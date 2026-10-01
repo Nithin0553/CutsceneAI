@@ -1,0 +1,17 @@
+{
+  "version": "0.1.0",
+  "engine": "unity",
+  "status": "draft",
+  "mappings": [
+    {"ced": "sequence.root", "native": ["TimelineAsset"]},
+    {"ced": "sequence.instance", "native": ["PlayableDirector"]},
+    {"ced": "timeline.track", "native": ["TrackAsset"]},
+    {"ced": "timeline.clip", "native": ["TimelineClip"]},
+    {"ced": "animation.track", "native": ["AnimationTrack"]},
+    {"ced": "audio.track", "native": ["AudioTrack"]},
+    {"ced": "event.trigger", "native": ["SignalEmitter", "IMarker"]},
+    {"ced": "entity.actor", "native": ["GameObject"]},
+    {"ced": "entity.character", "native": ["GameObject", "Animator"]},
+    {"ced": "entity.camera", "native": ["Camera", "Cinemachine camera variants"]}
+  ]
+}
