@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/csir/v0.1",
+  "title": "CutsceneAI Interchange Representation v0.1",
+  "type": "object",
+  "required": ["schema_version", "cutscene_id", "source", "timing", "entities", "tracks", "provenance"],
+  "properties": {
+    "schema_version": {"const": "0.1.0"},
+    "cutscene_id": {"type": "string", "minLength": 1},
+    "name": {"type": "string"},
+    "source": {
+      "type": "object",
+      "required": ["engine", "project_fingerprint", "sequence_ref"],
+      "properties": {
+        "engine": {"enum": ["unity", "unreal"]},
+        "engine_version": {"type": "string"},
+        "project_fingerprint": {"type": "string"},
+        "sequence_ref": {"type": "string"}
+      }
+    },
+    "timing": {
+      "type": "object",
+      "required": ["duration_seconds", "source_rate"],
+      "properties": {
+        "duration_seconds": {"type": "number", "minimum": 0},
+        "source_rate": {"$ref": "#/$defs/rational_rate"},
+        "display_rate": {"$ref": "#/$defs/rational_rate"},
+        "tick_resolution": {"$ref": "#/$defs/rational_rate"}
+      }
+    },
+    "entities": {"type": "array", "items": {"type": "object"}},
+    "tracks": {"type": "array", "items": {"type": "object"}},
+    "relationships": {"type": "array", "items": {"type": "object"}},
+    "semantics": {"type": "object"},
+    "provenance": {"type": "object"}
+  },
+  "$defs": {
+    "rational_rate": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": {"type": "integer", "minimum": 1},
+        "denominator": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    }
+  }
+}
