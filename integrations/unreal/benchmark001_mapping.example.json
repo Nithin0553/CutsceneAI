@@ -1,0 +1,22 @@
+{
+  "sequence_asset_path": "/Game/CutSceneAI/Benchmark001/LS_Benchmark001",
+  "overwrite_sequence": false,
+  "entities": {
+    "CHARACTER_Guard": {
+      "actor_label": "CHARACTER_Guard"
+    },
+    "MOVING_PROP": {
+      "actor_label": "MOVING_PROP"
+    },
+    "CAM_A_Wide": {
+      "actor_label": "CAM_A_Wide"
+    },
+    "CAM_B_Close": {
+      "actor_label": "CAM_B_Close"
+    }
+  },
+  "assets": {
+    "mixamo.com": "/Game/CutSceneAI/Benchmark001/Animations/A_CatwalkWalkTurn180",
+    "freesound_community-ominous-47658": "/Game/CutSceneAI/Benchmark001/Audio/A_Ominous"
+  }
+}
