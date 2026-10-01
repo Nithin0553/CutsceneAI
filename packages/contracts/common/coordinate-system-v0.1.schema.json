@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/common/coordinate-system/v0.1",
+  "title": "CutsceneAI Canonical Coordinate System v0.1",
+  "type": "object",
+  "required": ["handedness", "up_axis", "forward_axis", "right_axis", "linear_unit", "rotation_representation"],
+  "properties": {
+    "handedness": {"const": "RIGHT_HANDED"},
+    "up_axis": {"const": "+Y"},
+    "forward_axis": {"const": "-Z"},
+    "right_axis": {"const": "+X"},
+    "linear_unit": {"const": "METER"},
+    "angular_unit": {"const": "RADIAN"},
+    "rotation_representation": {"const": "QUATERNION_XYZW"}
+  },
+  "additionalProperties": false
+}
