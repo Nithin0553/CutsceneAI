@@ -11,7 +11,7 @@ namespace CutsceneAI.UnityExtractor
     internal static class UnityTimelineExtractor
     {
         internal const string ExtractorName = "CutsceneAI.UnityTimelineExtractor";
-        internal const string ExtractorVersion = "0.1.0";
+        internal const string ExtractorVersion = "0.1.1";
 
         internal static string Export(PlayableDirector director)
         {
@@ -52,7 +52,7 @@ namespace CutsceneAI.UnityExtractor
             {
                 _director = director;
                 _timeline = timeline;
-                _sourceRate = ExtractorUtilities.FrameRateToRational(timeline.editorSettings.fps);
+                _sourceRate = ExtractorUtilities.FrameRateToRational(timeline.editorSettings.frameRate);
 
                 if (!ExtractorUtilities.TryGetAssetIdentity(timeline, out var guid, out var localId, out var path))
                     throw new InvalidOperationException("TimelineAsset must be saved in the Unity project before extraction.");
@@ -126,6 +126,7 @@ namespace CutsceneAI.UnityExtractor
                 document.provenance.source_snapshot_hash = "sha256:" + ExtractorUtilities.Sha256(JsonUtility.ToJson(snapshot, false));
                 document.provenance.notes.Add("Structural extraction only; PlayableDirector.Evaluate was not called.");
                 document.provenance.notes.Add("Raw Unity animation key values are retained beside canonicalized transform channels.");
+                document.provenance.notes.Add("Activation clips are classified from ActivationTrack because Unity Timeline 1.8 does not expose the implementation playable publicly.");
                 return document;
             }
 
@@ -183,8 +184,8 @@ namespace CutsceneAI.UnityExtractor
 
             private SectionRecord ExtractClip(TrackAsset track, TimelineClip clip, GameObject bindingGameObject, int index)
             {
-                var asset = clip.asset;
-                var assetId = asset != null ? AddAsset(asset, ClassifyClipAsset(asset)) : string.Empty;
+                UnityEngine.Object asset = clip.asset;
+                var assetId = asset != null ? AddAsset(asset, ClassifyClipAsset(track, asset)) : string.Empty;
                 var sectionId = $"{ExtractorUtilities.StableAssetId(track)}:clip:{index}:{ToMicroseconds(clip.start)}";
                 var section = new SectionRecord
                 {
@@ -211,7 +212,12 @@ namespace CutsceneAI.UnityExtractor
                     },
                 };
 
-                if (asset is AnimationPlayableAsset animationPlayable)
+                if (track is ActivationTrack activationTrack)
+                {
+                    section.payload.activation.active = true;
+                    section.payload.activation.post_playback_state = activationTrack.postPlaybackState.ToString();
+                }
+                else if (asset is AnimationPlayableAsset animationPlayable)
                 {
                     section.payload.animation.apply_foot_ik = animationPlayable.applyFootIK;
                     if (animationPlayable.clip != null)
@@ -232,12 +238,6 @@ namespace CutsceneAI.UnityExtractor
                         section.payload.audio.samples = audioPlayable.clip.samples;
                         section.payload.audio.clip_length_seconds = audioPlayable.clip.length;
                     }
-                }
-                else if (asset is ActivationPlayableAsset)
-                {
-                    section.payload.activation.active = true;
-                    if (track is ActivationTrack activationTrack)
-                        section.payload.activation.post_playback_state = activationTrack.postPlaybackState.ToString();
                 }
                 else
                 {
@@ -500,26 +500,26 @@ namespace CutsceneAI.UnityExtractor
                 return "timeline.track";
             }
 
-            private static string ClassifySection(TrackAsset track, PlayableAsset asset, GameObject binding)
+            private static string ClassifySection(TrackAsset track, UnityEngine.Object asset, GameObject binding)
             {
+                if (track is ActivationTrack)
+                    return binding != null && binding.GetComponent<Camera>() != null ? "camera.cut" : "event.state";
                 if (asset is AnimationPlayableAsset)
                     return "animation.section";
                 if (asset is AudioPlayableAsset)
                     return "audio.section";
-                if (asset is ActivationPlayableAsset)
-                    return binding != null && binding.GetComponent<Camera>() != null ? "camera.cut" : "event.state";
                 return "timeline.clip";
             }
 
-            private static string ClassifyClipAsset(PlayableAsset asset)
+            private static string ClassifyClipAsset(TrackAsset track, UnityEngine.Object asset)
             {
-                return asset switch
-                {
-                    AnimationPlayableAsset => "animation.clip",
-                    AudioPlayableAsset => "audio.asset",
-                    ActivationPlayableAsset => "event.state",
-                    _ => "timeline.clip",
-                };
+                if (track is ActivationTrack)
+                    return "event.state";
+                if (asset is AnimationPlayableAsset)
+                    return "animation.clip";
+                if (asset is AudioPlayableAsset)
+                    return "audio.asset";
+                return "timeline.clip";
             }
 
             private static long ToMicroseconds(double seconds) => (long)Math.Round(seconds * 1_000_000.0);
