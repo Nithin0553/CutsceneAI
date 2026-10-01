@@ -26,6 +26,7 @@ namespace CutsceneAI.UnityExtractor
             try
             {
                 var outputPath = UnityTimelineExtractor.Export(director);
+                UnityTimelineOffsetAugmenter.Augment(outputPath, director);
                 Debug.Log($"[CutsceneAI] Timeline exported to: {outputPath}");
                 EditorUtility.RevealInFinder(outputPath);
             }
