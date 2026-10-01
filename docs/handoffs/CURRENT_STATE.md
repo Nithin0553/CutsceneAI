@@ -8,7 +8,7 @@ The source cutscene is ground truth.
 
 ## Current milestone
 
-Foundation Milestone 1.
+Engine Milestone 2 — Unity read-only structural extractor v0.1.
 
 ## Initial transfer direction
 
@@ -40,33 +40,35 @@ Unity → Unreal first. Reverse transfer follows after the complete deterministi
 - `packages/contracts/csir/csir-v0.1.schema.json`
 - `packages/adapters/interface.py`
 
-## Architecture documents
-
-- `docs/architecture/FOUNDATION_V0_1.md`
-- `docs/architecture/COORDINATE_CONVENTIONS_V0_1.md`
-- `docs/architecture/TIMING_CONVENTIONS_V0_1.md`
-
 ## First benchmark
 
 `docs/benchmarks/BENCHMARK_001.md`
 
 Benchmark 001 is a controlled 8–12 second Unity Timeline containing one character/animation, one moving prop, two cameras, one cut, camera motion/lens data, one audio clip, one event, and enough environment geometry to validate placement/framing.
 
-Equivalent/prepared assets and manual mappings are intentionally used so the first proof isolates transfer mechanics rather than asset-search or retargeting complexity.
+## Unity extractor implementation
 
-## Next implementation step
+Package path: `integrations/unity/com.cutsceneai.extractor`
 
-Implement the Unity source-side adapter for Benchmark 001 in this order:
+Current structural extraction covers Timeline identity/frame rate, recursive tracks, bindings, entity transforms, Camera/Animator metadata, clip timing/blends, animation/audio assets, raw + canonical animation keys, activation/camera-cut handling, SignalEmitter markers, generic fallback, source snapshot/provenance hash, and export to `CutsceneAI/Exports/*.csir.json`.
 
-1. Unity project validation/version detection
-2. Timeline enumeration
-3. relevant binding/asset discovery
-4. read-only extraction of sequence timing
-5. read-only extraction of entities/bindings
-6. track/section extraction
-7. transform/camera/audio/event extraction
-8. source snapshot generation
-9. CSIR v0.1 serialization
-10. fixture-based tests before connecting Unreal generation
+Structural extraction deliberately does not call `PlayableDirector.Evaluate()` or mutate/save source assets/scenes.
 
-Do not start automatic asset matching, ML, advanced retargeting, VFX reconstruction, or semantic correction until the deterministic benchmark path is validated end to end.
+## Automated checks
+
+Python CI statically verifies the Unity package baseline, editor-only assembly, required Timeline read APIs, absence of known source-mutating APIs, raw + canonical animation key preservation, and export menu presence.
+
+## Manual gate required next
+
+GitHub CI cannot compile Unity C# without a Unity runner/license. The next gate is local Unity verification:
+
+1. pull latest `main` after the extractor PR merges
+2. create/open Benchmark 001 Unity project in Unity 6000.0 with Timeline 1.8.10
+3. install local package from `integrations/unity/com.cutsceneai.extractor/package.json`
+4. confirm package compiles with zero errors
+5. select the Benchmark PlayableDirector
+6. run `Tools > CutsceneAI > Export Selected Timeline`
+7. provide the generated `.csir.json` back to CutsceneAI
+8. validate it against CSIR v0.1 and benchmark expectations
+
+Do not start Unreal generation until this exported artifact passes validation.
