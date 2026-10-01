@@ -1,6 +1,6 @@
 {
   "name": "com.cutsceneai.extractor",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "displayName": "CutsceneAI Unity Extractor",
   "description": "Read-only Unity Timeline extractor for CutsceneAI CSIR exports.",
   "unity": "6000.0",

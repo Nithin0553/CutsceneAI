@@ -32,4 +32,6 @@ def test_infinite_track_offsets_are_preserved() -> None:
     assert "transform.infinite_offset.rotation" in source
     assert "transform.track_offset.position" in source
     assert "transform.track_offset.rotation" in source
-    assert 'FinalExtractorVersion = "0.1.3"' in source
+    assert "track.trackOffset" in source
+    assert "track.applyOffsets" not in source
+    assert 'FinalExtractorVersion = "0.1.4"' in source

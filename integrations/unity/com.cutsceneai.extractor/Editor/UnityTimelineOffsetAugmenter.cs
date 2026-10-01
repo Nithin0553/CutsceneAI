@@ -8,7 +8,7 @@ namespace CutsceneAI.UnityExtractor
 {
     internal static class UnityTimelineOffsetAugmenter
     {
-        internal const string FinalExtractorVersion = "0.1.3";
+        internal const string FinalExtractorVersion = "0.1.4";
 
         internal static void Augment(string outputPath, PlayableDirector director)
         {
@@ -31,6 +31,8 @@ namespace CutsceneAI.UnityExtractor
                 document.provenance.extractor_version = FinalExtractorVersion;
                 document.provenance.notes.Add(
                     "AnimationTrack track/infinite offsets are preserved as synthetic canonical curves so infinite-track keys can be reconstructed as authored rather than treated as absolute values.");
+                document.provenance.notes.Add(
+                    "Unity 6000.3 uses AnimationTrack.trackOffset as the authoritative offset-mode API; deprecated applyOffsets is intentionally not read.");
             }
 
             File.WriteAllText(outputPath, JsonUtility.ToJson(document, true));
@@ -74,9 +76,6 @@ namespace CutsceneAI.UnityExtractor
             if (section?.payload?.animation == null)
                 return;
 
-            AddScalar(section, "CutSceneAI.AnimationTrack.applyOffsets",
-                "timeline.animation_track.apply_offsets", track.applyOffsets ? 1.0 : 0.0,
-                "unity_track_metadata");
             AddScalar(section, "CutSceneAI.AnimationTrack.trackOffset",
                 "timeline.animation_track.track_offset_mode", (double)(int)track.trackOffset,
                 "unity_track_metadata");
