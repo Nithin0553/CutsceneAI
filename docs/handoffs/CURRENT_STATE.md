@@ -1,55 +1,72 @@
 # CutsceneAI Current State
 
-## Status
+## Product definition
 
-Foundation Milestone 0 is in progress on branch `foundation/v0.1`.
+CutsceneAI transfers an already-existing cinematic cutscene from a source game engine into a target game engine with measurable fidelity.
 
-## Primary objective
+The source cutscene is ground truth.
 
-Transfer an already-existing cutscene from one game engine to another with measurable high fidelity.
+## Current milestone
 
-Initial direction: **Unity → Unreal**.
+Foundation Milestone 1.
+
+## Initial transfer direction
+
+Unity → Unreal first. Reverse transfer follows after the complete deterministic proof is working.
 
 ## Frozen architectural decisions
 
-- source cutscene is ground truth
 - source project is read-only by default
-- CED is separate from CSIR
-- engine mappings are separate from the canonical dictionary
-- every element has an explicit transfer outcome
-- target generation happens in staging before commit
-- generated target is read back before validation
-- deterministic engineering first
-- AI/ML only for unresolved ambiguity, retargeting, reconstruction or evaluation
+- source cutscene is authoritative ground truth
+- CED is engine-neutral
+- Unity/Unreal mappings live outside the canonical dictionary
+- CSIR preserves canonical values plus source-native escape-hatch data
+- canonical space is right-handed, +Y up, -Z forward, +X right, meters, quaternion XYZW
+- timing is rational and source-preserving; no forced 24/30/60 fps normalization
+- every transferred element ends in an explicit outcome: EXACT, CONVERTED, RETARGETED, BAKED, RECONSTRUCTED, TARGET_MAPPED, or BLOCKED
+- target generation occurs in staging before commit
+- generated target results must be read back before validation
+- deterministic transfer is preferred over AI/ML
+- AI/ML enters only when ambiguity/reconstruction cannot be solved reliably otherwise
 
-## Current foundation
+## Foundation contracts
 
-- project README and Python tooling
-- Foundation v0.1 architecture document
-- ADR-0001: source cutscene is ground truth
-- ADR-0002: explicit transfer outcomes
-- transfer-outcome JSON contract
-- Cutscene Element Dictionary v0.1 draft
-- Unity CED mapping draft
-- Unreal CED mapping draft
-- CSIR v0.1 schema draft
-- readiness subsystem contract
-- engine adapter contract
-- validation-layer contract
+- `packages/contracts/dictionary/cutscene-elements-v0.1.json`
+- `packages/contracts/dictionary/unity-mappings-v0.1.json`
+- `packages/contracts/dictionary/unreal-mappings-v0.1.json`
+- `packages/contracts/common/coordinate-system-v0.1.schema.json`
+- `packages/contracts/common/rational-time-v0.1.schema.json`
+- `packages/contracts/common/transfer-outcome-v0.1.schema.json`
+- `packages/contracts/csir/csir-v0.1.schema.json`
+- `packages/adapters/interface.py`
 
-## Next development step
+## Architecture documents
 
-Review and freeze:
+- `docs/architecture/FOUNDATION_V0_1.md`
+- `docs/architecture/COORDINATE_CONVENTIONS_V0_1.md`
+- `docs/architecture/TIMING_CONVENTIONS_V0_1.md`
 
-1. CED v0.1 scope
-2. canonical coordinate conventions
-3. exact timing model
-4. minimum CSIR v0.1 schema
-5. typed engine adapter interface
-6. first benchmark cutscene specification
+## First benchmark
 
-After these are frozen, implement the first **Unity read-only extractor**.
+`docs/benchmarks/BENCHMARK_001.md`
 
-## Critical reminder
+Benchmark 001 is a controlled 8–12 second Unity Timeline containing one character/animation, one moving prop, two cameras, one cut, camera motion/lens data, one audio clip, one event, and enough environment geometry to validate placement/framing.
 
-CutsceneAI does not primarily generate new cutscenes. It transfers an existing source cutscene. Do not reintroduce a text-to-motion or generative-performance system into the critical path unless a specific transfer problem later proves that it is necessary.
+Equivalent/prepared assets and manual mappings are intentionally used so the first proof isolates transfer mechanics rather than asset-search or retargeting complexity.
+
+## Next implementation step
+
+Implement the Unity source-side adapter for Benchmark 001 in this order:
+
+1. Unity project validation/version detection
+2. Timeline enumeration
+3. relevant binding/asset discovery
+4. read-only extraction of sequence timing
+5. read-only extraction of entities/bindings
+6. track/section extraction
+7. transform/camera/audio/event extraction
+8. source snapshot generation
+9. CSIR v0.1 serialization
+10. fixture-based tests before connecting Unreal generation
+
+Do not start automatic asset matching, ML, advanced retargeting, VFX reconstruction, or semantic correction until the deterministic benchmark path is validated end to end.
