@@ -1,0 +1,23 @@
+{
+  "version": "0.1.0",
+  "status": "draft",
+  "principle": "Engine-neutral concepts; engine mappings live separately.",
+  "categories": {
+    "sequence": ["sequence.root", "sequence.instance", "sequence.subsequence", "sequence.duration", "sequence.timebase", "sequence.playback_range"],
+    "timeline": ["timeline.track", "timeline.section", "timeline.clip", "timeline.key", "timeline.curve", "timeline.marker", "timeline.group", "timeline.blend"],
+    "entity": ["entity.actor", "entity.character", "entity.prop", "entity.camera", "entity.light", "entity.audio_source", "entity.vfx", "entity.environment"],
+    "binding": ["binding.object", "binding.component", "binding.tag"],
+    "transform": ["transform.position", "transform.rotation", "transform.scale", "transform.parent", "transform.world", "transform.local", "transform.pivot", "transform.path"],
+    "character": ["character.skeleton", "character.rig", "character.reference_pose", "character.root", "character.pelvis", "character.bone", "character.morph_target", "character.control"],
+    "animation": ["animation.clip", "animation.track", "animation.section", "animation.pose", "animation.bone_curve", "animation.property_curve", "animation.root_motion", "animation.additive", "animation.layer", "animation.mask", "animation.blend", "animation.speed", "animation.offset", "animation.loop", "animation.retarget", "animation.ik", "animation.contact"],
+    "camera": ["camera.entity", "camera.transform", "camera.cut", "camera.blend", "camera.fov", "camera.focal_length", "camera.sensor", "camera.aspect_ratio", "camera.aperture", "camera.focus_distance", "camera.dof", "camera.near_clip", "camera.far_clip", "camera.look_at", "camera.follow", "camera.tracking", "camera.path", "camera.shake", "camera.roll", "camera.postprocess", "camera.composition"],
+    "audio": ["audio.asset", "audio.track", "audio.section", "audio.start", "audio.duration", "audio.offset", "audio.volume", "audio.pitch", "audio.fade_in", "audio.fade_out", "audio.spatial"],
+    "dialogue": ["dialogue.line", "dialogue.speaker", "dialogue.text", "dialogue.audio", "dialogue.start", "dialogue.end", "dialogue.phoneme", "dialogue.viseme"],
+    "event": ["event.trigger", "event.state", "event.callback", "event.parameter", "event.spawn", "event.destroy", "event.activate", "event.deactivate", "event.gameplay"],
+    "light": ["light.entity", "light.type", "light.transform", "light.intensity", "light.color", "light.temperature", "light.range", "light.spot_angle", "light.shadow", "light.volumetric", "light.animation"],
+    "vfx": ["vfx.system", "vfx.asset", "vfx.spawn", "vfx.activation", "vfx.transform", "vfx.parameter", "vfx.intensity", "vfx.duration", "vfx.simulation_time"],
+    "media": ["media.track", "media.clip"],
+    "subtitle": ["subtitle.track", "subtitle.cue"],
+    "constraint": ["constraint.parent", "constraint.position", "constraint.rotation", "constraint.aim", "constraint.look_at", "constraint.follow", "constraint.ik", "constraint.path", "constraint.surface", "constraint.contact"]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "version": "0.1.0",
+  "engine": "unreal",
+  "status": "draft",
+  "mappings": [
+    {"ced": "sequence.root", "native": ["LevelSequence"]},
+    {"ced": "sequence.instance", "native": ["LevelSequenceActor"]},
+    {"ced": "timeline.track", "native": ["MovieSceneTrack", "Sequencer Track"]},
+    {"ced": "timeline.section", "native": ["MovieSceneSection"]},
+    {"ced": "animation.track", "native": ["Skeletal Animation Track"]},
+    {"ced": "audio.track", "native": ["Audio Track"]},
+    {"ced": "event.trigger", "native": ["Event Track"]},
+    {"ced": "camera.cut", "native": ["Camera Cut Track"]},
+    {"ced": "entity.actor", "native": ["Actor"]},
+    {"ced": "entity.character", "native": ["SkeletalMeshActor", "Character"]},
+    {"ced": "entity.camera", "native": ["CineCameraActor"]}
+  ]
+}

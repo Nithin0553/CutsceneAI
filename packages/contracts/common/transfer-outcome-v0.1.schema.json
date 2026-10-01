@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/common/transfer-outcome-v0.1",
+  "title": "CutsceneAI Transfer Outcome v0.1",
+  "type": "string",
+  "enum": [
+    "EXACT",
+    "CONVERTED",
+    "RETARGETED",
+    "BAKED",
+    "RECONSTRUCTED",
+    "TARGET_MAPPED",
+    "BLOCKED"
+  ]
+}
