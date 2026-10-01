@@ -30,9 +30,11 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import csir_plan
 import scene_prep
+import unreal_compat
 
 importlib.reload(csir_plan)
 importlib.reload(scene_prep)
+importlib.reload(unreal_compat)
 
 
 class UnrealBuildError(RuntimeError):
@@ -132,7 +134,7 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
     track.set_display_name(action.get("track_name", "CutSceneAI Transform"))
     section = track.add_section()
     section.set_range(0, sequence.get_playback_end())
-    channels = section.get_channels()
+    channels = unreal_compat.get_section_channels(section)
     if len(channels) < 6:
         raise UnrealBuildError("Unexpected Unreal transform channel layout; expected at least 6 channels.")
 
@@ -157,8 +159,7 @@ def _add_skeletal_animation(binding: Any, action: dict[str, Any]) -> None:
     section.set_range(int(action["start_frame"]), int(action["end_frame"]))
     params = section.get_editor_property("params")
     params.set_editor_property("animation", animation)
-    play_rate = unreal.MovieSceneTimeWarpVariant()
-    play_rate.set_fixed_play_rate(float(action.get("time_scale", 1.0)))
+    play_rate = unreal_compat.make_fixed_play_rate(float(action.get("time_scale", 1.0)))
     params.set_editor_property("play_rate", play_rate)
     section.set_editor_property("params", params)
 
@@ -182,7 +183,7 @@ def _add_camera_fov(sequence: unreal.LevelSequence, actor: unreal.Actor, action:
     track.set_property_name_and_path("FieldOfView", "FieldOfView")
     section = track.add_section()
     section.set_range(0, sequence.get_playback_end())
-    channels = section.get_channels()
+    channels = unreal_compat.get_section_channels(section)
     if len(channels) != 1:
         raise UnrealBuildError("Unexpected FOV channel layout; expected one float/double channel.")
     for key in action["keys"]:
@@ -231,33 +232,43 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
     plan = csir_plan.build_plan(csir, mapping)
 
     _apply_scene_prep(csir, mapping)
-    sequence = _create_sequence(plan)
-    bindings = _binding_cache(sequence, plan)
+    sequence: unreal.LevelSequence | None = None
+    try:
+        sequence = _create_sequence(plan)
+        bindings = _binding_cache(sequence, plan)
 
-    camera_cuts: list[dict[str, Any]] = []
-    for action in plan["actions"]:
-        kind = action["kind"]
-        if kind == "transform":
-            _add_transform(sequence, bindings[action["entity_name"]]["binding"], action)
-        elif kind == "skeletal_animation":
-            _add_skeletal_animation(bindings[action["entity_name"]]["binding"], action)
-        elif kind == "camera_fov":
-            _add_camera_fov(sequence, bindings[action["entity_name"]]["actor"], action)
-        elif kind == "camera_cut":
-            camera_cuts.append(action)
-        elif kind == "audio":
-            _add_audio(sequence, action)
-        elif kind == "marker":
-            _add_marker(sequence, action)
-        else:
-            raise UnrealBuildError(f"Unsupported reconstruction action: {kind}")
+        camera_cuts: list[dict[str, Any]] = []
+        for action in plan["actions"]:
+            kind = action["kind"]
+            if kind == "transform":
+                _add_transform(sequence, bindings[action["entity_name"]]["binding"], action)
+            elif kind == "skeletal_animation":
+                _add_skeletal_animation(bindings[action["entity_name"]]["binding"], action)
+            elif kind == "camera_fov":
+                _add_camera_fov(sequence, bindings[action["entity_name"]]["actor"], action)
+            elif kind == "camera_cut":
+                camera_cuts.append(action)
+            elif kind == "audio":
+                _add_audio(sequence, action)
+            elif kind == "marker":
+                _add_marker(sequence, action)
+            else:
+                raise UnrealBuildError(f"Unsupported reconstruction action: {kind}")
 
-    _add_camera_cuts(sequence, camera_cuts, bindings)
-    unreal.EditorAssetLibrary.save_loaded_asset(sequence)
-    unreal.LevelSequenceEditorBlueprintLibrary.open_level_sequence(sequence)
-    unreal.LevelSequenceEditorBlueprintLibrary.refresh_current_level_sequence()
-    unreal.log(f"[CutSceneAI] Generated Level Sequence: {plan['sequence_asset_path']}")
-    return sequence
+        _add_camera_cuts(sequence, camera_cuts, bindings)
+        unreal.EditorAssetLibrary.save_loaded_asset(sequence)
+        unreal.LevelSequenceEditorBlueprintLibrary.open_level_sequence(sequence)
+        unreal.LevelSequenceEditorBlueprintLibrary.refresh_current_level_sequence()
+        unreal.log(f"[CutSceneAI] Generated Level Sequence: {plan['sequence_asset_path']}")
+        return sequence
+    except Exception:
+        if sequence is not None:
+            asset_path = str(plan["sequence_asset_path"])
+            unreal.EditorAssetLibrary.delete_asset(asset_path)
+            unreal.log_warning(
+                f"[CutSceneAI] Rolled back incomplete generated sequence after build failure: {asset_path}"
+            )
+        raise
 
 
 if __name__ == "__main__":
