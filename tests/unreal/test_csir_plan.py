@@ -1,16 +1,16 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 UNREAL_INTEGRATION = ROOT / "integrations" / "unreal"
 sys.path.insert(0, str(UNREAL_INTEGRATION))
 
-import csir_plan  # noqa: E402
+import csir_plan
 
 
 def _rt(seconds: float) -> dict:
     return {
-        "value": int(round(seconds * 1_000_000)),
+        "value": round(seconds * 1_000_000),
         "rate": {"numerator": 1_000_000, "denominator": 1},
     }
 
