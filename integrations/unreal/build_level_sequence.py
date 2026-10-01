@@ -157,7 +157,9 @@ def _add_skeletal_animation(binding: Any, action: dict[str, Any]) -> None:
     section.set_range(int(action["start_frame"]), int(action["end_frame"]))
     params = section.get_editor_property("params")
     params.set_editor_property("animation", animation)
-    params.set_editor_property("play_rate", float(action.get("time_scale", 1.0)))
+    play_rate = unreal.MovieSceneTimeWarpVariant()
+    play_rate.set_fixed_play_rate(float(action.get("time_scale", 1.0)))
+    params.set_editor_property("play_rate", play_rate)
     section.set_editor_property("params", params)
 
 
