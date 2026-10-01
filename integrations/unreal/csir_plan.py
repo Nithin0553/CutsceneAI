@@ -323,6 +323,7 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                                     "kind": "camera_fov",
                                     "entity_name": entity["name"],
                                     "actor_label": actor_label,
+                                    "source_fov_axis": "vertical",
                                     "keys": [
                                         {
                                             "frame": seconds_to_frame(float(key["time_seconds"]), fps_n, fps_d),
