@@ -183,7 +183,7 @@ def _add_camera_fov(sequence: unreal.LevelSequence, actor: unreal.Actor, action:
     track.set_property_name_and_path("FieldOfView", "FieldOfView")
     section = track.add_section()
     section.set_range(0, sequence.get_playback_end())
-    channels = section.get_channels()
+    channels = unreal_compat.get_section_channels(section)
     if len(channels) != 1:
         raise UnrealBuildError("Unexpected FOV channel layout; expected one float/double channel.")
     for key in action["keys"]:
