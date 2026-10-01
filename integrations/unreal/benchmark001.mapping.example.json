@@ -1,0 +1,34 @@
+{
+  "target": {
+    "engine": "unreal",
+    "sequence_name": "Benchmark001_Transferred_Staging",
+    "sequence_path": "/Game/CutSceneAI/Benchmark001",
+    "level_path": "/Game/Benchmark001/Maps/Benchmark001"
+  },
+  "entities": {
+    "CHARACTER_Guard": {
+      "kind": "skeletal_mesh",
+      "skeletal_mesh": "/Game/Benchmark001/Characters/Ch31_nonPBR.Ch31_nonPBR"
+    },
+    "MOVING_PROP": {
+      "kind": "static_mesh",
+      "static_mesh": "/Engine/BasicShapes/Cube.Cube"
+    },
+    "CAM_A_Wide": {
+      "kind": "camera"
+    },
+    "CAM_B_Close": {
+      "kind": "camera"
+    }
+  },
+  "assets": {
+    "mixamo.com": {
+      "kind": "animation",
+      "path": "/Game/Benchmark001/Animations/REPLACE_WITH_IMPORTED_ANIMATION"
+    },
+    "freesound_community-ominous-47658": {
+      "kind": "audio",
+      "path": "/Game/Benchmark001/Audio/REPLACE_WITH_IMPORTED_SOUND"
+    }
+  }
+}
