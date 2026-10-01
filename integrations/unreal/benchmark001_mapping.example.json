@@ -13,6 +13,24 @@
     },
     "CAM_B_Close": {
       "actor_label": "CAM_B_Close"
+    },
+    "Floor": {
+      "actor_label": "Floor"
+    },
+    "Wall_Left": {
+      "actor_label": "Wall_Left"
+    },
+    "Wall_Right": {
+      "actor_label": "Wall_Right"
+    },
+    "Wall_Back": {
+      "actor_label": "Wall_Back"
+    },
+    "Wall_Front": {
+      "actor_label": "Wall_Front"
+    },
+    "Landmark_Pillar": {
+      "actor_label": "Landmark_Pillar"
     }
   },
   "assets": {
