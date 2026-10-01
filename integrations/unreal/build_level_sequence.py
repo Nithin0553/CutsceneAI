@@ -29,8 +29,10 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import csir_plan
+import scene_prep
 
 importlib.reload(csir_plan)
+importlib.reload(scene_prep)
 
 
 class UnrealBuildError(RuntimeError):
@@ -60,6 +62,30 @@ def _load_asset(asset_path: str) -> unreal.Object:
     if asset is None:
         raise UnrealBuildError(f"Unreal asset not found: {asset_path}")
     return asset
+
+
+def _apply_scene_prep(csir: dict[str, Any], mapping: dict[str, Any]) -> None:
+    for operation in scene_prep.build_scene_prep(csir, mapping):
+        actor = _find_actor(str(operation["actor_label"]))
+        location = operation["location_cm"]
+        pitch, yaw, roll = operation["rotation_pitch_yaw_roll_degrees"]
+        scale = operation["scale_xyz"]
+
+        actor.set_actor_location(
+            unreal.Vector(float(location[0]), float(location[1]), float(location[2])),
+            False,
+            False,
+        )
+        actor.set_actor_rotation(
+            unreal.Rotator(float(pitch), float(yaw), float(roll)),
+            False,
+        )
+        actor.set_actor_scale3d(
+            unreal.Vector(float(scale[0]), float(scale[1]), float(scale[2]))
+        )
+        unreal.log(
+            f"[CutSceneAI] Prepared actor {operation['actor_label']} from {operation['source']}"
+        )
 
 
 def _create_sequence(plan: dict[str, Any]) -> unreal.LevelSequence:
@@ -198,7 +224,11 @@ def _add_marker(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
 
 
 def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str]) -> unreal.LevelSequence:
-    plan = csir_plan.build_plan_from_files(csir_path, mapping_path)
+    csir = csir_plan.load_json(csir_path)
+    mapping = csir_plan.load_json(mapping_path)
+    plan = csir_plan.build_plan(csir, mapping)
+
+    _apply_scene_prep(csir, mapping)
     sequence = _create_sequence(plan)
     bindings = _binding_cache(sequence, plan)
 
