@@ -11,7 +11,7 @@ namespace CutsceneAI.UnityExtractor
     internal static class UnityTimelineExtractor
     {
         internal const string ExtractorName = "CutsceneAI.UnityTimelineExtractor";
-        internal const string ExtractorVersion = "0.1.1";
+        internal const string ExtractorVersion = "0.1.2";
 
         internal static string Export(PlayableDirector director)
         {
@@ -70,6 +70,7 @@ namespace CutsceneAI.UnityExtractor
                     name = _timeline.name,
                     source = new SourceInfo
                     {
+                        adapter_version = ExtractorVersion,
                         engine_version = Application.unityVersion,
                         project_fingerprint = ExtractorUtilities.ProjectFingerprint(),
                         sequence_ref = $"{TimelinePath}|guid={TimelineGuid}|local={TimelineLocalId}",
@@ -127,6 +128,7 @@ namespace CutsceneAI.UnityExtractor
                 document.provenance.notes.Add("Structural extraction only; PlayableDirector.Evaluate was not called.");
                 document.provenance.notes.Add("Raw Unity animation key values are retained beside canonicalized transform channels.");
                 document.provenance.notes.Add("Activation clips are classified from ActivationTrack because Unity Timeline 1.8 does not expose the implementation playable publicly.");
+                document.provenance.notes.Add("Infinite AnimationTrack clips are exported explicitly so recorded transform/property tracks are not lost.");
                 return document;
             }
 
@@ -169,6 +171,9 @@ namespace CutsceneAI.UnityExtractor
                     clipIndex++;
                 }
 
+                if (track is AnimationTrack animationTrack && animationTrack.infiniteClip != null)
+                    record.sections.Add(ExtractInfiniteAnimationTrack(animationTrack, bindingGameObject));
+
                 var markerIndex = 0;
                 foreach (var marker in track.GetMarkers())
                 {
@@ -180,6 +185,41 @@ namespace CutsceneAI.UnityExtractor
 
                 foreach (var child in track.GetChildTracks())
                     ExtractTrackRecursive(child, document);
+            }
+
+            private SectionRecord ExtractInfiniteAnimationTrack(AnimationTrack track, GameObject bindingGameObject)
+            {
+                var clip = track.infiniteClip;
+                var trackEnd = IsFinite(track.end) && track.end > 0.0 ? track.end : clip.length;
+                var assetId = AddAsset(clip, "animation.clip");
+                var isCamera = bindingGameObject != null && bindingGameObject.GetComponent<Camera>() != null;
+                var section = new SectionRecord
+                {
+                    section_id = $"{ExtractorUtilities.StableAssetId(track)}:infinite",
+                    ced_type = isCamera ? "camera.transform" : "animation.section",
+                    start = ExtractorUtilities.SecondsToRationalTime(0.0),
+                    end = ExtractorUtilities.SecondsToRationalTime(trackEnd),
+                    source_offset = ExtractorUtilities.SecondsToRationalTime(0.0),
+                    time_scale = 1.0,
+                    loop = false,
+                    payload = CreateEmptyPayload(clip.name, assetId),
+                    native_payload = new NativeSectionPayload
+                    {
+                        native_asset_type = clip.GetType().FullName ?? clip.GetType().Name,
+                        start_seconds = 0.0,
+                        end_seconds = trackEnd,
+                        duration_seconds = clip.length,
+                        clip_in_seconds = 0.0,
+                        time_scale = 1.0,
+                        blend_in_seconds = 0.0,
+                        blend_out_seconds = 0.0,
+                        ease_in_seconds = 0.0,
+                        ease_out_seconds = 0.0,
+                    },
+                };
+
+                ExtractAnimationCurves(clip, section.payload.animation);
+                return section;
             }
 
             private SectionRecord ExtractClip(TrackAsset track, TimelineClip clip, GameObject bindingGameObject, int index)
@@ -377,11 +417,22 @@ namespace CutsceneAI.UnityExtractor
                     return id;
 
                 var camera = gameObject.GetComponent<Camera>();
+                var audioSource = gameObject.GetComponent<AudioSource>();
                 var animator = gameObject.GetComponent<Animator>();
+                var hasCharacterRig =
+                    gameObject.GetComponentInChildren<SkinnedMeshRenderer>(true) != null ||
+                    (animator != null && animator.avatar != null);
+
                 var entity = new EntityRecord
                 {
                     entity_id = id,
-                    ced_type = camera != null ? "entity.camera" : animator != null ? "entity.character" : "entity.prop",
+                    ced_type = camera != null
+                        ? "entity.camera"
+                        : audioSource != null
+                            ? "entity.audio_source"
+                            : hasCharacterRig
+                                ? "entity.character"
+                                : "entity.prop",
                     name = gameObject.name,
                     native_ref = GlobalObjectId.GetGlobalObjectIdSlow(gameObject).ToString(),
                     parent_entity_id = string.Empty,
@@ -490,7 +541,7 @@ namespace CutsceneAI.UnityExtractor
             private static string ClassifyTrack(TrackAsset track, GameObject binding)
             {
                 if (track is AnimationTrack)
-                    return "animation.track";
+                    return binding != null && binding.GetComponent<Camera>() != null ? "camera.transform" : "animation.track";
                 if (track is AudioTrack)
                     return "audio.track";
                 if (track is ActivationTrack)
