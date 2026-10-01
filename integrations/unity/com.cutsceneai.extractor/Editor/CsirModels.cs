@@ -262,6 +262,7 @@ namespace CutsceneAI.UnityExtractor
         public string canonical_semantic;
         public string conversion;
         public List<KeyframeRecord> keys = new();
+        public List<KeyframeRecord> native_keys = new();
     }
 
     [Serializable]
