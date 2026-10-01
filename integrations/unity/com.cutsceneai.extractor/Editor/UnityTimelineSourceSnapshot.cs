@@ -163,7 +163,7 @@ namespace CutsceneAI.UnityExtractor
                 remove_start_offset = animationPlayable.removeStartOffset,
                 use_track_match_fields = animationPlayable.useTrackMatchFields,
                 apply_foot_ik = animationPlayable.applyFootIK,
-                loop = animationPlayable.loop,
+                loop_mode = animationPlayable.loop.ToString(),
             };
         }
 
@@ -252,7 +252,7 @@ namespace CutsceneAI.UnityExtractor
             public bool remove_start_offset;
             public bool use_track_match_fields;
             public bool apply_foot_ik;
-            public bool loop;
+            public string loop_mode;
         }
     }
 }
