@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/common/rational-time/v0.1",
+  "title": "CutsceneAI Rational Time v0.1",
+  "$defs": {
+    "rate": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": {"type": "integer", "minimum": 1},
+        "denominator": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "time": {
+      "type": "object",
+      "required": ["value", "rate"],
+      "properties": {
+        "value": {"type": "integer"},
+        "rate": {"$ref": "#/$defs/rate"},
+        "subframe": {
+          "type": "object",
+          "required": ["numerator", "denominator"],
+          "properties": {
+            "numerator": {"type": "integer"},
+            "denominator": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$ref": "#/$defs/time"
+}

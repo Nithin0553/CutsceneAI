@@ -3,37 +3,34 @@
   "$id": "cutsceneai://contracts/csir/v0.1",
   "title": "CutsceneAI Interchange Representation v0.1",
   "type": "object",
-  "required": ["schema_version", "cutscene_id", "source", "timing", "entities", "tracks", "provenance"],
+  "required": ["schema_version", "cutscene_id", "source", "coordinate_system", "timing", "assets", "entities", "tracks", "relationships", "provenance"],
   "properties": {
     "schema_version": {"const": "0.1.0"},
     "cutscene_id": {"type": "string", "minLength": 1},
     "name": {"type": "string"},
     "source": {
       "type": "object",
-      "required": ["engine", "project_fingerprint", "sequence_ref"],
+      "required": ["engine", "engine_version", "project_fingerprint", "sequence_ref"],
       "properties": {
         "engine": {"enum": ["unity", "unreal"]},
-        "engine_version": {"type": "string"},
-        "project_fingerprint": {"type": "string"},
-        "sequence_ref": {"type": "string"}
-      }
+        "engine_version": {"type": "string", "minLength": 1},
+        "adapter_version": {"type": "string"},
+        "project_fingerprint": {"type": "string", "minLength": 1},
+        "sequence_ref": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
     },
-    "timing": {
-      "type": "object",
-      "required": ["duration_seconds", "source_rate"],
-      "properties": {
-        "duration_seconds": {"type": "number", "minimum": 0},
-        "source_rate": {"$ref": "#/$defs/rational_rate"},
-        "display_rate": {"$ref": "#/$defs/rational_rate"},
-        "tick_resolution": {"$ref": "#/$defs/rational_rate"}
-      }
-    },
-    "entities": {"type": "array", "items": {"type": "object"}},
-    "tracks": {"type": "array", "items": {"type": "object"}},
-    "relationships": {"type": "array", "items": {"type": "object"}},
+    "coordinate_system": {"$ref": "#/$defs/coordinate_system"},
+    "timing": {"$ref": "#/$defs/sequence_timing"},
+    "assets": {"type": "array", "items": {"$ref": "#/$defs/asset"}},
+    "entities": {"type": "array", "items": {"$ref": "#/$defs/entity"}},
+    "tracks": {"type": "array", "items": {"$ref": "#/$defs/track"}},
+    "relationships": {"type": "array", "items": {"$ref": "#/$defs/relationship"}},
     "semantics": {"type": "object"},
-    "provenance": {"type": "object"}
+    "source_snapshot": {"type": "object"},
+    "provenance": {"$ref": "#/$defs/provenance"}
   },
+  "additionalProperties": false,
   "$defs": {
     "rational_rate": {
       "type": "object",
@@ -41,6 +38,134 @@
       "properties": {
         "numerator": {"type": "integer", "minimum": 1},
         "denominator": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "rational_time": {
+      "type": "object",
+      "required": ["value", "rate"],
+      "properties": {
+        "value": {"type": "integer"},
+        "rate": {"$ref": "#/$defs/rational_rate"},
+        "subframe": {
+          "type": "object",
+          "required": ["numerator", "denominator"],
+          "properties": {
+            "numerator": {"type": "integer"},
+            "denominator": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "coordinate_system": {
+      "type": "object",
+      "required": ["handedness", "up_axis", "forward_axis", "right_axis", "linear_unit", "rotation_representation"],
+      "properties": {
+        "handedness": {"const": "RIGHT_HANDED"},
+        "up_axis": {"const": "+Y"},
+        "forward_axis": {"const": "-Z"},
+        "right_axis": {"const": "+X"},
+        "linear_unit": {"const": "METER"},
+        "angular_unit": {"const": "RADIAN"},
+        "rotation_representation": {"const": "QUATERNION_XYZW"}
+      },
+      "additionalProperties": false
+    },
+    "sequence_timing": {
+      "type": "object",
+      "required": ["source_rate", "playback_start", "playback_end", "duration_seconds"],
+      "properties": {
+        "source_rate": {"$ref": "#/$defs/rational_rate"},
+        "display_rate": {"$ref": "#/$defs/rational_rate"},
+        "tick_resolution": {"$ref": "#/$defs/rational_rate"},
+        "playback_start": {"$ref": "#/$defs/rational_time"},
+        "playback_end": {"$ref": "#/$defs/rational_time"},
+        "duration_seconds": {"type": "number", "minimum": 0},
+        "preroll_seconds": {"type": "number", "minimum": 0},
+        "postroll_seconds": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "asset": {
+      "type": "object",
+      "required": ["asset_id", "ced_type", "source_ref"],
+      "properties": {
+        "asset_id": {"type": "string", "minLength": 1},
+        "ced_type": {"type": "string", "minLength": 1},
+        "name": {"type": "string"},
+        "source_ref": {"type": "string", "minLength": 1},
+        "content_hash": {"type": "string"},
+        "metadata": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "entity": {
+      "type": "object",
+      "required": ["entity_id", "ced_type"],
+      "properties": {
+        "entity_id": {"type": "string", "minLength": 1},
+        "ced_type": {"type": "string", "minLength": 1},
+        "name": {"type": "string"},
+        "native_ref": {"type": "string"},
+        "asset_id": {"type": "string"},
+        "parent_entity_id": {"type": ["string", "null"]},
+        "metadata": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "track": {
+      "type": "object",
+      "required": ["track_id", "ced_type", "sections"],
+      "properties": {
+        "track_id": {"type": "string", "minLength": 1},
+        "ced_type": {"type": "string", "minLength": 1},
+        "name": {"type": "string"},
+        "binding_entity_id": {"type": ["string", "null"]},
+        "muted": {"type": "boolean"},
+        "sections": {"type": "array", "items": {"$ref": "#/$defs/section"}},
+        "metadata": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "section": {
+      "type": "object",
+      "required": ["section_id", "ced_type", "start", "end", "payload"],
+      "properties": {
+        "section_id": {"type": "string", "minLength": 1},
+        "ced_type": {"type": "string", "minLength": 1},
+        "start": {"$ref": "#/$defs/rational_time"},
+        "end": {"$ref": "#/$defs/rational_time"},
+        "source_offset": {"$ref": "#/$defs/rational_time"},
+        "time_scale": {"type": "number", "exclusiveMinimum": 0},
+        "loop": {"type": "boolean"},
+        "payload": {"type": "object"},
+        "native_payload": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "relationship": {
+      "type": "object",
+      "required": ["relationship_id", "ced_type", "source_id", "target_id"],
+      "properties": {
+        "relationship_id": {"type": "string", "minLength": 1},
+        "ced_type": {"type": "string", "minLength": 1},
+        "source_id": {"type": "string", "minLength": 1},
+        "target_id": {"type": "string", "minLength": 1},
+        "metadata": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["extractor", "extracted_at_utc"],
+      "properties": {
+        "extractor": {"type": "string", "minLength": 1},
+        "extractor_version": {"type": "string"},
+        "extracted_at_utc": {"type": "string", "format": "date-time"},
+        "source_snapshot_hash": {"type": "string"},
+        "notes": {"type": "array", "items": {"type": "string"}}
       },
       "additionalProperties": false
     }
