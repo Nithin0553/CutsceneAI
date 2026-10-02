@@ -1,6 +1,6 @@
 # Benchmark 001 — Target Validation
 
-Status: **VISUALLY ACCEPTED; AUTOMATED READBACK VALIDATION PASS; TARGET HASH FREEZE PENDING**
+Status: **FROZEN AUTOMATED PASS — UNITY → UNREAL**
 
 ## Ground truth
 
@@ -15,7 +15,7 @@ The generated Unreal Level Sequence is not considered a benchmark pass merely be
 - Source artifact SHA-256: `5da9ede712854e77bb51e914ccf99d6e5b7432e6b9d24acbbb971c2d539b5ef4`
 - Adapter state includes the camera-rotation, root-motion direction, final-pose hold, camera-FOV/framing, and Unreal API compatibility corrections discovered during the controlled transfer.
 
-This record does **not** freeze the target artifact yet. Target freeze occurs after the automated report passes and the generated `.uasset` is hashed.
+The accepted Unreal target is now cryptographically frozen. The generated `.uasset`, source-derived expectation, Unreal readback, validation report, mapping, and frozen source CSIR all have recorded SHA-256 identities.
 
 ## Automated validation outputs
 
@@ -71,10 +71,6 @@ The accepted Unreal target completed the automated readback validation with:
 This establishes Benchmark001 as an automated semantic/numerical Unity → Unreal transfer
 pass for the implemented validation layers.
 
-The benchmark is not yet cryptographically frozen because the generated Unreal
-`LS_Benchmark001.uasset` and the three validation artifacts still need local SHA-256
-hashes recorded from the user's Unreal workspace.
+The target freeze completed successfully with the guarded local freeze tool. The resulting manifest records the exact Unreal engine build, target Level Sequence hash, mapping hash, validation artifact hashes, and CutSceneAI repository commit used for the accepted run.
 
-Use `tools/benchmark001_freeze.py` to create the target-freeze manifest. The tool refuses
-to freeze if the source CSIR hash differs from the accepted ground truth or if the
-validation report is not PASS with zero failed/incomplete checks.
+See `BENCHMARK_001_TARGET_FREEZE.md` and `BENCHMARK_001_TARGET_FREEZE_MANIFEST.json`.
