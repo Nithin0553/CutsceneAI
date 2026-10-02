@@ -1,4 +1,4 @@
-"""Realize a CutSceneAI CSIR reconstruction plan inside Unreal Engine 5.8.
+"""Realize a CutSceneAI CSIR reconstruction plan inside supported Unreal Editor runtimes.
 
 Run from the Unreal Python environment, for example:
 
@@ -10,8 +10,10 @@ Run from the Unreal Python environment, for example:
         r"B:/Research/CutSceneAI/CutsceneAI/integrations/unreal/benchmark001_mapping.json",
     )
 
-The script is intentionally conservative: it aborts instead of replacing an existing
-Level Sequence unless ``overwrite_sequence`` is enabled in the mapping file.
+The script is intentionally conservative and capability-driven: it probes the current
+Unreal runtime before target mutation and aborts instead of guessing when a required
+engine feature cannot be resolved. It also refuses to replace an existing Level Sequence
+unless ``overwrite_sequence`` is enabled in the mapping file.
 """
 
 from __future__ import annotations
@@ -64,6 +66,56 @@ def _load_asset(asset_path: str) -> unreal.Object:
     if asset is None:
         raise UnrealBuildError(f"Unreal asset not found: {asset_path}")
     return asset
+
+
+def _preflight(plan: dict[str, Any]) -> None:
+    """Probe target capabilities and mappings before mutating actors or creating assets."""
+    required_actions = {str(action["kind"]) for action in plan.get("actions", [])}
+    try:
+        unreal_compat.validate_runtime_capabilities(required_actions)
+    except unreal_compat.UnrealCompatibilityError as exc:
+        raise UnrealBuildError(str(exc)) from exc
+
+    profile = unreal_compat.runtime_profile()
+    unreal.log(
+        "[CutSceneAI] Runtime capability profile: "
+        + ", ".join(f"{key}={value}" for key, value in profile.items())
+    )
+
+    asset_path = str(plan["sequence_asset_path"])
+    existing = unreal.load_asset(asset_path)
+    if existing is not None and not plan.get("overwrite_sequence", False):
+        raise UnrealBuildError(
+            f"Level Sequence already exists: {asset_path}. "
+            "Set overwrite_sequence=true only when intentionally replacing it."
+        )
+
+    actor_cache: dict[str, unreal.Actor] = {}
+    for entity_name, actor_label in plan.get("bindings", {}).items():
+        actor_cache[entity_name] = _find_actor(str(actor_label))
+
+    for action in plan.get("actions", []):
+        kind = str(action["kind"])
+        if kind in {"skeletal_animation", "audio"}:
+            _load_asset(str(action["unreal_asset_path"]))
+        elif kind == "camera_fov":
+            actor = actor_cache[action["entity_name"]]
+            component, resolution_strategy = _camera_component(actor)
+            try:
+                fov_spec = unreal_compat.prepare_camera_fov_track(
+                    component,
+                    action["keys"],
+                    str(action.get("source_fov_axis", "vertical")),
+                )
+            except unreal_compat.UnrealCompatibilityError as exc:
+                raise UnrealBuildError(str(exc)) from exc
+            unreal.log(
+                "[CutSceneAI] Preflight camera "
+                f"{actor.get_actor_label()}: component={resolution_strategy}, "
+                f"lens={fov_spec['strategy']}"
+            )
+
+    unreal.log("[CutSceneAI] Runtime preflight PASS")
 
 
 def _apply_scene_prep(csir: dict[str, Any], mapping: dict[str, Any]) -> None:
@@ -164,30 +216,44 @@ def _add_skeletal_animation(binding: Any, action: dict[str, Any]) -> None:
     section.set_editor_property("params", params)
 
 
-def _camera_component(actor: unreal.Actor) -> unreal.CameraComponent:
-    if isinstance(actor, unreal.CameraActor):
-        return actor.get_camera_component()
-    components = actor.get_components_by_class(unreal.CameraComponent)
-    if len(components) != 1:
-        raise UnrealBuildError(
-            f"Camera actor '{actor.get_actor_label()}' must expose exactly one CameraComponent."
-        )
-    return components[0]
+def _camera_component(actor: unreal.Actor) -> tuple[Any, str]:
+    try:
+        return unreal_compat.resolve_camera_component(actor)
+    except unreal_compat.UnrealCompatibilityError as exc:
+        raise UnrealBuildError(str(exc)) from exc
 
 
 def _add_camera_fov(sequence: unreal.LevelSequence, actor: unreal.Actor, action: dict[str, Any]) -> None:
-    component = _camera_component(actor)
+    component, resolution_strategy = _camera_component(actor)
+    try:
+        fov_spec = unreal_compat.prepare_camera_fov_track(
+            component,
+            action["keys"],
+            str(action.get("source_fov_axis", "vertical")),
+        )
+    except unreal_compat.UnrealCompatibilityError as exc:
+        raise UnrealBuildError(str(exc)) from exc
+
     component_binding = unreal.MovieSceneSequenceExtensions.add_possessable(sequence, component)
     track = component_binding.add_track(unreal.MovieSceneFloatTrack)
-    track.set_display_name("CutSceneAI Field Of View")
-    track.set_property_name_and_path("FieldOfView", "FieldOfView")
+    track.set_display_name("CutSceneAI Camera Lens")
+    track.set_property_name_and_path(
+        str(fov_spec["property_name"]),
+        str(fov_spec["property_path"]),
+    )
     section = track.add_section()
     section.set_range(0, sequence.get_playback_end())
     channels = unreal_compat.get_section_channels(section)
     if len(channels) != 1:
-        raise UnrealBuildError("Unexpected FOV channel layout; expected one float/double channel.")
-    for key in action["keys"]:
+        raise UnrealBuildError("Unexpected camera lens channel layout; expected one float/double channel.")
+    for key in fov_spec["keys"]:
         channels[0].add_key(unreal.FrameNumber(int(key["frame"])), float(key["value"]))
+
+    unreal.log(
+        "[CutSceneAI] Camera lens adapter "
+        f"{actor.get_actor_label()}: component={resolution_strategy}, "
+        f"realization={fov_spec['strategy']}"
+    )
 
 
 def _add_camera_cuts(sequence: unreal.LevelSequence, actions: list[dict[str, Any]], bindings: dict[str, Any]) -> None:
@@ -231,6 +297,7 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
     mapping = csir_plan.load_json(mapping_path)
     plan = csir_plan.build_plan(csir, mapping)
 
+    _preflight(plan)
     _apply_scene_prep(csir, mapping)
     sequence: unreal.LevelSequence | None = None
     try:

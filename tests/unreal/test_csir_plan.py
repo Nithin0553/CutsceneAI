@@ -155,6 +155,7 @@ def test_camera_fov_and_cut_timing_are_preserved() -> None:
     fov = next(item for item in plan["actions"] if item["kind"] == "camera_fov")
     cut = next(item for item in plan["actions"] if item["kind"] == "camera_cut")
 
+    assert fov["source_fov_axis"] == "vertical"
     assert fov["keys"] == [{"frame": 300, "value": 35.0}, {"frame": 600, "value": 25.0}]
     assert cut["start_frame"] == 300
     assert cut["end_frame"] == 600

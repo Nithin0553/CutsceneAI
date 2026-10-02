@@ -10,7 +10,7 @@ The generator currently reconstructs:
 - skeletal animation sections from mapped Unreal animation assets
 - transform animation for props/cameras from CSIR curves
 - Unity infinite AnimationTrack base offsets from extractor v0.1.3
-- camera FOV animation
+- camera lens/FOV animation with source-to-target FOV semantic conversion
 - camera cuts
 - audio sections
 - event identity/timing as Unreal marked frames
@@ -18,9 +18,20 @@ The generator currently reconstructs:
 
 It intentionally does **not** attempt asset import or skeletal retargeting yet. Benchmark 001 uses pre-imported equivalent assets so the first test isolates transfer logic from asset-conversion problems.
 
+## Runtime compatibility
+
+The adapter is capability-driven rather than hard-coded to one Unreal version. Unreal
+5.8 is the current Benchmark 001 validation runtime, but the builder records the engine
+version and probes the APIs/features it needs before target mutation. Where engine
+versions expose equivalent semantics through different APIs, `unreal_compat.py` selects
+the compatible path. Unsupported capabilities fail explicitly instead of being guessed.
+
+See `docs/architecture/ENGINE_ADAPTER_COMPATIBILITY.md` and
+`docs/research/UNREAL_ADAPTER_COMPATIBILITY_LEDGER.md`.
+
 ## Requirements
 
-- Unreal Engine 5.8
+- a supported Unreal Editor runtime exposing the required probed capabilities
 - Python Editor Script Plugin enabled
 - Sequencer Scripting plugin enabled
 - target level already open
