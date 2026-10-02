@@ -16,6 +16,7 @@
         "required": ["ced", "status", "outcome", "resolver", "parameters", "evidence"],
         "properties": {
           "ced": {"type": "string", "minLength": 1},
+          "subject_id": {"type": "string"},
           "status": {"enum": ["RESOLVED", "BLOCKED"]},
           "outcome": {"enum": ["EXACT", "CONVERTED", "RETARGETED", "BAKED", "RECONSTRUCTED", "TARGET_MAPPED", "BLOCKED"]},
           "resolver": {"type": "string", "minLength": 1},
