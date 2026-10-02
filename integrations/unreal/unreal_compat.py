@@ -224,6 +224,76 @@ def _vertical_to_horizontal_fov(vertical_fov_degrees: float, aspect_ratio: float
     return math.degrees(horizontal)
 
 
+def validate_camera_setup(
+    component: Any,
+    *,
+    field_of_view_degrees: float,
+    source_axis: str,
+    source_aspect: float | None,
+    projection: str = "perspective",
+) -> dict[str, Any]:
+    """Validate target camera semantics without mutating the target."""
+    if str(projection).lower() != "perspective":
+        raise UnrealCompatibilityError(
+            f"Camera projection '{projection}' is not implemented by the Unreal adapter yet."
+        )
+
+    normalized_axis = str(source_axis).lower()
+    if normalized_axis not in {"vertical", "horizontal"}:
+        raise UnrealCompatibilityError(f"Unknown source FOV axis: {source_axis}")
+    _require_positive_fov(field_of_view_degrees)
+
+    aspect = float(source_aspect) if source_aspect is not None else None
+    if aspect is not None and aspect <= 0.0:
+        aspect = None
+
+    setter = getattr(component, "set_editor_property", None)
+    if not callable(setter):
+        raise UnrealCompatibilityError(
+            f"{_object_class_name(component)} does not expose set_editor_property()."
+        )
+
+    cine_type = getattr(unreal, "CineCameraComponent", None)
+    is_cine = cine_type is not None and isinstance(component, cine_type)
+    if is_cine:
+        filmback = _editor_property(component, "filmback")
+        if filmback is None:
+            raise UnrealCompatibilityError(
+                "CineCameraComponent does not expose filmback settings required for "
+                "source framing preservation."
+            )
+        sensor_height = _editor_property(filmback, "sensor_height")
+        if sensor_height is None:
+            sensor_height = getattr(filmback, "sensor_height", None)
+        if sensor_height is None or float(sensor_height) <= 0.0:
+            raise UnrealCompatibilityError(
+                "CineCamera filmback does not expose a valid sensor_height."
+            )
+        if aspect is not None and not callable(getattr(filmback, "set_editor_property", None)):
+            raise UnrealCompatibilityError(
+                "CineCamera filmback cannot accept source aspect-ratio settings."
+            )
+        return {
+            "strategy": "cine_filmback_and_focal_length",
+            "source_aspect": aspect,
+        }
+
+    if aspect is None:
+        current_aspect = _editor_property(component, "aspect_ratio")
+        if current_aspect is None:
+            current_aspect = getattr(component, "aspect_ratio", None)
+        if current_aspect is None or float(current_aspect) <= 0.0:
+            raise UnrealCompatibilityError(
+                "CameraComponent does not expose a valid aspect ratio."
+            )
+        aspect = float(current_aspect)
+
+    return {
+        "strategy": "camera_aspect_and_horizontal_fov",
+        "source_aspect": aspect,
+    }
+
+
 def apply_camera_setup(
     component: Any,
     *,
