@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS = ROOT / "packages" / "contracts"
 
@@ -115,3 +117,23 @@ def test_first_benchmark_is_documented() -> None:
     assert "Unity Timeline" in text
     assert "Unreal Level Sequence" in text
     assert "readback" in text.lower()
+
+
+def test_adaptive_mapping_rules_validate_and_reference_known_ced_ids() -> None:
+    ced = _load(CONTRACTS / "dictionary" / "cutscene-elements-v0.1.json")
+    known = {element for elements in ced["categories"].values() for element in elements}
+    schema = _load(CONTRACTS / "dictionary" / "adaptive-mapping-rules-v0.1.schema.json")
+    rules = _load(CONTRACTS / "dictionary" / "adaptive-rules-v0.1.json")
+
+    Draft202012Validator(schema).validate(rules)
+    unknown = [rule["ced"] for rule in rules["rules"] if rule["ced"] not in known]
+    assert unknown == []
+
+
+def test_project_intelligence_and_resolved_dictionary_contracts_are_valid_schemas() -> None:
+    for path in (
+        CONTRACTS / "project" / "project-profile-v0.1.schema.json",
+        CONTRACTS / "dictionary" / "resolved-dictionary-v0.1.schema.json",
+        CONTRACTS / "csir" / "csir-adaptive-context-v0.1.schema.json",
+    ):
+        Draft202012Validator.check_schema(_load(path))
