@@ -137,3 +137,11 @@ def test_project_intelligence_and_resolved_dictionary_contracts_are_valid_schema
         CONTRACTS / "csir" / "csir-adaptive-context-v0.1.schema.json",
     ):
         Draft202012Validator.check_schema(_load(path))
+
+
+def test_validation_contracts_are_valid_schemas() -> None:
+    for path in (
+        CONTRACTS / "validation" / "target-readback-v0.1.schema.json",
+        CONTRACTS / "validation" / "report-v0.1.schema.json",
+    ):
+        Draft202012Validator.check_schema(_load(path))
