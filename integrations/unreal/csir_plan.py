@@ -402,6 +402,11 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                         # Keep the last evaluated pose rather than inventing a target T-pose.
                         "completion_mode": "keep_state",
                         "completion_provenance": "legacy_csir_missing_post_extrapolation",
+                        # KeepState alone does not make a skeletal section evaluate its
+                        # final pose after the section range. Unreal post-roll explicitly
+                        # holds the last animation frame, so carry the desired hold end.
+                        "hold_end_frame": seconds_to_frame(duration, fps_n, fps_d),
+                        "hold_strategy": "post_roll_last_frame",
                     }
                     if expected_root_delta is not None:
                         action["expected_root_delta_cm"] = list(expected_root_delta)

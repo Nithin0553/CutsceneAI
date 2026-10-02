@@ -288,6 +288,31 @@ def apply_skeletal_root_yaw(section: Any, yaw_degrees: float) -> str:
     )
 
 
+def set_section_post_roll_frames(section: Any, frames: int) -> str:
+    """Hold a section's final evaluated frame for the requested post-roll duration."""
+    count = max(0, int(frames))
+    setter = getattr(section, "set_post_roll_frames", None)
+    if callable(setter):
+        try:
+            setter(count)
+            return "section.set_post_roll_frames"
+        except Exception:
+            pass
+
+    if _set_editor_property(
+        section,
+        "post_roll_frames",
+        unreal.FrameNumber(count),
+        required=False,
+    ):
+        return "section.post_roll_frames"
+
+    raise UnrealCompatibilityError(
+        "MovieScene section does not expose a supported post-roll API; "
+        f"cannot hold the final skeletal pose on Unreal {engine_version()}."
+    )
+
+
 def set_section_completion_mode(section: Any, mode: str) -> str:
     """Set post-section state behavior across MovieScene API variants."""
     normalized = str(mode).lower()

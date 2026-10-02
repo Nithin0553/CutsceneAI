@@ -245,7 +245,9 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
         channels[5].add_key(frame, float(rotation[2]))
 
 
-def _add_skeletal_animation(binding: Any, action: dict[str, Any]) -> None:
+def _add_skeletal_animation(
+    sequence: unreal.LevelSequence, binding: Any, action: dict[str, Any]
+) -> None:
     animation = _load_asset(action["unreal_asset_path"])
     track = binding.add_track(unreal.MovieSceneSkeletalAnimationTrack)
     track.set_display_name(action.get("track_name", "CutSceneAI Animation"))
@@ -256,6 +258,21 @@ def _add_skeletal_animation(binding: Any, action: dict[str, Any]) -> None:
     play_rate = unreal_compat.make_fixed_play_rate(float(action.get("time_scale", 1.0)))
     params.set_editor_property("play_rate", play_rate)
     section.set_editor_property("params", params)
+
+    hold_end_frame = int(action.get("hold_end_frame", action["end_frame"]))
+    post_roll_frames = max(0, hold_end_frame - int(action["end_frame"]))
+    if post_roll_frames:
+        try:
+            hold_strategy = unreal_compat.set_section_post_roll_frames(
+                section, post_roll_frames
+            )
+        except unreal_compat.UnrealCompatibilityError as exc:
+            raise UnrealBuildError(str(exc)) from exc
+        unreal.log(
+            "[CutSceneAI] Animation final-pose hold "
+            f"{action['entity_name']}: post_roll_frames={post_roll_frames}, "
+            f"strategy={hold_strategy}"
+        )
 
     expected = action.get("expected_root_delta_cm")
     if expected is not None:
@@ -409,7 +426,11 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
             if kind == "transform":
                 _add_transform(sequence, bindings[action["entity_name"]]["binding"], action)
             elif kind == "skeletal_animation":
-                _add_skeletal_animation(bindings[action["entity_name"]]["binding"], action)
+                _add_skeletal_animation(
+                    sequence,
+                    bindings[action["entity_name"]]["binding"],
+                    action,
+                )
             elif kind == "camera_setup":
                 _apply_camera_setup(bindings[action["entity_name"]]["actor"], action)
             elif kind == "camera_fov":
