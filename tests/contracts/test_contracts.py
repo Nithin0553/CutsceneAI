@@ -145,3 +145,21 @@ def test_validation_contracts_are_valid_schemas() -> None:
         CONTRACTS / "validation" / "report-v0.1.schema.json",
     ):
         Draft202012Validator.check_schema(_load(path))
+
+
+def test_benchmark002_spec_validates_and_references_known_ced_ids() -> None:
+    schema = _load(CONTRACTS / "benchmark" / "benchmark-spec-v0.1.schema.json")
+    spec = _load(ROOT / "docs" / "benchmarks" / "BENCHMARK_002_SPEC.json")
+    Draft202012Validator.check_schema(schema)
+    Draft202012Validator(schema).validate(spec)
+
+    ced = _load(CONTRACTS / "dictionary" / "cutscene-elements-v0.1.json")
+    known = {element for elements in ced["categories"].values() for element in elements}
+    unknown = [
+        requirement["ced"]
+        for requirement in spec["requirements"]
+        if requirement["ced"] not in known
+    ]
+    assert unknown == []
+    assert spec["timing"]["display_rate"] == {"numerator": 24, "denominator": 1}
+    assert spec["target"]["output_resolution"] == [2048, 858]
