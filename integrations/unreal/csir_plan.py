@@ -107,6 +107,59 @@ def _curve_value(curve: dict[str, Any] | None, time_seconds: float, default: flo
     return default
 
 
+def _source_root_delta_unreal_cm(section: dict[str, Any]) -> tuple[float, float, float] | None:
+    """Resolve Unity Animator RootT displacement into Unreal world-axis centimeters."""
+    curves = {
+        str(curve.get("property_name")): curve
+        for curve in section.get("payload", {}).get("animation", {}).get("curves", [])
+        if str(curve.get("property_name", "")).startswith("RootT.")
+    }
+    required = ("RootT.x", "RootT.y", "RootT.z")
+    if not all(name in curves for name in required):
+        return None
+
+    source_start = rational_seconds(section.get("source_offset", {"value": 0, "rate": {"numerator": 1, "denominator": 1}}))
+    timeline_duration = rational_seconds(section["end"]) - rational_seconds(section["start"])
+    source_end = source_start + timeline_duration * float(section.get("time_scale", 1.0))
+
+    dx = _curve_value(curves["RootT.x"], source_end) - _curve_value(curves["RootT.x"], source_start)
+    dy = _curve_value(curves["RootT.y"], source_end) - _curve_value(curves["RootT.y"], source_start)
+    dz = _curve_value(curves["RootT.z"], source_end) - _curve_value(curves["RootT.z"], source_start)
+
+    # RootT is Unity-native: +X right, +Y up, +Z forward, meters. Convert the
+    # displacement through the same canonical basis used for ordinary transforms.
+    canonical_delta = (dx, dy, -dz)
+    return canonical_position_to_unreal_cm(canonical_delta)
+
+
+def root_motion_yaw_alignment_degrees(
+    expected_delta_cm: tuple[float, float, float],
+    target_delta_cm: tuple[float, float, float],
+    minimum_horizontal_cm: float = 1.0,
+) -> float | None:
+    """Return yaw needed to align target imported root travel with source travel."""
+    expected_xy = math.hypot(float(expected_delta_cm[0]), float(expected_delta_cm[1]))
+    target_xy = math.hypot(float(target_delta_cm[0]), float(target_delta_cm[1]))
+    if expected_xy < minimum_horizontal_cm or target_xy < minimum_horizontal_cm:
+        return None
+    expected_angle = math.atan2(float(expected_delta_cm[1]), float(expected_delta_cm[0]))
+    target_angle = math.atan2(float(target_delta_cm[1]), float(target_delta_cm[0]))
+    degrees = math.degrees(expected_angle - target_angle)
+    return (degrees + 180.0) % 360.0 - 180.0
+
+
+def _target_output_profile(mapping: dict[str, Any]) -> tuple[int, int, str]:
+    value = mapping.get("output_resolution")
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        width = int(value[0])
+        height = int(value[1])
+        if width > 0 and height > 0:
+            return width, height, "mapping.output_resolution"
+    # Benchmark validation needs a stable output gate. Do not reuse Unity Camera.aspect:
+    # it is commonly derived from the current editor/game view rather than camera intent.
+    return 1920, 1080, "benchmark_default_1920x1080"
+
+
 def canonical_position_to_unreal_cm(position: tuple[float, float, float]) -> tuple[float, float, float]:
     # CSIR canonical: RH, +Y up, -Z forward, meters.
     # Unreal: LH, +Z up, +X forward, centimeters.
@@ -269,6 +322,8 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
     duration = float(csir["timing"]["duration_seconds"])
     assets = _asset_index(csir)
     entities = _entity_index(csir)
+    output_width, output_height, output_profile_source = _target_output_profile(mapping)
+    output_aspect = float(output_width) / float(output_height)
 
     plan: dict[str, Any] = {
         "sequence_asset_path": mapping.get("sequence_asset_path", "/Game/CutSceneAI/Benchmark001/LS_Benchmark001"),
@@ -276,6 +331,9 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
         "display_rate": {"numerator": fps_n, "denominator": fps_d},
         "duration_seconds": duration,
         "duration_frames": seconds_to_frame(duration, fps_n, fps_d),
+        "output_resolution": [output_width, output_height],
+        "output_aspect": output_aspect,
+        "output_profile_source": output_profile_source,
         "bindings": {},
         "actions": [],
     }
@@ -293,7 +351,7 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(camera, dict):
             continue
         fov = float(camera.get("field_of_view_degrees", 0.0))
-        aspect = float(camera.get("aspect", 0.0))
+        observed_aspect = float(camera.get("aspect", 0.0))
         if fov <= 0.0:
             continue
         plan["actions"].append(
@@ -304,7 +362,8 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                 "projection": "orthographic" if bool(camera.get("orthographic", False)) else "perspective",
                 "source_fov_axis": "vertical",
                 "field_of_view_degrees": fov,
-                "source_aspect": aspect if aspect > 0.0 else None,
+                "target_output_aspect": output_aspect,
+                "observed_source_aspect": observed_aspect if observed_aspect > 0.0 else None,
                 "near_clip": float(camera.get("near_clip", 0.0)),
                 "far_clip": float(camera.get("far_clip", 0.0)),
             }
@@ -322,18 +381,31 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                     asset = assets.get(asset_id)
                     if not asset:
                         continue
-                    plan["actions"].append(
-                        {
-                            "kind": "skeletal_animation",
-                            "track_name": track.get("name", ""),
-                            "entity_name": entity["name"],
-                            "actor_label": actor_label,
-                            "unreal_asset_path": _mapping_asset(mapping, asset["name"]),
-                            "start_frame": seconds_to_frame(rational_seconds(section["start"]), fps_n, fps_d),
-                            "end_frame": seconds_to_frame(rational_seconds(section["end"]), fps_n, fps_d),
-                            "time_scale": float(section.get("time_scale", 1.0)),
-                        }
+                    source_offset_seconds = rational_seconds(section["source_offset"])
+                    timeline_duration_seconds = (
+                        rational_seconds(section["end"]) - rational_seconds(section["start"])
                     )
+                    time_scale = float(section.get("time_scale", 1.0))
+                    expected_root_delta = _source_root_delta_unreal_cm(section)
+                    action: dict[str, Any] = {
+                        "kind": "skeletal_animation",
+                        "track_name": track.get("name", ""),
+                        "entity_name": entity["name"],
+                        "actor_label": actor_label,
+                        "unreal_asset_path": _mapping_asset(mapping, asset["name"]),
+                        "start_frame": seconds_to_frame(rational_seconds(section["start"]), fps_n, fps_d),
+                        "end_frame": seconds_to_frame(rational_seconds(section["end"]), fps_n, fps_d),
+                        "source_start_seconds": source_offset_seconds,
+                        "source_end_seconds": source_offset_seconds + timeline_duration_seconds * time_scale,
+                        "time_scale": time_scale,
+                        # CSIR 0.1.5 does not yet preserve Timeline clip extrapolation.
+                        # Keep the last evaluated pose rather than inventing a target T-pose.
+                        "completion_mode": "keep_state",
+                        "completion_provenance": "legacy_csir_missing_post_extrapolation",
+                    }
+                    if expected_root_delta is not None:
+                        action["expected_root_delta_cm"] = list(expected_root_delta)
+                    plan["actions"].append(action)
                 continue
 
             transform = _transform_action(track, entity, actor_label, fps_n, fps_d)
@@ -350,7 +422,8 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                                     "entity_name": entity["name"],
                                     "actor_label": actor_label,
                                     "source_fov_axis": "vertical",
-                                    "source_aspect": float(
+                                    "target_output_aspect": output_aspect,
+                                    "observed_source_aspect": float(
                                         entity.get("metadata", {}).get("camera", {}).get("aspect", 0.0)
                                     )
                                     or None,

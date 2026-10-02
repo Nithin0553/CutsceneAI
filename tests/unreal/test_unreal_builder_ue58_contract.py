@@ -57,14 +57,38 @@ def test_failed_unreal_build_rolls_back_partial_sequence() -> None:
     assert "unreal.EditorAssetLibrary.delete_asset(asset_path)" in builder
 
 
-def test_static_camera_setup_preserves_source_aspect_and_preflights_without_mutation() -> None:
+def test_camera_setup_uses_stable_output_gate_and_preflights_without_mutation() -> None:
     builder = _read("integrations/unreal/build_level_sequence.py")
     compat = _read("integrations/unreal/unreal_compat.py")
     plan = _read("integrations/unreal/csir_plan.py")
     assert '"kind": "camera_setup"' in plan
-    assert '"source_aspect"' in plan
+    assert '"target_output_aspect"' in plan
+    assert '"observed_source_aspect"' in plan
+    assert '"output_resolution"' in plan
     assert "unreal_compat.validate_camera_setup" in builder
     assert "unreal_compat.apply_camera_setup" in builder
     assert "cine_filmback_and_focal_length" in compat
     assert '"sensor_width"' in compat
     assert '"current_focal_length"' in compat
+
+
+def test_skeletal_root_motion_is_calibrated_against_target_asset() -> None:
+    builder = _read("integrations/unreal/build_level_sequence.py")
+    compat = _read("integrations/unreal/unreal_compat.py")
+    plan = _read("integrations/unreal/csir_plan.py")
+    assert '"expected_root_delta_cm"' in plan
+    assert "root_motion_yaw_alignment_degrees" in plan
+    assert "extract_animation_root_delta_cm" in builder
+    assert "extract_root_track_transform" in compat
+    assert "apply_skeletal_root_yaw" in builder
+    assert '"start_rotation_offset"' in compat
+
+
+def test_skeletal_completion_keeps_last_pose_instead_of_t_pose() -> None:
+    builder = _read("integrations/unreal/build_level_sequence.py")
+    compat = _read("integrations/unreal/unreal_compat.py")
+    plan = _read("integrations/unreal/csir_plan.py")
+    assert '"completion_mode": "keep_state"' in plan
+    assert "set_section_completion_mode" in builder
+    assert "MovieSceneCompletionMode" in compat
+    assert "KEEP_STATE" in compat

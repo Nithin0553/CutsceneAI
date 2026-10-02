@@ -36,5 +36,9 @@
   "assets": {
     "mixamo.com": "/Game/CutSceneAI/Benchmark001/Animations/A_CatwalkWalkTurn180",
     "freesound_community-ominous-47658": "/Game/CutSceneAI/Benchmark001/Audio/A_Ominous"
-  }
+  },
+  "output_resolution": [
+    1920,
+    1080
+  ]
 }
