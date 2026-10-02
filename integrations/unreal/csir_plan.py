@@ -228,18 +228,45 @@ def _transpose(matrix: list[list[float]]) -> list[list[float]]:
 def canonical_quat_to_unreal_rotator(
     q: tuple[float, float, float, float]
 ) -> tuple[float, float, float]:
-    # Basis columns: canonical +X -> UE +Y, +Y -> UE +Z, +Z -> UE -X.
+    """Convert canonical orientation into Unreal semantic Roll/Pitch/Yaw degrees.
+
+    CSIR canonical axes are +X right, +Y up, -Z forward. Unreal actor axes are
+    +Y right, +Z up, +X forward. The basis transform below produces the target
+    orientation matrix. We then recover Unreal semantics from the transformed
+    forward/right basis rather than applying a generic Euler decomposition.
+
+    Unreal Pitch is positive when looking up, so a Unity camera with +X=25°
+    (looking down) correctly becomes Unreal Pitch=-25°.
+    """
+    # Canonical +X -> UE +Y, +Y -> UE +Z, +Z -> UE -X.
     basis = [[0.0, 0.0, -1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
     rotation = _mat_mul(_mat_mul(basis, _quat_to_matrix(q)), _transpose(basis))
 
-    value = max(-1.0, min(1.0, -rotation[2][0]))
-    pitch = math.asin(value)
-    if abs(math.cos(pitch)) > 1e-7:
-        roll = math.atan2(rotation[2][1], rotation[2][2])
-        yaw = math.atan2(rotation[1][0], rotation[0][0])
-    else:
-        roll = 0.0
-        yaw = math.atan2(-rotation[0][1], rotation[1][1])
+    # Matrix columns are the rotated Unreal local X/Y/Z axes in world space.
+    forward = (rotation[0][0], rotation[1][0], rotation[2][0])
+    right = (rotation[0][1], rotation[1][1], rotation[2][1])
+
+    horizontal = math.hypot(forward[0], forward[1])
+    pitch = math.atan2(forward[2], horizontal)
+    yaw = math.atan2(forward[1], forward[0])
+
+    sin_pitch = math.sin(pitch)
+    cos_pitch = math.cos(pitch)
+    sin_yaw = math.sin(yaw)
+    cos_yaw = math.cos(yaw)
+
+    # Zero-roll target basis for the resolved forward direction.
+    zero_roll_right = (-sin_yaw, cos_yaw, 0.0)
+    zero_roll_up = (
+        -sin_pitch * cos_yaw,
+        -sin_pitch * sin_yaw,
+        cos_pitch,
+    )
+
+    right_dot_up = sum(right[i] * zero_roll_up[i] for i in range(3))
+    right_dot_right = sum(right[i] * zero_roll_right[i] for i in range(3))
+    roll = math.atan2(right_dot_up, right_dot_right)
+
     return (math.degrees(roll), math.degrees(pitch), math.degrees(yaw))
 
 
