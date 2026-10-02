@@ -139,3 +139,60 @@ def test_missing_root_motion_measurement_is_incomplete_not_false_pass() -> None:
     assert report["status"] == "INCOMPLETE"
     item = next(check for check in report["checks"] if check["id"] == "animation.root_motion.CHARACTER_Guard")
     assert item["status"] == "INCOMPLETE"
+
+
+def test_root_motion_subcentimeter_import_difference_passes_semantic_gate() -> None:
+    expected = _snapshot()
+    actual = copy.deepcopy(expected)
+    actual["bindings"][1]["tracks"][0]["effective_root_delta_cm"] = [
+        -150.02,
+        0.01,
+        0.39,
+    ]
+
+    report = core.compare(expected, actual)
+
+    item = next(
+        check for check in report["checks"]
+        if check["id"] == "animation.root_motion.CHARACTER_Guard"
+    )
+    assert item["status"] == "PASS"
+    assert item["actual"]["metrics"]["endpoint_error_cm"] < 0.5
+
+
+def test_root_motion_wrong_direction_still_fails() -> None:
+    expected = _snapshot()
+    actual = copy.deepcopy(expected)
+    actual["bindings"][1]["tracks"][0]["effective_root_delta_cm"] = [
+        150.0,
+        0.0,
+        0.0,
+    ]
+
+    report = core.compare(expected, actual)
+
+    item = next(
+        check for check in report["checks"]
+        if check["id"] == "animation.root_motion.CHARACTER_Guard"
+    )
+    assert item["status"] == "FAIL"
+    assert item["actual"]["metrics"]["direction_error_degrees"] > 179.0
+
+
+def test_root_motion_large_endpoint_drift_fails() -> None:
+    expected = _snapshot()
+    actual = copy.deepcopy(expected)
+    actual["bindings"][1]["tracks"][0]["effective_root_delta_cm"] = [
+        -148.0,
+        0.0,
+        0.0,
+    ]
+
+    report = core.compare(expected, actual)
+
+    item = next(
+        check for check in report["checks"]
+        if check["id"] == "animation.root_motion.CHARACTER_Guard"
+    )
+    assert item["status"] == "FAIL"
+    assert item["actual"]["metrics"]["endpoint_error_cm"] > 0.5
