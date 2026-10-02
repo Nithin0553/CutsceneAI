@@ -90,22 +90,26 @@ regression guard so the same failure signature is not reintroduced.
 - **Regression guards:** pure root-motion alignment tests plus Unreal adapter contract
   checks.
 
-## ANIM-002 — Skeletal section returned to reference/T-pose after the clip
+## ANIM-002 — Skeletal section post-clip pose preservation
 
-- **Observed:** after the 3.25 second character animation finished, the target character
-  returned to its reference/T-pose even though the desired evaluated cutscene state is
-  to remain at the completed pose.
-- **Root cause:** the generated Unreal skeletal section did not explicitly preserve its
-  completion state. The frozen CSIR 0.1.5 also does not preserve Unity Timeline clip
-  post-extrapolation, so the adapter cannot recover that policy exactly from this legacy
-  artifact.
-- **Permanent fix for the frozen benchmark:** set the generated skeletal section to
-  `KeepState`, preventing Unreal from restoring the pre-animation/reference pose.
-- **Future extractor requirement:** preserve Timeline pre/post-extrapolation explicitly
-  in CSIR so future transfers can map source completion semantics instead of relying on
-  a legacy fallback.
-- **Regression guard:** the Unreal builder contract requires an explicit completion-mode
-  path and the planner marks its provenance.
+- **Observed, first pass:** after the 3.25 second character animation finished, the
+  target character returned to its reference/T-pose.
+- **First attempted fix:** `KeepState` prevented the reference-pose restore, but at
+  frame 199 (four frames after the 195-frame clip end at 60 fps) the held skeletal state
+  was visibly invalid: the guard was lying on the ground.
+- **Revised root cause:** completion mode controls what happens when a section stops
+  evaluating; it does not itself guarantee that the skeletal section continues
+  evaluating the animation's final frame after the section range. Unreal's Animation
+  Track documentation defines post-roll as padding that holds the last animation frame.
+- **Permanent fix for the frozen benchmark:** preserve `KeepState` as the completion
+  policy and add explicit skeletal post-roll from the source clip end through the
+  cutscene end, so the last animation frame remains evaluated during the intended pause.
+- **Future extractor requirement:** preserve Unity Timeline pre/post-extrapolation
+  explicitly in CSIR so future transfers can map source completion semantics rather than
+  rely on this legacy benchmark fallback.
+- **Regression guard:** the planner carries `hold_end_frame` and
+  `hold_strategy=post_roll_last_frame`; the Unreal compatibility layer owns the
+  version-adaptive post-roll setter.
 
 ## CAMERA-003 — Unity observed Camera.aspect is not a safe camera intrinsic
 
