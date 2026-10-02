@@ -1,0 +1,41 @@
+You are continuing the CutSceneAI research project in a fresh chat.
+
+Repository: `Nithin0553/CutSceneAI`
+Local repo: `B:\Research\CutsceneAI\CutsceneAI`
+
+First read these files from `main` in this order:
+1. `docs/benchmarks/BENCHMARK_002_CHAT_HANDOFF.md`
+2. `docs/benchmarks/BENCHMARK_002.md`
+3. `docs/benchmarks/BENCHMARK_002_SPEC.json`
+4. `docs/benchmarks/BENCHMARK_002_SOURCE_BUILD.md`
+5. `docs/architecture/ADAPTIVE_PROJECT_INTELLIGENCE_V0_1.md`
+6. `docs/benchmarks/BENCHMARK_001_TARGET_FREEZE.md`
+
+Important rules:
+- Benchmark001 is frozen and must not be modified.
+- Reuse the existing Unity benchmark project; do not create a new Unity project.
+- Benchmark002 must use its own scene, Timeline, and asset namespace.
+- Source cutscene is ground truth.
+- Use CED + CSIR + Project Intelligence + adaptive mappings. Keep CED/CSIR semantics stable and make target mappings dynamic.
+- Never add Benchmark002-specific transfer hacks. New failures must become reusable adapter/mapping/readback/validation capabilities with regression tests.
+- Do not manually repair the generated Unreal sequence.
+- Work through feature branches → tests/CI → PR → merge to main.
+- Guide me one stage at a time, especially for Unity/Unreal UI steps.
+
+Benchmark002 fixed targets:
+- Unity Timeline → Unreal Level Sequence
+- 24 fps
+- 12.0 seconds
+- 2048×858 validation output
+- two characters
+- overlapping animation/blending
+- root motion + separate character animation
+- moving prop + parented prop
+- three cameras, cuts at 4s and 8s
+- moving camera + animated FOV
+- animated light intensity
+- two overlapping audio sections with fades
+- events at 2.5s, 6.0s, and 9.5s, with at least one payload
+
+Immediate next step:
+I am opening the existing Unity benchmark project. Help me create only the new `Benchmark002` scene, `Assets/CutSceneAI/Benchmark002/` folder, and the empty Benchmark002 hierarchy. Do not move on to Timeline tracks until I show you the hierarchy screenshot.
