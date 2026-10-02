@@ -72,7 +72,7 @@ def test_camera_setup_uses_stable_output_gate_and_preflights_without_mutation() 
     assert '"current_focal_length"' in compat
 
 
-def test_skeletal_root_motion_is_calibrated_against_target_asset() -> None:
+def test_skeletal_root_motion_is_calibrated_in_actor_world_space() -> None:
     builder = _read("integrations/unreal/build_level_sequence.py")
     compat = _read("integrations/unreal/unreal_compat.py")
     plan = _read("integrations/unreal/csir_plan.py")
@@ -80,8 +80,9 @@ def test_skeletal_root_motion_is_calibrated_against_target_asset() -> None:
     assert "root_motion_yaw_alignment_degrees" in plan
     assert "extract_animation_root_delta_cm" in builder
     assert "extract_root_track_transform" in compat
-    assert "apply_skeletal_root_yaw" in builder
-    assert '"start_rotation_offset"' in compat
+    assert "apply_actor_world_yaw_alignment" in builder
+    assert "space=actor_world" in builder
+    assert "apply_skeletal_root_yaw(section, yaw)" not in builder
 
 
 def test_skeletal_completion_holds_last_frame_instead_of_restoring_pose() -> None:
