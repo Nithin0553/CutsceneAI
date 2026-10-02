@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/dictionary/adaptive-mapping-rules/v0.1",
+  "title": "CutSceneAI Adaptive Mapping Rule Set v0.1",
+  "type": "object",
+  "required": ["version", "rules"],
+  "properties": {
+    "version": {"const": "0.1.0"},
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rule_id", "ced", "source", "target", "resolution"],
+        "properties": {
+          "rule_id": {"type": "string", "minLength": 1},
+          "ced": {"type": "string", "minLength": 1},
+          "priority": {"type": "integer", "default": 0},
+          "source": {"$ref": "#/$defs/selector"},
+          "target": {"$ref": "#/$defs/selector"},
+          "resolution": {
+            "type": "object",
+            "required": ["outcome", "resolver"],
+            "properties": {
+              "outcome": {"enum": ["EXACT", "CONVERTED", "RETARGETED", "BAKED", "RECONSTRUCTED", "TARGET_MAPPED", "BLOCKED"]},
+              "resolver": {"type": "string", "minLength": 1},
+              "parameters": {"type": "object"},
+              "required_evidence": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": false
+          },
+          "notes": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "selector": {
+      "type": "object",
+      "properties": {
+        "engine": {"type": "string"},
+        "version_prefix": {"type": "string"},
+        "capabilities_all": {"type": "array", "items": {"type": "string"}},
+        "settings_equals": {"type": "object"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
