@@ -34,6 +34,7 @@ def _curve(semantic: str, values: list[tuple[float, float]], property_name: str 
 def _fixture() -> tuple[dict, dict]:
     prop_id = "entity:prop"
     camera_id = "entity:camera"
+    character_id = "entity:character"
     assets = [
         {"asset_id": "anim", "name": "mixamo.com"},
         {"asset_id": "audio", "name": "ominous"},
@@ -44,6 +45,11 @@ def _fixture() -> tuple[dict, dict]:
         _curve("transform.infinite_offset.position.y", [(0.0, 0.5)]),
         _curve("transform.infinite_offset.position.z", [(0.0, -5.0)]),
         _curve("transform.position.x", [(2.0, 0.0), (7.0, 4.0)]),
+    ]
+    character_curves = [
+        _curve("", [(0.0, 0.0), (3.25, 0.1)], "RootT.x"),
+        _curve("", [(0.0, 1.0), (3.25, 1.0)], "RootT.y"),
+        _curve("", [(0.0, 0.0), (3.25, -1.5)], "RootT.z"),
     ]
     camera_curves = [
         _curve("transform.infinite_offset.position.x", [(0.0, 4.0)]),
@@ -81,6 +87,11 @@ def _fixture() -> tuple[dict, dict]:
         "entities": [
             {"entity_id": prop_id, "name": "MOVING_PROP", "ced_type": "entity.prop"},
             {
+                "entity_id": character_id,
+                "name": "CHARACTER_Guard",
+                "ced_type": "entity.character",
+            },
+            {
                 "entity_id": camera_id,
                 "name": "CAM_B_Close",
                 "ced_type": "entity.camera",
@@ -96,6 +107,23 @@ def _fixture() -> tuple[dict, dict]:
             },
         ],
         "tracks": [
+            {
+                "name": "CHARACTER_Animation",
+                "ced_type": "animation.track",
+                "binding_entity_id": character_id,
+                "sections": [
+                    {
+                        "start": _rt(0.0),
+                        "end": _rt(3.25),
+                        "source_offset": _rt(0.0),
+                        "time_scale": 1.0,
+                        "payload": {
+                            "asset_id": "anim",
+                            "animation": {"curves": character_curves},
+                        },
+                    }
+                ],
+            },
             {
                 "name": "MOVING_PROP_Movement",
                 "ced_type": "animation.track",
@@ -142,6 +170,7 @@ def _fixture() -> tuple[dict, dict]:
     }
     mapping = {
         "entities": {
+            "CHARACTER_Guard": {"actor_label": "CHARACTER_Guard"},
             "MOVING_PROP": {"actor_label": "MOVING_PROP"},
             "CAM_B_Close": {"actor_label": "CAM_B_Close"},
         },
@@ -173,9 +202,11 @@ def test_camera_fov_and_cut_timing_are_preserved() -> None:
 
     assert setup["field_of_view_degrees"] == 35.0
     assert setup["source_fov_axis"] == "vertical"
-    assert abs(setup["source_aspect"] - 4.93486166) < 1e-9
+    assert abs(setup["target_output_aspect"] - (16.0 / 9.0)) < 1e-9
+    assert abs(setup["observed_source_aspect"] - 4.93486166) < 1e-9
     assert fov["source_fov_axis"] == "vertical"
-    assert abs(fov["source_aspect"] - 4.93486166) < 1e-9
+    assert abs(fov["target_output_aspect"] - (16.0 / 9.0)) < 1e-9
+    assert abs(fov["observed_source_aspect"] - 4.93486166) < 1e-9
     assert fov["keys"] == [{"frame": 300, "value": 35.0}, {"frame": 600, "value": 25.0}]
     assert cut["start_frame"] == 300
     assert cut["end_frame"] == 600
@@ -195,3 +226,38 @@ def test_identity_rotation_maps_to_zero_unreal_rotator() -> None:
     assert abs(roll) < 1e-9
     assert abs(pitch) < 1e-9
     assert abs(yaw) < 1e-9
+
+
+def test_character_root_motion_and_final_pose_policy_are_planned() -> None:
+    csir, mapping = _fixture()
+    plan = csir_plan.build_plan(csir, mapping)
+    action = next(item for item in plan["actions"] if item["kind"] == "skeletal_animation")
+
+    assert action["completion_mode"] == "keep_state"
+    assert action["completion_provenance"] == "legacy_csir_missing_post_extrapolation"
+    assert action["source_start_seconds"] == 0.0
+    assert action["source_end_seconds"] == 3.25
+    assert action["expected_root_delta_cm"] == [-150.0, 10.0, 0.0]
+
+
+def test_root_motion_yaw_alignment_corrects_opposite_direction() -> None:
+    yaw = csir_plan.root_motion_yaw_alignment_degrees(
+        (-150.0, 0.0, 0.0),
+        (150.0, 0.0, 0.0),
+    )
+    assert yaw is not None
+    assert abs(abs(yaw) - 180.0) < 1e-9
+
+    aligned = csir_plan.root_motion_yaw_alignment_degrees(
+        (-150.0, 0.0, 0.0),
+        (-150.0, 0.0, 0.0),
+    )
+    assert aligned == 0.0
+
+
+def test_output_gate_does_not_reuse_live_unity_camera_aspect() -> None:
+    csir, mapping = _fixture()
+    plan = csir_plan.build_plan(csir, mapping)
+    assert plan["output_resolution"] == [1920, 1080]
+    assert abs(plan["output_aspect"] - (16.0 / 9.0)) < 1e-9
+    assert plan["output_profile_source"] == "benchmark_default_1920x1080"
