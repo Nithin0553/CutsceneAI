@@ -11,6 +11,8 @@ CONNECT
   ↓
 ANALYZE BOTH PROJECTS
   ↓
+PROJECT INTELLIGENCE PROFILES
+  ↓
 SELECT SOURCE CUTSCENE
   ↓
 TRANSFER READINESS ANALYSIS
@@ -20,6 +22,8 @@ TARGET PREPARATION RECOMMENDATIONS
 RESOLUTION GUIDES
   ↓
 RE-ANALYZE
+  ↓
+RESOLVE ADAPTIVE CED MAPPINGS FROM SOURCE/TARGET EVIDENCE
   ↓
 REVIEW ASSET / RIG / FEATURE MAPPINGS
   ↓
@@ -112,3 +116,7 @@ Unity Timeline
 ```
 
 Automatic matching, complex retargeting, VFX reconstruction and AI must not enter the critical path until this proof works.
+
+## Adaptive mapping refinement
+
+The CED and source CSIR remain stable semantic ground truth. Engine/version/project variability is captured in source and target Project Intelligence Profiles and resolved into a per-transfer Resolved Mapping Dictionary. See docs/architecture/ADAPTIVE_PROJECT_INTELLIGENCE_V0_1.md.
