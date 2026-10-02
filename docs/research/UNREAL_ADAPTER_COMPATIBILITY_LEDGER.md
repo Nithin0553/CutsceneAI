@@ -56,6 +56,22 @@ regression guard so the same failure signature is not reintroduced.
 - **Outcome:** the adapter preserves camera semantics instead of only matching property
   names.
 
+## CAMERA-002 — Static camera framing was not fully realized
+
+- **Observed after the first successful Benchmark001 generation:** the source CSIR
+  preserved static camera metadata, but the generator only animated Camera B lens data
+  and did not realize Camera A's static FOV or either camera's source aspect ratio.
+- **Source evidence:** Benchmark001 CAM_A has vertical FOV 60 degrees and aspect
+  4.93486166; CAM_B starts at vertical FOV 35 degrees with the same aspect.
+- **Risk:** the generated sequence can be structurally correct while the shot framing is
+  visibly different from Unity.
+- **Permanent fix:** every mapped camera now receives a `camera_setup` action carrying
+  source projection, vertical FOV, aspect, and clip-plane provenance. CineCamera targets
+  preserve aspect through filmback and realize FOV as focal length; generic cameras
+  preserve aspect and convert vertical FOV to horizontal FOV.
+- **Preflight:** camera setup feasibility is validated without mutating the target.
+- **Regression guards:** camera-plan and Unreal-builder contract tests.
+
 ## Failure-handling rule
 
 The Unreal builder now deletes an incomplete generated Level Sequence when a build
