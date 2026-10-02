@@ -73,6 +73,7 @@ def runtime_profile() -> dict[str, str]:
         "rotation_construction": "semantic_named_fields",
         "animation_root_sampling": animation_root_sampling_strategy(),
         "skeletal_completion": "feature_probe",
+        "root_motion_alignment": "actor_world_yaw",
         "camera_component_resolution": "feature_probe",
         "camera_fov_realization": "component_aware",
     }
@@ -309,6 +310,44 @@ def extract_animation_root_delta_cm(
         "MotionWarpingUtilities.extract_root_motion_from_animation(). "
         f"Unreal runtime: {engine_version()}."
     )
+
+
+def apply_actor_world_yaw_alignment(actor: Any, yaw_degrees: float) -> str:
+    """Align root-motion travel by rotating the actor around Unreal world-up.
+
+    Root-motion direction is a world-trajectory concern. Applying the correction to a
+    skeletal animation section can rotate in animation/root-bone space and corrupt pose
+    orientation. Actor yaw is explicitly around Unreal +Z and preserves actor pitch/roll.
+    """
+    getter = getattr(actor, "get_actor_rotation", None)
+    setter = getattr(actor, "set_actor_rotation", None)
+    if not callable(getter) or not callable(setter):
+        raise UnrealCompatibilityError(
+            f"{_object_class_name(actor)} does not expose actor rotation accessors."
+        )
+
+    current = getter()
+    try:
+        roll = float(current.roll)
+        pitch = float(current.pitch)
+        yaw = float(current.yaw)
+    except Exception as exc:
+        raise UnrealCompatibilityError(
+            f"Unable to read semantic actor rotation fields from {_object_class_name(actor)}."
+        ) from exc
+
+    target = make_rotator_semantic(
+        roll=roll,
+        pitch=pitch,
+        yaw=yaw + float(yaw_degrees),
+    )
+    try:
+        setter(target, False)
+    except Exception as exc:
+        raise UnrealCompatibilityError(
+            f"Unable to apply world-yaw alignment to {_object_class_name(actor)}: {exc}"
+        ) from exc
+    return "actor.set_actor_rotation.world_yaw"
 
 
 def apply_skeletal_root_yaw(section: Any, yaw_degrees: float) -> str:
