@@ -1,0 +1,122 @@
+{
+  "version": "0.1.0",
+  "rules": [
+    {
+      "rule_id": "unity-unreal-transform-rotation-semantic-fields",
+      "ced": "transform.rotation",
+      "priority": 100,
+      "source": {
+        "engine": "unity",
+        "capabilities_all": ["rotation.canonical_quaternion"]
+      },
+      "target": {
+        "engine": "unreal",
+        "capabilities_all": ["rotator.semantic_fields"]
+      },
+      "resolution": {
+        "outcome": "CONVERTED",
+        "resolver": "canonical.rotation.to_target_semantic_fields",
+        "parameters": {
+          "target_fields": {
+            "roll": "roll",
+            "pitch": "pitch",
+            "yaw": "yaw"
+          },
+          "construct_by_named_fields": true,
+          "never_assume_constructor_position": true
+        },
+        "required_evidence": ["source.coordinate_basis", "target.rotation_semantics"]
+      },
+      "notes": "Prevents positional constructor ordering from changing rotation meaning across engine bindings."
+    },
+    {
+      "rule_id": "unity-unreal-camera-orientation-basis",
+      "ced": "camera.transform",
+      "priority": 110,
+      "source": {
+        "engine": "unity",
+        "capabilities_all": ["camera.forward_up_basis", "rotation.canonical_quaternion"]
+      },
+      "target": {
+        "engine": "unreal",
+        "capabilities_all": ["camera.forward_up_basis", "rotator.semantic_fields"]
+      },
+      "resolution": {
+        "outcome": "CONVERTED",
+        "resolver": "camera.orientation.from_forward_up",
+        "parameters": {
+          "preserve_authored_roll": true,
+          "zero_unobserved_roll": true,
+          "verify_horizon": true
+        },
+        "required_evidence": ["source.camera_basis", "source.camera_roll", "target.camera_basis"]
+      },
+      "notes": "Camera orientation is reconstructed semantically from forward/up and authored roll, then verified."
+    },
+    {
+      "rule_id": "unity-unreal-camera-fov",
+      "ced": "camera.fov",
+      "priority": 100,
+      "source": {
+        "engine": "unity",
+        "capabilities_all": ["camera.vertical_fov"]
+      },
+      "target": {
+        "engine": "unreal",
+        "capabilities_all": ["camera.lens_model"]
+      },
+      "resolution": {
+        "outcome": "CONVERTED",
+        "resolver": "camera.vertical_fov.to_target_lens",
+        "parameters": {
+          "prefer_physical_lens_when_available": true,
+          "output_aspect_from_transfer_gate": true
+        },
+        "required_evidence": ["source.camera_fov_axis", "target.camera_lens_model", "transfer.output_resolution"]
+      }
+    },
+    {
+      "rule_id": "unity-unreal-animation-root-motion",
+      "ced": "animation.root_motion",
+      "priority": 100,
+      "source": {
+        "engine": "unity",
+        "capabilities_all": ["animation.root_motion_curves"]
+      },
+      "target": {
+        "engine": "unreal",
+        "capabilities_all": ["animation.root_motion_sampling"]
+      },
+      "resolution": {
+        "outcome": "CONVERTED",
+        "resolver": "animation.root_motion.align_from_measured_displacement",
+        "parameters": {
+          "modify_source_asset": false,
+          "calibrate_target_section": true
+        },
+        "required_evidence": ["source.root_motion_delta", "target.imported_root_motion_delta"]
+      }
+    },
+    {
+      "rule_id": "unity-unreal-section-completion",
+      "ced": "animation.section",
+      "priority": 90,
+      "source": {
+        "engine": "unity"
+      },
+      "target": {
+        "engine": "unreal",
+        "capabilities_all": ["sequencer.section_completion", "sequencer.post_roll"]
+      },
+      "resolution": {
+        "outcome": "CONVERTED",
+        "resolver": "animation.section.map_completion_and_extrapolation",
+        "parameters": {
+          "require_explicit_source_completion": false,
+          "legacy_missing_completion_fallback": "hold_last_evaluated_pose"
+        },
+        "required_evidence": ["source.section_range", "target.section_completion_capabilities"]
+      }
+    }
+  ]
+}
