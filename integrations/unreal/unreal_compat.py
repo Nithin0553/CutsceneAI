@@ -52,12 +52,26 @@ def play_rate_strategy() -> str:
     return "MovieSceneTimeWarpVariant.instance_probe"
 
 
+def animation_root_sampling_strategy() -> str:
+    library = getattr(unreal, "AnimationLibrary", None)
+    raw = getattr(library, "extract_root_track_transform", None) if library else None
+    if callable(raw):
+        return "AnimationLibrary.extract_root_track_transform"
+    motion = getattr(unreal, "MotionWarpingUtilities", None)
+    extract = getattr(motion, "extract_root_motion_from_animation", None) if motion else None
+    if callable(extract):
+        return "MotionWarpingUtilities.extract_root_motion_from_animation"
+    return "unavailable"
+
+
 def runtime_profile() -> dict[str, str]:
     """Return a compact capability profile for logging and provenance."""
     return {
         "engine_version": engine_version(),
         "section_channels": section_channel_strategy(),
         "skeletal_play_rate": play_rate_strategy(),
+        "animation_root_sampling": animation_root_sampling_strategy(),
+        "skeletal_completion": "feature_probe",
         "camera_component_resolution": "feature_probe",
         "camera_fov_realization": "component_aware",
     }
@@ -202,6 +216,113 @@ def _set_editor_property(value: Any, name: str, new_value: Any, *, required: boo
         return False
 
 
+def _transform_translation_xyz(transform: Any) -> tuple[float, float, float]:
+    translation = getattr(transform, "translation", None)
+    if translation is None:
+        translation = _editor_property(transform, "translation")
+    if translation is None:
+        raise UnrealCompatibilityError(
+            f"{_object_class_name(transform)} does not expose translation."
+        )
+    return (float(translation.x), float(translation.y), float(translation.z))
+
+
+def extract_animation_root_delta_cm(
+    animation: Any, start_seconds: float, end_seconds: float
+) -> tuple[tuple[float, float, float], str]:
+    """Inspect the imported target asset's root travel without changing the asset."""
+    start = max(0.0, float(start_seconds))
+    end = max(start, float(end_seconds))
+
+    library = getattr(unreal, "AnimationLibrary", None)
+    length_getter = getattr(library, "get_sequence_length", None) if library else None
+    if callable(length_getter):
+        try:
+            length = float(length_getter(animation))
+            if length > 0.0:
+                start = min(start, length)
+                end = min(end, length)
+        except Exception:
+            pass
+
+    extract_raw = getattr(library, "extract_root_track_transform", None) if library else None
+    if callable(extract_raw):
+        try:
+            begin = extract_raw(animation, start)
+            finish = extract_raw(animation, end)
+            bx, by, bz = _transform_translation_xyz(begin)
+            ex, ey, ez = _transform_translation_xyz(finish)
+            return (ex - bx, ey - by, ez - bz), "AnimationLibrary.extract_root_track_transform"
+        except Exception:
+            pass
+
+    motion = getattr(unreal, "MotionWarpingUtilities", None)
+    extract_motion = (
+        getattr(motion, "extract_root_motion_from_animation", None) if motion else None
+    )
+    if callable(extract_motion):
+        try:
+            delta = extract_motion(animation, start, end)
+            return _transform_translation_xyz(delta), (
+                "MotionWarpingUtilities.extract_root_motion_from_animation"
+            )
+        except Exception:
+            pass
+
+    raise UnrealCompatibilityError(
+        "Unable to inspect target animation root travel. Expected "
+        "AnimationLibrary.extract_root_track_transform() or "
+        "MotionWarpingUtilities.extract_root_motion_from_animation(). "
+        f"Unreal runtime: {engine_version()}."
+    )
+
+
+def apply_skeletal_root_yaw(section: Any, yaw_degrees: float) -> str:
+    """Rotate a skeletal section's root-motion basis without editing the animation asset."""
+    rotation = unreal.Rotator(0.0, float(yaw_degrees), 0.0)
+    if _set_editor_property(section, "start_rotation_offset", rotation, required=False):
+        return "section.start_rotation_offset"
+    raise UnrealCompatibilityError(
+        "MovieSceneSkeletalAnimationSection does not expose start_rotation_offset; "
+        f"cannot align imported root motion on Unreal {engine_version()}."
+    )
+
+
+def set_section_completion_mode(section: Any, mode: str) -> str:
+    """Set post-section state behavior across MovieScene API variants."""
+    normalized = str(mode).lower()
+    enum_type = getattr(unreal, "MovieSceneCompletionMode", None)
+    enum_value = None
+    if enum_type is not None:
+        if normalized == "keep_state":
+            enum_value = getattr(enum_type, "KEEP_STATE", None)
+        elif normalized == "restore_state":
+            enum_value = getattr(enum_type, "RESTORE_STATE", None)
+        elif normalized == "project_default":
+            enum_value = getattr(enum_type, "PROJECT_DEFAULT", None)
+    if enum_value is None:
+        raise UnrealCompatibilityError(f"Unsupported MovieScene completion mode: {mode}")
+
+    setter = getattr(section, "set_completion_mode", None)
+    if callable(setter):
+        try:
+            setter(enum_value)
+            return "section.set_completion_mode"
+        except Exception:
+            pass
+
+    options = _editor_property(section, "eval_options")
+    if options is not None and _set_editor_property(
+        options, "completion_mode", enum_value, required=False
+    ):
+        if _set_editor_property(section, "eval_options", options, required=False):
+            return "section.eval_options.completion_mode"
+
+    raise UnrealCompatibilityError(
+        f"Unable to set MovieScene completion mode '{mode}' on Unreal {engine_version()}."
+    )
+
+
 def _require_positive_fov(value: float) -> float:
     fov = float(value)
     if not 0.0 < fov < 179.0:
@@ -229,7 +350,7 @@ def validate_camera_setup(
     *,
     field_of_view_degrees: float,
     source_axis: str,
-    source_aspect: float | None,
+    target_aspect: float | None,
     projection: str = "perspective",
 ) -> dict[str, Any]:
     """Validate target camera semantics without mutating the target."""
@@ -243,7 +364,7 @@ def validate_camera_setup(
         raise UnrealCompatibilityError(f"Unknown source FOV axis: {source_axis}")
     _require_positive_fov(field_of_view_degrees)
 
-    aspect = float(source_aspect) if source_aspect is not None else None
+    aspect = float(target_aspect) if target_aspect is not None else None
     if aspect is not None and aspect <= 0.0:
         aspect = None
 
@@ -275,7 +396,7 @@ def validate_camera_setup(
             )
         return {
             "strategy": "cine_filmback_and_focal_length",
-            "source_aspect": aspect,
+            "target_aspect": aspect,
         }
 
     if aspect is None:
@@ -290,7 +411,7 @@ def validate_camera_setup(
 
     return {
         "strategy": "camera_aspect_and_horizontal_fov",
-        "source_aspect": aspect,
+        "target_aspect": aspect,
     }
 
 
@@ -299,7 +420,7 @@ def apply_camera_setup(
     *,
     field_of_view_degrees: float,
     source_axis: str,
-    source_aspect: float | None,
+    target_aspect: float | None,
     projection: str = "perspective",
 ) -> dict[str, Any]:
     """Apply non-animated source camera semantics to the target component."""
@@ -312,7 +433,7 @@ def apply_camera_setup(
     if normalized_axis not in {"vertical", "horizontal"}:
         raise UnrealCompatibilityError(f"Unknown source FOV axis: {source_axis}")
 
-    aspect = float(source_aspect) if source_aspect is not None else None
+    aspect = float(target_aspect) if target_aspect is not None else None
     if aspect is not None and aspect <= 0.0:
         aspect = None
 
@@ -357,7 +478,7 @@ def apply_camera_setup(
         _set_editor_property(component, "constrain_aspect_ratio", True, required=False)
         return {
             "strategy": "cine_filmback_and_focal_length",
-            "source_aspect": aspect,
+            "target_aspect": aspect,
             "target_value": focal_length,
             "target_property": "CurrentFocalLength",
         }
@@ -382,7 +503,7 @@ def apply_camera_setup(
     _set_editor_property(component, "field_of_view", target_fov)
     return {
         "strategy": "camera_aspect_and_horizontal_fov",
-        "source_aspect": aspect,
+        "target_aspect": aspect,
         "target_value": target_fov,
         "target_property": "FieldOfView",
     }
@@ -392,7 +513,7 @@ def prepare_camera_fov_track(
     component: Any,
     keys: list[dict[str, Any]],
     source_axis: str,
-    source_aspect: float | None = None,
+    target_aspect: float | None = None,
 ) -> dict[str, Any]:
     """Adapt source animated FOV semantics to the target camera component."""
     normalized_axis = str(source_axis).lower()
@@ -431,7 +552,7 @@ def prepare_camera_fov_track(
         }
 
     if normalized_axis == "vertical":
-        aspect = float(source_aspect) if source_aspect is not None else None
+        aspect = float(target_aspect) if target_aspect is not None else None
         if aspect is None or aspect <= 0.0:
             aspect = _editor_property(component, "aspect_ratio")
             if aspect is None:
