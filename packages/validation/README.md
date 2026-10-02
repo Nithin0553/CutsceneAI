@@ -75,3 +75,16 @@ different thresholds based on scale, frame rate, transfer mode, and asset proven
 
 This policy deliberately still rejects wrong-direction motion and visible trajectory
 drift while avoiding false failures from sub-centimeter import/resampling differences.
+
+## Root-motion vertical semantics
+
+The second Benchmark001 automated run showed why a single 3D endpoint threshold is still too coarse. Horizontal trajectory parity was essentially exact while the imported target root had a 0.687 cm vertical endpoint offset.
+
+CutSceneAI now derives a source root-motion profile from the original RootT curves, including horizontal travel and vertical excursion. Validation uses that source evidence:
+
+- long-range motion with <= 5 cm source vertical excursion is treated as `grounded_low_vertical_excursion`;
+- horizontal endpoint, heading, and travel distance remain strict;
+- grounded vertical endpoint error is allowed up to 1 cm to absorb root/import baseline and resampling differences;
+- clips with material vertical excursion are **not** automatically passed by an endpoint check. They return `INCOMPLETE` until sampled vertical trajectory validation is available.
+
+This avoids both false failures for grounded locomotion and false passes for jumps or other genuinely vertical motion.
