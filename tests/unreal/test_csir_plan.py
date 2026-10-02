@@ -153,7 +153,9 @@ def _fixture() -> tuple[dict, dict]:
 def test_prop_relative_keys_are_resolved_against_infinite_offset() -> None:
     csir, mapping = _fixture()
     plan = csir_plan.build_plan(csir, mapping)
-    action = next(item for item in plan["actions"] if item["track_name"] == "MOVING_PROP_Movement")
+    action = next(
+        item for item in plan["actions"] if item.get("track_name") == "MOVING_PROP_Movement"
+    )
 
     assert action["keys"][0]["frame"] == 120
     assert action["keys"][0]["location_cm"] == (500.0, -200.0, 50.0)
