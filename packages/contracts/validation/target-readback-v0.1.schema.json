@@ -120,6 +120,14 @@
         "name": {"type": "string", "minLength": 1},
         "binding_id": {"type": "string"},
         "canonical_world_transform": {"$ref": "#/$defs/canonical_transform"},
+        "camera_state": {
+          "type": "object",
+          "properties": {
+            "vertical_fov_degrees": {"type": "number"},
+            "target_output_aspect": {"type": "number"}
+          },
+          "additionalProperties": false
+        },
         "tracks": {
           "type": "array",
           "items": {"type": "object"}
