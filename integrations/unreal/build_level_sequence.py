@@ -203,10 +203,14 @@ def _apply_root_motion_alignment(plan: dict[str, Any]) -> None:
             strategy = unreal_compat.apply_actor_world_yaw_alignment(actor, float(yaw))
         except unreal_compat.UnrealCompatibilityError as exc:
             raise UnrealBuildError(str(exc)) from exc
+        resolved_rotation = actor.get_actor_rotation()
         unreal.log(
             "[CutSceneAI] Root motion aligned "
             f"{action['entity_name']}: space=actor_world, strategy={strategy}, "
-            f"yaw={float(yaw):.3f} deg"
+            f"yaw_correction={float(yaw):.3f} deg, "
+            f"actor_rpy=({float(resolved_rotation.roll):.3f}, "
+            f"{float(resolved_rotation.pitch):.3f}, "
+            f"{float(resolved_rotation.yaw):.3f})"
         )
 
 
