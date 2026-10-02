@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/benchmark/spec/v0.1",
+  "title": "CutSceneAI Benchmark Specification v0.1",
+  "type": "object",
+  "required": ["version", "benchmark", "source", "target", "timing", "challenge_dimensions", "requirements", "acceptance"],
+  "properties": {
+    "version": {"const": "0.1.0"},
+    "benchmark": {"type": "string", "minLength": 1},
+    "description": {"type": "string"},
+    "source": {
+      "type": "object",
+      "required": ["engine"],
+      "properties": {
+        "engine": {"type": "string", "minLength": 1},
+        "minimum_engine_version": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "required": ["engine"],
+      "properties": {
+        "engine": {"type": "string", "minLength": 1},
+        "minimum_engine_version": {"type": "string"},
+        "output_resolution": {
+          "type": "array",
+          "prefixItems": [{"type": "integer", "minimum": 1}, {"type": "integer", "minimum": 1}],
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "type": "object",
+      "required": ["display_rate", "duration_seconds"],
+      "properties": {
+        "display_rate": {
+          "type": "object",
+          "required": ["numerator", "denominator"],
+          "properties": {
+            "numerator": {"type": "integer", "minimum": 1},
+            "denominator": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        },
+        "duration_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "duration_tolerance_seconds": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "challenge_dimensions": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "ced", "minimum_count", "validation_layer"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "ced": {"type": "string", "minLength": 1},
+          "minimum_count": {"type": "integer", "minimum": 1},
+          "validation_layer": {
+            "enum": ["STRUCTURAL", "TIMING", "SPATIAL", "ANIMATION", "CAMERA", "AUDIO_EVENT", "LIGHTING", "RELATIONSHIP"]
+          },
+          "notes": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "required": ["require_visual_acceptance", "require_target_readback", "max_failed", "max_incomplete"],
+      "properties": {
+        "require_visual_acceptance": {"type": "boolean"},
+        "require_target_readback": {"type": "boolean"},
+        "max_failed": {"type": "integer", "minimum": 0},
+        "max_incomplete": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

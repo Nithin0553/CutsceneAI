@@ -1,0 +1,151 @@
+{
+  "version": "0.1.0",
+  "benchmark": "Benchmark002",
+  "description": "Generalization benchmark for project-aware Unity-to-Unreal cutscene transfer using a different timebase, multiple characters, overlapping animation sections, richer audio/events, parent relationships, animated lighting, and three-camera coverage.",
+  "source": {
+    "engine": "Unity",
+    "minimum_engine_version": "6000.3"
+  },
+  "target": {
+    "engine": "Unreal",
+    "minimum_engine_version": "5.8",
+    "output_resolution": [
+      2048,
+      858
+    ]
+  },
+  "timing": {
+    "display_rate": {
+      "numerator": 24,
+      "denominator": 1
+    },
+    "duration_seconds": 12,
+    "duration_tolerance_seconds": 0.000001
+  },
+  "challenge_dimensions": [
+    "24-fps source timebase",
+    "multiple character bindings",
+    "overlapping animation sections and blend semantics",
+    "root motion plus non-root-motion animation",
+    "parented prop relationship",
+    "three cameras and two cuts",
+    "animated camera transform and lens",
+    "animated light intensity",
+    "overlapping audio with fades",
+    "multiple events with payloads",
+    "scope output aspect 2048x858"
+  ],
+  "requirements": [
+    {
+      "id": "characters",
+      "ced": "entity.character",
+      "minimum_count": 2,
+      "validation_layer": "STRUCTURAL",
+      "notes": "Two independently bound humanoid characters."
+    },
+    {
+      "id": "animation_tracks",
+      "ced": "animation.track",
+      "minimum_count": 2,
+      "validation_layer": "ANIMATION",
+      "notes": "At least one animation track per character."
+    },
+    {
+      "id": "animation_sections",
+      "ced": "animation.section",
+      "minimum_count": 3,
+      "validation_layer": "ANIMATION",
+      "notes": "Character A uses two overlapping sections; Character B uses one or more sections."
+    },
+    {
+      "id": "animation_blend",
+      "ced": "animation.blend",
+      "minimum_count": 1,
+      "validation_layer": "ANIMATION",
+      "notes": "At least one authored overlap/blend interval must survive extraction and target realization."
+    },
+    {
+      "id": "root_motion",
+      "ced": "animation.root_motion",
+      "minimum_count": 1,
+      "validation_layer": "ANIMATION",
+      "notes": "At least one character clip must carry measurable root motion."
+    },
+    {
+      "id": "parent_relationship",
+      "ced": "transform.parent",
+      "minimum_count": 1,
+      "validation_layer": "RELATIONSHIP",
+      "notes": "One prop must preserve an authored parent relationship."
+    },
+    {
+      "id": "moving_props",
+      "ced": "entity.prop",
+      "minimum_count": 2,
+      "validation_layer": "SPATIAL",
+      "notes": "One independently animated prop and one parented prop."
+    },
+    {
+      "id": "cameras",
+      "ced": "entity.camera",
+      "minimum_count": 3,
+      "validation_layer": "CAMERA",
+      "notes": "Wide, moving medium, and close cameras."
+    },
+    {
+      "id": "camera_cuts",
+      "ced": "camera.cut",
+      "minimum_count": 2,
+      "validation_layer": "CAMERA",
+      "notes": "Cuts at 4s and 8s."
+    },
+    {
+      "id": "camera_lens",
+      "ced": "camera.fov",
+      "minimum_count": 1,
+      "validation_layer": "CAMERA",
+      "notes": "At least one camera has animated vertical FOV/physical-lens equivalent."
+    },
+    {
+      "id": "lights",
+      "ced": "entity.light",
+      "minimum_count": 1,
+      "validation_layer": "LIGHTING",
+      "notes": "One explicitly mapped light actor."
+    },
+    {
+      "id": "light_animation",
+      "ced": "light.animation",
+      "minimum_count": 1,
+      "validation_layer": "LIGHTING",
+      "notes": "Animate intensity across a visible interval."
+    },
+    {
+      "id": "audio_sections",
+      "ced": "audio.section",
+      "minimum_count": 2,
+      "validation_layer": "AUDIO_EVENT",
+      "notes": "Two overlapping audio sections."
+    },
+    {
+      "id": "audio_fades",
+      "ced": "audio.fade_in",
+      "minimum_count": 1,
+      "validation_layer": "AUDIO_EVENT",
+      "notes": "At least one fade-in and one fade-out should be authored."
+    },
+    {
+      "id": "events",
+      "ced": "event.trigger",
+      "minimum_count": 3,
+      "validation_layer": "AUDIO_EVENT",
+      "notes": "Three events at distinct times; at least one carries a payload."
+    }
+  ],
+  "acceptance": {
+    "require_visual_acceptance": true,
+    "require_target_readback": true,
+    "max_failed": 0,
+    "max_incomplete": 0
+  }
+}

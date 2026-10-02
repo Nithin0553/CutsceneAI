@@ -128,3 +128,22 @@ The runner writes three artifacts:
 The readback extractor independently inspects actual Sequencer bindings, tracks, sections, keys, camera cuts, audio, marked frames, camera lens state, mapped actor transforms, and target animation/root-motion data. It does not call `csir_plan.build_plan()`.
 
 Do not manually edit the sequence to make a failed report pass. Fix the adapter/mapping, add a regression test, regenerate, and rerun readback.
+
+## Generic validation runner
+
+`validate_transfer.py` is benchmark-name agnostic. Benchmark wrappers may select filenames and labels, but transfer semantics and comparison behavior must stay generic.
+
+Example for a future Benchmark002 run:
+
+```python
+import validate_transfer
+
+report = validate_transfer.run(
+    "Benchmark002",
+    r"D:/path/to/Benchmark002.csir.json",
+    r"B:/Research/CutSceneAI/CutsceneAI/integrations/unreal/benchmark002_mapping.json",
+    r"D:/path/to/validation",
+)
+```
+
+Benchmark-specific hacks in the generator, readback, or validator are not allowed. New gaps discovered by Benchmark002 must become reusable CED/adapter/readback capabilities.

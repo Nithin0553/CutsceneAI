@@ -1,7 +1,8 @@
 from pathlib import Path
 
 READBACK = Path("integrations/unreal/readback_level_sequence.py")
-RUNNER = Path("integrations/unreal/validate_benchmark001.py")
+RUNNER = Path("integrations/unreal/validate_transfer.py")
+BENCHMARK001_WRAPPER = Path("integrations/unreal/validate_benchmark001.py")
 
 
 def test_readback_inspects_saved_sequence_instead_of_reusing_generation_plan() -> None:
@@ -21,9 +22,16 @@ def test_readback_canonicalizes_transforms_and_camera_lens_semantics() -> None:
     assert "extract_animation_root_delta_cm" in source
 
 
-def test_validation_runner_writes_expectation_readback_and_report() -> None:
+def test_generic_validation_runner_uses_benchmark_name_for_outputs() -> None:
     source = RUNNER.read_text(encoding="utf-8")
-    assert "Benchmark001.expected.json" in source
-    assert "Benchmark001.unreal.readback.json" in source
-    assert "Benchmark001.validation.json" in source
+    assert 'f"{benchmark_name}.expected.json"' in source
+    assert 'f"{benchmark_name}.unreal.readback.json"' in source
+    assert 'f"{benchmark_name}.validation.json"' in source
     assert "validation_core.compare" in source
+
+
+def test_benchmark001_wrapper_has_no_special_validation_semantics() -> None:
+    source = BENCHMARK001_WRAPPER.read_text(encoding="utf-8")
+    assert 'validate_transfer.run(' in source
+    assert '"Benchmark001"' in source
+    assert "validation_core.compare" not in source
