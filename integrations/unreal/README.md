@@ -82,3 +82,21 @@ Unity Signal Emitters are represented as Unreal Sequencer **marked frames** with
 ## Validation target for Benchmark 001
 
 After generation, the next step is Unreal readback into CSIR followed by structural/numerical comparison against the frozen Unity source artifact. Do not manually repair the generated Level Sequence before readback; failures should be fixed in the adapter so the benchmark remains reproducible.
+
+
+## Project intelligence
+
+Before transfer, the Unreal adapter can emit a read-only Project Intelligence Profile:
+
+    import sys
+    sys.path.append(r"B:/Research/CutSceneAI/CutsceneAI/integrations/unreal")
+    import project_intelligence
+    profile = project_intelligence.analyze_project()
+
+Or write it to a JSON file:
+
+    project_intelligence.write_profile(r"D:/path/CutSceneAI_UnrealProjectProfile.json")
+
+The profile records engine/runtime capabilities and semantic conventions used by the
+adaptive mapping resolver. Rotation construction is capability-driven and uses named
+roll/pitch/yaw fields rather than positional Rotator arguments.
