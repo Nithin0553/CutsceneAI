@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/validation/target-readback-v0.1",
+  "title": "CutSceneAI Target Readback Snapshot v0.1",
+  "type": "object",
+  "required": ["schema_version", "engine", "sequence_asset_path", "display_rate", "playback", "bindings", "camera_cuts", "audio_sections", "markers"],
+  "properties": {
+    "schema_version": {"const": "0.1.0"},
+    "engine": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "sequence_asset_path": {"type": "string", "minLength": 1},
+    "display_rate": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": {"type": "integer", "minimum": 1},
+        "denominator": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "playback": {
+      "type": "object",
+      "required": ["start_frame", "end_frame"],
+      "properties": {
+        "start_frame": {"type": "integer"},
+        "end_frame": {"type": "integer"}
+      },
+      "additionalProperties": false
+    },
+    "bindings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/binding"}
+    },
+    "camera_cuts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["start_frame", "end_frame", "camera_binding"],
+        "properties": {
+          "start_frame": {"type": "integer"},
+          "end_frame": {"type": "integer"},
+          "camera_binding": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "audio_sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["start_frame", "end_frame", "asset_path", "loop"],
+        "properties": {
+          "start_frame": {"type": "integer"},
+          "end_frame": {"type": "integer"},
+          "asset_path": {"type": "string"},
+          "loop": {"type": "boolean"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "markers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["frame", "label"],
+        "properties": {
+          "frame": {"type": "integer"},
+          "label": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "key": {
+      "type": "object",
+      "required": ["frame", "value"],
+      "properties": {
+        "frame": {"type": "integer"},
+        "value": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "canonical_transform": {
+      "type": "object",
+      "required": ["position_m", "rotation_xyzw", "scale_xyz"],
+      "properties": {
+        "position_m": {
+          "type": "array",
+          "prefixItems": [{"type":"number"},{"type":"number"},{"type":"number"}],
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "rotation_xyzw": {
+          "type": "array",
+          "prefixItems": [{"type":"number"},{"type":"number"},{"type":"number"},{"type":"number"}],
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "scale_xyz": {
+          "type": "array",
+          "prefixItems": [{"type":"number"},{"type":"number"},{"type":"number"}],
+          "minItems": 3,
+          "maxItems": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "required": ["name", "binding_id", "tracks"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "binding_id": {"type": "string"},
+        "canonical_world_transform": {"$ref": "#/$defs/canonical_transform"},
+        "tracks": {
+          "type": "array",
+          "items": {"type": "object"}
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
