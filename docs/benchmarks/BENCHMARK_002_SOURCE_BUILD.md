@@ -1,10 +1,16 @@
 # Benchmark 002 — Source Build Checklist
 
-Benchmark002 should be authored manually in Unity so the source remains a real engine-native Timeline rather than a synthetic fixture.
+Benchmark002 should be authored manually inside the existing Unity benchmark project so the source remains a real engine-native Timeline while Benchmark001 stays frozen and untouched.
+
+## Isolation rule
+
+Reuse the project, not the benchmark artifacts. Keep Benchmark002 in its own scene and asset folder (for example `Assets/CutSceneAI/Benchmark002/`). Do not modify the Benchmark001 scene, Timeline, imported source files, or frozen export.
+
+This makes Benchmark002 a **cutscene-generalization test** under the same project/runtime configuration. A later benchmark can intentionally change engine version or project settings to test project-level generalization.
 
 ## Build order
 
-1. Create a new Unity project/scene named `Benchmark002` using the same extractor package, but do not copy the Benchmark001 Timeline.
+1. Reuse the existing Unity benchmark project, but create a **new scene** named `Benchmark002` and a new Timeline/PlayableDirector for it. Do not modify, duplicate over, or reuse the frozen Benchmark001 Timeline asset.
 2. Set the Timeline display rate to **24 fps** and the sequence duration to **12.0 seconds**.
 3. Create two independently bound humanoid actors: `CHARACTER_A` and `CHARACTER_B`.
 4. Give `CHARACTER_A` two animation clips with a real overlap around the transition. At least one clip must contain root motion.
