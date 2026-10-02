@@ -55,3 +55,16 @@ def test_failed_unreal_build_rolls_back_partial_sequence() -> None:
     builder = _read("integrations/unreal/build_level_sequence.py")
     assert "Rolled back incomplete generated sequence after build failure" in builder
     assert "unreal.EditorAssetLibrary.delete_asset(asset_path)" in builder
+
+
+def test_static_camera_setup_preserves_source_aspect_and_preflights_without_mutation() -> None:
+    builder = _read("integrations/unreal/build_level_sequence.py")
+    compat = _read("integrations/unreal/unreal_compat.py")
+    plan = _read("integrations/unreal/csir_plan.py")
+    assert '"kind": "camera_setup"' in plan
+    assert '"source_aspect"' in plan
+    assert "unreal_compat.validate_camera_setup" in builder
+    assert "unreal_compat.apply_camera_setup" in builder
+    assert "cine_filmback_and_focal_length" in compat
+    assert '"sensor_width"' in compat
+    assert '"current_focal_length"' in compat

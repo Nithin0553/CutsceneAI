@@ -98,6 +98,24 @@ def _preflight(plan: dict[str, Any]) -> None:
         kind = str(action["kind"])
         if kind in {"skeletal_animation", "audio"}:
             _load_asset(str(action["unreal_asset_path"]))
+        elif kind == "camera_setup":
+            actor = actor_cache[action["entity_name"]]
+            component, resolution_strategy = _camera_component(actor)
+            try:
+                setup_spec = unreal_compat.validate_camera_setup(
+                    component,
+                    field_of_view_degrees=float(action["field_of_view_degrees"]),
+                    source_axis=str(action.get("source_fov_axis", "vertical")),
+                    source_aspect=action.get("source_aspect"),
+                    projection=str(action.get("projection", "perspective")),
+                )
+            except unreal_compat.UnrealCompatibilityError as exc:
+                raise UnrealBuildError(str(exc)) from exc
+            unreal.log(
+                "[CutSceneAI] Preflight camera setup "
+                f"{actor.get_actor_label()}: component={resolution_strategy}, "
+                f"realization={setup_spec['strategy']}"
+            )
         elif kind == "camera_fov":
             actor = actor_cache[action["entity_name"]]
             component, resolution_strategy = _camera_component(actor)
@@ -106,6 +124,7 @@ def _preflight(plan: dict[str, Any]) -> None:
                     component,
                     action["keys"],
                     str(action.get("source_fov_axis", "vertical")),
+                    action.get("source_aspect"),
                 )
             except unreal_compat.UnrealCompatibilityError as exc:
                 raise UnrealBuildError(str(exc)) from exc
@@ -223,6 +242,27 @@ def _camera_component(actor: unreal.Actor) -> tuple[Any, str]:
         raise UnrealBuildError(str(exc)) from exc
 
 
+def _apply_camera_setup(actor: unreal.Actor, action: dict[str, Any]) -> None:
+    component, resolution_strategy = _camera_component(actor)
+    try:
+        setup_spec = unreal_compat.apply_camera_setup(
+            component,
+            field_of_view_degrees=float(action["field_of_view_degrees"]),
+            source_axis=str(action.get("source_fov_axis", "vertical")),
+            source_aspect=action.get("source_aspect"),
+            projection=str(action.get("projection", "perspective")),
+        )
+    except unreal_compat.UnrealCompatibilityError as exc:
+        raise UnrealBuildError(str(exc)) from exc
+
+    unreal.log(
+        "[CutSceneAI] Camera setup "
+        f"{actor.get_actor_label()}: component={resolution_strategy}, "
+        f"realization={setup_spec['strategy']}, "
+        f"source_aspect={setup_spec['source_aspect']}"
+    )
+
+
 def _add_camera_fov(sequence: unreal.LevelSequence, actor: unreal.Actor, action: dict[str, Any]) -> None:
     component, resolution_strategy = _camera_component(actor)
     try:
@@ -230,6 +270,7 @@ def _add_camera_fov(sequence: unreal.LevelSequence, actor: unreal.Actor, action:
             component,
             action["keys"],
             str(action.get("source_fov_axis", "vertical")),
+            action.get("source_aspect"),
         )
     except unreal_compat.UnrealCompatibilityError as exc:
         raise UnrealBuildError(str(exc)) from exc
@@ -311,6 +352,8 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
                 _add_transform(sequence, bindings[action["entity_name"]]["binding"], action)
             elif kind == "skeletal_animation":
                 _add_skeletal_animation(bindings[action["entity_name"]]["binding"], action)
+            elif kind == "camera_setup":
+                _apply_camera_setup(bindings[action["entity_name"]]["actor"], action)
             elif kind == "camera_fov":
                 _add_camera_fov(sequence, bindings[action["entity_name"]]["actor"], action)
             elif kind == "camera_cut":

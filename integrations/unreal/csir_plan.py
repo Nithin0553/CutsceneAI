@@ -284,6 +284,32 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
         if entity["name"] in mapping.get("entities", {}):
             plan["bindings"][entity["name"]] = _mapping_actor(mapping, entity["name"])
 
+    for entity in csir.get("entities", []):
+        if entity.get("ced_type") != "entity.camera":
+            continue
+        if entity["name"] not in mapping.get("entities", {}):
+            continue
+        camera = entity.get("metadata", {}).get("camera", {})
+        if not isinstance(camera, dict):
+            continue
+        fov = float(camera.get("field_of_view_degrees", 0.0))
+        aspect = float(camera.get("aspect", 0.0))
+        if fov <= 0.0:
+            continue
+        plan["actions"].append(
+            {
+                "kind": "camera_setup",
+                "entity_name": entity["name"],
+                "actor_label": _mapping_actor(mapping, entity["name"]),
+                "projection": "orthographic" if bool(camera.get("orthographic", False)) else "perspective",
+                "source_fov_axis": "vertical",
+                "field_of_view_degrees": fov,
+                "source_aspect": aspect if aspect > 0.0 else None,
+                "near_clip": float(camera.get("near_clip", 0.0)),
+                "far_clip": float(camera.get("far_clip", 0.0)),
+            }
+        )
+
     for track in csir.get("tracks", []):
         entity = entities.get(track.get("binding_entity_id", ""))
         ced_type = track.get("ced_type")
@@ -324,6 +350,10 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                                     "entity_name": entity["name"],
                                     "actor_label": actor_label,
                                     "source_fov_axis": "vertical",
+                                    "source_aspect": float(
+                                        entity.get("metadata", {}).get("camera", {}).get("aspect", 0.0)
+                                    )
+                                    or None,
                                     "keys": [
                                         {
                                             "frame": seconds_to_frame(float(key["time_seconds"]), fps_n, fps_d),

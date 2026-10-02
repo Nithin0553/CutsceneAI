@@ -183,6 +183,25 @@ def resolve_camera_component(actor: Any) -> tuple[Any, str]:
     )
 
 
+def _set_editor_property(value: Any, name: str, new_value: Any, *, required: bool = True) -> bool:
+    setter = getattr(value, "set_editor_property", None)
+    if not callable(setter):
+        if required:
+            raise UnrealCompatibilityError(
+                f"{_object_class_name(value)} does not expose set_editor_property()."
+            )
+        return False
+    try:
+        setter(name, new_value)
+        return True
+    except Exception as exc:
+        if required:
+            raise UnrealCompatibilityError(
+                f"Unable to set {_object_class_name(value)}.{name}: {exc}"
+            ) from exc
+        return False
+
+
 def _require_positive_fov(value: float) -> float:
     fov = float(value)
     if not 0.0 < fov < 179.0:
@@ -205,15 +224,177 @@ def _vertical_to_horizontal_fov(vertical_fov_degrees: float, aspect_ratio: float
     return math.degrees(horizontal)
 
 
-def prepare_camera_fov_track(
-    component: Any, keys: list[dict[str, Any]], source_axis: str
+def validate_camera_setup(
+    component: Any,
+    *,
+    field_of_view_degrees: float,
+    source_axis: str,
+    source_aspect: float | None,
+    projection: str = "perspective",
 ) -> dict[str, Any]:
-    """Adapt source FOV semantics to the target camera component.
+    """Validate target camera semantics without mutating the target."""
+    if str(projection).lower() != "perspective":
+        raise UnrealCompatibilityError(
+            f"Camera projection '{projection}' is not implemented by the Unreal adapter yet."
+        )
 
-    Unity Camera.fieldOfView is vertical.  CineCamera components are realized through
-    focal length using their filmback sensor height; generic CameraComponents use their
-    horizontal FieldOfView after aspect-ratio conversion.
-    """
+    normalized_axis = str(source_axis).lower()
+    if normalized_axis not in {"vertical", "horizontal"}:
+        raise UnrealCompatibilityError(f"Unknown source FOV axis: {source_axis}")
+    _require_positive_fov(field_of_view_degrees)
+
+    aspect = float(source_aspect) if source_aspect is not None else None
+    if aspect is not None and aspect <= 0.0:
+        aspect = None
+
+    setter = getattr(component, "set_editor_property", None)
+    if not callable(setter):
+        raise UnrealCompatibilityError(
+            f"{_object_class_name(component)} does not expose set_editor_property()."
+        )
+
+    cine_type = getattr(unreal, "CineCameraComponent", None)
+    is_cine = cine_type is not None and isinstance(component, cine_type)
+    if is_cine:
+        filmback = _editor_property(component, "filmback")
+        if filmback is None:
+            raise UnrealCompatibilityError(
+                "CineCameraComponent does not expose filmback settings required for "
+                "source framing preservation."
+            )
+        sensor_height = _editor_property(filmback, "sensor_height")
+        if sensor_height is None:
+            sensor_height = getattr(filmback, "sensor_height", None)
+        if sensor_height is None or float(sensor_height) <= 0.0:
+            raise UnrealCompatibilityError(
+                "CineCamera filmback does not expose a valid sensor_height."
+            )
+        if aspect is not None and not callable(getattr(filmback, "set_editor_property", None)):
+            raise UnrealCompatibilityError(
+                "CineCamera filmback cannot accept source aspect-ratio settings."
+            )
+        return {
+            "strategy": "cine_filmback_and_focal_length",
+            "source_aspect": aspect,
+        }
+
+    if aspect is None:
+        current_aspect = _editor_property(component, "aspect_ratio")
+        if current_aspect is None:
+            current_aspect = getattr(component, "aspect_ratio", None)
+        if current_aspect is None or float(current_aspect) <= 0.0:
+            raise UnrealCompatibilityError(
+                "CameraComponent does not expose a valid aspect ratio."
+            )
+        aspect = float(current_aspect)
+
+    return {
+        "strategy": "camera_aspect_and_horizontal_fov",
+        "source_aspect": aspect,
+    }
+
+
+def apply_camera_setup(
+    component: Any,
+    *,
+    field_of_view_degrees: float,
+    source_axis: str,
+    source_aspect: float | None,
+    projection: str = "perspective",
+) -> dict[str, Any]:
+    """Apply non-animated source camera semantics to the target component."""
+    if str(projection).lower() != "perspective":
+        raise UnrealCompatibilityError(
+            f"Camera projection '{projection}' is not implemented by the Unreal adapter yet."
+        )
+
+    normalized_axis = str(source_axis).lower()
+    if normalized_axis not in {"vertical", "horizontal"}:
+        raise UnrealCompatibilityError(f"Unknown source FOV axis: {source_axis}")
+
+    aspect = float(source_aspect) if source_aspect is not None else None
+    if aspect is not None and aspect <= 0.0:
+        aspect = None
+
+    cine_type = getattr(unreal, "CineCameraComponent", None)
+    is_cine = cine_type is not None and isinstance(component, cine_type)
+
+    if is_cine:
+        filmback = _editor_property(component, "filmback")
+        if filmback is None:
+            raise UnrealCompatibilityError(
+                "CineCameraComponent does not expose filmback settings required for "
+                "source framing preservation."
+            )
+        sensor_height = _editor_property(filmback, "sensor_height")
+        if sensor_height is None:
+            sensor_height = getattr(filmback, "sensor_height", None)
+        if sensor_height is None or float(sensor_height) <= 0.0:
+            raise UnrealCompatibilityError(
+                "CineCamera filmback does not expose a valid sensor_height."
+            )
+
+        if aspect is not None:
+            _set_editor_property(filmback, "sensor_width", float(sensor_height) * aspect)
+            _set_editor_property(component, "filmback", filmback)
+
+        if normalized_axis == "vertical":
+            focal_length = _vertical_fov_to_focal_length(
+                field_of_view_degrees, float(sensor_height)
+            )
+        else:
+            sensor_width = _editor_property(filmback, "sensor_width")
+            if sensor_width is None:
+                sensor_width = getattr(filmback, "sensor_width", None)
+            if sensor_width is None or float(sensor_width) <= 0.0:
+                raise UnrealCompatibilityError(
+                    "CineCamera filmback does not expose a valid sensor_width."
+                )
+            horizontal = math.radians(_require_positive_fov(field_of_view_degrees))
+            focal_length = float(sensor_width) / (2.0 * math.tan(horizontal * 0.5))
+
+        _set_editor_property(component, "current_focal_length", focal_length)
+        _set_editor_property(component, "constrain_aspect_ratio", True, required=False)
+        return {
+            "strategy": "cine_filmback_and_focal_length",
+            "source_aspect": aspect,
+            "target_value": focal_length,
+            "target_property": "CurrentFocalLength",
+        }
+
+    if aspect is None:
+        current_aspect = _editor_property(component, "aspect_ratio")
+        if current_aspect is None:
+            current_aspect = getattr(component, "aspect_ratio", None)
+        if current_aspect is None or float(current_aspect) <= 0.0:
+            raise UnrealCompatibilityError(
+                "CameraComponent does not expose a valid aspect ratio."
+            )
+        aspect = float(current_aspect)
+
+    _set_editor_property(component, "aspect_ratio", aspect)
+    _set_editor_property(component, "constrain_aspect_ratio", True, required=False)
+
+    if normalized_axis == "vertical":
+        target_fov = _vertical_to_horizontal_fov(field_of_view_degrees, aspect)
+    else:
+        target_fov = _require_positive_fov(field_of_view_degrees)
+    _set_editor_property(component, "field_of_view", target_fov)
+    return {
+        "strategy": "camera_aspect_and_horizontal_fov",
+        "source_aspect": aspect,
+        "target_value": target_fov,
+        "target_property": "FieldOfView",
+    }
+
+
+def prepare_camera_fov_track(
+    component: Any,
+    keys: list[dict[str, Any]],
+    source_axis: str,
+    source_aspect: float | None = None,
+) -> dict[str, Any]:
+    """Adapt source animated FOV semantics to the target camera component."""
     normalized_axis = str(source_axis).lower()
     if normalized_axis not in {"vertical", "horizontal"}:
         raise UnrealCompatibilityError(f"Unknown source FOV axis: {source_axis}")
@@ -250,10 +431,12 @@ def prepare_camera_fov_track(
         }
 
     if normalized_axis == "vertical":
-        aspect = _editor_property(component, "aspect_ratio")
-        if aspect is None:
-            aspect = getattr(component, "aspect_ratio", None)
-        if aspect is None:
+        aspect = float(source_aspect) if source_aspect is not None else None
+        if aspect is None or aspect <= 0.0:
+            aspect = _editor_property(component, "aspect_ratio")
+            if aspect is None:
+                aspect = getattr(component, "aspect_ratio", None)
+        if aspect is None or float(aspect) <= 0.0:
             raise UnrealCompatibilityError(
                 "CameraComponent does not expose aspect_ratio required to convert "
                 "source vertical FOV to Unreal horizontal FieldOfView."
