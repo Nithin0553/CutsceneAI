@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/validation/report-v0.1",
+  "title": "CutSceneAI Validation Report v0.1",
+  "type": "object",
+  "required": ["schema_version", "benchmark", "status", "summary", "checks"],
+  "properties": {
+    "schema_version": {"const": "0.1.0"},
+    "benchmark": {"type": "string", "minLength": 1},
+    "status": {"enum": ["PASS", "FAIL", "INCOMPLETE"]},
+    "summary": {
+      "type": "object",
+      "required": ["passed", "failed", "incomplete"],
+      "properties": {
+        "passed": {"type": "integer", "minimum": 0},
+        "failed": {"type": "integer", "minimum": 0},
+        "incomplete": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "layer", "status", "expected", "actual", "details"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "layer": {"enum": ["STRUCTURAL", "TIMING", "SPATIAL", "ANIMATION", "CAMERA", "AUDIO_EVENT"]},
+          "status": {"enum": ["PASS", "FAIL", "INCOMPLETE"]},
+          "expected": {},
+          "actual": {},
+          "details": {"type": "string"},
+          "error": {"type": "number"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
