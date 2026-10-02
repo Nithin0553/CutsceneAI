@@ -298,6 +298,34 @@ def compare(
                     dict(match) if match else None,
                     "Skeletal animation asset and section range must match.",
                 )
+                if match is not None:
+                    post_roll_ok = int(exp_track.get("post_roll_frames", 0)) == int(
+                        match.get("post_roll_frames", -1)
+                    )
+                    _check(
+                        checks,
+                        f"animation.post_roll.{name}",
+                        "ANIMATION",
+                        _status_from_bool(post_roll_ok),
+                        int(exp_track.get("post_roll_frames", 0)),
+                        int(match.get("post_roll_frames", -1)),
+                        "Skeletal final-pose hold duration must match.",
+                    )
+                    play_rate_error = abs(
+                        float(exp_track.get("play_rate", 1.0))
+                        - float(match.get("play_rate", 1.0))
+                    )
+                    _check(
+                        checks,
+                        f"animation.play_rate.{name}",
+                        "ANIMATION",
+                        _status_from_bool(play_rate_error <= 1e-6),
+                        float(exp_track.get("play_rate", 1.0)),
+                        float(match.get("play_rate", 1.0)),
+                        "Skeletal animation playback rate must match.",
+                        error=play_rate_error,
+                    )
+
                 if match is not None and "effective_root_delta_cm" in exp_track:
                     actual_delta = match.get("effective_root_delta_cm")
                     if actual_delta is None:
