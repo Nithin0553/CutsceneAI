@@ -101,6 +101,7 @@ def build_expectation(
                     - int(action["end_frame"]),
                 ),
                 "completion_mode": str(action.get("completion_mode", "project_default")),
+                "play_rate": float(action.get("time_scale", 1.0)),
             }
             expected_root_delta = action.get("expected_root_delta_cm")
             if expected_root_delta is not None:
