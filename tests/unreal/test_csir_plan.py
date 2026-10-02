@@ -235,6 +235,8 @@ def test_character_root_motion_and_final_pose_policy_are_planned() -> None:
 
     assert action["completion_mode"] == "keep_state"
     assert action["completion_provenance"] == "legacy_csir_missing_post_extrapolation"
+    assert action["hold_end_frame"] == 600
+    assert action["hold_strategy"] == "post_roll_last_frame"
     assert action["source_start_seconds"] == 0.0
     assert action["source_end_seconds"] == 3.25
     assert action["expected_root_delta_cm"] == [-150.0, 10.0, 0.0]
