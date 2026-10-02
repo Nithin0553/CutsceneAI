@@ -112,12 +112,14 @@ def _preflight(plan: dict[str, Any]) -> None:
                     tuple(float(value) for value in expected),
                     target_delta,
                 )
+                action["resolved_root_yaw_degrees"] = yaw
+                action["root_motion_sampling_strategy"] = root_strategy
                 unreal.log(
                     "[CutSceneAI] Preflight root motion "
                     f"{action['entity_name']}: sampler={root_strategy}, "
                     f"expected_cm={tuple(round(float(v), 3) for v in expected)}, "
                     f"target_cm={tuple(round(float(v), 3) for v in target_delta)}, "
-                    f"yaw_correction={None if yaw is None else round(yaw, 3)}"
+                    f"world_yaw_correction={None if yaw is None else round(yaw, 3)}"
                 )
         elif kind == "audio":
             _load_asset(str(action["unreal_asset_path"]))
@@ -185,6 +187,26 @@ def _apply_scene_prep(csir: dict[str, Any], mapping: dict[str, Any]) -> None:
         )
         unreal.log(
             f"[CutSceneAI] Prepared actor {operation['actor_label']} from {operation['source']}"
+        )
+
+
+def _apply_root_motion_alignment(plan: dict[str, Any]) -> None:
+    """Apply measured trajectory alignment in actor/world space before Sequencer build."""
+    for action in plan.get("actions", []):
+        if str(action.get("kind")) != "skeletal_animation":
+            continue
+        yaw = action.get("resolved_root_yaw_degrees")
+        if yaw is None or abs(float(yaw)) <= 0.05:
+            continue
+        actor = _find_actor(str(action["actor_label"]))
+        try:
+            strategy = unreal_compat.apply_actor_world_yaw_alignment(actor, float(yaw))
+        except unreal_compat.UnrealCompatibilityError as exc:
+            raise UnrealBuildError(str(exc)) from exc
+        unreal.log(
+            "[CutSceneAI] Root motion aligned "
+            f"{action['entity_name']}: space=actor_world, strategy={strategy}, "
+            f"yaw={float(yaw):.3f} deg"
         )
 
 
@@ -277,31 +299,6 @@ def _add_skeletal_animation(
             f"{action['entity_name']}: post_roll_frames={post_roll_frames}, "
             f"strategy={hold_strategy}"
         )
-
-    expected = action.get("expected_root_delta_cm")
-    if expected is not None:
-        try:
-            target_delta, root_strategy = unreal_compat.extract_animation_root_delta_cm(
-                animation,
-                float(action.get("source_start_seconds", 0.0)),
-                float(action.get("source_end_seconds", 0.0)),
-            )
-        except unreal_compat.UnrealCompatibilityError as exc:
-            raise UnrealBuildError(str(exc)) from exc
-        yaw = csir_plan.root_motion_yaw_alignment_degrees(
-            tuple(float(value) for value in expected),
-            target_delta,
-        )
-        if yaw is not None and abs(yaw) > 0.05:
-            try:
-                alignment_strategy = unreal_compat.apply_skeletal_root_yaw(section, yaw)
-            except unreal_compat.UnrealCompatibilityError as exc:
-                raise UnrealBuildError(str(exc)) from exc
-            unreal.log(
-                "[CutSceneAI] Root motion aligned "
-                f"{action['entity_name']}: sampler={root_strategy}, "
-                f"section={alignment_strategy}, yaw={yaw:.3f} deg"
-            )
 
     completion = str(action.get("completion_mode", "project_default"))
     try:
@@ -419,6 +416,7 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
 
     _preflight(plan)
     _apply_scene_prep(csir, mapping)
+    _apply_root_motion_alignment(plan)
     sequence: unreal.LevelSequence | None = None
     try:
         sequence = _create_sequence(plan)
