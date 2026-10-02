@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[2]
 UNREAL_INTEGRATION = ROOT / "integrations" / "unreal"
 sys.path.insert(0, str(UNREAL_INTEGRATION))
 
+import csir_plan
 import scene_prep
 
 
