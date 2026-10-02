@@ -123,13 +123,16 @@
         "resolver": "animation.root_motion.align_from_measured_displacement",
         "parameters": {
           "modify_source_asset": false,
-          "calibrate_target_section": true
+          "calibrate_target_actor_world_yaw": true,
+          "do_not_rotate_skeletal_section": true,
+          "alignment_axis": "unreal_world_up_z"
         },
         "required_evidence": [
           "source.root_motion_delta",
           "target.imported_root_motion_delta"
         ]
-      }
+      },
+      "notes": "Measure source and target root travel, then align the target actor around Unreal world-up. Do not use skeletal-section rotation offsets for trajectory correction."
     },
     {
       "rule_id": "unity-unreal-section-completion",
