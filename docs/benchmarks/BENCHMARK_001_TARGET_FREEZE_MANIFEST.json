@@ -1,0 +1,43 @@
+{
+  "schema_version": "0.1.0",
+  "benchmark": "Benchmark001",
+  "status": "FROZEN_AUTOMATED_PASS",
+  "source": {
+    "engine": "Unity",
+    "sha256": "5da9ede712854e77bb51e914ccf99d6e5b7432e6b9d24acbbb971c2d539b5ef4"
+  },
+  "target": {
+    "engine": {
+      "name": "unreal",
+      "version": "5.8.3-58210709+++UE5+Release-5.8"
+    },
+    "sequence_asset_path": "/Game/CutSceneAI/Benchmark001/LS_Benchmark001",
+    "sha256": "384f246f066cbab18969d49d4a4824e8aa80c16f42175098796a3ed522618304"
+  },
+  "validation": {
+    "status": "PASS",
+    "summary": {
+      "passed": 54,
+      "failed": 0,
+      "incomplete": 0
+    },
+    "expected_sha256": "bd4e49c138fc00d1d3fd563ca9304d7e66c7c77e11b78a5f7fad258014a898af",
+    "readback_sha256": "53551b043528a2df9b97d784e901a4f1200d82948fb5be88d01dfeede8a5e10e",
+    "report_sha256": "c63d76cda0422ae011bda46d114438dd42ac9ec9127c1e2d18d7bef0ba859df6",
+    "display_rate": {
+      "numerator": 60,
+      "denominator": 1
+    },
+    "playback": {
+      "start_frame": 0,
+      "end_frame": 600
+    }
+  },
+  "mapping": {
+    "sha256": "1fa9322d344cec34ff24a7672fec59164544a5cff4efe4f89a0856bd0c01fd03"
+  },
+  "software": {
+    "repository": "Nithin0553/CutsceneAI",
+    "git_head": "094e926f9887139a3f6eb18522a764f257daa55e"
+  }
+}
