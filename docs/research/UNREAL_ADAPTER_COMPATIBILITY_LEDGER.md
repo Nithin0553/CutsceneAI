@@ -72,6 +72,54 @@ regression guard so the same failure signature is not reintroduced.
 - **Preflight:** camera setup feasibility is validated without mutating the target.
 - **Regression guards:** camera-plan and Unreal-builder contract tests.
 
+## ANIM-001 — Imported root motion can use a different forward basis
+
+- **Observed after successful Benchmark001 generation:** the source walk/turn clip played
+  correctly, but the guard travelled in the wrong world direction.
+- **Root cause:** matching the source animation asset by identity is not sufficient to
+  guarantee that its imported target root track uses the same engine-space forward basis.
+  The source CSIR already contains Unity `RootT.x/y/z` curves, so direction should be
+  calibrated from data rather than guessed from engine conventions.
+- **Permanent fix:** the plan derives expected source root displacement from `RootT`,
+  converts it to target world axes, then the Unreal adapter samples the imported target
+  animation root track and computes the minimal horizontal yaw needed to align the two.
+  The correction is applied as the Sequencer section's root-motion rotation offset; the
+  imported animation asset itself remains unchanged.
+- **Preflight:** expected and target root displacements plus the computed yaw correction
+  are logged before target mutation.
+- **Regression guards:** pure root-motion alignment tests plus Unreal adapter contract
+  checks.
+
+## ANIM-002 — Skeletal section returned to reference/T-pose after the clip
+
+- **Observed:** after the 3.25 second character animation finished, the target character
+  returned to its reference/T-pose even though the desired evaluated cutscene state is
+  to remain at the completed pose.
+- **Root cause:** the generated Unreal skeletal section did not explicitly preserve its
+  completion state. The frozen CSIR 0.1.5 also does not preserve Unity Timeline clip
+  post-extrapolation, so the adapter cannot recover that policy exactly from this legacy
+  artifact.
+- **Permanent fix for the frozen benchmark:** set the generated skeletal section to
+  `KeepState`, preventing Unreal from restoring the pre-animation/reference pose.
+- **Future extractor requirement:** preserve Timeline pre/post-extrapolation explicitly
+  in CSIR so future transfers can map source completion semantics instead of relying on
+  a legacy fallback.
+- **Regression guard:** the Unreal builder contract requires an explicit completion-mode
+  path and the planner marks its provenance.
+
+## CAMERA-003 — Unity observed Camera.aspect is not a safe camera intrinsic
+
+- **Observed:** preserving the frozen source `Camera.aspect` value produced an
+  extremely wide CineCamera filmback and strong letterboxing in the Unreal viewport.
+- **Root cause:** Unity's observed camera aspect can reflect the active Game/editor view.
+  Treating that runtime value as an authored lens intrinsic makes target framing depend
+  on the source editor window rather than on a controlled validation output.
+- **Permanent fix:** keep the observed source aspect as provenance only. Camera
+  realization now uses an explicit `output_resolution` gate from the mapping; the
+  Benchmark001 default is 1920x1080 when no mapping value is supplied.
+- **Outcome:** vertical FOV remains source-derived while horizontal framing becomes
+  reproducible for a declared validation resolution.
+
 ## Failure-handling rule
 
 The Unreal builder now deletes an incomplete generated Level Sequence when a build
