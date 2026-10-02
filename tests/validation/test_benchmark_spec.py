@@ -9,7 +9,7 @@ import benchmark_spec
 
 def _rt(seconds: float) -> dict:
     return {
-        "value": int(round(seconds * 1_000_000)),
+        "value": round(seconds * 1_000_000),
         "rate": {"numerator": 1_000_000, "denominator": 1},
     }
 
