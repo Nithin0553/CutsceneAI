@@ -14,6 +14,7 @@ The benchmark must not copy Benchmark001 timing, camera count, character count, 
 - Duration: **12 seconds**
 - Validation output: **2048 × 858**
 - Source remains authoritative.
+- Benchmark002 reuses the existing Unity benchmark project but lives in a separate scene/Timeline/assets namespace; Benchmark001 remains untouched.
 - Target assets may be prepared/mapped, but cinematic timing and authored behavior must come from source extraction.
 
 ## Source scene design
@@ -87,7 +88,7 @@ Two audio sections must overlap. At least one fade-in and one fade-out must be a
 The important new question is not simply “can we generate another sequence?” It is:
 
 ```text
-Can CutSceneAI analyze a different project/cutscene,
+Can CutSceneAI analyze a substantially different cutscene in the same source project,
 discover the relevant semantics,
 resolve mappings from evidence,
 generate the target,
@@ -109,3 +110,7 @@ Do not manually repair the target sequence.
 Benchmark002 passes only after the Unity source is frozen by SHA-256, Project Intelligence profiles are captured for source and target, adaptive mappings are resolved without benchmark-name special cases, Unreal generation completes from CSIR, the saved target is independently read back, all required automated checks report zero failed and zero incomplete, visual review confirms the intended cinematic result, and source/target/mapping/readback/validation/software identities are frozen.
 
 The machine-readable definition is `BENCHMARK_002_SPEC.json`.
+
+## Generalization scope
+
+Benchmark002 tests **cutscene-level generalization** while holding the Unity project/runtime configuration constant. This deliberately isolates new cinematic structure from project-setting changes. Project-level generalization across different render pipelines, engine versions, import conventions, or project settings should be tested in a later benchmark rather than confounded with this one.
