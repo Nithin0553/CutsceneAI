@@ -132,6 +132,67 @@ def _source_root_delta_unreal_cm(section: dict[str, Any]) -> tuple[float, float,
     return canonical_position_to_unreal_cm(canonical_delta)
 
 
+def _source_root_profile_unreal_cm(section: dict[str, Any]) -> dict[str, float] | None:
+    """Summarize source RootT trajectory in Unreal world-axis centimeters.
+
+    The profile is used for validation policy. It does not change the transferred
+    animation. Vertical excursion is measured over source curve key times inside the
+    section so a jump-like clip is not misclassified from a near-zero end displacement.
+    """
+    curves = {
+        str(curve.get("property_name")): curve
+        for curve in section.get("payload", {}).get("animation", {}).get("curves", [])
+        if str(curve.get("property_name", "")).startswith("RootT.")
+    }
+    required = ("RootT.x", "RootT.y", "RootT.z")
+    if not all(name in curves for name in required):
+        return None
+
+    source_start = rational_seconds(
+        section.get(
+            "source_offset",
+            {"value": 0, "rate": {"numerator": 1, "denominator": 1}},
+        )
+    )
+    timeline_duration = rational_seconds(section["end"]) - rational_seconds(section["start"])
+    source_end = source_start + timeline_duration * float(section.get("time_scale", 1.0))
+
+    times = {source_start, source_end}
+    for curve in curves.values():
+        for key in curve.get("keys", []):
+            time_seconds = float(key["time_seconds"])
+            if source_start <= time_seconds <= source_end:
+                times.add(time_seconds)
+
+    start_x = _curve_value(curves["RootT.x"], source_start)
+    start_y = _curve_value(curves["RootT.y"], source_start)
+    start_z = _curve_value(curves["RootT.z"], source_start)
+
+    positions_unreal_cm: list[tuple[float, float, float]] = []
+    for time_seconds in sorted(times):
+        dx = _curve_value(curves["RootT.x"], time_seconds) - start_x
+        dy = _curve_value(curves["RootT.y"], time_seconds) - start_y
+        dz = _curve_value(curves["RootT.z"], time_seconds) - start_z
+        positions_unreal_cm.append(
+            canonical_position_to_unreal_cm((dx, dy, -dz))
+        )
+
+    if not positions_unreal_cm:
+        return None
+
+    end = positions_unreal_cm[-1]
+    horizontal_distance = math.hypot(float(end[0]), float(end[1]))
+    vertical_values = [float(position[2]) for position in positions_unreal_cm]
+    vertical_excursion = max(vertical_values) - min(vertical_values)
+
+    return {
+        "horizontal_end_distance_cm": horizontal_distance,
+        "vertical_net_displacement_cm": float(end[2]),
+        "vertical_excursion_cm": vertical_excursion,
+        "sample_count": float(len(positions_unreal_cm)),
+    }
+
+
 def root_motion_yaw_alignment_degrees(
     expected_delta_cm: tuple[float, float, float],
     target_delta_cm: tuple[float, float, float],
@@ -437,6 +498,9 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                     }
                     if expected_root_delta is not None:
                         action["expected_root_delta_cm"] = list(expected_root_delta)
+                        source_profile = _source_root_profile_unreal_cm(section)
+                        if source_profile is not None:
+                            action["root_motion_source_profile"] = source_profile
                     plan["actions"].append(action)
                 continue
 
