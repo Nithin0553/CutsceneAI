@@ -17,7 +17,7 @@
         "properties": {
           "ced": {"type": "string", "minLength": 1},
           "subject_id": {"type": "string"},
-          "status": {"enum": ["RESOLVED", "BLOCKED"]},
+          "status": {"enum": ["RESOLVED", "NEEDS_EVIDENCE", "BLOCKED"]},
           "outcome": {"enum": ["EXACT", "CONVERTED", "RETARGETED", "BAKED", "RECONSTRUCTED", "TARGET_MAPPED", "BLOCKED"]},
           "resolver": {"type": "string", "minLength": 1},
           "rule_id": {"type": "string"},
