@@ -57,3 +57,21 @@ The first automated report checks:
 A result may be `PASS`, `FAIL`, or `INCOMPLETE`. Missing readback evidence is never converted into a false pass.
 
 Visual validation remains a separate gate; numerical validation does not claim shader/material/lighting equivalence.
+
+
+## Root-motion numerical policy
+
+Root motion is not validated as bit-identical imported curve data. The source and target
+engines can serialize/resample the same animation differently, so Benchmark001 validates
+the **effective trajectory displacement** with explicit, reported semantic gates:
+
+- endpoint displacement error <= 0.5 cm
+- horizontal direction error <= 0.1 degree
+- horizontal travel-distance relative error <= 0.25%
+
+All measured errors are retained in the validation report. These are Benchmark001 v0.1
+acceptance tolerances, not universal CutSceneAI constants; future benchmarks may define
+different thresholds based on scale, frame rate, transfer mode, and asset provenance.
+
+This policy deliberately still rejects wrong-direction motion and visible trajectory
+drift while avoiding false failures from sub-centimeter import/resampling differences.

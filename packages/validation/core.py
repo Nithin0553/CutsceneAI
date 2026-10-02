@@ -15,7 +15,9 @@ DEFAULT_TOLERANCES = {
     "rotation_deg": 0.05,
     "scale": 1e-4,
     "fov_deg": 0.05,
-    "root_motion_cm": 0.1,
+    "root_motion_endpoint_cm": 0.5,
+    "root_motion_direction_deg": 0.1,
+    "root_motion_distance_relative": 0.0025,
 }
 
 
@@ -58,6 +60,44 @@ def _position_error(expected: Iterable[float], actual: Iterable[float]) -> float
 
 def _scale_error(expected: Iterable[float], actual: Iterable[float]) -> float:
     return _position_error(expected, actual)
+
+
+def root_motion_metrics(
+    expected: Iterable[float],
+    actual: Iterable[float],
+) -> dict[str, float]:
+    exp = tuple(float(value) for value in expected)
+    act = tuple(float(value) for value in actual)
+    if len(exp) != 3 or len(act) != 3:
+        raise ValueError("Root-motion displacement must contain three values")
+
+    delta = tuple(act[i] - exp[i] for i in range(3))
+    endpoint_error = math.sqrt(sum(value * value for value in delta))
+
+    exp_horizontal = math.hypot(exp[0], exp[1])
+    act_horizontal = math.hypot(act[0], act[1])
+    horizontal_distance_error = abs(act_horizontal - exp_horizontal)
+    relative_distance_error = (
+        horizontal_distance_error / exp_horizontal if exp_horizontal > 1e-9 else 0.0
+    )
+
+    if exp_horizontal > 1e-9 and act_horizontal > 1e-9:
+        dot = (exp[0] * act[0] + exp[1] * act[1]) / (
+            exp_horizontal * act_horizontal
+        )
+        dot = max(-1.0, min(1.0, dot))
+        direction_error = math.degrees(math.acos(dot))
+    else:
+        direction_error = 0.0
+
+    return {
+        "endpoint_error_cm": endpoint_error,
+        "horizontal_distance_error_cm": horizontal_distance_error,
+        "horizontal_distance_relative_error": relative_distance_error,
+        "direction_error_degrees": direction_error,
+        "vertical_error_cm": abs(delta[2]),
+        "max_component_error_cm": max(abs(value) for value in delta),
+    }
 
 
 def _quat_normalize(q: Iterable[float]) -> tuple[float, float, float, float]:
@@ -339,18 +379,45 @@ def compare(
                             "Readback could not measure effective root-motion displacement.",
                         )
                     else:
-                        root_error = _position_error(
-                            exp_track["effective_root_delta_cm"], actual_delta
+                        metrics = root_motion_metrics(
+                            exp_track["effective_root_delta_cm"],
+                            actual_delta,
                         )
+                        endpoint_ok = (
+                            metrics["endpoint_error_cm"]
+                            <= tol["root_motion_endpoint_cm"]
+                        )
+                        direction_ok = (
+                            metrics["direction_error_degrees"]
+                            <= tol["root_motion_direction_deg"]
+                        )
+                        distance_ok = (
+                            metrics["horizontal_distance_relative_error"]
+                            <= tol["root_motion_distance_relative"]
+                        )
+                        root_ok = endpoint_ok and direction_ok and distance_ok
                         _check(
                             checks,
                             f"animation.root_motion.{name}",
                             "ANIMATION",
-                            _status_from_bool(root_error <= tol["root_motion_cm"]),
-                            exp_track["effective_root_delta_cm"],
-                            actual_delta,
-                            "Effective target root trajectory displacement.",
-                            error=root_error,
+                            _status_from_bool(root_ok),
+                            {
+                                "delta_cm": exp_track["effective_root_delta_cm"],
+                                "tolerances": {
+                                    "endpoint_cm": tol["root_motion_endpoint_cm"],
+                                    "direction_deg": tol["root_motion_direction_deg"],
+                                    "horizontal_distance_relative": tol[
+                                        "root_motion_distance_relative"
+                                    ],
+                                },
+                            },
+                            {
+                                "delta_cm": actual_delta,
+                                "metrics": metrics,
+                            },
+                            "Effective target root trajectory displacement compared "
+                            "with endpoint, direction, and relative-distance gates.",
+                            error=metrics["endpoint_error_cm"],
                         )
 
             elif kind == "transform":
