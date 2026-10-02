@@ -89,3 +89,36 @@ def test_character_uses_animation_playable_clip_offset_not_preview_transform() -
     assert len(operations) == 1
     assert operations[0]["source"] == "animation_clip_offset"
     assert operations[0]["location_cm"] == (700.0, 0.0, 0.0)
+
+
+def test_static_unity_camera_pitch_remains_unreal_pitch_not_roll() -> None:
+    csir = {
+        "entities": [
+            {
+                "entity_id": "cam-a",
+                "ced_type": "entity.camera",
+                "name": "CAM_A_Wide",
+                "metadata": {
+                    "world_transform": {
+                        "position": {"x": 0.0, "y": 2.6, "z": 0.8},
+                        "rotation": {
+                            "x": -0.2164396047592163,
+                            "y": 0.0,
+                            "z": 0.0,
+                            "w": 0.976296067237854,
+                        },
+                        "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+                    }
+                },
+            }
+        ],
+        "tracks": [],
+    }
+    mapping = {"entities": {"CAM_A_Wide": {"actor_label": "CAM_A_Wide"}}}
+
+    operation = scene_prep.build_scene_prep(csir, mapping)[0]
+    pitch, yaw, roll = operation["rotation_pitch_yaw_roll_degrees"]
+
+    assert abs(pitch - 25.0) < 1e-4
+    assert abs(yaw) < 1e-6
+    assert abs(roll) < 1e-6

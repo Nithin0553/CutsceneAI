@@ -173,7 +173,11 @@ def _apply_scene_prep(csir: dict[str, Any], mapping: dict[str, Any]) -> None:
             False,
         )
         actor.set_actor_rotation(
-            unreal.Rotator(float(pitch), float(yaw), float(roll)),
+            unreal_compat.make_rotator_semantic(
+                roll=float(roll),
+                pitch=float(pitch),
+                yaw=float(yaw),
+            ),
             False,
         )
         actor.set_actor_scale3d(

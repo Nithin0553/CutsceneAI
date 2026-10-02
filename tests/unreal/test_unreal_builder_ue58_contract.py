@@ -95,3 +95,13 @@ def test_skeletal_completion_holds_last_frame_instead_of_restoring_pose() -> Non
     assert "set_section_completion_mode" in builder
     assert "MovieSceneCompletionMode" in compat
     assert "KEEP_STATE" in compat
+
+
+def test_unreal_rotators_are_constructed_by_semantic_field_name() -> None:
+    builder = _read("integrations/unreal/build_level_sequence.py")
+    compat = _read("integrations/unreal/unreal_compat.py")
+    assert "unreal_compat.make_rotator_semantic" in builder
+    assert "make_rotator_semantic(roll=0.0, pitch=0.0, yaw=float(yaw_degrees))" in compat
+    assert "rotator_type(roll=float(roll), pitch=float(pitch), yaw=float(yaw))" in compat
+    assert "unreal.Rotator(float(pitch), float(yaw), float(roll))" not in builder
+    assert "unreal.Rotator(0.0, float(yaw_degrees), 0.0)" not in compat

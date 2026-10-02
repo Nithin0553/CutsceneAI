@@ -70,6 +70,7 @@ def runtime_profile() -> dict[str, str]:
         "engine_version": engine_version(),
         "section_channels": section_channel_strategy(),
         "skeletal_play_rate": play_rate_strategy(),
+        "rotation_construction": "semantic_named_fields",
         "animation_root_sampling": animation_root_sampling_strategy(),
         "skeletal_completion": "feature_probe",
         "camera_component_resolution": "feature_probe",
@@ -96,6 +97,39 @@ def get_section_channels(section: Any) -> list[Any]:
         "No supported Sequencer channel API was found. Expected get_all_channels(), "
         "MovieSceneSectionExtensions.get_all_channels(), or legacy get_channels(). "
         f"Unreal runtime: {engine_version()}."
+    )
+
+
+def make_rotator_semantic(*, roll: float, pitch: float, yaw: float) -> Any:
+    """Construct an Unreal rotator by semantic field name, never positional order.
+
+    Unreal's Python wrapper exposes Rotator(roll, pitch, yaw), while native C++ FRotator
+    constructors are commonly documented as (pitch, yaw, roll). Named fields prevent
+    binding-language/version details from changing cinematic meaning.
+    """
+    rotator_type = getattr(unreal, "Rotator", None)
+    if rotator_type is None:
+        raise UnrealCompatibilityError(
+            f"Unreal runtime does not expose Rotator. Runtime: {engine_version()}."
+        )
+
+    try:
+        return rotator_type(roll=float(roll), pitch=float(pitch), yaw=float(yaw))
+    except Exception:
+        try:
+            value = rotator_type()
+            setter = getattr(value, "set_editor_property", None)
+            if callable(setter):
+                setter("roll", float(roll))
+                setter("pitch", float(pitch))
+                setter("yaw", float(yaw))
+                return value
+        except Exception:
+            pass
+
+    raise UnrealCompatibilityError(
+        "Unable to construct Rotator through semantic roll/pitch/yaw fields on "
+        f"Unreal {engine_version()}."
     )
 
 
@@ -279,7 +313,7 @@ def extract_animation_root_delta_cm(
 
 def apply_skeletal_root_yaw(section: Any, yaw_degrees: float) -> str:
     """Rotate a skeletal section's root-motion basis without editing the animation asset."""
-    rotation = unreal.Rotator(0.0, float(yaw_degrees), 0.0)
+    rotation = make_rotator_semantic(roll=0.0, pitch=0.0, yaw=float(yaw_degrees))
     if _set_editor_property(section, "start_rotation_offset", rotation, required=False):
         return "section.start_rotation_offset"
     raise UnrealCompatibilityError(

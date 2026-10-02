@@ -124,6 +124,14 @@ regression guard so the same failure signature is not reintroduced.
 - **Outcome:** vertical FOV remains source-derived while horizontal framing becomes
   reproducible for a declared validation resolution.
 
+## UE-PY-001 — Rotator positional argument semantic mismatch
+
+- Observed: Benchmark001 CAM_A_Wide arrived with an approximately 25 degree sideways roll. Setting that roll to zero manually restored the intended level horizon.
+- Source evidence: the Unity camera had an approximately 25 degree X pitch and no authored roll.
+- Root cause: the Unreal Python Rotator wrapper exposes constructor fields in roll, pitch, yaw order, while native C++ FRotator documentation describes its three-value constructor as pitch, yaw, roll. The adapter passed positional values and therefore assigned semantic components incorrectly.
+- Permanent fix: all Unreal Rotator construction now routes through unreal_compat.make_rotator_semantic() using explicit named roll=, pitch=, yaw= fields. The adaptive mapping rule requires the rotator.semantic_fields capability and explicitly forbids positional constructor assumptions.
+- Scope: this also fixes skeletal root-motion yaw offsets, which had used a positional Rotator call.
+- Regression guard: the Unreal contract test rejects the old positional patterns.
 ## Failure-handling rule
 
 The Unreal builder now deletes an incomplete generated Level Sequence when a build

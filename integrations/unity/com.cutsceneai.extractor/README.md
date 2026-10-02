@@ -46,3 +46,11 @@ Install this package in Benchmark 001 and verify:
 3. export completes;
 4. exported JSON validates against `packages/contracts/csir/csir-v0.1.schema.json`;
 5. expected benchmark counts/times/assets are present.
+
+
+## Project intelligence
+
+Use **Tools -> CutsceneAI -> Analyze Project** before transfer to emit
+`CutSceneAI_ProjectProfile.json` at the Unity project root. This read-only profile
+captures the Unity version, coordinate/camera conventions, render pipeline, relevant
+capabilities, and evidence consumed by adaptive mapping/readiness.
