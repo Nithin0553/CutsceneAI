@@ -1,6 +1,6 @@
 # Benchmark 001 — Target Validation
 
-Status: **VISUALLY ACCEPTED; AUTOMATED READBACK VALIDATION READY TO RUN**
+Status: **VISUALLY ACCEPTED; AUTOMATED READBACK VALIDATION PASS; TARGET HASH FREEZE PENDING**
 
 ## Ground truth
 
@@ -57,3 +57,24 @@ The updated semantic metric isolated the remaining difference:
 - vertical endpoint error: approximately 0.687 cm
 
 The source RootT curve has only low vertical excursion for this grounded walk/turn clip. The validator therefore now treats the horizontal trajectory as the primary locomotion semantic and evaluates the small vertical endpoint difference under the grounded-motion policy. This policy is derived from source curve excursion rather than from the asset name or a Benchmark001-specific hard code.
+
+
+## Automated PASS achieved
+
+The accepted Unreal target completed the automated readback validation with:
+
+- passed checks: 54
+- failed checks: 0
+- incomplete checks: 0
+- report status: `PASS`
+
+This establishes Benchmark001 as an automated semantic/numerical Unity → Unreal transfer
+pass for the implemented validation layers.
+
+The benchmark is not yet cryptographically frozen because the generated Unreal
+`LS_Benchmark001.uasset` and the three validation artifacts still need local SHA-256
+hashes recorded from the user's Unreal workspace.
+
+Use `tools/benchmark001_freeze.py` to create the target-freeze manifest. The tool refuses
+to freeze if the source CSIR hash differs from the accepted ground truth or if the
+validation report is not PASS with zero failed/incomplete checks.
