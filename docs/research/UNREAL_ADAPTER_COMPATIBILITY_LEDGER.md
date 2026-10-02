@@ -132,6 +132,21 @@ regression guard so the same failure signature is not reintroduced.
 - Permanent fix: all Unreal Rotator construction now routes through unreal_compat.make_rotator_semantic() using explicit named roll=, pitch=, yaw= fields. The adaptive mapping rule requires the rotator.semantic_fields capability and explicitly forbids positional constructor assumptions.
 - Scope: this also fixes skeletal root-motion yaw offsets, which had used a positional Rotator call.
 - Regression guard: the Unreal contract test rejects the old positional patterns.
+## CAMERA-004 — Canonical-to-Unreal pitch sign regression
+
+- **Observed:** after switching Unreal Rotator construction to explicit semantic fields, Benchmark001 CAM_A_Wide no longer rolled sideways, but it looked upward and the first shot became mostly sky.
+- **Source evidence:** the frozen CSIR camera quaternion represents the Unity-authored +25 degree X camera pitch (a downward-looking camera).
+- **Root cause:** the canonical quaternion basis conversion was correct, but the generic Euler-matrix extraction used the wrong sign for Unreal Pitch. Unreal defines positive Pitch as nose-up; the source camera needs approximately -25 degrees in Unreal.
+- **Permanent fix:** derive Unreal Roll/Pitch/Yaw from the converted target forward and right basis. Pitch is now atan2(forward.z, horizontal_length), yaw comes from the horizontal forward vector, and roll is measured relative to the zero-roll target basis.
+- **Regression guards:** Unity +25 X camera rotation must resolve to Unreal Pitch=-25, Yaw=0, Roll=0; independent yaw and roll tests are also included.
+
+## ANIM-003 — Root-motion trajectory correction must not use skeletal section orientation
+
+- **Observed:** character trajectory alignment was implemented through MovieSceneSkeletalAnimationSection.start_rotation_offset; subsequent generated frames could leave the character with an invalid body orientation during/after the animation.
+- **Root cause:** root-motion travel direction is a world-trajectory concern, while a skeletal-section rotation offset is evaluated in animation/root-bone space. Treating those spaces as interchangeable is unsafe for imported rigs.
+- **Permanent fix:** CutSceneAI still measures source and imported-target root displacement, but applies the resolved horizontal yaw to the mapped character actor around Unreal world-up (+Z). The skeletal animation section is no longer rotated for trajectory correction.
+- **Adaptive rule:** animation.root_motion now requires actor-world yaw calibration and explicitly forbids skeletal-section rotation for this purpose.
+- **Regression guard:** the builder contract requires actor-world alignment and rejects the previous apply_skeletal_root_yaw(section, yaw) path.
 ## Failure-handling rule
 
 The Unreal builder now deletes an incomplete generated Level Sequence when a build
