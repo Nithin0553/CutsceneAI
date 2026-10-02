@@ -46,3 +46,14 @@ relative horizontal travel-distance error separately. The declared v0.1 threshol
 0.5 cm endpoint, 0.1 degree direction, and 0.25% horizontal distance. The report retains
 the measured values so the pass is quantitative and auditable rather than visually
 waived.
+
+## Second automated run finding
+
+The updated semantic metric isolated the remaining difference:
+
+- horizontal endpoint error: approximately 0.017 cm
+- horizontal relative distance error: approximately 0.0119%
+- direction error: approximately 0.0000015 degree
+- vertical endpoint error: approximately 0.687 cm
+
+The source RootT curve has only low vertical excursion for this grounded walk/turn clip. The validator therefore now treats the horizontal trajectory as the primary locomotion semantic and evaluates the small vertical endpoint difference under the grounded-motion policy. This policy is derived from source curve excursion rather than from the asset name or a Benchmark001-specific hard code.

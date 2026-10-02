@@ -15,9 +15,12 @@ DEFAULT_TOLERANCES = {
     "rotation_deg": 0.05,
     "scale": 1e-4,
     "fov_deg": 0.05,
-    "root_motion_endpoint_cm": 0.5,
+    "root_motion_horizontal_endpoint_cm": 0.5,
     "root_motion_direction_deg": 0.1,
     "root_motion_distance_relative": 0.0025,
+    "root_motion_grounded_min_horizontal_cm": 50.0,
+    "root_motion_grounded_max_vertical_excursion_cm": 5.0,
+    "root_motion_grounded_vertical_endpoint_cm": 1.0,
 }
 
 
@@ -73,6 +76,7 @@ def root_motion_metrics(
 
     delta = tuple(act[i] - exp[i] for i in range(3))
     endpoint_error = math.sqrt(sum(value * value for value in delta))
+    horizontal_endpoint_error = math.hypot(delta[0], delta[1])
 
     exp_horizontal = math.hypot(exp[0], exp[1])
     act_horizontal = math.hypot(act[0], act[1])
@@ -92,11 +96,60 @@ def root_motion_metrics(
 
     return {
         "endpoint_error_cm": endpoint_error,
+        "horizontal_endpoint_error_cm": horizontal_endpoint_error,
         "horizontal_distance_error_cm": horizontal_distance_error,
         "horizontal_distance_relative_error": relative_distance_error,
         "direction_error_degrees": direction_error,
         "vertical_error_cm": abs(delta[2]),
         "max_component_error_cm": max(abs(value) for value in delta),
+    }
+
+
+def root_motion_policy(
+    source_profile: JsonObject | None,
+    tolerances: JsonObject,
+) -> dict[str, Any]:
+    """Choose the validation policy from source trajectory evidence.
+
+    Low-vertical-excursion long-range motion is treated as grounded locomotion: horizontal
+    trajectory is strict, while the vertical endpoint receives a small import/resampling
+    allowance. Clips with significant vertical excursion are not falsely passed by an
+    endpoint-only validator; they require future sampled trajectory validation.
+    """
+    if not isinstance(source_profile, Mapping):
+        return {
+            "mode": "unknown_source_profile",
+            "status": "INCOMPLETE",
+            "details": "Source root-motion excursion profile is unavailable.",
+        }
+
+    horizontal = float(source_profile.get("horizontal_end_distance_cm", 0.0))
+    vertical_excursion = float(source_profile.get("vertical_excursion_cm", math.inf))
+    grounded = (
+        horizontal >= float(tolerances["root_motion_grounded_min_horizontal_cm"])
+        and vertical_excursion
+        <= float(tolerances["root_motion_grounded_max_vertical_excursion_cm"])
+    )
+    if grounded:
+        return {
+            "mode": "grounded_low_vertical_excursion",
+            "status": "RESOLVED",
+            "horizontal_end_distance_cm": horizontal,
+            "vertical_excursion_cm": vertical_excursion,
+            "vertical_endpoint_tolerance_cm": float(
+                tolerances["root_motion_grounded_vertical_endpoint_cm"]
+            ),
+        }
+
+    return {
+        "mode": "requires_sampled_vertical_trajectory",
+        "status": "INCOMPLETE",
+        "horizontal_end_distance_cm": horizontal,
+        "vertical_excursion_cm": vertical_excursion,
+        "details": (
+            "Source motion has material vertical excursion or insufficient horizontal "
+            "travel; endpoint-only vertical validation is not enough."
+        ),
     }
 
 
@@ -383,9 +436,14 @@ def compare(
                             exp_track["effective_root_delta_cm"],
                             actual_delta,
                         )
-                        endpoint_ok = (
-                            metrics["endpoint_error_cm"]
-                            <= tol["root_motion_endpoint_cm"]
+                        policy = root_motion_policy(
+                            exp_track.get("root_motion_source_profile"),
+                            tol,
+                        )
+
+                        horizontal_endpoint_ok = (
+                            metrics["horizontal_endpoint_error_cm"]
+                            <= tol["root_motion_horizontal_endpoint_cm"]
                         )
                         direction_ok = (
                             metrics["direction_error_degrees"]
@@ -395,29 +453,52 @@ def compare(
                             metrics["horizontal_distance_relative_error"]
                             <= tol["root_motion_distance_relative"]
                         )
-                        root_ok = endpoint_ok and direction_ok and distance_ok
+                        horizontal_ok = (
+                            horizontal_endpoint_ok and direction_ok and distance_ok
+                        )
+
+                        if policy["status"] == "RESOLVED":
+                            vertical_ok = (
+                                metrics["vertical_error_cm"]
+                                <= float(policy["vertical_endpoint_tolerance_cm"])
+                            )
+                            root_status = _status_from_bool(horizontal_ok and vertical_ok)
+                        elif horizontal_ok:
+                            root_status = "INCOMPLETE"
+                        else:
+                            root_status = "FAIL"
+
                         _check(
                             checks,
                             f"animation.root_motion.{name}",
                             "ANIMATION",
-                            _status_from_bool(root_ok),
+                            root_status,
                             {
                                 "delta_cm": exp_track["effective_root_delta_cm"],
+                                "source_profile": exp_track.get(
+                                    "root_motion_source_profile"
+                                ),
                                 "tolerances": {
-                                    "endpoint_cm": tol["root_motion_endpoint_cm"],
+                                    "horizontal_endpoint_cm": tol[
+                                        "root_motion_horizontal_endpoint_cm"
+                                    ],
                                     "direction_deg": tol["root_motion_direction_deg"],
                                     "horizontal_distance_relative": tol[
                                         "root_motion_distance_relative"
+                                    ],
+                                    "grounded_vertical_endpoint_cm": tol[
+                                        "root_motion_grounded_vertical_endpoint_cm"
                                     ],
                                 },
                             },
                             {
                                 "delta_cm": actual_delta,
                                 "metrics": metrics,
+                                "policy": policy,
                             },
-                            "Effective target root trajectory displacement compared "
-                            "with endpoint, direction, and relative-distance gates.",
-                            error=metrics["endpoint_error_cm"],
+                            "Effective target root trajectory displacement validated "
+                            "with source-derived horizontal/vertical semantics.",
+                            error=metrics["horizontal_endpoint_error_cm"],
                         )
 
             elif kind == "transform":

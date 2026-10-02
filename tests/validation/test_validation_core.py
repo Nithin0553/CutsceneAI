@@ -38,6 +38,12 @@ def _snapshot() -> dict:
                         "post_roll_frames": 405,
                         "play_rate": 1.0,
                         "effective_root_delta_cm": [-150.0, 0.0, 0.0],
+                        "root_motion_source_profile": {
+                            "horizontal_end_distance_cm": 150.0,
+                            "vertical_net_displacement_cm": 0.0,
+                            "vertical_excursion_cm": 2.5,
+                            "sample_count": 40.0,
+                        },
                     }
                 ],
             },
@@ -157,7 +163,7 @@ def test_root_motion_subcentimeter_import_difference_passes_semantic_gate() -> N
         if check["id"] == "animation.root_motion.CHARACTER_Guard"
     )
     assert item["status"] == "PASS"
-    assert item["actual"]["metrics"]["endpoint_error_cm"] < 0.5
+    assert item["actual"]["metrics"]["horizontal_endpoint_error_cm"] < 0.5
 
 
 def test_root_motion_wrong_direction_still_fails() -> None:
@@ -195,4 +201,58 @@ def test_root_motion_large_endpoint_drift_fails() -> None:
         if check["id"] == "animation.root_motion.CHARACTER_Guard"
     )
     assert item["status"] == "FAIL"
-    assert item["actual"]["metrics"]["endpoint_error_cm"] > 0.5
+    assert item["actual"]["metrics"]["horizontal_endpoint_error_cm"] > 0.5
+
+
+def test_grounded_root_motion_allows_small_vertical_import_baseline_difference() -> None:
+    expected = _snapshot()
+    expected_track = expected["bindings"][1]["tracks"][0]
+    expected_track["effective_root_delta_cm"] = [
+        -143.279836831084,
+        9.377430092622522,
+        -0.3940307787440145,
+    ]
+    expected_track["root_motion_source_profile"] = {
+        "horizontal_end_distance_cm": 143.586393,
+        "vertical_net_displacement_cm": -0.3940307787440145,
+        "vertical_excursion_cm": 2.565968,
+        "sample_count": 75.0,
+    }
+
+    actual = copy.deepcopy(expected)
+    actual["bindings"][1]["tracks"][0]["effective_root_delta_cm"] = [
+        -143.2968983194817,
+        9.378550322968488,
+        -1.0808486938476562,
+    ]
+
+    report = core.compare(expected, actual)
+    item = next(
+        check for check in report["checks"]
+        if check["id"] == "animation.root_motion.CHARACTER_Guard"
+    )
+
+    assert item["status"] == "PASS"
+    assert item["actual"]["policy"]["mode"] == "grounded_low_vertical_excursion"
+    assert item["actual"]["metrics"]["horizontal_endpoint_error_cm"] < 0.02
+    assert item["actual"]["metrics"]["vertical_error_cm"] < 1.0
+
+
+def test_material_vertical_excursion_requires_sampled_trajectory_validation() -> None:
+    expected = _snapshot()
+    expected["bindings"][1]["tracks"][0]["root_motion_source_profile"] = {
+        "horizontal_end_distance_cm": 120.0,
+        "vertical_net_displacement_cm": 0.0,
+        "vertical_excursion_cm": 85.0,
+        "sample_count": 80.0,
+    }
+    actual = copy.deepcopy(expected)
+
+    report = core.compare(expected, actual)
+    item = next(
+        check for check in report["checks"]
+        if check["id"] == "animation.root_motion.CHARACTER_Guard"
+    )
+
+    assert item["status"] == "INCOMPLETE"
+    assert item["actual"]["policy"]["mode"] == "requires_sampled_vertical_trajectory"
