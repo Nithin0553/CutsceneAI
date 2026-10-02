@@ -100,3 +100,31 @@ Or write it to a JSON file:
 The profile records engine/runtime capabilities and semantic conventions used by the
 adaptive mapping resolver. Rotation construction is capability-driven and uses named
 roll/pitch/yaw fields rather than positional Rotator arguments.
+
+## Readback and Benchmark001 validation
+
+After a generated sequence is visually accepted, validate the **saved target** rather than the generation request.
+
+Run from Unreal's Python console:
+
+```python
+import sys
+sys.path.append(r"B:/Research/CutSceneAI/CutsceneAI/integrations/unreal")
+import validate_benchmark001
+
+report = validate_benchmark001.run(
+    r"D:/Unreal/CutsceneAI_Benchmark001_Unreal/Benchmark001.csir.json",
+    r"B:/Research/CutSceneAI/CutsceneAI/integrations/unreal/benchmark001_mapping.json",
+    r"D:/Unreal/CutsceneAI_Benchmark001_Unreal/validation",
+)
+```
+
+The runner writes three artifacts:
+
+- `Benchmark001.expected.json` — source-derived semantic expectation
+- `Benchmark001.unreal.readback.json` — data read from the saved Level Sequence and mapped actors
+- `Benchmark001.validation.json` — layered PASS/FAIL/INCOMPLETE report
+
+The readback extractor independently inspects actual Sequencer bindings, tracks, sections, keys, camera cuts, audio, marked frames, camera lens state, mapped actor transforms, and target animation/root-motion data. It does not call `csir_plan.build_plan()`.
+
+Do not manually edit the sequence to make a failed report pass. Fix the adapter/mapping, add a regression test, regenerate, and rerun readback.
