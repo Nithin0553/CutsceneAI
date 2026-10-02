@@ -102,7 +102,7 @@ def _preflight(plan: dict[str, Any]) -> None:
             actor = actor_cache[action["entity_name"]]
             component, resolution_strategy = _camera_component(actor)
             try:
-                setup_spec = unreal_compat.apply_camera_setup(
+                setup_spec = unreal_compat.validate_camera_setup(
                     component,
                     field_of_view_degrees=float(action["field_of_view_degrees"]),
                     source_axis=str(action.get("source_fov_axis", "vertical")),
