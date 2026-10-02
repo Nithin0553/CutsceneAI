@@ -71,6 +71,25 @@ aspect ratio.
 
 This is semantic conversion, not regeneration.
 
+## Animation semantic adaptation
+
+Animation identity and skeletal compatibility do not guarantee equivalent world motion
+after import. CutSceneAI therefore separates pose transfer from root-motion alignment.
+When source root curves are available, the adapter computes the source world
+displacement, samples the imported target animation root displacement, and aligns the
+target section through a non-destructive Sequencer root-motion offset.
+
+Section completion behavior is also explicit. A target engine must not silently restore
+a reference pose when the source cutscene expects the evaluated end state to persist.
+
+## Camera output gate
+
+Camera FOV is a lens semantic, while aspect ratio may be a property of the active render
+surface rather than of the camera asset itself. Validation therefore uses an explicit
+output-resolution gate. Source-observed aspect values can be retained as provenance, but
+target filmback/aspect should be derived from the declared validation output unless the
+source provides an explicitly authored aspect constraint.
+
 ## Regression rule
 
 Every engine integration failure found in a real transfer must produce:
