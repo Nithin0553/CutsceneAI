@@ -24,6 +24,21 @@ class CutsceneDescriptor:
 
 
 @dataclass(frozen=True)
+class ProjectAnalysis:
+    """Observed project facts used to resolve engine/version/project-specific mappings."""
+
+    profile_id: str
+    engine: str
+    engine_version: str
+    project_fingerprint: str
+    conventions: JsonObject
+    settings: JsonObject
+    capabilities: tuple[JsonObject, ...]
+    evidence: tuple[JsonObject, ...]
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class CapabilityReport:
     adapter_name: str
     adapter_version: str
@@ -73,7 +88,13 @@ class EngineAdapter(Protocol):
 
     def validate_project(self, project_path: Path) -> ProjectDescriptor: ...
 
-    def discover_capabilities(self, project: ProjectDescriptor) -> CapabilityReport: ...
+    def analyze_project(self, project: ProjectDescriptor) -> ProjectAnalysis:
+        """Inspect conventions/settings/capabilities without mutating the project."""
+        ...
+
+    def discover_capabilities(self, project: ProjectDescriptor) -> CapabilityReport:
+        """Compatibility summary derived from the richer project analysis."""
+        ...
 
     def list_cutscenes(self, project: ProjectDescriptor) -> Sequence[CutsceneDescriptor]: ...
 
