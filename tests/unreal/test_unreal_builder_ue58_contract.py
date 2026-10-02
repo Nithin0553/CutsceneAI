@@ -84,11 +84,14 @@ def test_skeletal_root_motion_is_calibrated_against_target_asset() -> None:
     assert '"start_rotation_offset"' in compat
 
 
-def test_skeletal_completion_keeps_last_pose_instead_of_t_pose() -> None:
+def test_skeletal_completion_holds_last_frame_instead_of_restoring_pose() -> None:
     builder = _read("integrations/unreal/build_level_sequence.py")
     compat = _read("integrations/unreal/unreal_compat.py")
     plan = _read("integrations/unreal/csir_plan.py")
     assert '"completion_mode": "keep_state"' in plan
+    assert '"hold_strategy": "post_roll_last_frame"' in plan
+    assert "set_section_post_roll_frames" in builder
+    assert "set_post_roll_frames" in compat
     assert "set_section_completion_mode" in builder
     assert "MovieSceneCompletionMode" in compat
     assert "KEEP_STATE" in compat
