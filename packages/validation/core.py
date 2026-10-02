@@ -233,6 +233,49 @@ def compare(
                     error=s_error,
                 )
 
+        exp_camera = exp_binding.get("camera_state")
+        if isinstance(exp_camera, Mapping):
+            act_camera = act_binding.get("camera_state")
+            if not isinstance(act_camera, Mapping):
+                _check(
+                    checks,
+                    f"camera.static.{name}",
+                    "CAMERA",
+                    "INCOMPLETE",
+                    exp_camera,
+                    act_camera,
+                    "Target readback did not provide normalized camera state.",
+                )
+            else:
+                fov_error = abs(
+                    float(exp_camera.get("vertical_fov_degrees", 0.0))
+                    - float(act_camera.get("vertical_fov_degrees", 0.0))
+                )
+                aspect_error = abs(
+                    float(exp_camera.get("target_output_aspect", 0.0))
+                    - float(act_camera.get("target_output_aspect", 0.0))
+                )
+                _check(
+                    checks,
+                    f"camera.static_fov.{name}",
+                    "CAMERA",
+                    _status_from_bool(fov_error <= tol["fov_deg"]),
+                    exp_camera.get("vertical_fov_degrees"),
+                    act_camera.get("vertical_fov_degrees"),
+                    "Static camera state compared as vertical FOV.",
+                    error=fov_error,
+                )
+                _check(
+                    checks,
+                    f"camera.aspect.{name}",
+                    "CAMERA",
+                    _status_from_bool(aspect_error <= 1e-6),
+                    exp_camera.get("target_output_aspect"),
+                    act_camera.get("target_output_aspect"),
+                    "Camera output aspect must match the declared validation gate.",
+                    error=aspect_error,
+                )
+
         for exp_track in exp_binding.get("tracks", []):
             if not isinstance(exp_track, Mapping):
                 continue
