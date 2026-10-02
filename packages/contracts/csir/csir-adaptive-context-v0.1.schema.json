@@ -9,6 +9,7 @@
     "cutscene_id": {"type": "string", "minLength": 1},
     "source_project_profile_id": {"type": "string", "minLength": 1},
     "source_snapshot_hash": {"type": "string"},
+    "observed_capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
     "semantic_observations": {
       "type": "array",
       "items": {
