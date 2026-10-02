@@ -96,7 +96,30 @@ def _preflight(plan: dict[str, Any]) -> None:
 
     for action in plan.get("actions", []):
         kind = str(action["kind"])
-        if kind in {"skeletal_animation", "audio"}:
+        if kind == "skeletal_animation":
+            animation = _load_asset(str(action["unreal_asset_path"]))
+            expected = action.get("expected_root_delta_cm")
+            if expected is not None:
+                try:
+                    target_delta, root_strategy = unreal_compat.extract_animation_root_delta_cm(
+                        animation,
+                        float(action.get("source_start_seconds", 0.0)),
+                        float(action.get("source_end_seconds", 0.0)),
+                    )
+                except unreal_compat.UnrealCompatibilityError as exc:
+                    raise UnrealBuildError(str(exc)) from exc
+                yaw = csir_plan.root_motion_yaw_alignment_degrees(
+                    tuple(float(value) for value in expected),
+                    target_delta,
+                )
+                unreal.log(
+                    "[CutSceneAI] Preflight root motion "
+                    f"{action['entity_name']}: sampler={root_strategy}, "
+                    f"expected_cm={tuple(round(float(v), 3) for v in expected)}, "
+                    f"target_cm={tuple(round(float(v), 3) for v in target_delta)}, "
+                    f"yaw_correction={None if yaw is None else round(yaw, 3)}"
+                )
+        elif kind == "audio":
             _load_asset(str(action["unreal_asset_path"]))
         elif kind == "camera_setup":
             actor = actor_cache[action["entity_name"]]
@@ -106,7 +129,7 @@ def _preflight(plan: dict[str, Any]) -> None:
                     component,
                     field_of_view_degrees=float(action["field_of_view_degrees"]),
                     source_axis=str(action.get("source_fov_axis", "vertical")),
-                    source_aspect=action.get("source_aspect"),
+                    target_aspect=action.get("target_output_aspect"),
                     projection=str(action.get("projection", "perspective")),
                 )
             except unreal_compat.UnrealCompatibilityError as exc:
@@ -124,7 +147,7 @@ def _preflight(plan: dict[str, Any]) -> None:
                     component,
                     action["keys"],
                     str(action.get("source_fov_axis", "vertical")),
-                    action.get("source_aspect"),
+                    action.get("target_output_aspect"),
                 )
             except unreal_compat.UnrealCompatibilityError as exc:
                 raise UnrealBuildError(str(exc)) from exc
@@ -234,6 +257,41 @@ def _add_skeletal_animation(binding: Any, action: dict[str, Any]) -> None:
     params.set_editor_property("play_rate", play_rate)
     section.set_editor_property("params", params)
 
+    expected = action.get("expected_root_delta_cm")
+    if expected is not None:
+        try:
+            target_delta, root_strategy = unreal_compat.extract_animation_root_delta_cm(
+                animation,
+                float(action.get("source_start_seconds", 0.0)),
+                float(action.get("source_end_seconds", 0.0)),
+            )
+        except unreal_compat.UnrealCompatibilityError as exc:
+            raise UnrealBuildError(str(exc)) from exc
+        yaw = csir_plan.root_motion_yaw_alignment_degrees(
+            tuple(float(value) for value in expected),
+            target_delta,
+        )
+        if yaw is not None and abs(yaw) > 0.05:
+            try:
+                alignment_strategy = unreal_compat.apply_skeletal_root_yaw(section, yaw)
+            except unreal_compat.UnrealCompatibilityError as exc:
+                raise UnrealBuildError(str(exc)) from exc
+            unreal.log(
+                "[CutSceneAI] Root motion aligned "
+                f"{action['entity_name']}: sampler={root_strategy}, "
+                f"section={alignment_strategy}, yaw={yaw:.3f} deg"
+            )
+
+    completion = str(action.get("completion_mode", "project_default"))
+    try:
+        completion_strategy = unreal_compat.set_section_completion_mode(section, completion)
+    except unreal_compat.UnrealCompatibilityError as exc:
+        raise UnrealBuildError(str(exc)) from exc
+    unreal.log(
+        "[CutSceneAI] Animation completion "
+        f"{action['entity_name']}: mode={completion}, strategy={completion_strategy}"
+    )
+
 
 def _camera_component(actor: unreal.Actor) -> tuple[Any, str]:
     try:
@@ -249,7 +307,7 @@ def _apply_camera_setup(actor: unreal.Actor, action: dict[str, Any]) -> None:
             component,
             field_of_view_degrees=float(action["field_of_view_degrees"]),
             source_axis=str(action.get("source_fov_axis", "vertical")),
-            source_aspect=action.get("source_aspect"),
+            target_aspect=action.get("target_output_aspect"),
             projection=str(action.get("projection", "perspective")),
         )
     except unreal_compat.UnrealCompatibilityError as exc:
@@ -259,7 +317,7 @@ def _apply_camera_setup(actor: unreal.Actor, action: dict[str, Any]) -> None:
         "[CutSceneAI] Camera setup "
         f"{actor.get_actor_label()}: component={resolution_strategy}, "
         f"realization={setup_spec['strategy']}, "
-        f"source_aspect={setup_spec['source_aspect']}"
+        f"target_aspect={setup_spec['target_aspect']}"
     )
 
 
@@ -270,7 +328,7 @@ def _add_camera_fov(sequence: unreal.LevelSequence, actor: unreal.Actor, action:
             component,
             action["keys"],
             str(action.get("source_fov_axis", "vertical")),
-            action.get("source_aspect"),
+            action.get("target_output_aspect"),
         )
     except unreal_compat.UnrealCompatibilityError as exc:
         raise UnrealBuildError(str(exc)) from exc
