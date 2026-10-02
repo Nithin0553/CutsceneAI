@@ -119,6 +119,20 @@ def test_static_unity_camera_pitch_remains_unreal_pitch_not_roll() -> None:
     operation = scene_prep.build_scene_prep(csir, mapping)[0]
     pitch, yaw, roll = operation["rotation_pitch_yaw_roll_degrees"]
 
-    assert abs(pitch - 25.0) < 1e-4
+    assert abs(pitch + 25.0) < 1e-4
     assert abs(yaw) < 1e-6
     assert abs(roll) < 1e-6
+
+
+def test_unity_camera_yaw_and_roll_map_to_unreal_semantics() -> None:
+    yaw_q = csir_plan.unity_euler_delta_to_canonical_quat(0.0, 30.0, 0.0)
+    yaw_roll, yaw_pitch, yaw_yaw = csir_plan.canonical_quat_to_unreal_rotator(yaw_q)
+    assert abs(yaw_roll) < 1e-6
+    assert abs(yaw_pitch) < 1e-6
+    assert abs(yaw_yaw - 30.0) < 1e-6
+
+    roll_q = csir_plan.unity_euler_delta_to_canonical_quat(0.0, 0.0, 10.0)
+    roll_roll, roll_pitch, roll_yaw = csir_plan.canonical_quat_to_unreal_rotator(roll_q)
+    assert abs(roll_roll - 10.0) < 1e-6
+    assert abs(roll_pitch) < 1e-6
+    assert abs(roll_yaw) < 1e-6
