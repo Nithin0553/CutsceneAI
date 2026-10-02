@@ -108,6 +108,11 @@ def build_expectation(
                 track["effective_root_delta_cm"] = [
                     float(value) for value in expected_root_delta
                 ]
+            source_profile = action.get("root_motion_source_profile")
+            if isinstance(source_profile, dict):
+                track["root_motion_source_profile"] = {
+                    str(key): float(value) for key, value in source_profile.items()
+                }
             bindings[name]["tracks"].append(track)
 
         elif kind == "camera_setup":
