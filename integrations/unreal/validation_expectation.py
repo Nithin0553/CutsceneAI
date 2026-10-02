@@ -31,11 +31,18 @@ def build_expectation(
     plan = csir_plan.build_plan(csir, mapping)
     bindings = _binding_table(plan)
 
-    # Static/prepared actor transforms. Dynamic actors intentionally omitted by scene_prep
-    # are validated from their Sequencer transform keys instead.
+    dynamic_or_skeletal = {
+        str(action.get("entity_name"))
+        for action in plan.get("actions", [])
+        if str(action.get("kind")) in {"transform", "skeletal_animation"}
+        and action.get("entity_name")
+    }
+
+    # Static/prepared actor transforms. Dynamic and skeletal actors are validated from
+    # their actual Sequencer data/root trajectory, not from an editor-evaluated actor pose.
     for operation in scene_prep.build_scene_prep(csir, mapping):
         name = str(operation["actor_label"])
-        if name not in bindings:
+        if name not in bindings or name in dynamic_or_skeletal:
             continue
         bindings[name]["canonical_world_transform"] = readback_math.target_transform_to_canonical(
             operation["location_cm"],
