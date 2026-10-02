@@ -80,7 +80,20 @@ def _fixture() -> tuple[dict, dict]:
         "assets": assets,
         "entities": [
             {"entity_id": prop_id, "name": "MOVING_PROP", "ced_type": "entity.prop"},
-            {"entity_id": camera_id, "name": "CAM_B_Close", "ced_type": "entity.camera"},
+            {
+                "entity_id": camera_id,
+                "name": "CAM_B_Close",
+                "ced_type": "entity.camera",
+                "metadata": {
+                    "camera": {
+                        "orthographic": False,
+                        "field_of_view_degrees": 35.0,
+                        "aspect": 4.93486166,
+                        "near_clip": 0.3,
+                        "far_clip": 1000.0,
+                    }
+                },
+            },
         ],
         "tracks": [
             {
@@ -152,10 +165,15 @@ def test_camera_fov_and_cut_timing_are_preserved() -> None:
     csir, mapping = _fixture()
     plan = csir_plan.build_plan(csir, mapping)
 
+    setup = next(item for item in plan["actions"] if item["kind"] == "camera_setup")
     fov = next(item for item in plan["actions"] if item["kind"] == "camera_fov")
     cut = next(item for item in plan["actions"] if item["kind"] == "camera_cut")
 
+    assert setup["field_of_view_degrees"] == 35.0
+    assert setup["source_fov_axis"] == "vertical"
+    assert abs(setup["source_aspect"] - 4.93486166) < 1e-9
     assert fov["source_fov_axis"] == "vertical"
+    assert abs(fov["source_aspect"] - 4.93486166) < 1e-9
     assert fov["keys"] == [{"frame": 300, "value": 35.0}, {"frame": 600, "value": 25.0}]
     assert cut["start_frame"] == 300
     assert cut["end_frame"] == 600
