@@ -8,6 +8,8 @@ The generator currently reconstructs:
 
 - existing level actor bindings by actor label
 - skeletal animation sections from mapped Unreal animation assets
+- source-to-target root-motion direction calibration without modifying imported assets
+- explicit skeletal section completion semantics to avoid target reference-pose fallback
 - transform animation for props/cameras from CSIR curves
 - Unity infinite AnimationTrack base offsets from extractor v0.1.3
 - camera lens/FOV animation with source-to-target FOV semantic conversion
@@ -44,6 +46,8 @@ See `docs/architecture/ENGINE_ADAPTER_COMPATIBILITY.md` and
 Copy `benchmark001_mapping.example.json` to a local file such as `benchmark001_mapping.json` and replace the Unreal asset paths with the actual imported assets in your project.
 
 Actor labels are deliberately explicit. The generator aborts if a mapped actor label is missing or ambiguous rather than silently binding the wrong object.
+
+`output_resolution` may be set in the mapping (for example `[1920, 1080]`) to define the reproducible camera-framing validation gate. Benchmark001 falls back to 1920x1080 when it is omitted; observed source editor-view aspect is retained only as provenance.
 
 ## Run inside Unreal
 
