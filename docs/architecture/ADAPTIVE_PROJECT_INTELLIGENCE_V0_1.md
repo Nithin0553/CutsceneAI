@@ -63,7 +63,7 @@ During this work, a camera-rotation problem demonstrated the need for adaptive m
 3. Passing the numbers in the wrong order made an intended **pitch** value become **roll**.
 4. The Unreal compatibility layer was therefore changed to set **named rotation fields** instead of relying on their position. The mapping rule also checks the target's `rotator.semantic_fields` capability.
 
-**What we learned:** Engine names or versions alone are not enough. CutSceneAI must check the actual behavior of the destination project.
+**What I learned:** Engine names or versions alone are not enough. CutSceneAI must check the actual behavior of the destination project.
 
 ## 5. What if an element cannot be transferred directly?
 
