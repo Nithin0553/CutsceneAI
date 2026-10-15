@@ -65,3 +65,12 @@ def test_exporter_declares_canonical_and_native_animation_keys() -> None:
 def test_menu_entry_exists() -> None:
     source = (EDITOR / "CutsceneAIExportMenu.cs").read_text(encoding="utf-8")
     assert '"Tools/CutsceneAI/Export Selected Timeline"' in source
+
+
+def test_parent_hierarchy_is_exported_as_reusable_csir_relationships() -> None:
+    source = (EDITOR / "UnityTimelineOffsetAugmenter.cs").read_text(encoding="utf-8")
+    assert "AugmentParentRelationships" in source
+    assert 'ced_type = "transform.parent"' in source
+    assert "parent_entity_id = parentId" in source
+    assert "Unity Transform.parent hierarchy" in source
+    assert 'FinalExtractorVersion = "0.1.6"' in source
