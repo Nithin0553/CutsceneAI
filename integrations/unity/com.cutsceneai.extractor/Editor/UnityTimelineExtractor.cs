@@ -357,7 +357,8 @@ namespace CutsceneAI.UnityExtractor
                         record.native_keys.Add(nativeKey);
 
                         var canonicalValue = ExtractorUtilities.ConvertCurveValueToCanonical(binding.propertyName ?? string.Empty, key.value, out var semantic, out var conversion);
-                        record.canonical_semantic = semantic;
+                        var declaredSemantic = ExtractorUtilities.CurveCanonicalSemantic(binding.type, binding.propertyName ?? string.Empty);
+                        record.canonical_semantic = string.IsNullOrEmpty(declaredSemantic) ? semantic : declaredSemantic;
                         record.conversion = conversion;
 
                         var negate = conversion == "negate_z_for_right_handed_basis" || conversion == "negate_xy_for_right_handed_basis";
