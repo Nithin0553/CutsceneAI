@@ -317,6 +317,15 @@ namespace CutsceneAI.UnityExtractor
     }
 
     [Serializable]
+    internal sealed class AudioFadeRecord
+    {
+        public string ced_type;
+        public double duration_seconds;
+        public double start_seconds;
+        public double end_seconds;
+    }
+
+    [Serializable]
     internal sealed class AudioPayload
     {
         public bool loop;
@@ -324,6 +333,8 @@ namespace CutsceneAI.UnityExtractor
         public int frequency;
         public int samples;
         public double clip_length_seconds;
+        public AudioFadeRecord fade_in;
+        public AudioFadeRecord fade_out;
     }
 
     [Serializable]
