@@ -73,7 +73,7 @@ def test_parent_hierarchy_is_exported_as_reusable_csir_relationships() -> None:
     assert 'ced_type = "transform.parent"' in source
     assert "parent_entity_id = parentId" in source
     assert "Unity Transform.parent hierarchy" in source
-    assert 'FinalExtractorVersion = "0.1.8"' in source
+    assert 'FinalExtractorVersion = "0.1.9"' in source
 
 
 def test_camera_fov_curve_is_emitted_as_canonical_ced_evidence() -> None:
@@ -88,7 +88,7 @@ def test_camera_fov_curve_is_emitted_as_canonical_ced_evidence() -> None:
     assert '"camera.vertical_fov_degrees"' in utilities
     assert "binding.type" in extractor
     assert "ExtractorUtilities.CurveCedType" in extractor
-    assert 'FinalExtractorVersion = "0.1.8"' in augmenter
+    assert 'FinalExtractorVersion = "0.1.9"' in augmenter
 
 
 def test_light_entity_and_intensity_animation_are_canonicalized() -> None:
@@ -105,4 +105,21 @@ def test_light_entity_and_intensity_animation_are_canonicalized() -> None:
     assert "CreateLightMetadata" in extractor
     assert '"entity.light"' in augmenter
     assert "CreateLightMetadata" in augmenter
-    assert 'FinalExtractorVersion = "0.1.8"' in augmenter
+    assert 'FinalExtractorVersion = "0.1.9"' in augmenter
+
+
+def test_audio_ease_durations_are_exported_as_canonical_fades() -> None:
+    models = (EDITOR / "CsirModels.cs").read_text(encoding="utf-8")
+    extractor = (EDITOR / "UnityTimelineExtractor.cs").read_text(encoding="utf-8")
+    augmenter = (EDITOR / "UnityTimelineOffsetAugmenter.cs").read_text(encoding="utf-8")
+
+    assert "AudioFadeRecord" in models
+    assert "public AudioFadeRecord fade_in;" in models
+    assert "public AudioFadeRecord fade_out;" in models
+    assert 'ced_type = "audio.fade_in"' in extractor
+    assert 'ced_type = "audio.fade_out"' in extractor
+    assert "duration_seconds = clip.easeInDuration" in extractor
+    assert "duration_seconds = clip.easeOutDuration" in extractor
+    assert "start_seconds = clip.start" in extractor
+    assert "end_seconds = clip.end" in extractor
+    assert 'FinalExtractorVersion = "0.1.9"' in augmenter
