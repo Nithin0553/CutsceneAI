@@ -145,10 +145,27 @@ namespace CutsceneAI.UnityExtractor
             return value;
         }
 
+        internal static string CurveCedType(Type componentType, string propertyName)
+        {
+            if (componentType == typeof(Camera) &&
+                string.Equals(propertyName, "field of view", StringComparison.OrdinalIgnoreCase))
+            {
+                return "camera.fov";
+            }
+
+            return string.Empty;
+        }
+
         internal static double ConvertCurveValueToCanonical(string propertyName, double value, out string semantic, out string conversion)
         {
             semantic = string.Empty;
             conversion = "identity";
+
+            if (string.Equals(propertyName, "field of view", StringComparison.OrdinalIgnoreCase))
+            {
+                semantic = "camera.vertical_fov_degrees";
+                return value;
+            }
 
             if (propertyName.EndsWith("m_LocalPosition.x", StringComparison.Ordinal) ||
                 propertyName.EndsWith("localPosition.x", StringComparison.Ordinal))

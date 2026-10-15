@@ -73,4 +73,19 @@ def test_parent_hierarchy_is_exported_as_reusable_csir_relationships() -> None:
     assert 'ced_type = "transform.parent"' in source
     assert "parent_entity_id = parentId" in source
     assert "Unity Transform.parent hierarchy" in source
-    assert 'FinalExtractorVersion = "0.1.6"' in source
+    assert 'FinalExtractorVersion = "0.1.7"' in source
+
+
+def test_camera_fov_curve_is_emitted_as_canonical_ced_evidence() -> None:
+    models = (EDITOR / "CsirModels.cs").read_text(encoding="utf-8")
+    utilities = (EDITOR / "ExtractorUtilities.cs").read_text(encoding="utf-8")
+    extractor = (EDITOR / "UnityTimelineExtractor.cs").read_text(encoding="utf-8")
+    augmenter = (EDITOR / "UnityTimelineOffsetAugmenter.cs").read_text(encoding="utf-8")
+
+    assert "public string ced_type;" in models
+    assert "CurveCedType" in utilities
+    assert 'return "camera.fov";' in utilities
+    assert '"camera.vertical_fov_degrees"' in utilities
+    assert "binding.type" in extractor
+    assert "ExtractorUtilities.CurveCedType" in extractor
+    assert 'FinalExtractorVersion = "0.1.7"' in augmenter
