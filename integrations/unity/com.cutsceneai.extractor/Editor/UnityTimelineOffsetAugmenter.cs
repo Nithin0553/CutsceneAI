@@ -10,7 +10,7 @@ namespace CutsceneAI.UnityExtractor
 {
     internal static class UnityTimelineOffsetAugmenter
     {
-        internal const string FinalExtractorVersion = "0.1.7";
+        internal const string FinalExtractorVersion = "0.1.8";
 
         internal static void Augment(string outputPath, PlayableDirector director)
         {
@@ -268,7 +268,8 @@ namespace CutsceneAI.UnityExtractor
             var gameObject = transform.gameObject;
             var hasRenderer = gameObject.GetComponent<MeshRenderer>() != null ||
                               gameObject.GetComponent<SkinnedMeshRenderer>() != null;
-            if (hasRenderer)
+            var hasLight = gameObject.GetComponent<Light>() != null;
+            if (hasRenderer || hasLight)
                 AddSceneEntity(gameObject, document, existing);
 
             for (var i = 0; i < transform.childCount; i++)
@@ -285,6 +286,7 @@ namespace CutsceneAI.UnityExtractor
                 return;
 
             var camera = gameObject.GetComponent<Camera>();
+            var light = gameObject.GetComponent<Light>();
             var audioSource = gameObject.GetComponent<AudioSource>();
             var animator = gameObject.GetComponent<Animator>();
             var hasCharacterRig = gameObject.GetComponent<SkinnedMeshRenderer>() != null ||
@@ -295,11 +297,13 @@ namespace CutsceneAI.UnityExtractor
                 entity_id = id,
                 ced_type = camera != null
                     ? "entity.camera"
-                    : audioSource != null
-                        ? "entity.audio_source"
-                        : hasCharacterRig
-                            ? "entity.character"
-                            : "entity.prop",
+                    : light != null
+                        ? "entity.light"
+                        : audioSource != null
+                            ? "entity.audio_source"
+                            : hasCharacterRig
+                                ? "entity.character"
+                                : "entity.prop",
                 name = gameObject.name,
                 native_ref = GlobalObjectId.GetGlobalObjectIdSlow(gameObject).ToString(),
                 parent_entity_id = string.Empty,
@@ -311,6 +315,7 @@ namespace CutsceneAI.UnityExtractor
                     local_transform = ExtractorUtilities.CaptureLocalTransform(gameObject.transform),
                     world_transform = ExtractorUtilities.CaptureWorldTransform(gameObject.transform),
                     camera = CreateCameraMetadata(camera),
+                    light = CreateLightMetadata(light),
                     animator = CreateAnimatorMetadata(animator),
                 },
             });
@@ -333,6 +338,34 @@ namespace CutsceneAI.UnityExtractor
                 near_clip = camera.nearClipPlane,
                 far_clip = camera.farClipPlane,
                 aspect = camera.aspect,
+            };
+        }
+
+        private static LightMetadata CreateLightMetadata(Light light)
+        {
+            if (light == null)
+                return new LightMetadata
+                {
+                    light_type = string.Empty,
+                    color = new ColorRecord(),
+                };
+
+            var color = light.color;
+            return new LightMetadata
+            {
+                light_type = light.type.ToString(),
+                intensity = light.intensity,
+                color = new ColorRecord
+                {
+                    r = color.r,
+                    g = color.g,
+                    b = color.b,
+                    a = color.a,
+                },
+                range = light.range,
+                spot_angle_degrees = light.spotAngle,
+                inner_spot_angle_degrees = light.innerSpotAngle,
+                shadows_enabled = light.shadows != LightShadows.None,
             };
         }
 
