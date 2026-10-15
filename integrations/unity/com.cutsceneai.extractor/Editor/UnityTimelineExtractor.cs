@@ -344,6 +344,7 @@ namespace CutsceneAI.UnityExtractor
 
                     var record = new CurveRecord
                     {
+                        ced_type = ExtractorUtilities.CurveCedType(binding.type, binding.propertyName ?? string.Empty),
                         path = binding.path ?? string.Empty,
                         component_type = binding.type != null ? binding.type.FullName ?? binding.type.Name : string.Empty,
                         property_name = binding.propertyName ?? string.Empty,
