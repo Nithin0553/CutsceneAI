@@ -10,7 +10,7 @@ namespace CutsceneAI.UnityExtractor
 {
     internal static class UnityTimelineOffsetAugmenter
     {
-        internal const string FinalExtractorVersion = "0.1.6";
+        internal const string FinalExtractorVersion = "0.1.7";
 
         internal static void Augment(string outputPath, PlayableDirector director)
         {
