@@ -15,7 +15,7 @@ def test_infinite_animation_tracks_are_exported() -> None:
     source = EXTRACTOR.read_text(encoding="utf-8")
     assert "animationTrack.infiniteClip" in source
     assert "ExtractInfiniteAnimationTrack" in source
-    assert 'ced_type = isCamera ? "camera.transform" : "animation.section"' in source
+    assert 'ced_type = isCamera ? "camera.transform" : isLight ? "light.animation" : "animation.section"' in source
 
 
 def test_scene_entities_are_not_classified_by_animator_presence_alone() -> None:
