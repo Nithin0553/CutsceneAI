@@ -50,4 +50,4 @@ def test_static_rendered_scene_context_is_exported() -> None:
     assert "MeshRenderer" in source
     assert "SkinnedMeshRenderer" in source
     assert "CaptureWorldTransform" in source
-    assert 'FinalExtractorVersion = "0.1.8"' in source
+    assert 'FinalExtractorVersion = "0.1.9"' in source
