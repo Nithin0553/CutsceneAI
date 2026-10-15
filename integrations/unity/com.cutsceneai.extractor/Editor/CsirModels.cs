@@ -256,6 +256,7 @@ namespace CutsceneAI.UnityExtractor
     [Serializable]
     internal sealed class CurveRecord
     {
+        public string ced_type;
         public string path;
         public string component_type;
         public string property_name;
