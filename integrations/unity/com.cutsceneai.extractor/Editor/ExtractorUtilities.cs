@@ -153,6 +153,31 @@ namespace CutsceneAI.UnityExtractor
                 return "camera.fov";
             }
 
+            if (componentType == typeof(Light) &&
+                (string.Equals(propertyName, "m_Intensity", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(propertyName, "intensity", StringComparison.OrdinalIgnoreCase)))
+            {
+                return "light.animation";
+            }
+
+            return string.Empty;
+        }
+
+        internal static string CurveCanonicalSemantic(Type componentType, string propertyName)
+        {
+            if (componentType == typeof(Camera) &&
+                string.Equals(propertyName, "field of view", StringComparison.OrdinalIgnoreCase))
+            {
+                return "camera.vertical_fov_degrees";
+            }
+
+            if (componentType == typeof(Light) &&
+                (string.Equals(propertyName, "m_Intensity", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(propertyName, "intensity", StringComparison.OrdinalIgnoreCase)))
+            {
+                return "light.intensity";
+            }
+
             return string.Empty;
         }
 

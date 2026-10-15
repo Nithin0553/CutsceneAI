@@ -193,10 +193,11 @@ namespace CutsceneAI.UnityExtractor
                 var trackEnd = IsFinite(track.end) && track.end > 0.0 ? track.end : clip.length;
                 var assetId = AddAsset(clip, "animation.clip");
                 var isCamera = bindingGameObject != null && bindingGameObject.GetComponent<Camera>() != null;
+                var isLight = bindingGameObject != null && bindingGameObject.GetComponent<Light>() != null;
                 var section = new SectionRecord
                 {
                     section_id = $"{ExtractorUtilities.StableAssetId(track)}:infinite",
-                    ced_type = isCamera ? "camera.transform" : "animation.section",
+                    ced_type = isCamera ? "camera.transform" : isLight ? "light.animation" : "animation.section",
                     start = ExtractorUtilities.SecondsToRationalTime(0.0),
                     end = ExtractorUtilities.SecondsToRationalTime(trackEnd),
                     source_offset = ExtractorUtilities.SecondsToRationalTime(0.0),
@@ -356,7 +357,8 @@ namespace CutsceneAI.UnityExtractor
                         record.native_keys.Add(nativeKey);
 
                         var canonicalValue = ExtractorUtilities.ConvertCurveValueToCanonical(binding.propertyName ?? string.Empty, key.value, out var semantic, out var conversion);
-                        record.canonical_semantic = semantic;
+                        var declaredSemantic = ExtractorUtilities.CurveCanonicalSemantic(binding.type, binding.propertyName ?? string.Empty);
+                        record.canonical_semantic = string.IsNullOrEmpty(declaredSemantic) ? semantic : declaredSemantic;
                         record.conversion = conversion;
 
                         var negate = conversion == "negate_z_for_right_handed_basis" || conversion == "negate_xy_for_right_handed_basis";
@@ -418,6 +420,7 @@ namespace CutsceneAI.UnityExtractor
                     return id;
 
                 var camera = gameObject.GetComponent<Camera>();
+                var light = gameObject.GetComponent<Light>();
                 var audioSource = gameObject.GetComponent<AudioSource>();
                 var animator = gameObject.GetComponent<Animator>();
                 var hasCharacterRig =
@@ -429,11 +432,13 @@ namespace CutsceneAI.UnityExtractor
                     entity_id = id,
                     ced_type = camera != null
                         ? "entity.camera"
-                        : audioSource != null
-                            ? "entity.audio_source"
-                            : hasCharacterRig
-                                ? "entity.character"
-                                : "entity.prop",
+                        : light != null
+                            ? "entity.light"
+                            : audioSource != null
+                                ? "entity.audio_source"
+                                : hasCharacterRig
+                                    ? "entity.character"
+                                    : "entity.prop",
                     name = gameObject.name,
                     native_ref = GlobalObjectId.GetGlobalObjectIdSlow(gameObject).ToString(),
                     parent_entity_id = string.Empty,
@@ -445,6 +450,7 @@ namespace CutsceneAI.UnityExtractor
                         local_transform = ExtractorUtilities.CaptureLocalTransform(gameObject.transform),
                         world_transform = ExtractorUtilities.CaptureWorldTransform(gameObject.transform),
                         camera = CreateCameraMetadata(camera),
+                        light = CreateLightMetadata(light),
                         animator = CreateAnimatorMetadata(animator),
                     },
                 };
@@ -514,6 +520,34 @@ namespace CutsceneAI.UnityExtractor
                 };
             }
 
+            private static LightMetadata CreateLightMetadata(Light light)
+            {
+                if (light == null)
+                    return new LightMetadata
+                    {
+                        light_type = string.Empty,
+                        color = new ColorRecord(),
+                    };
+
+                var color = light.color;
+                return new LightMetadata
+                {
+                    light_type = light.type.ToString(),
+                    intensity = light.intensity,
+                    color = new ColorRecord
+                    {
+                        r = color.r,
+                        g = color.g,
+                        b = color.b,
+                        a = color.a,
+                    },
+                    range = light.range,
+                    spot_angle_degrees = light.spotAngle,
+                    inner_spot_angle_degrees = light.innerSpotAngle,
+                    shadows_enabled = light.shadows != LightShadows.None,
+                };
+            }
+
             private static AnimatorMetadata CreateAnimatorMetadata(Animator animator)
             {
                 if (animator == null)
@@ -542,7 +576,13 @@ namespace CutsceneAI.UnityExtractor
             private static string ClassifyTrack(TrackAsset track, GameObject binding)
             {
                 if (track is AnimationTrack)
-                    return binding != null && binding.GetComponent<Camera>() != null ? "camera.transform" : "animation.track";
+                {
+                    if (binding != null && binding.GetComponent<Camera>() != null)
+                        return "camera.transform";
+                    if (binding != null && binding.GetComponent<Light>() != null)
+                        return "light.animation";
+                    return "animation.track";
+                }
                 if (track is AudioTrack)
                     return "audio.track";
                 if (track is ActivationTrack)
@@ -557,7 +597,9 @@ namespace CutsceneAI.UnityExtractor
                 if (track is ActivationTrack)
                     return binding != null && binding.GetComponent<Camera>() != null ? "camera.cut" : "event.state";
                 if (asset is AnimationPlayableAsset)
-                    return "animation.section";
+                    return binding != null && binding.GetComponent<Light>() != null
+                        ? "light.animation"
+                        : "animation.section";
                 if (asset is AudioPlayableAsset)
                     return "audio.section";
                 return "timeline.clip";

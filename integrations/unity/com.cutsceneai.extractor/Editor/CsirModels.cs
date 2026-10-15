@@ -120,6 +120,7 @@ namespace CutsceneAI.UnityExtractor
         public TransformSnapshot local_transform;
         public TransformSnapshot world_transform;
         public CameraMetadata camera;
+        public LightMetadata light;
         public AnimatorMetadata animator;
     }
 
@@ -168,6 +169,27 @@ namespace CutsceneAI.UnityExtractor
         public double near_clip;
         public double far_clip;
         public double aspect;
+    }
+
+    [Serializable]
+    internal sealed class ColorRecord
+    {
+        public double r;
+        public double g;
+        public double b;
+        public double a;
+    }
+
+    [Serializable]
+    internal sealed class LightMetadata
+    {
+        public string light_type;
+        public double intensity;
+        public ColorRecord color;
+        public double range;
+        public double spot_angle_degrees;
+        public double inner_spot_angle_degrees;
+        public bool shadows_enabled;
     }
 
     [Serializable]
