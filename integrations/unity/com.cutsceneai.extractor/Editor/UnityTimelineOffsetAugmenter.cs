@@ -10,7 +10,7 @@ namespace CutsceneAI.UnityExtractor
 {
     internal static class UnityTimelineOffsetAugmenter
     {
-        internal const string FinalExtractorVersion = "0.1.5";
+        internal const string FinalExtractorVersion = "0.1.6";
 
         internal static void Augment(string outputPath, PlayableDirector director)
         {
@@ -27,6 +27,7 @@ namespace CutsceneAI.UnityExtractor
                 AugmentTrackRecursive(rootTrack, document);
 
             AugmentStaticSceneContext(director, document);
+            AugmentParentRelationships(director, document);
 
             if (document.source_snapshot != null)
             {
@@ -47,6 +48,8 @@ namespace CutsceneAI.UnityExtractor
                     "AnimationPlayableAsset clip position/rotation offsets are preserved as canonical metadata curves for deterministic root-motion placement in the target engine.");
                 document.provenance.notes.Add(
                     "Static rendered scene objects in the PlayableDirector scene are included as entity context so environment placement can be mapped and validated.");
+                document.provenance.notes.Add(
+                    "Unity Transform.parent ancestry for extracted entities is preserved with parent_entity_id and explicit transform.parent relationship records; transform-only ancestors are added as entity context when needed.");
             }
 
             File.WriteAllText(outputPath, JsonUtility.ToJson(document, true));
@@ -151,6 +154,110 @@ namespace CutsceneAI.UnityExtractor
 
             foreach (var root in director.gameObject.scene.GetRootGameObjects())
                 AddRenderedObjectsRecursive(root.transform, document, existing);
+        }
+
+        private static void AugmentParentRelationships(PlayableDirector director, CsirDocument document)
+        {
+            var sceneObjects = new Dictionary<string, GameObject>();
+            foreach (var root in director.gameObject.scene.GetRootGameObjects())
+                IndexSceneObjects(root.transform, sceneObjects);
+
+            var entitiesById = new Dictionary<string, EntityRecord>();
+            var existingEntityIds = new HashSet<string>();
+            foreach (var entity in document.entities)
+            {
+                if (entity == null || string.IsNullOrEmpty(entity.entity_id))
+                    continue;
+                entitiesById[entity.entity_id] = entity;
+                existingEntityIds.Add(entity.entity_id);
+            }
+
+            if (document.relationships == null)
+                document.relationships = new List<RelationshipRecord>();
+
+            var existingRelationshipIds = new HashSet<string>();
+            foreach (var relationship in document.relationships)
+            {
+                if (relationship != null && !string.IsNullOrEmpty(relationship.relationship_id))
+                    existingRelationshipIds.Add(relationship.relationship_id);
+            }
+
+            var seedEntities = new List<EntityRecord>(document.entities);
+            foreach (var seedEntity in seedEntities)
+            {
+                if (seedEntity == null ||
+                    string.IsNullOrEmpty(seedEntity.entity_id) ||
+                    !sceneObjects.TryGetValue(seedEntity.entity_id, out var childObject))
+                {
+                    continue;
+                }
+
+                var childEntity = seedEntity;
+                var parentTransform = childObject.transform.parent;
+
+                while (parentTransform != null)
+                {
+                    var parentObject = parentTransform.gameObject;
+                    var parentId = ExtractorUtilities.StableSceneObjectId(parentObject);
+
+                    if (!entitiesById.TryGetValue(parentId, out var parentEntity))
+                    {
+                        AddSceneEntity(parentObject, document, existingEntityIds);
+                        parentEntity = FindEntity(document, parentId);
+                        if (parentEntity == null)
+                            break;
+                        entitiesById[parentId] = parentEntity;
+                    }
+
+                    childEntity.parent_entity_id = parentId;
+                    AddParentRelationship(document, existingRelationshipIds, childEntity.entity_id, parentId);
+
+                    childEntity = parentEntity;
+                    parentTransform = parentTransform.parent;
+                }
+            }
+        }
+
+        private static void IndexSceneObjects(Transform transform, Dictionary<string, GameObject> sceneObjects)
+        {
+            var gameObject = transform.gameObject;
+            sceneObjects[ExtractorUtilities.StableSceneObjectId(gameObject)] = gameObject;
+
+            for (var i = 0; i < transform.childCount; i++)
+                IndexSceneObjects(transform.GetChild(i), sceneObjects);
+        }
+
+        private static EntityRecord FindEntity(CsirDocument document, string entityId)
+        {
+            foreach (var entity in document.entities)
+            {
+                if (entity != null && entity.entity_id == entityId)
+                    return entity;
+            }
+            return null;
+        }
+
+        private static void AddParentRelationship(
+            CsirDocument document,
+            HashSet<string> existingRelationshipIds,
+            string childId,
+            string parentId)
+        {
+            var relationshipId = $"unity-parent:{childId}->{parentId}";
+            if (!existingRelationshipIds.Add(relationshipId))
+                return;
+
+            document.relationships.Add(new RelationshipRecord
+            {
+                relationship_id = relationshipId,
+                ced_type = "transform.parent",
+                source_id = childId,
+                target_id = parentId,
+                metadata = new RelationshipMetadata
+                {
+                    reason = "Unity Transform.parent hierarchy",
+                },
+            });
         }
 
         private static void AddRenderedObjectsRecursive(
