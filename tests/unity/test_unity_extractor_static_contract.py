@@ -73,7 +73,7 @@ def test_parent_hierarchy_is_exported_as_reusable_csir_relationships() -> None:
     assert 'ced_type = "transform.parent"' in source
     assert "parent_entity_id = parentId" in source
     assert "Unity Transform.parent hierarchy" in source
-    assert 'FinalExtractorVersion = "0.1.6"' in source
+    assert 'FinalExtractorVersion = "0.1.7"' in source
 
 
 def test_camera_fov_curve_is_emitted_as_canonical_ced_evidence() -> None:
