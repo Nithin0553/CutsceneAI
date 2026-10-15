@@ -271,6 +271,29 @@ namespace CutsceneAI.UnityExtractor
                 {
                     section.loop = audioPlayable.loop;
                     section.payload.audio.loop = audioPlayable.loop;
+
+                    if (clip.easeInDuration > 0.0)
+                    {
+                        section.payload.audio.fade_in = new AudioFadeRecord
+                        {
+                            ced_type = "audio.fade_in",
+                            duration_seconds = clip.easeInDuration,
+                            start_seconds = clip.start,
+                            end_seconds = clip.start + clip.easeInDuration,
+                        };
+                    }
+
+                    if (clip.easeOutDuration > 0.0)
+                    {
+                        section.payload.audio.fade_out = new AudioFadeRecord
+                        {
+                            ced_type = "audio.fade_out",
+                            duration_seconds = clip.easeOutDuration,
+                            start_seconds = clip.end - clip.easeOutDuration,
+                            end_seconds = clip.end,
+                        };
+                    }
+
                     if (audioPlayable.clip != null)
                     {
                         section.payload.asset_id = AddAsset(audioPlayable.clip, "audio.asset");
@@ -493,7 +516,11 @@ namespace CutsceneAI.UnityExtractor
                     display_name = displayName ?? string.Empty,
                     asset_id = assetId ?? string.Empty,
                     animation = new AnimationPayload(),
-                    audio = new AudioPayload(),
+                    audio = new AudioPayload
+                    {
+                        fade_in = new AudioFadeRecord { ced_type = string.Empty },
+                        fade_out = new AudioFadeRecord { ced_type = string.Empty },
+                    },
                     activation = new ActivationPayload { post_playback_state = string.Empty },
                     signal = new SignalPayload { signal_asset_id = string.Empty },
                     generic = new GenericPayload { native_type = string.Empty, asset_ref = string.Empty },
