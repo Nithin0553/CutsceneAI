@@ -10,7 +10,7 @@ namespace CutsceneAI.UnityExtractor
 {
     internal static class UnityTimelineOffsetAugmenter
     {
-        internal const string FinalExtractorVersion = "0.1.8";
+        internal const string FinalExtractorVersion = "0.1.9";
 
         internal static void Augment(string outputPath, PlayableDirector director)
         {
@@ -48,6 +48,8 @@ namespace CutsceneAI.UnityExtractor
                     "AnimationPlayableAsset clip position/rotation offsets are preserved as canonical metadata curves for deterministic root-motion placement in the target engine.");
                 document.provenance.notes.Add(
                     "Static rendered scene objects in the PlayableDirector scene are included as entity context so environment placement can be mapped and validated.");
+                document.provenance.notes.Add(
+                    "Unity Timeline audio clip ease-in/ease-out durations are exported as canonical audio.fade_in/audio.fade_out evidence while retaining native section timing.");
                 document.provenance.notes.Add(
                     "Unity Transform.parent ancestry for extracted entities is preserved with parent_entity_id and explicit transform.parent relationship records; transform-only ancestors are added as entity context when needed.");
             }
