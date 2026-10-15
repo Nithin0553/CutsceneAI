@@ -125,3 +125,38 @@ def test_wrong_timebase_is_hard_failure() -> None:
     assert report["status"] == "FAIL"
     timing = next(check for check in report["checks"] if check["id"] == "timing.display_rate")
     assert timing["status"] == "FAIL"
+
+
+def test_inventory_counts_nested_audio_fade_evidence() -> None:
+    csir = _csir()
+    csir["tracks"].append(
+        {
+            "track_id": "audio",
+            "ced_type": "audio.track",
+            "sections": [
+                {
+                    "section_id": "ambience",
+                    "ced_type": "audio.section",
+                    "start": _rt(0.0),
+                    "end": _rt(12.0),
+                    "payload": {
+                        "audio": {
+                            "fade_in": {
+                                "ced_type": "audio.fade_in",
+                                "duration_seconds": 0.5,
+                            },
+                            "fade_out": {
+                                "ced_type": "audio.fade_out",
+                                "duration_seconds": 0.5,
+                            },
+                        }
+                    },
+                }
+            ],
+        }
+    )
+
+    counts = benchmark_spec.inventory(csir)
+
+    assert counts["audio.fade_in"] == 1
+    assert counts["audio.fade_out"] == 1
