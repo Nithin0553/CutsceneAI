@@ -163,6 +163,24 @@ namespace CutsceneAI.UnityExtractor
             return string.Empty;
         }
 
+        internal static string CurveCanonicalSemantic(Type componentType, string propertyName)
+        {
+            if (componentType == typeof(Camera) &&
+                string.Equals(propertyName, "field of view", StringComparison.OrdinalIgnoreCase))
+            {
+                return "camera.vertical_fov_degrees";
+            }
+
+            if (componentType == typeof(Light) &&
+                (string.Equals(propertyName, "m_Intensity", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(propertyName, "intensity", StringComparison.OrdinalIgnoreCase)))
+            {
+                return "light.intensity";
+            }
+
+            return string.Empty;
+        }
+
         internal static double ConvertCurveValueToCanonical(string propertyName, double value, out string semantic, out string conversion)
         {
             semantic = string.Empty;
@@ -171,13 +189,6 @@ namespace CutsceneAI.UnityExtractor
             if (string.Equals(propertyName, "field of view", StringComparison.OrdinalIgnoreCase))
             {
                 semantic = "camera.vertical_fov_degrees";
-                return value;
-            }
-
-            if (string.Equals(propertyName, "m_Intensity", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(propertyName, "intensity", StringComparison.OrdinalIgnoreCase))
-            {
-                semantic = "light.intensity";
                 return value;
             }
 
