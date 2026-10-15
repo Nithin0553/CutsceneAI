@@ -153,6 +153,13 @@ namespace CutsceneAI.UnityExtractor
                 return "camera.fov";
             }
 
+            if (componentType == typeof(Light) &&
+                (string.Equals(propertyName, "m_Intensity", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(propertyName, "intensity", StringComparison.OrdinalIgnoreCase)))
+            {
+                return "light.animation";
+            }
+
             return string.Empty;
         }
 
@@ -164,6 +171,13 @@ namespace CutsceneAI.UnityExtractor
             if (string.Equals(propertyName, "field of view", StringComparison.OrdinalIgnoreCase))
             {
                 semantic = "camera.vertical_fov_degrees";
+                return value;
+            }
+
+            if (string.Equals(propertyName, "m_Intensity", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(propertyName, "intensity", StringComparison.OrdinalIgnoreCase))
+            {
+                semantic = "light.intensity";
                 return value;
             }
 
