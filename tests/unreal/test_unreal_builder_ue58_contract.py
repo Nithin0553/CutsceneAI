@@ -81,6 +81,8 @@ def test_skeletal_root_motion_is_calibrated_in_actor_world_space() -> None:
     assert "extract_animation_root_delta_cm" in builder
     assert "extract_root_track_transform" in compat
     assert "apply_actor_world_yaw_alignment" in builder
+    assert "select_actor_root_motion_alignments" in builder
+    assert "calibration_horizontal_cm" in builder
     assert "space=actor_world" in builder
     assert "apply_skeletal_root_yaw(section, yaw)" not in builder
 
