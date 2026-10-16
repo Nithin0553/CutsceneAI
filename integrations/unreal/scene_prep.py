@@ -129,7 +129,7 @@ def _character_clip_transform(
         position,
         rotation,
         scale,
-        "animation_clip_offset_with_parent_world",
+        "animation_clip_offset",
     )
 
 
