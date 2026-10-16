@@ -21,6 +21,7 @@ DEFAULT_TOLERANCES = {
     "root_motion_negligible_horizontal_cm": 10.0,
     "root_motion_grounded_min_horizontal_cm": 50.0,
     "root_motion_grounded_max_vertical_excursion_cm": 5.0,
+    "root_motion_grounded_max_vertical_excursion_relative": 0.02,
     "root_motion_grounded_vertical_endpoint_cm": 1.0,
 }
 
@@ -140,10 +141,19 @@ def root_motion_policy(
             ),
         }
 
+    vertical_relative = (
+        vertical_excursion / horizontal if horizontal > 1e-9 else math.inf
+    )
     grounded = (
         horizontal >= float(tolerances["root_motion_grounded_min_horizontal_cm"])
-        and vertical_excursion
-        <= float(tolerances["root_motion_grounded_max_vertical_excursion_cm"])
+        and (
+            vertical_excursion
+            <= float(tolerances["root_motion_grounded_max_vertical_excursion_cm"])
+            or vertical_relative
+            <= float(
+                tolerances["root_motion_grounded_max_vertical_excursion_relative"]
+            )
+        )
     )
     if grounded:
         return {
@@ -151,6 +161,7 @@ def root_motion_policy(
             "status": "RESOLVED",
             "horizontal_end_distance_cm": horizontal,
             "vertical_excursion_cm": vertical_excursion,
+            "vertical_excursion_relative": vertical_relative,
             "vertical_endpoint_tolerance_cm": float(
                 tolerances["root_motion_grounded_vertical_endpoint_cm"]
             ),

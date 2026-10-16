@@ -156,6 +156,40 @@ def test_camera_mapping_preserves_canonical_orientation_and_named_fields() -> No
     assert entry["parameters"]["never_assume_constructor_position"] is True
 
 
+def test_root_motion_mapping_preserves_timing_and_allows_sampled_translation_correction() -> None:
+    source = _profile(
+        "unity-source",
+        "unity",
+        "6000.3.8f1",
+        ["animation.root_motion_curves"],
+        ["source.root_motion_delta"],
+    )
+    target = _profile(
+        "unreal-target",
+        "unreal",
+        "5.8.3",
+        ["animation.root_motion_sampling"],
+        ["target.imported_root_motion_delta"],
+    )
+
+    entry = adaptive_mapping.resolve_dictionary(
+        ["animation.root_motion"],
+        source,
+        target,
+        _rules(),
+    )["entries"][0]
+
+    assert entry["status"] == "RESOLVED"
+    assert entry["resolver"] == "animation.root_motion.align_from_measured_displacement"
+    assert entry["parameters"]["calibrate_target_actor_world_yaw"] is True
+    assert (
+        entry["parameters"]["calibrate_target_actor_world_translation_from_samples"]
+        is True
+    )
+    assert entry["parameters"]["preserve_animation_timing"] is True
+    assert entry["parameters"]["modify_source_asset"] is False
+
+
 def test_csir_context_promotes_observed_root_motion_capability() -> None:
     csir = {
         "cutscene_id": "benchmark",

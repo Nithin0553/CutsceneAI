@@ -124,6 +124,8 @@
         "parameters": {
           "modify_source_asset": false,
           "calibrate_target_actor_world_yaw": true,
+          "calibrate_target_actor_world_translation_from_samples": true,
+          "preserve_animation_timing": true,
           "do_not_rotate_skeletal_section": true,
           "alignment_axis": "unreal_world_up_z"
         },
@@ -132,7 +134,7 @@
           "target.imported_root_motion_delta"
         ]
       },
-      "notes": "Measure source and target root travel, then align the target actor around Unreal world-up. Do not use skeletal-section rotation offsets for trajectory correction."
+      "notes": "Measure source and target root travel, align the target actor around Unreal world-up, and when imported trajectory magnitude differs, preserve animation timing by applying sampled actor-world translation compensation. Do not edit the source asset or use skeletal-section rotation offsets for trajectory correction."
     },
     {
       "rule_id": "unity-unreal-section-completion",

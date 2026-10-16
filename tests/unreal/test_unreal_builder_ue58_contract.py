@@ -85,6 +85,10 @@ def test_skeletal_root_motion_is_calibrated_in_actor_world_space() -> None:
     assert "base_actor_yaw_degrees" in plan
     assert "rotate_unreal_delta_yaw" in builder
     assert "target_base_world_cm" in builder
+    assert "root_motion_source_samples" in plan
+    assert "root_motion_correction_samples" in builder
+    assert "actor_world_sampled_translation" in builder
+    assert "CutSceneAI Root Motion Correction" in builder
     assert "calibration_horizontal_cm" in builder
     assert "space=actor_world" in builder
     assert "apply_skeletal_root_yaw(section, yaw)" not in builder

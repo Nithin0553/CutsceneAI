@@ -147,6 +147,64 @@ def _binding_name(binding: Any) -> str:
     return ""
 
 
+def _track_display_name(track: Any) -> str:
+    getter = getattr(track, "get_display_name", None)
+    if callable(getter):
+        try:
+            return str(getter())
+        except Exception:
+            pass
+    extensions = getattr(unreal, "MovieSceneTrackExtensions", None)
+    extension_getter = getattr(extensions, "get_display_name", None) if extensions else None
+    if callable(extension_getter):
+        try:
+            return str(extension_getter(track))
+        except Exception:
+            pass
+    return ""
+
+
+ROOT_MOTION_CORRECTION_TRACK_PREFIX = "CutSceneAI Root Motion Correction"
+
+
+def _root_motion_correction_info(track: Any) -> dict[str, Any] | None:
+    display_name = _track_display_name(track)
+    prefix = ROOT_MOTION_CORRECTION_TRACK_PREFIX + "|"
+    if not display_name.startswith(prefix):
+        return None
+    parts = display_name.split("|")
+    if len(parts) != 3:
+        return None
+    try:
+        source_start_frame = int(parts[1])
+        source_end_frame = int(parts[2])
+    except ValueError:
+        return None
+
+    sections = _sections(track)
+    if not sections:
+        return None
+    channels = unreal_compat.get_section_channels(sections[0])
+    if len(channels) < 3:
+        return None
+    maps = [_key_map(channel) for channel in channels[:3]]
+    if not all(
+        source_start_frame in mapping and source_end_frame in mapping
+        for mapping in maps
+    ):
+        return None
+
+    start_location = tuple(float(mapping[source_start_frame]) for mapping in maps)
+    end_location = tuple(float(mapping[source_end_frame]) for mapping in maps)
+    delta = tuple(end_location[i] - start_location[i] for i in range(3))
+    return {
+        "start_frame": source_start_frame,
+        "end_frame": source_end_frame,
+        "delta_cm": list(delta),
+        "strategy": "actor_world_sampled_translation",
+    }
+
+
 def _binding_guid(binding: Any) -> Any:
     getter = getattr(binding, "get_id", None)
     if callable(getter):
@@ -299,6 +357,7 @@ def _skeletal_track(
     track: Any,
     actor: Any | None,
     display_rate: dict[str, int],
+    root_corrections: dict[tuple[int, int], dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     fps = float(display_rate["numerator"]) / float(display_rate["denominator"])
@@ -333,7 +392,23 @@ def _skeletal_track(
                     float(rotation.pitch),
                     float(rotation.yaw),
                 )
-                item["effective_root_delta_cm"] = _matrix_vector(matrix, local_delta)
+                effective_delta = _matrix_vector(matrix, local_delta)
+                correction = (
+                    (root_corrections or {}).get((start_frame, end_frame))
+                )
+                if correction is not None:
+                    correction_delta = [
+                        float(value) for value in correction.get("delta_cm", [0.0, 0.0, 0.0])
+                    ]
+                    effective_delta = [
+                        float(effective_delta[index]) + correction_delta[index]
+                        for index in range(3)
+                    ]
+                    item["root_motion_correction_delta_cm"] = correction_delta
+                    item["root_motion_correction_strategy"] = str(
+                        correction.get("strategy", "")
+                    )
+                item["effective_root_delta_cm"] = effective_delta
                 item["root_motion_sampling_strategy"] = strategy
             except Exception as exc:
                 item["root_motion_readback_error"] = str(exc)
@@ -578,13 +653,27 @@ def readback(
 
         bound_object = _bound_object(sequence, binding)
 
-        for track in _binding_tracks(binding):
+        binding_tracks = _binding_tracks(binding)
+        root_corrections: dict[tuple[int, int], dict[str, Any]] = {}
+        for candidate in binding_tracks:
+            if isinstance(candidate, unreal.MovieScene3DTransformTrack):
+                correction = _root_motion_correction_info(candidate)
+                if correction is not None:
+                    root_corrections[
+                        (int(correction["start_frame"]), int(correction["end_frame"]))
+                    ] = correction
+
+        for track in binding_tracks:
             if isinstance(track, unreal.MovieScene3DTransformTrack):
+                if _root_motion_correction_info(track) is not None:
+                    continue
                 item = _transform_track(track)
                 if item is not None:
                     record["tracks"].append(item)
             elif isinstance(track, unreal.MovieSceneSkeletalAnimationTrack):
-                record["tracks"].extend(_skeletal_track(track, actor, rate))
+                record["tracks"].extend(
+                    _skeletal_track(track, actor, rate, root_corrections)
+                )
             elif isinstance(track, unreal.MovieSceneFloatTrack):
                 component = bound_object
                 if component is None and actor is not None:

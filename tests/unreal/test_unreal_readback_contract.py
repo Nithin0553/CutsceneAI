@@ -23,6 +23,14 @@ def test_readback_canonicalizes_transforms_and_camera_lens_semantics() -> None:
     assert "extract_animation_root_delta_cm" in source
 
 
+def test_readback_accounts_for_generated_root_motion_correction() -> None:
+    source = READBACK.read_text(encoding="utf-8")
+    assert "ROOT_MOTION_CORRECTION_TRACK_PREFIX" in source
+    assert "_root_motion_correction_info" in source
+    assert "root_motion_correction_delta_cm" in source
+    assert "effective_delta" in source
+
+
 def test_readback_normalizes_actor_labels_back_to_source_entity_names() -> None:
     source = READBACK.read_text(encoding="utf-8")
     assert "source_by_label" in source

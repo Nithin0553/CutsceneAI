@@ -44,6 +44,11 @@ class UnrealBuildError(RuntimeError):
     pass
 
 
+ROOT_MOTION_TRAJECTORY_CORRECTION_MIN_HORIZONTAL_CM = 10.0
+ROOT_MOTION_TRAJECTORY_CORRECTION_EPSILON_CM = 0.05
+ROOT_MOTION_CORRECTION_TRACK_PREFIX = "CutSceneAI Root Motion Correction"
+
+
 def _split_asset_path(asset_path: str) -> tuple[str, str]:
     normalized = asset_path.rstrip("/")
     if not normalized.startswith("/Game/"):
@@ -123,6 +128,91 @@ def _preflight(plan: dict[str, Any]) -> None:
                 action["target_root_delta_after_base_cm"] = [
                     float(value) for value in target_world_delta
                 ]
+
+                source_profile = action.get("root_motion_source_profile", {})
+                source_horizontal = float(
+                    source_profile.get("horizontal_end_distance_cm", 0.0)
+                    if isinstance(source_profile, dict)
+                    else 0.0
+                )
+                source_samples = action.get("root_motion_source_samples", [])
+                if (
+                    source_horizontal >= ROOT_MOTION_TRAJECTORY_CORRECTION_MIN_HORIZONTAL_CM
+                    and isinstance(source_samples, list)
+                    and source_samples
+                ):
+                    final_yaw = base_yaw + (float(yaw) if yaw is not None else 0.0)
+                    rate = plan["display_rate"]
+                    fps_n = int(rate["numerator"])
+                    fps_d = int(rate["denominator"])
+                    correction_by_frame: dict[int, dict[str, Any]] = {}
+                    for sample in source_samples:
+                        source_time = float(sample["source_time_seconds"])
+                        timeline_time = float(sample["timeline_time_seconds"])
+                        try:
+                            sampled_target_delta, _sample_strategy = (
+                                unreal_compat.extract_animation_root_delta_cm(
+                                    animation,
+                                    float(action.get("source_start_seconds", 0.0)),
+                                    source_time,
+                                )
+                            )
+                        except unreal_compat.UnrealCompatibilityError as exc:
+                            raise UnrealBuildError(str(exc)) from exc
+                        sampled_target_world = csir_plan.rotate_unreal_delta_yaw(
+                            sampled_target_delta,
+                            final_yaw,
+                        )
+                        sampled_source_world = tuple(
+                            float(value) for value in sample["delta_cm"]
+                        )
+                        correction = tuple(
+                            sampled_source_world[index]
+                            - float(sampled_target_world[index])
+                            for index in range(3)
+                        )
+                        frame = csir_plan.seconds_to_frame(
+                            timeline_time, fps_n, fps_d
+                        )
+                        correction_by_frame[frame] = {
+                            "frame": int(frame),
+                            "correction_delta_cm": [
+                                float(value) for value in correction
+                            ],
+                            "source_delta_cm": [
+                                float(value) for value in sampled_source_world
+                            ],
+                            "target_delta_cm": [
+                                float(value) for value in sampled_target_world
+                            ],
+                        }
+
+                    correction_samples = [
+                        correction_by_frame[frame]
+                        for frame in sorted(correction_by_frame)
+                    ]
+                    max_horizontal_correction = max(
+                        math.hypot(
+                            float(sample["correction_delta_cm"][0]),
+                            float(sample["correction_delta_cm"][1]),
+                        )
+                        for sample in correction_samples
+                    )
+                    if (
+                        max_horizontal_correction
+                        > ROOT_MOTION_TRAJECTORY_CORRECTION_EPSILON_CM
+                    ):
+                        action["root_motion_correction_samples"] = correction_samples
+                        action["root_motion_correction_strategy"] = (
+                            "actor_world_sampled_translation"
+                        )
+                        unreal.log(
+                            "[CutSceneAI] Preflight root trajectory correction "
+                            f"{action['entity_name']}: samples={len(correction_samples)}, "
+                            f"max_horizontal_cm={max_horizontal_correction:.3f}, "
+                            f"endpoint_cm={tuple(round(float(v), 3) for v in correction_samples[-1]['correction_delta_cm'])}"
+                        )
+
                 unreal.log(
                     "[CutSceneAI] Preflight root motion "
                     f"{action['entity_name']}: sampler={root_strategy}, "
@@ -328,6 +418,67 @@ def _add_skeletal_animation(
     )
 
 
+def _add_root_motion_correction(
+    sequence: unreal.LevelSequence,
+    binding: Any,
+    actor: unreal.Actor,
+    action: dict[str, Any],
+) -> None:
+    """Apply sampled world-translation compensation without changing animation timing."""
+    samples = action.get("root_motion_correction_samples", [])
+    if not isinstance(samples, list) or not samples:
+        return
+
+    track = binding.add_track(unreal.MovieScene3DTransformTrack)
+    track.set_display_name(
+        f"{ROOT_MOTION_CORRECTION_TRACK_PREFIX}|"
+        f"{int(action['start_frame'])}|{int(action['end_frame'])}"
+    )
+    section = track.add_section()
+    section.set_range(0, sequence.get_playback_end())
+    channels = unreal_compat.get_section_channels(section)
+    if len(channels) < 6:
+        raise UnrealBuildError(
+            "Unexpected Unreal transform channel layout for root-motion correction; "
+            "expected at least 6 channels."
+        )
+
+    base_location = actor.get_actor_location()
+    base_rotation = actor.get_actor_rotation()
+    base_scale = actor.get_actor_scale3d()
+
+    emitted: dict[int, list[float]] = {}
+    for sample in samples:
+        frame_number = int(sample["frame"])
+        correction = [float(value) for value in sample["correction_delta_cm"]]
+        emitted[frame_number] = correction
+
+    last_frame = max(emitted)
+    hold_frame = int(sequence.get_playback_end())
+    if hold_frame > last_frame:
+        emitted[hold_frame] = list(emitted[last_frame])
+
+    for frame_number in sorted(emitted):
+        correction = emitted[frame_number]
+        frame = unreal.FrameNumber(frame_number)
+        channels[0].add_key(frame, float(base_location.x) + correction[0])
+        channels[1].add_key(frame, float(base_location.y) + correction[1])
+        channels[2].add_key(frame, float(base_location.z) + correction[2])
+        channels[3].add_key(frame, float(base_rotation.roll))
+        channels[4].add_key(frame, float(base_rotation.pitch))
+        channels[5].add_key(frame, float(base_rotation.yaw))
+        if len(channels) >= 9:
+            channels[6].add_key(frame, float(base_scale.x))
+            channels[7].add_key(frame, float(base_scale.y))
+            channels[8].add_key(frame, float(base_scale.z))
+
+    unreal.log(
+        "[CutSceneAI] Root trajectory correction "
+        f"{action['entity_name']}: strategy={action.get('root_motion_correction_strategy')}, "
+        f"samples={len(samples)}, hold_end_frame={hold_frame}"
+    )
+
+
 def _camera_component(actor: unreal.Actor) -> tuple[Any, str]:
     try:
         return unreal_compat.resolve_camera_component(actor)
@@ -440,6 +591,7 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
         bindings = _binding_cache(sequence, plan)
 
         camera_cuts: list[dict[str, Any]] = []
+        root_corrections: list[dict[str, Any]] = []
         for action in plan["actions"]:
             kind = action["kind"]
             if kind == "transform":
@@ -450,6 +602,8 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
                     bindings[action["entity_name"]]["binding"],
                     action,
                 )
+                if action.get("root_motion_correction_samples"):
+                    root_corrections.append(action)
             elif kind == "camera_setup":
                 _apply_camera_setup(bindings[action["entity_name"]]["actor"], action)
             elif kind == "camera_fov":
@@ -462,6 +616,24 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
                 _add_marker(sequence, action)
             else:
                 raise UnrealBuildError(f"Unsupported reconstruction action: {kind}")
+
+        corrections_by_actor: dict[str, list[dict[str, Any]]] = {}
+        for action in root_corrections:
+            corrections_by_actor.setdefault(str(action["actor_label"]), []).append(action)
+        for actor_label, actions in corrections_by_actor.items():
+            if len(actions) > 1:
+                raise UnrealBuildError(
+                    "Multiple sampled root-motion corrections for one actor are not "
+                    f"yet safely composable: {actor_label}. Refusing to guess."
+                )
+            action = actions[0]
+            binding_record = bindings[action["entity_name"]]
+            _add_root_motion_correction(
+                sequence,
+                binding_record["binding"],
+                binding_record["actor"],
+                action,
+            )
 
         _add_camera_cuts(sequence, camera_cuts, bindings)
         unreal.EditorAssetLibrary.save_loaded_asset(sequence)
