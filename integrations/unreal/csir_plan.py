@@ -107,7 +107,10 @@ def _curve_value(curve: dict[str, Any] | None, time_seconds: float, default: flo
     return default
 
 
-def _source_root_delta_unreal_cm(section: dict[str, Any]) -> tuple[float, float, float] | None:
+def _source_root_delta_unreal_cm(
+    section: dict[str, Any],
+    world_rotation: tuple[float, float, float, float] | None = None,
+) -> tuple[float, float, float] | None:
     """Resolve Unity Animator RootT displacement into Unreal world-axis centimeters."""
     curves = {
         str(curve.get("property_name")): curve
@@ -129,10 +132,15 @@ def _source_root_delta_unreal_cm(section: dict[str, Any]) -> tuple[float, float,
     # RootT is Unity-native: +X right, +Y up, +Z forward, meters. Convert the
     # displacement through the same canonical basis used for ordinary transforms.
     canonical_delta = (dx, dy, -dz)
+    if world_rotation is not None:
+        canonical_delta = _quat_rotate_vector(world_rotation, canonical_delta)
     return canonical_position_to_unreal_cm(canonical_delta)
 
 
-def _source_root_profile_unreal_cm(section: dict[str, Any]) -> dict[str, float] | None:
+def _source_root_profile_unreal_cm(
+    section: dict[str, Any],
+    world_rotation: tuple[float, float, float, float] | None = None,
+) -> dict[str, float] | None:
     """Summarize source RootT trajectory in Unreal world-axis centimeters.
 
     The profile is used for validation policy. It does not change the transferred
@@ -173,9 +181,10 @@ def _source_root_profile_unreal_cm(section: dict[str, Any]) -> dict[str, float] 
         dx = _curve_value(curves["RootT.x"], time_seconds) - start_x
         dy = _curve_value(curves["RootT.y"], time_seconds) - start_y
         dz = _curve_value(curves["RootT.z"], time_seconds) - start_z
-        positions_unreal_cm.append(
-            canonical_position_to_unreal_cm((dx, dy, -dz))
-        )
+        canonical_delta = (dx, dy, -dz)
+        if world_rotation is not None:
+            canonical_delta = _quat_rotate_vector(world_rotation, canonical_delta)
+        positions_unreal_cm.append(canonical_position_to_unreal_cm(canonical_delta))
 
     if not positions_unreal_cm:
         return None
@@ -314,6 +323,133 @@ def _quat_to_matrix(q: tuple[float, float, float, float]) -> list[list[float]]:
     ]
 
 
+def _quat_rotate_vector(
+    q: tuple[float, float, float, float],
+    vector: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    matrix = _quat_to_matrix(q)
+    return tuple(
+        sum(float(matrix[row][col]) * float(vector[col]) for col in range(3))
+        for row in range(3)
+    )  # type: ignore[return-value]
+
+
+def parent_world_transform(
+    entity: dict[str, Any],
+    entities: dict[str, dict[str, Any]],
+) -> tuple[
+    tuple[float, float, float],
+    tuple[float, float, float, float],
+    tuple[float, float, float],
+]:
+    """Return the source parent's canonical world transform, or identity."""
+    parent = entities.get(str(entity.get("parent_entity_id", "")))
+    if not parent:
+        return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
+
+    transform = parent.get("metadata", {}).get("world_transform")
+    if not isinstance(transform, dict):
+        return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
+
+    position = transform.get("position", {})
+    rotation = transform.get("rotation", {})
+    scale = transform.get("scale", {})
+    return (
+        (
+            float(position.get("x", 0.0)),
+            float(position.get("y", 0.0)),
+            float(position.get("z", 0.0)),
+        ),
+        _normalize_quat(
+            (
+                float(rotation.get("x", 0.0)),
+                float(rotation.get("y", 0.0)),
+                float(rotation.get("z", 0.0)),
+                float(rotation.get("w", 1.0)),
+            )
+        ),
+        (
+            float(scale.get("x", 1.0)),
+            float(scale.get("y", 1.0)),
+            float(scale.get("z", 1.0)),
+        ),
+    )
+
+
+def compose_canonical_transform(
+    parent_position: tuple[float, float, float],
+    parent_rotation: tuple[float, float, float, float],
+    parent_scale: tuple[float, float, float],
+    local_position: tuple[float, float, float],
+    local_rotation: tuple[float, float, float, float],
+    local_scale: tuple[float, float, float] = (1.0, 1.0, 1.0),
+) -> tuple[
+    tuple[float, float, float],
+    tuple[float, float, float, float],
+    tuple[float, float, float],
+]:
+    """Compose a canonical local transform under a canonical parent world transform."""
+    scaled_local = tuple(
+        float(local_position[i]) * float(parent_scale[i]) for i in range(3)
+    )
+    rotated_local = _quat_rotate_vector(parent_rotation, scaled_local)
+    world_position = tuple(
+        float(parent_position[i]) + float(rotated_local[i]) for i in range(3)
+    )
+    world_rotation = _quat_mul(parent_rotation, local_rotation)
+    world_scale = tuple(
+        float(parent_scale[i]) * float(local_scale[i]) for i in range(3)
+    )
+    return world_position, world_rotation, world_scale
+
+
+def character_section_world_transform(
+    section: dict[str, Any],
+    entity: dict[str, Any],
+    entities: dict[str, dict[str, Any]],
+) -> tuple[
+    tuple[float, float, float],
+    tuple[float, float, float, float],
+    tuple[float, float, float],
+]:
+    """Resolve Timeline track/clip offsets into source world space."""
+    curves = _curve_map(section)
+    track_position = _vector_offset(curves, "transform.track_offset.position")
+    clip_position = _vector_offset(curves, "transform.clip_offset.position")
+    local_position = tuple(
+        float(track_position[i]) + float(clip_position[i]) for i in range(3)
+    )
+    track_rotation = _quat_offset(curves, "transform.track_offset.rotation")
+    clip_rotation = _quat_offset(curves, "transform.clip_offset.rotation")
+    local_rotation = _quat_mul(track_rotation, clip_rotation)
+    parent_position, parent_rotation, parent_scale = parent_world_transform(
+        entity, entities
+    )
+    return compose_canonical_transform(
+        parent_position,
+        parent_rotation,
+        parent_scale,
+        local_position,
+        local_rotation,
+    )
+
+
+def rotate_unreal_delta_yaw(
+    delta_cm: tuple[float, float, float],
+    yaw_degrees: float,
+) -> tuple[float, float, float]:
+    """Rotate an Unreal-space displacement around world-up Z."""
+    radians = math.radians(float(yaw_degrees))
+    cosine = math.cos(radians)
+    sine = math.sin(radians)
+    x, y, z = (float(value) for value in delta_cm)
+    return (
+        cosine * x - sine * y,
+        sine * x + cosine * y,
+        z,
+    )
+
+
 def _mat_mul(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
     return [[sum(a[r][k] * b[k][c] for k in range(3)) for c in range(3)] for r in range(3)]
 
@@ -368,7 +504,12 @@ def canonical_quat_to_unreal_rotator(
 
 
 def _transform_action(
-    track: dict[str, Any], entity: dict[str, Any], actor_label: str, fps_n: int, fps_d: int
+    track: dict[str, Any],
+    entity: dict[str, Any],
+    actor_label: str,
+    fps_n: int,
+    fps_d: int,
+    entities: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
     if not track.get("sections"):
         return None
@@ -408,20 +549,32 @@ def _transform_action(
             _curve_value(position_curves["y"], time_seconds),
             _curve_value(position_curves["z"], time_seconds),
         )
-        absolute_position = tuple(base_position[i] + relative_position[i] for i in range(3))
+        local_position = tuple(
+            base_position[i] + relative_position[i] for i in range(3)
+        )
 
         delta_q = unity_euler_delta_to_canonical_quat(
             _curve_value(euler_curves["x"], time_seconds),
             _curve_value(euler_curves["y"], time_seconds),
             _curve_value(euler_curves["z"], time_seconds),
         )
-        absolute_q = _quat_mul(base_rotation, delta_q)
+        local_rotation = _quat_mul(base_rotation, delta_q)
+        parent_position, parent_rotation, parent_scale = parent_world_transform(
+            entity, entities
+        )
+        world_position, world_rotation, _world_scale = compose_canonical_transform(
+            parent_position,
+            parent_rotation,
+            parent_scale,
+            local_position,
+            local_rotation,
+        )
         keys.append(
             {
                 "frame": seconds_to_frame(time_seconds, fps_n, fps_d),
                 "time_seconds": time_seconds,
-                "location_cm": canonical_position_to_unreal_cm(absolute_position),
-                "rotation_rpy_degrees": canonical_quat_to_unreal_rotator(absolute_q),
+                "location_cm": canonical_position_to_unreal_cm(world_position),
+                "rotation_rpy_degrees": canonical_quat_to_unreal_rotator(world_rotation),
             }
         )
 
@@ -510,7 +663,17 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                         rational_seconds(section["end"]) - rational_seconds(section["start"])
                     )
                     time_scale = float(section.get("time_scale", 1.0))
-                    expected_root_delta = _source_root_delta_unreal_cm(section)
+                    (
+                        _source_world_position,
+                        source_world_rotation,
+                        _source_world_scale,
+                    ) = character_section_world_transform(section, entity, entities)
+                    expected_root_delta = _source_root_delta_unreal_cm(
+                        section, source_world_rotation
+                    )
+                    base_roll, base_pitch, base_yaw = canonical_quat_to_unreal_rotator(
+                        source_world_rotation
+                    )
                     action: dict[str, Any] = {
                         "kind": "skeletal_animation",
                         "track_name": track.get("name", ""),
@@ -522,6 +685,12 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                         "source_start_seconds": source_offset_seconds,
                         "source_end_seconds": source_offset_seconds + timeline_duration_seconds * time_scale,
                         "time_scale": time_scale,
+                        "base_actor_rotation_rpy_degrees": [
+                            float(base_roll),
+                            float(base_pitch),
+                            float(base_yaw),
+                        ],
+                        "base_actor_yaw_degrees": float(base_yaw),
                         # CSIR 0.1.5 does not yet preserve Timeline clip extrapolation.
                         # Keep the last evaluated pose rather than inventing a target T-pose.
                         "completion_mode": "keep_state",
@@ -534,13 +703,17 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                     }
                     if expected_root_delta is not None:
                         action["expected_root_delta_cm"] = list(expected_root_delta)
-                        source_profile = _source_root_profile_unreal_cm(section)
+                        source_profile = _source_root_profile_unreal_cm(
+                            section, source_world_rotation
+                        )
                         if source_profile is not None:
                             action["root_motion_source_profile"] = source_profile
                     plan["actions"].append(action)
                 continue
 
-            transform = _transform_action(track, entity, actor_label, fps_n, fps_d)
+            transform = _transform_action(
+                track, entity, actor_label, fps_n, fps_d, entities
+            )
             if transform:
                 plan["actions"].append(transform)
 
