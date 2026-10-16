@@ -137,6 +137,63 @@ def _source_root_delta_unreal_cm(
     return canonical_position_to_unreal_cm(canonical_delta)
 
 
+def _source_root_samples_unreal_cm(
+    section: dict[str, Any],
+    world_rotation: tuple[float, float, float, float] | None = None,
+) -> list[dict[str, Any]]:
+    """Sample source RootT displacement at authored key times in Unreal world axes."""
+    curves = {
+        str(curve.get("property_name")): curve
+        for curve in section.get("payload", {}).get("animation", {}).get("curves", [])
+        if str(curve.get("property_name", "")).startswith("RootT.")
+    }
+    required = ("RootT.x", "RootT.y", "RootT.z")
+    if not all(name in curves for name in required):
+        return []
+
+    source_start = rational_seconds(
+        section.get(
+            "source_offset",
+            {"value": 0, "rate": {"numerator": 1, "denominator": 1}},
+        )
+    )
+    timeline_duration = rational_seconds(section["end"]) - rational_seconds(section["start"])
+    time_scale = float(section.get("time_scale", 1.0))
+    source_end = source_start + timeline_duration * time_scale
+
+    times = {source_start, source_end}
+    for curve in curves.values():
+        for key in curve.get("keys", []):
+            time_seconds = float(key["time_seconds"])
+            if source_start <= time_seconds <= source_end:
+                times.add(time_seconds)
+
+    start_x = _curve_value(curves["RootT.x"], source_start)
+    start_y = _curve_value(curves["RootT.y"], source_start)
+    start_z = _curve_value(curves["RootT.z"], source_start)
+
+    section_start_seconds = rational_seconds(section["start"])
+    samples: list[dict[str, Any]] = []
+    for source_time in sorted(times):
+        dx = _curve_value(curves["RootT.x"], source_time) - start_x
+        dy = _curve_value(curves["RootT.y"], source_time) - start_y
+        dz = _curve_value(curves["RootT.z"], source_time) - start_z
+        canonical_delta = (dx, dy, -dz)
+        if world_rotation is not None:
+            canonical_delta = _quat_rotate_vector(world_rotation, canonical_delta)
+        timeline_time = section_start_seconds + (
+            (source_time - source_start) / time_scale if abs(time_scale) > 1e-12 else 0.0
+        )
+        samples.append(
+            {
+                "source_time_seconds": float(source_time),
+                "timeline_time_seconds": float(timeline_time),
+                "delta_cm": list(canonical_position_to_unreal_cm(canonical_delta)),
+            }
+        )
+    return samples
+
+
 def _source_root_profile_unreal_cm(
     section: dict[str, Any],
     world_rotation: tuple[float, float, float, float] | None = None,
@@ -165,26 +222,11 @@ def _source_root_profile_unreal_cm(
     timeline_duration = rational_seconds(section["end"]) - rational_seconds(section["start"])
     source_end = source_start + timeline_duration * float(section.get("time_scale", 1.0))
 
-    times = {source_start, source_end}
-    for curve in curves.values():
-        for key in curve.get("keys", []):
-            time_seconds = float(key["time_seconds"])
-            if source_start <= time_seconds <= source_end:
-                times.add(time_seconds)
-
-    start_x = _curve_value(curves["RootT.x"], source_start)
-    start_y = _curve_value(curves["RootT.y"], source_start)
-    start_z = _curve_value(curves["RootT.z"], source_start)
-
-    positions_unreal_cm: list[tuple[float, float, float]] = []
-    for time_seconds in sorted(times):
-        dx = _curve_value(curves["RootT.x"], time_seconds) - start_x
-        dy = _curve_value(curves["RootT.y"], time_seconds) - start_y
-        dz = _curve_value(curves["RootT.z"], time_seconds) - start_z
-        canonical_delta = (dx, dy, -dz)
-        if world_rotation is not None:
-            canonical_delta = _quat_rotate_vector(world_rotation, canonical_delta)
-        positions_unreal_cm.append(canonical_position_to_unreal_cm(canonical_delta))
+    samples = _source_root_samples_unreal_cm(section, world_rotation)
+    positions_unreal_cm = [
+        tuple(float(value) for value in sample["delta_cm"])
+        for sample in samples
+    ]
 
     if not positions_unreal_cm:
         return None
@@ -708,6 +750,11 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                         )
                         if source_profile is not None:
                             action["root_motion_source_profile"] = source_profile
+                        source_samples = _source_root_samples_unreal_cm(
+                            section, source_world_rotation
+                        )
+                        if source_samples:
+                            action["root_motion_source_samples"] = source_samples
                     plan["actions"].append(action)
                 continue
 
