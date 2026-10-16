@@ -260,6 +260,39 @@ def test_root_motion_yaw_alignment_corrects_opposite_direction() -> None:
     assert aligned == 0.0
 
 
+def test_root_motion_alignment_selects_one_strongest_section_per_actor() -> None:
+    walk = {
+        "kind": "skeletal_animation",
+        "entity_name": "CharacterA",
+        "actor_label": "CHARACTER_A",
+        "expected_root_delta_cm": [329.0, 0.0, 0.0],
+        "resolved_root_yaw_degrees": -90.0,
+    }
+    idle_drift = {
+        "kind": "skeletal_animation",
+        "entity_name": "CharacterA",
+        "actor_label": "CHARACTER_A",
+        "expected_root_delta_cm": [0.5, 4.5, 0.0],
+        "resolved_root_yaw_degrees": -89.0,
+    }
+    other_actor = {
+        "kind": "skeletal_animation",
+        "entity_name": "CharacterB",
+        "actor_label": "CHARACTER_B",
+        "expected_root_delta_cm": [120.0, 0.0, 0.0],
+        "resolved_root_yaw_degrees": 15.0,
+    }
+
+    selected = csir_plan.select_actor_root_motion_alignments(
+        [walk, idle_drift, other_actor]
+    )
+
+    assert len(selected) == 2
+    by_actor = {item["actor_label"]: item for item in selected}
+    assert by_actor["CHARACTER_A"] is walk
+    assert by_actor["CHARACTER_B"] is other_actor
+
+
 def test_output_gate_does_not_reuse_live_unity_camera_aspect() -> None:
     csir, mapping = _fixture()
     plan = csir_plan.build_plan(csir, mapping)
