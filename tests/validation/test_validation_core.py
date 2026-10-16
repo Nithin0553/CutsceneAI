@@ -238,6 +238,66 @@ def test_grounded_root_motion_allows_small_vertical_import_baseline_difference()
     assert item["actual"]["metrics"]["vertical_error_cm"] < 1.0
 
 
+def test_negligible_root_drift_ignores_direction_and_relative_error() -> None:
+    expected = _snapshot()
+    expected_track = expected["bindings"][1]["tracks"][0]
+    expected_track["effective_root_delta_cm"] = [-0.18, -0.24, -0.005]
+    expected_track["root_motion_source_profile"] = {
+        "horizontal_end_distance_cm": 0.30,
+        "vertical_net_displacement_cm": -0.005,
+        "vertical_excursion_cm": 6.0,
+        "sample_count": 31.0,
+    }
+
+    actual = copy.deepcopy(expected)
+    actual["bindings"][1]["tracks"][0]["effective_root_delta_cm"] = [
+        0.28,
+        -0.15,
+        -0.018,
+    ]
+
+    report = core.compare(expected, actual)
+    item = next(
+        check for check in report["checks"]
+        if check["id"] == "animation.root_motion.CHARACTER_Guard"
+    )
+
+    assert item["status"] == "PASS"
+    assert item["actual"]["policy"]["mode"] == "negligible_horizontal_root_drift"
+    assert item["actual"]["metrics"]["direction_error_degrees"] > 90.0
+    assert item["actual"]["metrics"]["horizontal_endpoint_error_cm"] < 0.5
+
+
+def test_small_idle_root_drift_uses_absolute_endpoint_error() -> None:
+    expected = _snapshot()
+    expected_track = expected["bindings"][1]["tracks"][0]
+    expected_track["effective_root_delta_cm"] = [0.20, -4.60, 0.24]
+    expected_track["root_motion_source_profile"] = {
+        "horizontal_end_distance_cm": 4.60,
+        "vertical_net_displacement_cm": 0.24,
+        "vertical_excursion_cm": 0.24,
+        "sample_count": 17.0,
+    }
+
+    actual = copy.deepcopy(expected)
+    actual["bindings"][1]["tracks"][0]["effective_root_delta_cm"] = [
+        0.52,
+        -4.83,
+        0.28,
+    ]
+
+    report = core.compare(expected, actual)
+    item = next(
+        check for check in report["checks"]
+        if check["id"] == "animation.root_motion.CHARACTER_Guard"
+    )
+
+    assert item["status"] == "PASS"
+    assert item["actual"]["policy"]["mode"] == "negligible_horizontal_root_drift"
+    assert item["actual"]["metrics"]["horizontal_distance_relative_error"] > 0.05
+    assert item["actual"]["metrics"]["horizontal_endpoint_error_cm"] < 0.5
+
+
 def test_material_vertical_excursion_requires_sampled_trajectory_validation() -> None:
     expected = _snapshot()
     expected["bindings"][1]["tracks"][0]["root_motion_source_profile"] = {

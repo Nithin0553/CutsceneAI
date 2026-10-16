@@ -18,6 +18,7 @@ DEFAULT_TOLERANCES = {
     "root_motion_horizontal_endpoint_cm": 0.5,
     "root_motion_direction_deg": 0.1,
     "root_motion_distance_relative": 0.0025,
+    "root_motion_negligible_horizontal_cm": 10.0,
     "root_motion_grounded_min_horizontal_cm": 50.0,
     "root_motion_grounded_max_vertical_excursion_cm": 5.0,
     "root_motion_grounded_vertical_endpoint_cm": 1.0,
@@ -125,6 +126,20 @@ def root_motion_policy(
 
     horizontal = float(source_profile.get("horizontal_end_distance_cm", 0.0))
     vertical_excursion = float(source_profile.get("vertical_excursion_cm", math.inf))
+    if horizontal < float(tolerances["root_motion_negligible_horizontal_cm"]):
+        return {
+            "mode": "negligible_horizontal_root_drift",
+            "status": "RESOLVED",
+            "horizontal_end_distance_cm": horizontal,
+            "vertical_excursion_cm": vertical_excursion,
+            "horizontal_endpoint_tolerance_cm": float(
+                tolerances["root_motion_horizontal_endpoint_cm"]
+            ),
+            "vertical_endpoint_tolerance_cm": float(
+                tolerances["root_motion_grounded_vertical_endpoint_cm"]
+            ),
+        }
+
     grounded = (
         horizontal >= float(tolerances["root_motion_grounded_min_horizontal_cm"])
         and vertical_excursion
@@ -457,7 +472,23 @@ def compare(
                             horizontal_endpoint_ok and direction_ok and distance_ok
                         )
 
-                        if policy["status"] == "RESOLVED":
+                        if policy["mode"] == "negligible_horizontal_root_drift":
+                            # Direction and relative-distance error are unstable for
+                            # near-zero displacement vectors. Validate absolute endpoint
+                            # drift instead so stationary/in-place clips are not treated
+                            # as failed locomotion.
+                            low_drift_horizontal_ok = (
+                                metrics["horizontal_endpoint_error_cm"]
+                                <= float(policy["horizontal_endpoint_tolerance_cm"])
+                            )
+                            low_drift_vertical_ok = (
+                                metrics["vertical_error_cm"]
+                                <= float(policy["vertical_endpoint_tolerance_cm"])
+                            )
+                            root_status = _status_from_bool(
+                                low_drift_horizontal_ok and low_drift_vertical_ok
+                            )
+                        elif policy["status"] == "RESOLVED":
                             vertical_ok = (
                                 metrics["vertical_error_cm"]
                                 <= float(policy["vertical_endpoint_tolerance_cm"])
@@ -485,6 +516,9 @@ def compare(
                                     "direction_deg": tol["root_motion_direction_deg"],
                                     "horizontal_distance_relative": tol[
                                         "root_motion_distance_relative"
+                                    ],
+                                    "negligible_horizontal_cm": tol[
+                                        "root_motion_negligible_horizontal_cm"
                                     ],
                                     "grounded_vertical_endpoint_cm": tol[
                                         "root_motion_grounded_vertical_endpoint_cm"
