@@ -298,6 +298,35 @@ def test_small_idle_root_drift_uses_absolute_endpoint_error() -> None:
     assert item["actual"]["metrics"]["horizontal_endpoint_error_cm"] < 0.5
 
 
+def test_long_walk_with_small_relative_vertical_excursion_is_grounded() -> None:
+    expected = _snapshot()
+    expected_track = expected["bindings"][1]["tracks"][0]
+    expected_track["effective_root_delta_cm"] = [-329.86, 0.0, -0.48]
+    expected_track["root_motion_source_profile"] = {
+        "horizontal_end_distance_cm": 329.86,
+        "vertical_net_displacement_cm": -0.48,
+        "vertical_excursion_cm": 5.08,
+        "sample_count": 43.0,
+    }
+
+    actual = copy.deepcopy(expected)
+    actual["bindings"][1]["tracks"][0]["effective_root_delta_cm"] = [
+        -329.90,
+        0.01,
+        -0.30,
+    ]
+
+    report = core.compare(expected, actual)
+    item = next(
+        check for check in report["checks"]
+        if check["id"] == "animation.root_motion.CHARACTER_Guard"
+    )
+
+    assert item["status"] == "PASS"
+    assert item["actual"]["policy"]["mode"] == "grounded_low_vertical_excursion"
+    assert item["actual"]["policy"]["vertical_excursion_relative"] < 0.02
+
+
 def test_material_vertical_excursion_requires_sampled_trajectory_validation() -> None:
     expected = _snapshot()
     expected["bindings"][1]["tracks"][0]["root_motion_source_profile"] = {
