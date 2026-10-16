@@ -92,6 +92,63 @@ def test_character_uses_animation_playable_clip_offset_not_preview_transform() -
     assert operations[0]["location_cm"] == (700.0, 0.0, 0.0)
 
 
+def test_character_clip_offset_is_composed_with_parent_world_transform() -> None:
+    curves = [
+        _curve("transform.track_offset.position.x", 0.0),
+        _curve("transform.track_offset.position.y", 0.0),
+        _curve("transform.track_offset.position.z", 0.0),
+        _curve("transform.track_offset.rotation.x", 0.0),
+        _curve("transform.track_offset.rotation.y", 0.0),
+        _curve("transform.track_offset.rotation.z", 0.0),
+        _curve("transform.track_offset.rotation.w", 1.0),
+        _curve("transform.clip_offset.position.x", 0.0),
+        _curve("transform.clip_offset.position.y", 0.0),
+        _curve("transform.clip_offset.position.z", 0.0),
+        _curve("transform.clip_offset.rotation.x", 0.0),
+        _curve("transform.clip_offset.rotation.y", 0.0),
+        _curve("transform.clip_offset.rotation.z", 0.0),
+        _curve("transform.clip_offset.rotation.w", 1.0),
+    ]
+    csir = {
+        "entities": [
+            {
+                "entity_id": "root",
+                "ced_type": "entity.prop",
+                "name": "Root",
+                "metadata": {
+                    "world_transform": {
+                        "position": {"x": 1.5, "y": 0.0, "z": -5.0},
+                        "rotation": {"x": 0.0, "y": 1.0, "z": 0.0, "w": 0.0},
+                        "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+                    }
+                },
+            },
+            {
+                "entity_id": "guard",
+                "parent_entity_id": "root",
+                "ced_type": "entity.character",
+                "name": "CHARACTER_Guard",
+            },
+        ],
+        "tracks": [
+            {
+                "ced_type": "animation.track",
+                "binding_entity_id": "guard",
+                "sections": [{"payload": {"animation": {"curves": curves}}}],
+            }
+        ],
+    }
+    mapping = {"entities": {"CHARACTER_Guard": {"actor_label": "CHARACTER_Guard"}}}
+
+    operation = scene_prep.build_scene_prep(csir, mapping)[0]
+    pitch, yaw, roll = operation["rotation_pitch_yaw_roll_degrees"]
+
+    assert operation["location_cm"] == (500.0, 150.0, 0.0)
+    assert abs(pitch) < 1e-6
+    assert abs(abs(yaw) - 180.0) < 1e-6
+    assert abs(roll) < 1e-6
+
+
 def test_static_unity_camera_pitch_remains_unreal_pitch_not_roll() -> None:
     csir = {
         "entities": [

@@ -3,6 +3,7 @@ from pathlib import Path
 READBACK = Path("integrations/unreal/readback_level_sequence.py")
 RUNNER = Path("integrations/unreal/validate_transfer.py")
 BENCHMARK001_WRAPPER = Path("integrations/unreal/validate_benchmark001.py")
+VALIDATION_EXPECTATION = Path("integrations/unreal/validation_expectation.py")
 
 
 def test_readback_inspects_saved_sequence_instead_of_reusing_generation_plan() -> None:
@@ -20,6 +21,19 @@ def test_readback_canonicalizes_transforms_and_camera_lens_semantics() -> None:
     assert "vertical_fov_from_focal_length" in source
     assert "vertical_fov_from_horizontal" in source
     assert "extract_animation_root_delta_cm" in source
+
+
+def test_readback_normalizes_actor_labels_back_to_source_entity_names() -> None:
+    source = READBACK.read_text(encoding="utf-8")
+    assert "source_by_label" in source
+    assert "record_name = source_by_label.get(owner_label, name)" in source
+    assert "for source_name, entry in sorted(mapping.get(\"entities\", {}).items())" in source
+
+
+def test_animated_camera_does_not_compare_transient_static_fov() -> None:
+    source = VALIDATION_EXPECTATION.read_text(encoding="utf-8")
+    assert 'bindings[name].pop("camera_state", None)' in source
+    assert '"kind": "camera_lens"' in source
 
 
 def test_generic_validation_runner_uses_benchmark_name_for_outputs() -> None:
