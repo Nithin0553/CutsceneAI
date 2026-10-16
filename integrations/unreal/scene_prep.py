@@ -108,7 +108,10 @@ def _world_transform(entity: dict[str, Any], actor_label: str) -> dict[str, Any]
 
 
 def _character_clip_transform(
-    track: dict[str, Any], entity: dict[str, Any], actor_label: str
+    track: dict[str, Any],
+    entity: dict[str, Any],
+    actor_label: str,
+    entities: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
     sections = track.get("sections", [])
     if not sections:
@@ -117,21 +120,16 @@ def _character_clip_transform(
     if not any(key.startswith("transform.clip_offset.") for key in curves):
         return None
 
-    track_position = _vector(curves, "transform.track_offset.position")
-    clip_position = _vector(curves, "transform.clip_offset.position")
-    position = _add3(track_position, clip_position)
-
-    track_rotation = _quat(curves, "transform.track_offset.rotation")
-    clip_rotation = _quat(curves, "transform.clip_offset.rotation")
-    rotation = csir_plan._quat_mul(track_rotation, clip_rotation)
-
+    position, rotation, scale = csir_plan.character_section_world_transform(
+        sections[0], entity, entities
+    )
     return _transform_operation(
         entity["name"],
         actor_label,
         position,
         rotation,
-        (1.0, 1.0, 1.0),
-        "animation_clip_offset",
+        scale,
+        "animation_clip_offset_with_parent_world",
     )
 
 
@@ -154,6 +152,7 @@ def build_scene_prep(csir: dict[str, Any], mapping: dict[str, Any]) -> list[dict
                     track,
                     entity,
                     str(mapping["entities"][entity["name"]]["actor_label"]),
+                    entities,
                 )
                 if op:
                     operations.append(op)
