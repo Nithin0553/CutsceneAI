@@ -109,17 +109,27 @@ def _preflight(plan: dict[str, Any]) -> None:
                     )
                 except unreal_compat.UnrealCompatibilityError as exc:
                     raise UnrealBuildError(str(exc)) from exc
+                base_yaw = float(action.get("base_actor_yaw_degrees", 0.0))
+                target_world_delta = csir_plan.rotate_unreal_delta_yaw(
+                    target_delta,
+                    base_yaw,
+                )
                 yaw = csir_plan.root_motion_yaw_alignment_degrees(
                     tuple(float(value) for value in expected),
-                    target_delta,
+                    target_world_delta,
                 )
                 action["resolved_root_yaw_degrees"] = yaw
                 action["root_motion_sampling_strategy"] = root_strategy
+                action["target_root_delta_after_base_cm"] = [
+                    float(value) for value in target_world_delta
+                ]
                 unreal.log(
                     "[CutSceneAI] Preflight root motion "
                     f"{action['entity_name']}: sampler={root_strategy}, "
-                    f"expected_cm={tuple(round(float(v), 3) for v in expected)}, "
-                    f"target_cm={tuple(round(float(v), 3) for v in target_delta)}, "
+                    f"expected_world_cm={tuple(round(float(v), 3) for v in expected)}, "
+                    f"target_import_cm={tuple(round(float(v), 3) for v in target_delta)}, "
+                    f"base_actor_yaw={round(base_yaw, 3)}, "
+                    f"target_base_world_cm={tuple(round(float(v), 3) for v in target_world_delta)}, "
                     f"world_yaw_correction={None if yaw is None else round(yaw, 3)}"
                 )
         elif kind == "audio":
