@@ -209,6 +209,42 @@ def root_motion_yaw_alignment_degrees(
     return (degrees + 180.0) % 360.0 - 180.0
 
 
+def select_actor_root_motion_alignments(
+    actions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Choose at most one root-motion yaw calibration per target actor.
+
+    Root-motion import orientation is an actor/skeleton-space calibration, not a
+    per-section rotation to accumulate. When an actor has multiple animation
+    sections, choose the section with the largest observed source horizontal travel;
+    low-motion/idle drift must not apply a second yaw correction to the same actor.
+    """
+    selected: dict[str, tuple[float, dict[str, Any]]] = {}
+    order: list[str] = []
+
+    for action in actions:
+        if str(action.get("kind")) != "skeletal_animation":
+            continue
+        if action.get("resolved_root_yaw_degrees") is None:
+            continue
+        expected = action.get("expected_root_delta_cm")
+        if not isinstance(expected, (list, tuple)) or len(expected) < 2:
+            continue
+        actor_label = str(action.get("actor_label", "")).strip()
+        if not actor_label:
+            continue
+
+        horizontal_cm = math.hypot(float(expected[0]), float(expected[1]))
+        current = selected.get(actor_label)
+        if current is None:
+            selected[actor_label] = (horizontal_cm, action)
+            order.append(actor_label)
+        elif horizontal_cm > current[0]:
+            selected[actor_label] = (horizontal_cm, action)
+
+    return [selected[actor_label][1] for actor_label in order]
+
+
 def _target_output_profile(mapping: dict[str, Any]) -> tuple[int, int, str]:
     value = mapping.get("output_resolution")
     if isinstance(value, (list, tuple)) and len(value) == 2:
