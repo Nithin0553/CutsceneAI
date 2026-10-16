@@ -299,6 +299,11 @@ def test_character_root_motion_and_final_pose_policy_are_planned() -> None:
     assert action["root_motion_source_profile"]["horizontal_end_distance_cm"] > 100.0
     assert action["root_motion_source_profile"]["vertical_excursion_cm"] >= 0.0
     assert action["root_motion_source_profile"]["sample_count"] >= 2.0
+    samples = action["root_motion_source_samples"]
+    assert samples[0]["delta_cm"] == [0.0, 0.0, 0.0]
+    assert samples[-1]["delta_cm"] == [-150.0, 10.0, 0.0]
+    assert samples[0]["timeline_time_seconds"] == 0.0
+    assert samples[-1]["timeline_time_seconds"] == 3.25
 
 
 def test_root_motion_yaw_alignment_corrects_opposite_direction() -> None:
