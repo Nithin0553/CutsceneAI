@@ -19,6 +19,7 @@ unless ``overwrite_sequence`` is enabled in the mapping file.
 from __future__ import annotations
 
 import importlib
+import math
 import os
 import sys
 from pathlib import Path
@@ -191,14 +192,15 @@ def _apply_scene_prep(csir: dict[str, Any], mapping: dict[str, Any]) -> None:
 
 
 def _apply_root_motion_alignment(plan: dict[str, Any]) -> None:
-    """Apply measured trajectory alignment in actor/world space before Sequencer build."""
-    for action in plan.get("actions", []):
-        if str(action.get("kind")) != "skeletal_animation":
-            continue
+    """Apply one measured trajectory calibration per actor before Sequencer build."""
+    selected = csir_plan.select_actor_root_motion_alignments(plan.get("actions", []))
+    for action in selected:
         yaw = action.get("resolved_root_yaw_degrees")
         if yaw is None or abs(float(yaw)) <= 0.05:
             continue
         actor = _find_actor(str(action["actor_label"]))
+        expected = action.get("expected_root_delta_cm", (0.0, 0.0, 0.0))
+        horizontal_cm = math.hypot(float(expected[0]), float(expected[1]))
         try:
             strategy = unreal_compat.apply_actor_world_yaw_alignment(actor, float(yaw))
         except unreal_compat.UnrealCompatibilityError as exc:
@@ -207,6 +209,7 @@ def _apply_root_motion_alignment(plan: dict[str, Any]) -> None:
         unreal.log(
             "[CutSceneAI] Root motion aligned "
             f"{action['entity_name']}: space=actor_world, strategy={strategy}, "
+            f"calibration_horizontal_cm={horizontal_cm:.3f}, "
             f"yaw_correction={float(yaw):.3f} deg, "
             f"actor_rpy=({float(resolved_rotation.roll):.3f}, "
             f"{float(resolved_rotation.pitch):.3f}, "
