@@ -539,22 +539,27 @@ def readback(
     target_aspect = float(width) / float(height)
 
     sequence_bindings = _bindings(sequence)
-    guid_to_name = {
-        _guid_key(_binding_guid(binding)): _binding_name(binding)
-        for binding in sequence_bindings
-    }
-
-    mapping_labels = {
-        str(entry.get("actor_label"))
-        for entry in mapping.get("entities", {}).values()
+    source_by_label = {
+        str(entry.get("actor_label")): str(source_name)
+        for source_name, entry in mapping.get("entities", {}).items()
         if isinstance(entry, dict) and entry.get("actor_label")
     }
+    mapping_labels = set(source_by_label)
+
+    binding_identity: dict[str, str] = {}
+    for binding in sequence_bindings:
+        owner_label = _binding_owner_label(sequence, binding)
+        binding_identity[_guid_key(_binding_guid(binding))] = source_by_label.get(
+            owner_label,
+            _binding_name(binding),
+        )
+    guid_to_name = dict(binding_identity)
 
     binding_records: dict[str, dict[str, Any]] = {}
     for binding in sequence_bindings:
         name = _binding_name(binding)
         owner_label = _binding_owner_label(sequence, binding)
-        record_name = owner_label if owner_label in mapping_labels else name
+        record_name = source_by_label.get(owner_label, name)
         record = binding_records.setdefault(
             record_name,
             {
@@ -565,9 +570,9 @@ def readback(
         )
 
         actor = None
-        if record_name in mapping_labels:
+        if owner_label in mapping_labels:
             try:
-                actor = _find_actor(record_name)
+                actor = _find_actor(owner_label)
             except UnrealReadbackError:
                 actor = None
 
@@ -595,10 +600,14 @@ def readback(
     # Enrich mapped actor bindings with read-back actor/camera state. Static transforms
     # are recorded only for actors without a generated transform track; dynamic transform
     # parity comes from actual Sequencer keys.
-    for label in sorted(mapping_labels):
+    for source_name, entry in sorted(mapping.get("entities", {}).items()):
+        if not isinstance(entry, dict) or not entry.get("actor_label"):
+            continue
+        label = str(entry["actor_label"])
+        record_name = str(source_name)
         record = binding_records.setdefault(
-            label,
-            {"name": label, "binding_id": "", "tracks": []},
+            record_name,
+            {"name": record_name, "binding_id": "", "tracks": []},
         )
         actor = _find_actor(label)
         has_transform_track = any(
