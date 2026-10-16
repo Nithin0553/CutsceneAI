@@ -192,6 +192,62 @@ def test_prop_relative_keys_are_resolved_against_infinite_offset() -> None:
     assert action["keys"][-1]["location_cm"] == (500.0, 200.0, 50.0)
 
 
+def test_nested_dynamic_transform_composes_parent_world_transform() -> None:
+    csir, mapping = _fixture()
+    csir["entities"].append(
+        {
+            "entity_id": "entity:root",
+            "name": "Root",
+            "ced_type": "entity.prop",
+            "metadata": {
+                "world_transform": {
+                    "position": {"x": 1.0, "y": 0.0, "z": 2.0},
+                    "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+                    "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+                }
+            },
+        }
+    )
+    prop = next(item for item in csir["entities"] if item["name"] == "MOVING_PROP")
+    prop["parent_entity_id"] = "entity:root"
+
+    plan = csir_plan.build_plan(csir, mapping)
+    action = next(
+        item for item in plan["actions"] if item.get("track_name") == "MOVING_PROP_Movement"
+    )
+
+    assert action["keys"][0]["location_cm"] == (300.0, -100.0, 50.0)
+    assert action["keys"][-1]["location_cm"] == (300.0, 300.0, 50.0)
+
+
+def test_character_root_motion_respects_parent_world_orientation() -> None:
+    csir, mapping = _fixture()
+    csir["entities"].append(
+        {
+            "entity_id": "entity:root",
+            "name": "Root",
+            "ced_type": "entity.prop",
+            "metadata": {
+                "world_transform": {
+                    "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "rotation": {"x": 0.0, "y": 1.0, "z": 0.0, "w": 0.0},
+                    "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+                }
+            },
+        }
+    )
+    character = next(
+        item for item in csir["entities"] if item["name"] == "CHARACTER_Guard"
+    )
+    character["parent_entity_id"] = "entity:root"
+
+    plan = csir_plan.build_plan(csir, mapping)
+    action = next(item for item in plan["actions"] if item["kind"] == "skeletal_animation")
+
+    assert action["expected_root_delta_cm"] == [150.0, -10.0, 0.0]
+    assert abs(abs(action["base_actor_yaw_degrees"]) - 180.0) < 1e-6
+
+
 def test_camera_fov_and_cut_timing_are_preserved() -> None:
     csir, mapping = _fixture()
     plan = csir_plan.build_plan(csir, mapping)
