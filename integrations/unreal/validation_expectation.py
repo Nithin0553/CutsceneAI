@@ -127,6 +127,10 @@ def build_expectation(
             name = str(action["entity_name"])
             if name not in bindings:
                 continue
+            # Once the camera lens is animated, the editor component's current static
+            # FOV depends on Sequencer evaluation time and is not a stable source state.
+            # Validate the actual lens keys instead of comparing a transient static FOV.
+            bindings[name].pop("camera_state", None)
             bindings[name]["tracks"].append(
                 {
                     "kind": "camera_lens",
