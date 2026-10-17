@@ -247,7 +247,7 @@ def validate_capture(plan: dict[str, Any], capture: dict[str, Any]) -> dict[str,
         bone_ids_by_rig[rig_id] = bone_set
         for bone in bones:
             parent = bone.get("parent_bone_id")
-            if parent is not None and parent not in bone_set:
+            if parent and parent not in bone_set:
                 failures.append(f"Unknown skeletal parent bone in rig {rig_id}.")
     declared_layers = {
         str(item.get("layer")): str(item.get("status"))
