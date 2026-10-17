@@ -30,7 +30,12 @@ import unreal
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+CINETWIN_DIR = SCRIPT_DIR.parents[1] / "packages" / "cinetwin"
+if str(CINETWIN_DIR) not in sys.path:
+    sys.path.insert(0, str(CINETWIN_DIR))
 
+import cinetwin_hierarchy_runtime
+import hierarchy_realization
 import csir_plan
 import scene_prep
 import unreal_compat
@@ -38,6 +43,8 @@ import unreal_compat
 importlib.reload(csir_plan)
 importlib.reload(scene_prep)
 importlib.reload(unreal_compat)
+importlib.reload(cinetwin_hierarchy_runtime)
+importlib.reload(hierarchy_realization)
 
 
 class UnrealBuildError(RuntimeError):
@@ -582,9 +589,29 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
     mapping = csir_plan.load_json(mapping_path)
     plan = csir_plan.build_plan(csir, mapping)
 
+    # Hierarchy realization remains opt-in until a staging target project and
+    # evaluated child-motion verification have been proven in the user's engine.
+    # Compute all constraints BEFORE making any level actor changes.
+    hierarchy_operations = None
+    if bool(mapping.get("enable_cinetwin_hierarchy", False)):
+        hierarchy_operations = hierarchy_realization.build_attachment_operations(
+            csir, mapping, plan["actions"]
+        )
+        unreal.log(
+            "[CineTwin] Preflight actor hierarchy: "
+            f"attachments={len(hierarchy_operations['attachments'])}, "
+            f"unresolved_source_parents="
+            f"{len(hierarchy_operations['unresolved_source_parents'])}."
+        )
+
     _preflight(plan)
     _apply_scene_prep(csir, mapping)
     _apply_root_motion_alignment(plan)
+    attachment_changes: list[dict[str, Any]] = []
+    if hierarchy_operations is not None:
+        attachment_changes = cinetwin_hierarchy_runtime.apply_hierarchy(
+            hierarchy_operations
+        )
     sequence: unreal.LevelSequence | None = None
     try:
         sequence = _create_sequence(plan)
@@ -642,12 +669,20 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
         unreal.log(f"[CutSceneAI] Generated Level Sequence: {plan['sequence_asset_path']}")
         return sequence
     except Exception:
-        if sequence is not None:
-            asset_path = str(plan["sequence_asset_path"])
-            unreal.EditorAssetLibrary.delete_asset(asset_path)
-            unreal.log_warning(
-                f"[CutSceneAI] Rolled back incomplete generated sequence after build failure: {asset_path}"
-            )
+        try:
+            if sequence is not None:
+                asset_path = str(plan["sequence_asset_path"])
+                unreal.EditorAssetLibrary.delete_asset(asset_path)
+                unreal.log_warning(
+                    f"[CutSceneAI] Rolled back incomplete generated sequence after build failure: {asset_path}"
+                )
+        finally:
+            if attachment_changes:
+                cinetwin_hierarchy_runtime.rollback_hierarchy(attachment_changes)
+                unreal.log_warning(
+                    "[CineTwin] Rolled back newly created actor attachments "
+                    "because sequence construction failed."
+                )
         raise
 
 
