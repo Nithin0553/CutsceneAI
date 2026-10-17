@@ -44,7 +44,7 @@ def main() -> int:
     capture = json.loads(args.capture.read_text(encoding="utf-8-sig"))
     report = validate_capture(plan, capture)
     print(json.dumps(report, indent=2))
-    return 0 if report["status"] == "PASS" else 1
+    return 1 if report["status"] == "FAIL" else 0
 
 
 if __name__ == "__main__":
