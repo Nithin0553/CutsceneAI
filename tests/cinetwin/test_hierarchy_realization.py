@@ -134,7 +134,8 @@ def test_builder_feature_flag_and_exception_rollback_are_explicit():
     ast.parse(builder)
     ast.parse(runtime)
     assert 'mapping.get("enable_cinetwin_hierarchy", False)' in builder
-    assert builder.index("build_attachment_operations(") < builder.index("_apply_scene_prep(csir")
+    build_body = builder[builder.index("def build("):]
+    assert build_body.index("build_attachment_operations(") < build_body.index("_apply_scene_prep(csir")
     assert "rollback_hierarchy(attachment_changes)" in builder
     assert "get_attach_parent_actor()" in runtime
     assert "unreal.AttachmentRule.KEEP_WORLD" in runtime
