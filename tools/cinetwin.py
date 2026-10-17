@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / "packages" / "cinetwin"))
 
 from sampling_plan import plan_file, validate_capture
 from behavior_compare import BehavioralComparisonError, compare_files
+from hierarchy_plan import plan_actor_hierarchy
 
 
 def main() -> int:
@@ -33,6 +34,13 @@ def main() -> int:
     comparison.add_argument("target", type=Path)
     comparison.add_argument("output", type=Path)
 
+    hierarchy = sub.add_parser(
+        "hierarchy", help="Read-only source-to-target attachment planning"
+    )
+    hierarchy.add_argument("csir", type=Path)
+    hierarchy.add_argument("mapping", type=Path)
+    hierarchy.add_argument("output", type=Path)
+
     args = parser.parse_args()
     if args.command == "plan":
         plan = plan_file(args.csir, args.output)
@@ -47,6 +55,27 @@ def main() -> int:
                 if entry["status"] == "NOT_IMPLEMENTED"
             )
         )
+        return 0
+
+    if args.command == "hierarchy":
+        csir = json.loads(args.csir.read_text(encoding="utf-8-sig"))
+        mapping = json.loads(args.mapping.read_text(encoding="utf-8-sig"))
+        result = plan_actor_hierarchy(csir, mapping)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(result, indent=2), encoding="utf-8"
+        )
+        print(
+            "[CineTwin] Hierarchy dry-run: "
+            f"{len(result['planned_actor_attachments'])} mapped attachments, "
+            f"{len(result['unresolved_source_parents'])} unresolved source parents."
+        )
+        for edge in result["planned_actor_attachments"]:
+            print(
+                f"  ATTACH {edge['actor_label']} -> {edge['parent_actor_label']} "
+                f"(rule={edge['attachment_rule']})"
+            )
+        print("[CineTwin] No Unreal assets or source files modified.")
         return 0
 
     if args.command == "compare":
