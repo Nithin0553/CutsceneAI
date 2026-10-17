@@ -62,14 +62,36 @@ def _entity_scope(csir: dict[str, Any]) -> list[dict[str, Any]]:
     return entities
 
 
-CAPTURED_LAYERS = ("world_transform", "camera_state", "light_state")
+CAPTURED_LAYERS = ("world_transform", "camera_state", "light_state", "skeletal_pose")
 UNIMPLEMENTED_LAYERS = (
-    "skeletal_pose",
     "audio_output",
     "event_execution",
     "rendered_frame",
     "physics_state",
 )
+
+
+def _skeletal_entity_ids(csir: dict[str, Any]) -> list[str]:
+    """Derive actual animated characters, not every renderer tagged as a character.
+
+    The structural source extractor can emit separate character entities for
+    individual mesh parts; only Timeline-bound skeletal animation targets are
+    requested as pose-capture rigs.
+    """
+    by_id = {str(entity["entity_id"]): entity for entity in csir.get("entities", [])}
+    result: set[str] = set()
+    for track in csir.get("tracks", []):
+        if str(track.get("ced_type")) != "animation.track":
+            continue
+        if not any(
+            str(section.get("ced_type")) == "animation.section"
+            for section in track.get("sections", [])
+        ):
+            continue
+        entity_id = str(track.get("binding_entity_id") or "")
+        if by_id.get(entity_id, {}).get("ced_type") == "entity.character":
+            result.add(entity_id)
+    return sorted(result)
 
 
 def build_plan(csir: dict[str, Any], *, csir_sha256: str = "") -> dict[str, Any]:
@@ -169,6 +191,7 @@ def build_plan(csir: dict[str, Any], *, csir_sha256: str = "") -> dict[str, Any]
             "playback_end_seconds": _timestamp(end),
         },
         "entities": _entity_scope(csir),
+        "skeletal_entity_ids": _skeletal_entity_ids(csir),
         "capabilities": capabilities,
         "samples": samples,
     }
@@ -204,6 +227,28 @@ def validate_capture(plan: dict[str, Any], capture: dict[str, Any]) -> dict[str,
         failures.append("Capture sample count does not match the sampling plan.")
     expected_entities = {item["entity_id"]: item for item in plan["entities"]}
     ids = set(expected_entities)
+    requested_rig_ids = set(plan.get("skeletal_entity_ids", []))
+    rig_records = capture.get("rigs", [])
+    rig_lookup = {rig.get("entity_id"): rig for rig in rig_records}
+    if (
+        len(rig_records) != len(rig_lookup)
+        or set(rig_lookup) != requested_rig_ids
+    ):
+        failures.append("Missing, unexpected or repeated skeletal rig definitions.")
+    bone_ids_by_rig: dict[str, set[str]] = {}
+    for rig_id in requested_rig_ids & rig_lookup.keys():
+        rig = rig_lookup[rig_id]
+        bones = rig.get("bones", [])
+        bone_ids = [bone.get("bone_id", "") for bone in bones]
+        if not bones or not all(bone_ids) or len(bone_ids) != len(set(bone_ids)):
+            failures.append(f"Skeletal rig {rig_id} has no bones or duplicate bone IDs.")
+            continue
+        bone_set = set(bone_ids)
+        bone_ids_by_rig[rig_id] = bone_set
+        for bone in bones:
+            parent = bone.get("parent_bone_id")
+            if parent is not None and parent not in bone_set:
+                failures.append(f"Unknown skeletal parent bone in rig {rig_id}.")
     declared_layers = {
         str(item.get("layer")): str(item.get("status"))
         for item in capture.get("capture_layers", [])
@@ -225,6 +270,39 @@ def validate_capture(plan: dict[str, Any], capture: dict[str, Any]) -> dict[str,
             continue
         if abs(float(sample["time_seconds"]) - expected_time) > 1e-7:
             failures.append(f"Sample {index} time differs from plan.")
+        poses = sample.get("skeletal_poses", [])
+        pose_by_rig = {pose.get("entity_id"): pose for pose in poses}
+        if (
+            len(poses) != len(pose_by_rig)
+            or set(pose_by_rig) != requested_rig_ids
+        ):
+            failures.append(f"Sample {index} skeletal rig observations incomplete.")
+        for rig_id in requested_rig_ids & pose_by_rig.keys():
+            bones = pose_by_rig[rig_id].get("bones", [])
+            bone_by_id = {bone.get("bone_id"): bone for bone in bones}
+            expected_bones = bone_ids_by_rig.get(rig_id)
+            if (
+                expected_bones is None
+                or len(bones) != len(bone_by_id)
+                or set(bone_by_id) != expected_bones
+            ):
+                failures.append(f"Sample {index} rig {rig_id} missing or extra bones.")
+                continue
+            for bone in bones:
+                for transform_key in ("local_transform", "world_transform"):
+                    transform = bone.get(transform_key, {})
+                    for field, length in (
+                        ("position_m", 3), ("rotation_xyzw", 4), ("scale_xyz", 3)
+                    ):
+                        values = transform.get(field, [])
+                        if len(values) != length or any(
+                            not math.isfinite(float(value)) for value in values
+                        ):
+                            failures.append(
+                                f"Sample {index} rig {rig_id} bone "
+                                f"{bone['bone_id']} invalid {transform_key}.{field}."
+                            )
+                            break
         states = sample.get("entities", [])
         state_ids = [str(item.get("entity_id", "")) for item in states]
         if len(state_ids) != len(set(state_ids)) or set(state_ids) != ids:
@@ -271,6 +349,7 @@ def validate_capture(plan: dict[str, Any], capture: dict[str, Any]) -> dict[str,
         "expected_samples": len(expected_times),
         "observed_samples": len(observed_samples),
         "entity_count": len(ids),
+        "skeletal_rig_count": len(requested_rig_ids),
         "failures": failures[:100],
         "not_verified": pending,
     }
