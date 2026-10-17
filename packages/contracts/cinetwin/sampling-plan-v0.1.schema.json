@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/cinetwin/sampling-plan/v0.1",
+  "title": "CineTwin Source Sampling Plan v0.1",
+  "type": "object",
+  "required": ["schema_version", "kind", "cutscene_id", "source", "timing", "entities", "capabilities", "samples"],
+  "properties": {
+    "schema_version": {"const": "0.1.0"},
+    "kind": {"const": "cinetwin.sampling_plan"},
+    "cutscene_id": {"type": "string", "minLength": 1},
+    "source": {
+      "type": "object",
+      "required": ["engine", "engine_version", "sequence_ref", "project_fingerprint", "csir_sha256"],
+      "properties": {
+        "engine": {"type": "string"},
+        "engine_version": {"type": "string"},
+        "sequence_ref": {"type": "string"},
+        "project_fingerprint": {"type": "string"},
+        "csir_sha256": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "timing": {
+      "type": "object",
+      "required": ["display_rate", "playback_start_seconds", "playback_end_seconds"],
+      "properties": {
+        "display_rate": {
+          "type": "object",
+          "required": ["numerator", "denominator"],
+          "properties": {"numerator": {"type": "integer", "minimum": 1}, "denominator": {"type": "integer", "minimum": 1}}
+        },
+        "playback_start_seconds": {"type": "number"},
+        "playback_end_seconds": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["entity_id", "name", "ced_type", "hierarchy_path", "parent_entity_id"],
+        "properties": {
+          "entity_id": {"type": "string", "minLength": 1},
+          "name": {"type": "string"},
+          "ced_type": {"type": "string"},
+          "hierarchy_path": {"type": "string"},
+          "parent_entity_id": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["layer", "status"],
+        "properties": {
+          "layer": {"type": "string"},
+          "status": {"enum": ["PLANNED", "NOT_IMPLEMENTED"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "samples": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["time_seconds", "reasons"],
+        "properties": {
+          "time_seconds": {"type": "number"},
+          "reasons": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

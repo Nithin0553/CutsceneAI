@@ -1,0 +1,14 @@
+{
+  "name": "CutSceneAI.CineTwin.Capture.Editor",
+  "rootNamespace": "CutSceneAI.CineTwin",
+  "references": ["Unity.Timeline"],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

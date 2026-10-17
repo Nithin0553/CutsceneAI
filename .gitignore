@@ -20,3 +20,7 @@ Thumbs.db
 research/artifacts/
 research/checkpoints/
 research/datasets/local/
+
+# Local CineTwin experiments / derived evidence
+*.cinetwin.behavior.json
+*.cinetwin.sampling-plan.json
