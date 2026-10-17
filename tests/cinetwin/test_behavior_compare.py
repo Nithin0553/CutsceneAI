@@ -163,6 +163,7 @@ def test_static_target_actor_is_flagged_separately_from_native_bone_motion() -> 
     alice = next(e for e in result["entities"] if e["source_name"] == "Alice")
     assert "SOURCE_MOVES_BUT_TARGET_ACTOR_STATIC" in alice["flags"]
     assert result["rig_motion_diagnostics"][0]["flags"] == []
+    assert alice["motion_diagnostic"] == "MOTION_MAY_BE_CARRIED_BY_SKELETON"
 
 
 def test_source_bones_move_but_unreal_native_bones_are_static() -> None:
