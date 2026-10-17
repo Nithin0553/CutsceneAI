@@ -149,6 +149,8 @@ def test_world_position_and_relative_trajectory_differences_are_measured() -> No
     alice = next(e for e in result["entities"] if e["source_name"] == "Alice")
     assert alice["max_world_position_error_cm"] == pytest.approx(7.0)
     assert alice["max_relative_trajectory_error_cm"] == 0
+    assert alice["initial_world_position_error_cm"] == pytest.approx(7.0)
+    assert alice["motion_diagnostic"] == "INITIAL_PLACEMENT_OFFSET_DOMINATES"
     assert "WORLD_POSITION_OUTSIDE_TOLERANCE" in alice["flags"]
     assert result["evaluation"]["status"] == "DIFFERENCES_DETECTED"
 
@@ -161,6 +163,7 @@ def test_static_target_actor_is_flagged_separately_from_native_bone_motion() -> 
     alice = next(e for e in result["entities"] if e["source_name"] == "Alice")
     assert "SOURCE_MOVES_BUT_TARGET_ACTOR_STATIC" in alice["flags"]
     assert result["rig_motion_diagnostics"][0]["flags"] == []
+    assert alice["motion_diagnostic"] == "MOTION_MAY_BE_CARRIED_BY_SKELETON"
 
 
 def test_source_bones_move_but_unreal_native_bones_are_static() -> None:

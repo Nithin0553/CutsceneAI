@@ -286,7 +286,13 @@ def compare(
             "max_world_position_error_cm": round(max(epos), 4),
             "max_world_position_error_time_s": target_samples[max_index]["time_seconds"],
             "end_world_position_error_cm": round(epos[-1], 4),
+            "initial_world_offset_cm": [
+                round((tgt_start[k] - src_start[k]) * 100.0, 4)
+                for k in range(3)
+            ],
+            "initial_world_position_error_cm": round(epos[0], 4),
             "max_relative_trajectory_error_cm": round(max(relative_errors), 4),
+            "end_relative_trajectory_error_cm": round(relative_errors[-1], 4),
             "source_max_motion_from_start_cm": round(source_motion, 4),
             "target_max_motion_from_start_cm": round(target_motion, 4),
             "max_world_rotation_error_degrees": round(max(erot), 4),
@@ -324,6 +330,44 @@ def compare(
             "flags": flags,
             "comparison_policy": "MOTION_PRESENCE_ONLY_NO_BONE_RETARGET_MAP",
         })
+    # A large absolute difference can be a fixed world-space placement
+    # offset, while a moving source actor and stationary Unreal actor can
+    # indicate a different motion carrier (bones/components vs actor).
+    # These are *diagnostic hypotheses*, never proof of matching animation.
+    rig_by_id = {entry["entity_id"]: entry for entry in rig_diagnostics}
+    for item in results:
+        source_motion = item["source_max_motion_from_start_cm"]
+        target_motion = item["target_max_motion_from_start_cm"]
+        relative_error = item["max_relative_trajectory_error_cm"]
+        initial_error = item["initial_world_position_error_cm"]
+        if source_motion <= 0.1 and target_motion <= 0.1:
+            category = (
+                "STATIC_PLACEMENT_MISMATCH" if initial_error > position_limit
+                else "STATIC_ACTOR_TRANSFORM_MATCH"
+            )
+        elif source_motion > 1.0 and target_motion < 0.1:
+            rig = rig_by_id.get(item["entity_id"])
+            native_bones_move = (
+                rig is not None
+                and rig["target"]["maximum_bone_displacement_from_start_cm"] > 1.0
+            )
+            category = (
+                "MOTION_MAY_BE_CARRIED_BY_SKELETON"
+                if native_bones_move else "MOTION_NOT_OBSERVED_ON_TARGET_ACTOR"
+            )
+        elif relative_error <= position_limit and initial_error > position_limit:
+            category = "INITIAL_PLACEMENT_OFFSET_DOMINATES"
+        elif relative_error > position_limit:
+            category = "RELATIVE_TRAJECTORY_MISMATCH"
+        else:
+            category = "ACTOR_TRAJECTORY_WITHIN_TOLERANCE"
+        item["motion_diagnostic"] = category
+        if category == "MOTION_MAY_BE_CARRIED_BY_SKELETON":
+            item["motion_hypothesis_note"] = (
+                "Actor stays stationary but native target bones move. "
+                "Possible motion ownership difference; this does not prove "
+                "that source trajectory or final pose matches."
+            )
     flags_present = any(item["flags"] for item in results + rig_diagnostics)
 
     return {
@@ -343,6 +387,10 @@ def compare(
         "entities": results,
         "rig_motion_diagnostics": rig_diagnostics,
         "unmapped_source_entities": unmapped,
+        "motion_ownership_policy": (
+            "ACTOR_VS_NATIVE_SKELETON_DIAGNOSTIC_ONLY;"
+            "NO_AUTOMATIC_ROOT_MOTION_REPAIR"
+        ),
         "unverified_domains": [
             "skeletal_pose_correspondence",
             "camera_optics",
