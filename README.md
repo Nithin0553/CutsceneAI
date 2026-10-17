@@ -46,3 +46,15 @@ The reverse direction (Unreal → Unity) follows after the first complete Unity 
 Transfer one real Unity Timeline containing one character, one skeletal animation, one moving prop, two cameras, one camera cut, camera transform/lens data, one audio clip, one event/marker, and an 8–12 second duration into an Unreal Level Sequence and verify it numerically.
 
 See `docs/architecture/FOUNDATION_V0_1.md`.
+
+## CineTwin research track (Phase 1, experimental)
+
+CineTwin complements the lossless CSIR with measured, evaluated source behavior.
+The first implementation creates a source-derived sampling plan and captures Unity
+world transforms, camera FOV, and light intensity in Play Mode, without saving the
+original scene. Unsupported layers remain explicit and block any claim of complete
+transfer fidelity.
+
+See [CineTwin Phase 1](docs/research/CINETWIN_PHASE_1.md) for architecture,
+current limitations, local usage, and the verification command.
+
