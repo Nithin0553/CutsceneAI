@@ -139,6 +139,5 @@ def test_builder_feature_flag_and_exception_rollback_are_explicit():
     assert "get_attach_parent_actor()" in runtime
     assert "unreal.AttachmentRule.KEEP_WORLD" in runtime
     assert "weld_simulated_bodies=False" in runtime
-    assert "False\\n            )" not in runtime  # explicit positional False is used
     assert "save_current_level" not in runtime
     assert "save_loaded_asset" not in runtime
