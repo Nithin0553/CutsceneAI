@@ -149,6 +149,8 @@ def test_world_position_and_relative_trajectory_differences_are_measured() -> No
     alice = next(e for e in result["entities"] if e["source_name"] == "Alice")
     assert alice["max_world_position_error_cm"] == pytest.approx(7.0)
     assert alice["max_relative_trajectory_error_cm"] == 0
+    assert alice["initial_world_position_error_cm"] == pytest.approx(7.0)
+    assert alice["motion_diagnostic"] == "INITIAL_PLACEMENT_OFFSET_DOMINATES"
     assert "WORLD_POSITION_OUTSIDE_TOLERANCE" in alice["flags"]
     assert result["evaluation"]["status"] == "DIFFERENCES_DETECTED"
 
