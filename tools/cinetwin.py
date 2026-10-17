@@ -70,7 +70,10 @@ def main() -> int:
                 f"max_position_error={item['max_world_position_error_cm']:.3f} cm, "
                 f"max_rotation_error={item['max_world_rotation_error_degrees']:.3f} deg, "
                 f"source_motion={item['source_max_motion_from_start_cm']:.3f} cm, "
-                f"target_motion={item['target_max_motion_from_start_cm']:.3f} cm"
+                f"target_motion={item['target_max_motion_from_start_cm']:.3f} cm, "
+                f"initial_offset={item['initial_world_position_error_cm']:.3f} cm, "
+                f"relative_trajectory_error={item['max_relative_trajectory_error_cm']:.3f} cm, "
+                f"diagnosis={item['motion_diagnostic']}"
             )
         for rig in report["rig_motion_diagnostics"]:
             print(
