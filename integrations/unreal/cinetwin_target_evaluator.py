@@ -172,7 +172,9 @@ def run(
         )
     library = _sequencer_api()
     earlier_sequence = library.get_current_level_sequence()
-    earlier_position = None
+    earlier_position = (
+        library.get_global_position() if earlier_sequence is not None else None
+    )
     opened_for_capture = earlier_sequence is None or (
         earlier_sequence.get_path_name() != sequence.get_path_name()
     )
@@ -188,7 +190,6 @@ def run(
             raise CineTwinTargetObservationError(
                 "The requested Unreal Level Sequence is not active in Sequencer."
             )
-        earlier_position = library.get_global_position()
         actors = _find_actors(request["bound"])
         skeletal_components = {
             entry["entity_id"]: _skeletal_component(actors[entry["entity_id"]])
@@ -274,6 +275,10 @@ def run(
     finally:
         # Scrubbing may temporarily alter editor-world actor state. Restore the
         # previous playhead/sequence; never save target assets during capture.
+        if opened_for_capture and earlier_sequence is not None:
+            library.open_level_sequence(earlier_sequence)
+        elif opened_for_capture and earlier_sequence is None:
+            library.close_level_sequence()
         if earlier_position is not None:
             try:
                 library.set_global_position(
@@ -285,7 +290,3 @@ def run(
                     "[CineTwin] Could not restore Unreal Sequencer playhead: "
                     + str(error)
                 )
-        if opened_for_capture and earlier_sequence is not None:
-            library.open_level_sequence(earlier_sequence)
-        elif opened_for_capture and earlier_sequence is None:
-            library.close_level_sequence()
