@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/cinetwin/behavior-capture/v0.1",
+  "title": "CineTwin Source Behavior Capture v0.1",
+  "description": "Samples of evaluated source-engine behavior, not a replacement for source CSIR.",
+  "type": "object",
+  "required": ["schema_version", "kind", "cutscene_id", "source", "samples", "capture_layers", "errors", "provenance"],
+  "properties": {
+    "schema_version": {"const": "0.1.0"},
+    "kind": {"const": "cinetwin.behavior_capture"},
+    "cutscene_id": {"type": "string", "minLength": 1},
+    "source": {
+      "type": "object",
+      "required": ["csir_sha256", "sequence_ref", "project_fingerprint"],
+      "properties": {
+        "csir_sha256": {"type": "string"},
+        "sequence_ref": {"type": "string", "minLength": 1},
+        "project_fingerprint": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "capture_layers": {"type": "array", "items": {
+      "type": "object", "required": ["layer", "status"],
+      "properties": {"layer": {"type": "string"}, "status": {"enum": ["CAPTURED", "NOT_IMPLEMENTED", "FAILED"]}}
+    }},
+    "errors": {"type": "array", "items": {"type": "string"}},
+    "provenance": {
+      "type": "object",
+      "required": ["method", "engine_version", "captured_at_utc"],
+      "properties": {
+        "method": {"const": "PlayableDirector.Evaluate"},
+        "engine_version": {"type": "string"},
+        "captured_at_utc": {"type": "string", "format": "date-time"},
+        "play_mode": {"const": true}
+      },
+      "additionalProperties": true
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["time_seconds", "entities"],
+        "properties": {
+          "time_seconds": {"type": "number"},
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["entity_id", "world_transform"],
+              "properties": {
+                "entity_id": {"type": "string", "minLength": 1},
+                "world_transform": {
+                  "type": "object",
+                  "required": ["position_m", "rotation_xyzw", "scale_xyz"],
+                  "properties": {
+                    "position_m": {"$ref": "#/$defs/vector3"},
+                    "rotation_xyzw": {"$ref": "#/$defs/quaternion"},
+                    "scale_xyz": {"$ref": "#/$defs/vector3"}
+                  },
+                  "additionalProperties": false
+                },
+                "camera": {
+                  "type": "object", "required": ["vertical_fov_degrees"],
+                  "properties": {"vertical_fov_degrees": {"type": "number"}}
+                },
+                "light": {
+                  "type": "object", "required": ["intensity"],
+                  "properties": {"intensity": {"type": "number"}}
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "vector3": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+    "quaternion": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}
+  },
+  "additionalProperties": false
+}
