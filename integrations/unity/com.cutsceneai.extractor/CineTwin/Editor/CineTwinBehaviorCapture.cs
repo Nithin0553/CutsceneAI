@@ -50,6 +50,7 @@ namespace CutSceneAI.CineTwin
             public string cutscene_id;
             public SourceInfo source;
             public PlannedEntity[] entities;
+            public string[] skeletal_entity_ids;
             public PlannedSample[] samples;
         }
 
@@ -73,6 +74,50 @@ namespace CutSceneAI.CineTwin
             public float intensity;
         }
 
+
+        [Serializable]
+        private class BoneDefinition
+        {
+            public string bone_id;
+            public string parent_bone_id;
+            public string hierarchy_path;
+        }
+
+        [Serializable]
+        private class RigDefinition
+        {
+            public string entity_id;
+            public string rig_type = "skinned_mesh_bones";
+            public BoneDefinition[] bones;
+        }
+
+        private class BoneReference
+        {
+            public string bone_id;
+            public Transform transform;
+        }
+
+        private class RigCapture
+        {
+            public RigDefinition definition;
+            public BoneReference[] bone_refs;
+        }
+
+        [Serializable]
+        private class BonePose
+        {
+            public string bone_id;
+            public WorldTransform local_transform;
+            public WorldTransform world_transform;
+        }
+
+        [Serializable]
+        private class SkeletalPose
+        {
+            public string entity_id;
+            public BonePose[] bones;
+        }
+
         [Serializable]
         private class EntityState
         {
@@ -87,6 +132,7 @@ namespace CutSceneAI.CineTwin
         {
             public double time_seconds;
             public EntityState[] entities;
+            public SkeletalPose[] skeletal_poses;
         }
 
         [Serializable]
@@ -113,6 +159,7 @@ namespace CutSceneAI.CineTwin
             public string cutscene_id;
             public SourceInfo source;
             public List<Sample> samples = new List<Sample>();
+            public List<RigDefinition> rigs = new List<RigDefinition>();
             public List<CaptureLayer> capture_layers = new List<CaptureLayer>();
             public List<string> errors = new List<string>();
             public Provenance provenance;
@@ -142,7 +189,8 @@ namespace CutSceneAI.CineTwin
                     File.ReadAllText(planPath));
                 ValidatePlan(plan, director);
                 var entities = ResolveEntities(plan.entities, director.gameObject.scene);
-                var capture = EvaluateInPlayMode(director, plan, entities);
+                var rigs = ResolveRigs(plan, entities);
+                var capture = EvaluateInPlayMode(director, plan, entities, rigs);
 
                 var projectRoot = Directory.GetParent(Application.dataPath).FullName;
                 var folder = Path.Combine(projectRoot, "CutsceneAI", "Exports");
@@ -153,7 +201,8 @@ namespace CutSceneAI.CineTwin
                 File.WriteAllText(path, JsonUtility.ToJson(capture, true));
                 Debug.Log("[CineTwin] Source behavior captured: " + path
                     + " (samples=" + capture.samples.Count
-                    + ", entities=" + plan.entities.Length + ")");
+                    + ", entities=" + plan.entities.Length
+                    + ", skeletal_rigs=" + capture.rigs.Count + ")");
                 EditorUtility.RevealInFinder(path);
             }
             catch (Exception error)
@@ -190,7 +239,8 @@ namespace CutSceneAI.CineTwin
         {
             if (plan == null || plan.kind != "cinetwin.sampling_plan"
                 || plan.source == null || plan.entities == null
-                || plan.entities.Length == 0 || plan.samples == null
+                || plan.entities.Length == 0 || plan.skeletal_entity_ids == null
+                || plan.samples == null
                 || plan.samples.Length < 2)
             {
                 throw new InvalidOperationException(
@@ -216,6 +266,16 @@ namespace CutSceneAI.CineTwin
                 throw new InvalidOperationException(
                     "Source Timeline GUID/local ID differs from the sampling plan.");
             }
+
+            var plannedEntities = new HashSet<string>(
+                plan.entities.Select(entity => entity.entity_id),
+                StringComparer.Ordinal);
+            var distinctRigs = new HashSet<string>(
+                plan.skeletal_entity_ids, StringComparer.Ordinal);
+            if (distinctRigs.Count != plan.skeletal_entity_ids.Length
+                || distinctRigs.Any(id => !plannedEntities.Contains(id)))
+                throw new InvalidOperationException(
+                    "Sampling plan contains duplicate or unknown skeletal rig identities.");
 
             var previous = double.NegativeInfinity;
             foreach (var sample in plan.samples)
@@ -284,7 +344,8 @@ namespace CutSceneAI.CineTwin
 
         private static Capture EvaluateInPlayMode(
             PlayableDirector director, SamplingPlan plan,
-            Dictionary<string, Transform> entities)
+            Dictionary<string, Transform> entities,
+            Dictionary<string, RigCapture> rigs)
         {
             var capture = new Capture
             {
@@ -298,6 +359,9 @@ namespace CutSceneAI.CineTwin
                     play_mode = true
                 }
             };
+
+            foreach (var rigId in plan.skeletal_entity_ids)
+                capture.rigs.Add(rigs[rigId].definition);
 
             var oldTime = director.time;
             var oldMode = director.timeUpdateMode;
@@ -322,6 +386,9 @@ namespace CutSceneAI.CineTwin
                         entities = plan.entities.Select(
                             entity => CaptureEntity(
                                 entity.entity_id, entities[entity.entity_id])
+                        ).ToArray(),
+                        skeletal_poses = plan.skeletal_entity_ids.Select(
+                            rigId => CaptureSkeletalPose(rigId, rigs[rigId])
                         ).ToArray()
                     };
                     capture.samples.Add(sample);
@@ -357,8 +424,10 @@ namespace CutSceneAI.CineTwin
                 { layer = "camera_state", status = "CAPTURED" });
             capture.capture_layers.Add(new CaptureLayer
                 { layer = "light_state", status = "CAPTURED" });
+            capture.capture_layers.Add(new CaptureLayer
+                { layer = "skeletal_pose", status = "CAPTURED" });
             foreach (var name in new[] {
-                "skeletal_pose", "audio_output", "event_execution",
+                "audio_output", "event_execution",
                 "rendered_frame", "physics_state" })
             {
                 capture.capture_layers.Add(new CaptureLayer
@@ -367,20 +436,110 @@ namespace CutSceneAI.CineTwin
             return capture;
         }
 
+        private static Dictionary<string, RigCapture> ResolveRigs(
+            SamplingPlan plan, Dictionary<string, Transform> entities)
+        {
+            var captures = new Dictionary<string, RigCapture>(StringComparer.Ordinal);
+            foreach (var rigId in plan.skeletal_entity_ids)
+            {
+                var root = entities[rigId];
+                var rendererBones = root.GetComponentsInChildren<SkinnedMeshRenderer>(true)
+                    .SelectMany(renderer => renderer.bones ?? Array.Empty<Transform>())
+                    .Where(bone => bone != null)
+                    .Distinct()
+                    .ToArray();
+
+                if (rendererBones.Length == 0)
+                {
+                    throw new InvalidOperationException(
+                        "Animated source rig has no SkinnedMeshRenderer bones: "
+                        + rigId + ". Refusing to report skeletal_pose as captured.");
+                }
+
+                var allBones = rendererBones
+                    .Select(bone => new BoneReference
+                    {
+                        bone_id = StableBonePath(bone),
+                        transform = bone
+                    })
+                    .OrderBy(bone => bone.bone_id, StringComparer.Ordinal)
+                    .ToArray();
+
+                if (allBones.Select(bone => bone.bone_id)
+                    .Distinct(StringComparer.Ordinal).Count() != allBones.Length)
+                {
+                    throw new InvalidOperationException(
+                        "Ambiguous source bone paths for rig " + rigId);
+                }
+
+                var boneIds = new Dictionary<Transform, string>();
+                foreach (var bone in allBones)
+                    boneIds.Add(bone.transform, bone.bone_id);
+
+                captures.Add(rigId, new RigCapture
+                {
+                    definition = new RigDefinition
+                    {
+                        entity_id = rigId,
+                        bones = allBones.Select(bone => new BoneDefinition
+                        {
+                            bone_id = bone.bone_id,
+                            parent_bone_id = bone.transform.parent != null
+                                && boneIds.TryGetValue(
+                                    bone.transform.parent, out string parentId)
+                                ? parentId : "",
+                            hierarchy_path = HierarchyPath(bone.transform)
+                        }).ToArray()
+                    },
+                    bone_refs = allBones
+                });
+            }
+            return captures;
+        }
+
+        private static string StableBonePath(Transform transform)
+        {
+            // Include sibling indices: duplicate bone names are legal within a rig.
+            var parts = new List<string>();
+            for (var current = transform; current != null; current = current.parent)
+                parts.Add(current.name + "[" + current.GetSiblingIndex() + "]");
+            parts.Reverse();
+            return string.Join("/", parts);
+        }
+
+        private static SkeletalPose CaptureSkeletalPose(string rigId, RigCapture rig)
+        {
+            return new SkeletalPose
+            {
+                entity_id = rigId,
+                bones = rig.bone_refs.Select(bone => new BonePose
+                {
+                    bone_id = bone.bone_id,
+                    local_transform = CaptureTransform(bone.transform, true),
+                    world_transform = CaptureTransform(bone.transform, false)
+                }).ToArray()
+            };
+        }
+
+        private static WorldTransform CaptureTransform(Transform transform, bool local)
+        {
+            var p = local ? transform.localPosition : transform.position;
+            var q = local ? transform.localRotation : transform.rotation;
+            var s = local ? transform.localScale : transform.lossyScale;
+            return new WorldTransform
+            {
+                position_m = new[] { p.x, p.y, -p.z },
+                rotation_xyzw = new[] { -q.x, -q.y, q.z, q.w },
+                scale_xyz = new[] { s.x, s.y, s.z }
+            };
+        }
+
         private static EntityState CaptureEntity(string entityId, Transform transform)
         {
-            var p = transform.position;
-            var q = transform.rotation;
-            var s = transform.lossyScale;
             var state = new EntityState
             {
                 entity_id = entityId,
-                world_transform = new WorldTransform
-                {
-                    position_m = new[] { p.x, p.y, -p.z },
-                    rotation_xyzw = new[] { -q.x, -q.y, q.z, q.w },
-                    scale_xyz = new[] { s.x, s.y, s.z }
-                }
+                world_transform = CaptureTransform(transform, false)
             };
             var camera = transform.GetComponent<Camera>();
             if (camera != null)
