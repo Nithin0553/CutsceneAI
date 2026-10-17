@@ -11,7 +11,6 @@ use a handful of source-authored times before attempting a full recording.
 from __future__ import annotations
 
 import json
-import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,65 +25,9 @@ for directory in (HERE, HERE.parents[1] / "packages" / "cinetwin"):
 
 import cinetwin_target_evaluator as base
 import target_observation_plan
+from tick_probe_quality import TickObservationError, choose_times, max_bone_motion_m
 
 _ACTIVE: "_TickSession | None" = None
-
-
-class TickObservationError(RuntimeError):
-    pass
-
-
-def _choose_times(plan: dict[str, Any], requested: tuple[float, ...] | None) -> list[float]:
-    all_times = [float(item["time_seconds"]) for item in plan["samples"]]
-    if requested is None:
-        return all_times
-    if not requested:
-        raise TickObservationError("Specify nonempty test times, or None for the full plan.")
-    result: list[float] = []
-    for moment in requested:
-        value = float(moment)
-        if not math.isfinite(value):
-            raise TickObservationError("All probe times must be finite.")
-        nearest = min(all_times, key=lambda t: abs(t - value))
-        if abs(nearest - value) > 0.05:
-            raise TickObservationError(
-                f"Requested time {value} s lies outside sampled source timing."
-            )
-        if nearest not in result:
-            result.append(nearest)
-    if result != sorted(result):
-        raise TickObservationError("Probe times must be chronologically ordered.")
-    return result
-
-
-def _max_bone_motion_m(samples: list[dict[str, Any]], rig_id: str) -> float:
-    initial: dict[str, tuple[float, float, float]] = {}
-    maximum = 0.0
-    for i, sample in enumerate(samples):
-        poses = [
-            entry for entry in sample.get("skeletal_poses", [])
-            if entry.get("entity_id") == rig_id
-        ]
-        if len(poses) != 1:
-            raise TickObservationError(f"Sample {i} missing skeletal rig {rig_id}.")
-        current: dict[str, tuple[float, float, float]] = {}
-        for bone in poses[0].get("bones", []):
-            name = str(bone["bone_name"])
-            xyz = tuple(float(x) for x in bone["world_position_m"])
-            if len(xyz) != 3 or any(not math.isfinite(x) for x in xyz):
-                raise TickObservationError(f"Rig {rig_id} has invalid bone position.")
-            if name in current:
-                raise TickObservationError(f"Rig {rig_id} has duplicate bone {name}.")
-            current[name] = xyz  # type: ignore[assignment]
-        if i == 0:
-            if not current:
-                raise TickObservationError(f"Rig {rig_id} has no bones.")
-            initial = current
-        elif set(current) != set(initial):
-            raise TickObservationError(f"Rig {rig_id} changed bone topology.")
-        for name, xyz in current.items():
-            maximum = max(maximum, math.dist(initial[name], xyz))
-    return maximum
 
 
 class _TickSession:
@@ -237,7 +180,7 @@ class _TickSession:
         warnings = []
         for rig in self.rigs:
             rig_id = rig["entity_id"]
-            movement = _max_bone_motion_m(self.samples, rig_id)
+            movement = max_bone_motion_m(self.samples, rig_id)
             if movement < 0.0001:
                 warnings.append(
                     "NO_BONE_MOTION_OBSERVED: " + rig_id
@@ -347,7 +290,7 @@ def start(
     mapping = json.loads(Path(mapping_path).read_text(encoding="utf-8-sig"))
     if plan.get("kind") != "cinetwin.sampling_plan":
         raise TickObservationError("Wrong or invalid CineTwin sampling plan.")
-    times = _choose_times(plan, probe_times)
+    times = choose_times(plan, probe_times)
     session = _TickSession(
         plan, mapping, sequence_path, output_path, times, ticks_per_sample
     )
