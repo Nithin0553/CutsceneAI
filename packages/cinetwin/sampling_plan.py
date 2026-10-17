@@ -134,9 +134,15 @@ def build_plan(csir: dict[str, Any], *, csir_sha256: str = "") -> dict[str, Any]
             if str(track.get("ced_type")) == "event.trigger":
                 add(a, "event:" + key)
 
+    # Unity often stores microsecond-rounded clip boundaries alongside higher
+    # precision editor blend durations. Merge times that become equal at the
+    # exported precision; otherwise the Play Mode evaluator sees duplicate instants.
+    rounded_reasons: dict[float, set[str]] = defaultdict(set)
+    for moment, tags in sorted(reasons.items()):
+        rounded_reasons[_timestamp(moment)].update(tags)
     samples = [
-        {"time_seconds": _timestamp(moment), "reasons": sorted(tags)}
-        for moment, tags in sorted(reasons.items())
+        {"time_seconds": moment, "reasons": sorted(tags)}
+        for moment, tags in sorted(rounded_reasons.items())
     ]
     capabilities = [
         {"layer": layer, "status": "PLANNED"}
