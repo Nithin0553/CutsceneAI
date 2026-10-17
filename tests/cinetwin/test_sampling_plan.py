@@ -58,6 +58,7 @@ def _csir() -> dict:
         "tracks": [
             {
                 "track_id": "track:animation", "ced_type": "animation.track",
+                "binding_entity_id": "entity:a",
                 "sections": [
                     _section("walk", 0, 2_458_333, blend_out=0.4583333333333335),
                     _section("idle", 2_000_000, 4_000_000, blend_in=0.4583333333333335),
@@ -98,9 +99,55 @@ def _capture(plan: dict) -> dict:
             )}
             for item in plan["capabilities"]
         ],
+        "rigs": [
+            {
+                "entity_id": rig_id,
+                "rig_type": "skinned_mesh_bones",
+                "bones": [
+                    {
+                        "bone_id": "scene/actor[0]/Hips[0]",
+                        "parent_bone_id": "",
+                        "hierarchy_path": "Scene/Actor/Hips",
+                    },
+                    {
+                        "bone_id": "scene/actor[0]/Hips[0]/Spine[0]",
+                        "parent_bone_id": "scene/actor[0]/Hips[0]",
+                        "hierarchy_path": "Scene/Actor/Hips/Spine",
+                    },
+                ],
+            }
+            for rig_id in plan["skeletal_entity_ids"]
+        ],
         "samples": [
-            {"time_seconds": sample["time_seconds"],
-             "entities": [state(entity) for entity in plan["entities"]]}
+            {
+                "time_seconds": sample["time_seconds"],
+                "entities": [state(entity) for entity in plan["entities"]],
+                "skeletal_poses": [
+                    {
+                        "entity_id": rig_id,
+                        "bones": [
+                            {
+                                "bone_id": bone_id,
+                                "local_transform": {
+                                    "position_m": [0, 0, 0],
+                                    "rotation_xyzw": [0, 0, 0, 1],
+                                    "scale_xyz": [1, 1, 1],
+                                },
+                                "world_transform": {
+                                    "position_m": [0, 1, 0],
+                                    "rotation_xyzw": [0, 0, 0, 1],
+                                    "scale_xyz": [1, 1, 1],
+                                },
+                            }
+                            for bone_id in (
+                                "scene/actor[0]/Hips[0]",
+                                "scene/actor[0]/Hips[0]/Spine[0]",
+                            )
+                        ],
+                    }
+                    for rig_id in plan["skeletal_entity_ids"]
+                ],
+            }
             for sample in plan["samples"]
         ],
         "errors": [],
@@ -146,6 +193,7 @@ def test_source_entity_identity_and_ancestry_preserved() -> None:
     plan = sampling_plan.build_plan(_csir(), csir_sha256="123")
     assert plan["source"]["csir_sha256"] == "123"
     assert plan["entities"][1]["parent_entity_id"] == "entity:a"
+    assert plan["skeletal_entity_ids"] == ["entity:a"]
     assert plan["entities"][1]["hierarchy_path"] == "Scene/Actor/Camera"
 
 
@@ -172,7 +220,55 @@ def test_valid_capture_has_explicit_incomplete_global_coverage() -> None:
     report = sampling_plan.validate_capture(plan, capture)
     assert report["status"] == "INCOMPLETE"
     assert report["failures"] == []
-    assert "skeletal_pose" in report["not_verified"]
+    assert "skeletal_pose" not in report["not_verified"]
+    assert report["skeletal_rig_count"] == 1
+
+
+def test_skeletal_pose_is_required_for_every_bone_at_every_time() -> None:
+    plan = sampling_plan.build_plan(_csir())
+    capture = _capture(plan)
+    capture["samples"][4]["skeletal_poses"][0]["bones"].pop()
+    report = sampling_plan.validate_capture(plan, capture)
+    assert report["status"] == "FAIL"
+    assert "missing or extra bones" in str(report["failures"])
+
+
+def test_skeletal_pose_local_and_world_transform_both_required() -> None:
+    plan = sampling_plan.build_plan(_csir())
+    capture = _capture(plan)
+    capture["samples"][0]["skeletal_poses"][0]["bones"][1][
+        "local_transform"
+    ]["rotation_xyzw"] = [0, 0, 0]
+    report = sampling_plan.validate_capture(plan, capture)
+    assert report["status"] == "FAIL"
+    assert "local_transform.rotation_xyzw" in str(report["failures"])
+
+
+def test_missing_animated_rig_definition_fails_closed() -> None:
+    plan = sampling_plan.build_plan(_csir())
+    capture = _capture(plan)
+    capture["rigs"] = []
+    report = sampling_plan.validate_capture(plan, capture)
+    assert report["status"] == "FAIL"
+    assert "skeletal rig definitions" in str(report["failures"])
+
+
+def test_mesh_part_character_does_not_create_extra_rig() -> None:
+    source = _csir()
+    source["entities"].append({
+        "entity_id": "entity:mesh",
+        "name": "ActorMesh",
+        "ced_type": "entity.character",
+        "metadata": {"hierarchy_path": "Scene/Actor/Mesh"},
+    })
+    source["tracks"].append({
+        "track_id": "track:other",
+        "ced_type": "animation.track",
+        "binding_entity_id": "entity:mesh",
+        "sections": [],
+    })
+    plan = sampling_plan.build_plan(source)
+    assert plan["skeletal_entity_ids"] == ["entity:a"]
 
 
 def test_missing_entity_or_camera_state_fails_closed() -> None:
@@ -229,6 +325,10 @@ def test_cinetwin_unity_capture_is_play_mode_only_and_separate_from_extractor() 
     )
     assert "EditorApplication.isPlaying" in capture
     assert "director.Evaluate();" in capture
+    assert "SkinnedMeshRenderer" in capture
+    assert "StableBonePath" in capture
+    assert "local_transform = CaptureTransform" in capture
+    assert "world_transform = CaptureTransform" in capture
     assert "SaveScene(" not in capture
     assert "SaveAssets(" not in capture
     assert ".Evaluate(" not in structural
