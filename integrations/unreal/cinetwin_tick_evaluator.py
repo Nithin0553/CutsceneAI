@@ -24,7 +24,9 @@ for directory in (HERE, HERE.parents[1] / "packages" / "cinetwin"):
         sys.path.insert(0, str(directory))
 
 import cinetwin_target_evaluator as base
+import cinetwin_motion_layers
 import target_observation_plan
+from motion_layers import analyze_motion_layers
 from tick_probe_quality import TickObservationError, choose_times, max_bone_motion_m
 
 _ACTIVE: "_TickSession | None" = None
@@ -39,6 +41,7 @@ class _TickSession:
         output_path: str,
         times: list[float],
         ticks_per_sample: int,
+        capture_motion_layers: bool,
     ) -> None:
         if ticks_per_sample < 2 or ticks_per_sample > 10:
             raise TickObservationError("Use 2 to 10 real editor ticks per timestamp.")
@@ -47,6 +50,7 @@ class _TickSession:
         self.times = times
         self.output_path = Path(output_path)
         self.ticks_per_sample = ticks_per_sample
+        self.capture_motion_layers = capture_motion_layers
         self.samples: list[dict[str, Any]] = []
         self.index = 0
         self.wait_ticks = ticks_per_sample
@@ -161,10 +165,20 @@ class _TickSession:
             }
             for rig_id, names in self.rig_bones.items()
         ]
+        motion_layers = (
+            [
+                cinetwin_motion_layers.observe_actor_motion_layers(
+                    self.actors[entry["entity_id"]], entry["entity_id"]
+                )
+                for entry in self.request["bound"]
+            ]
+            if self.capture_motion_layers else None
+        )
         self.samples.append({
             "time_seconds": time_seconds,
             "entities": entities,
             "skeletal_poses": poses,
+            **({"motion_layers": motion_layers} if motion_layers is not None else {}),
             # Diagnostic only. Editor API reports playhead as a playback-params
             # struct; its representation differs across Unreal versions.
             "editor_playhead": str(self.library.get_global_position()),
@@ -192,6 +206,10 @@ class _TickSession:
                 "editor_animation_settings": self.initial_component_properties[rig_id],
             })
 
+        layer_analysis = (
+            analyze_motion_layers(self.plan, self.samples, self.rigs)
+            if self.capture_motion_layers else None
+        )
         capture = {
             "schema_version": "0.1.0",
             "kind": "cinetwin.target_behavior_observation",
@@ -220,6 +238,9 @@ class _TickSession:
                 "rig_evidence": rig_evidence,
                 "warnings": warnings,
                 "status": "SUSPECT" if warnings else "OBSERVED_NOT_YET_PROVEN",
+                "motion_layers_captured": self.capture_motion_layers,
+                **({"motion_carrier_diagnostics": layer_analysis}
+                    if layer_analysis is not None else {}),
             },
             "provenance": {
                 "method": "sequencer_jump_editor_ticks_then_capture",
@@ -236,6 +257,16 @@ class _TickSession:
             f"skeletal_rigs={len(self.rigs)}, "
             f"quality={capture['quality']['status']})"
         )
+        if layer_analysis is not None:
+            for row in layer_analysis:
+                unreal.log(
+                    f"[CineTwin] MOTION {row['actor_label']}: "
+                    f"actor={row['actor_motion_cm']:.3f}cm, "
+                    f"component={row['max_component_motion_cm']:.3f}cm, "
+                    f"root_bones={row['skeletal_root_bone_motion_cm']}, "
+                    f"carrier={row['motion_carrier_diagnostic']}, "
+                    f"attachment={row['attachment_diagnostic']}"
+                )
         for item in rig_evidence:
             unreal.log(
                 f"[CineTwin] {item['entity_id']}: "
@@ -275,6 +306,7 @@ def start(
     *,
     probe_times: tuple[float, ...] | None = (0.0, 0.75, 1.5, 2.25, 3.0),
     ticks_per_sample: int = 3,
+    capture_motion_layers: bool = False,
 ) -> dict[str, Any]:
     """Start a background-in-editor sampling session. No blocking Python loop.
 
@@ -292,7 +324,8 @@ def start(
         raise TickObservationError("Wrong or invalid CineTwin sampling plan.")
     times = choose_times(plan, probe_times)
     session = _TickSession(
-        plan, mapping, sequence_path, output_path, times, ticks_per_sample
+        plan, mapping, sequence_path, output_path, times, ticks_per_sample,
+        capture_motion_layers
     )
     _ACTIVE = session
     try:
