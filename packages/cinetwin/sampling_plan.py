@@ -196,7 +196,20 @@ def validate_capture(plan: dict[str, Any], capture: dict[str, Any]) -> dict[str,
     observed_samples = capture.get("samples", [])
     if len(observed_samples) != len(expected_times):
         failures.append("Capture sample count does not match the sampling plan.")
-    ids = {item["entity_id"] for item in plan["entities"]}
+    expected_entities = {item["entity_id"]: item for item in plan["entities"]}
+    ids = set(expected_entities)
+    declared_layers = {
+        str(item.get("layer")): str(item.get("status"))
+        for item in capture.get("capture_layers", [])
+    }
+    for item in plan["capabilities"]:
+        expected_status = (
+            "CAPTURED" if item["status"] == "PLANNED" else "NOT_IMPLEMENTED"
+        )
+        if declared_layers.get(item["layer"]) != expected_status:
+            failures.append(
+                "Capture claims unsupported or missing layer: " + item["layer"]
+            )
     for index, expected_time in enumerate(expected_times):
         if index >= len(observed_samples):
             break
@@ -212,6 +225,23 @@ def validate_capture(plan: dict[str, Any], capture: dict[str, Any]) -> dict[str,
             failures.append(f"Sample {index} has missing, extra, or repeated entities.")
             continue
         for state in states:
+            semantic_type = expected_entities[state["entity_id"]]["ced_type"]
+            if semantic_type == "entity.camera":
+                camera = state.get("camera")
+                if not isinstance(camera, dict) or not math.isfinite(
+                    float(camera.get("vertical_fov_degrees", float("nan")))
+                ):
+                    failures.append(
+                        f"Sample {index} entity {state['entity_id']} missing camera state."
+                    )
+            if semantic_type == "entity.light":
+                light = state.get("light")
+                if not isinstance(light, dict) or not math.isfinite(
+                    float(light.get("intensity", float("nan")))
+                ):
+                    failures.append(
+                        f"Sample {index} entity {state['entity_id']} missing light state."
+                    )
             transform = state.get("world_transform", {})
             for field, length in (("position_m", 3), ("rotation_xyzw", 4), ("scale_xyz", 3)):
                 values = transform.get(field, [])
@@ -225,13 +255,16 @@ def validate_capture(plan: dict[str, Any], capture: dict[str, Any]) -> dict[str,
     for problem in capture.get("errors", []):
         failures.append("Source evaluator reported: " + str(problem))
 
+    pending = [
+        entry["layer"] for entry in plan["capabilities"]
+        if entry["status"] != "PLANNED"
+    ]
     return {
         "schema_version": "0.1.0",
-        "status": "FAIL" if failures else "PASS",
+        "status": "FAIL" if failures else ("INCOMPLETE" if pending else "PASS"),
         "expected_samples": len(expected_times),
         "observed_samples": len(observed_samples),
         "entity_count": len(ids),
         "failures": failures[:100],
-        "not_verified": [entry["layer"] for entry in plan["capabilities"]
-                         if entry["status"] != "PLANNED"],
+        "not_verified": pending,
     }
