@@ -231,4 +231,4 @@ def test_cinetwin_unity_capture_is_play_mode_only_and_separate_from_extractor() 
     assert "director.Evaluate();" in capture
     assert "SaveScene(" not in capture
     assert "SaveAssets(" not in capture
-    assert "PlayableDirector.Evaluate" not in structural
+    assert ".Evaluate(" not in structural
