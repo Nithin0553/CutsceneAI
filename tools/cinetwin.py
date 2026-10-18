@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "packages" / "cinetwin"))
 from sampling_plan import plan_file, validate_capture
 from behavior_compare import BehavioralComparisonError, compare_files
 from hierarchy_plan import plan_actor_hierarchy
+from hierarchy_verify import HierarchyVerificationError, verify_files
 
 
 def main() -> int:
@@ -41,6 +42,15 @@ def main() -> int:
     hierarchy.add_argument("mapping", type=Path)
     hierarchy.add_argument("output", type=Path)
 
+    hverify = sub.add_parser(
+        "hierarchy-verify", help="Compare source and target measured attachment behavior"
+    )
+    hverify.add_argument("plan", type=Path)
+    hverify.add_argument("source", type=Path)
+    hverify.add_argument("target", type=Path)
+    hverify.add_argument("hierarchy", type=Path)
+    hverify.add_argument("output", type=Path)
+
     args = parser.parse_args()
     if args.command == "plan":
         plan = plan_file(args.csir, args.output)
@@ -56,6 +66,33 @@ def main() -> int:
             )
         )
         return 0
+
+    if args.command == "hierarchy-verify":
+        try:
+            result = verify_files(
+                args.plan, args.source, args.target, args.hierarchy, args.output
+            )
+        except HierarchyVerificationError as exc:
+            print("[CineTwin] Hierarchy verification blocked:", exc, file=sys.stderr)
+            return 1
+        print(
+            f"[CineTwin] Hierarchy sampled verification: {result['status']} "
+            f"({result['sample_count']} timestamps, "
+            f"{result['verified_direct_attachment_count']} direct attachments)"
+        )
+        for edge in result["attachments"]:
+            print(
+                f"  {edge['target_child_actor_label']} -> "
+                f"{edge['target_parent_actor_label']}: "
+                f"max_child_world_error={edge['max_child_world_position_error_cm']:.3f} cm, "
+                f"max_local_offset_error={edge['max_parent_relative_offset_error_cm']:.3f} cm, "
+                f"flags={edge['flags']}"
+            )
+        print(
+            "[CineTwin] Source/target assets unchanged. "
+            f"Sampled result only. Report: {args.output}"
+        )
+        return 1 if result["status"] == "MISMATCH_DETECTED" else 0
 
     if args.command == "hierarchy":
         csir = json.loads(args.csir.read_text(encoding="utf-8-sig"))
