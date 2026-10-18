@@ -54,7 +54,7 @@ def _mobility_snapshot(actor: Any) -> list[dict[str, Any]]:
         )
     # Root first for mobility upgrades; children first when undoing.
     ordered = [root] + sorted(
-        (component for component in components if component is not root),
+        (component for component in components if component != root),
         key=lambda component: str(component.get_path_name()),
     )
     result = []
