@@ -6,6 +6,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -53,7 +54,7 @@ class _Actor:
 
 
 class _Saving:
-    saved_packages = []
+    saved_packages: ClassVar[list] = []
     result = True
 
     @classmethod
