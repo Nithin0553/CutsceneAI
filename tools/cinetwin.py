@@ -86,13 +86,25 @@ def main() -> int:
                 f"{edge['target_parent_actor_label']}: "
                 f"max_child_world_error={edge['max_child_world_position_error_cm']:.3f} cm, "
                 f"max_local_offset_error={edge['max_parent_relative_offset_error_cm']:.3f} cm, "
-                f"flags={edge['flags']}"
+                f"active_max_child_world_error={edge['max_active_child_world_error_cm']:.3f} cm, "
+                f"active_max_local_offset_error={edge['max_active_local_offset_error_cm']:.3f} cm, "
+                f"flags={edge['flags']}, "
+                f"active_flags={edge['active_range_flags']}, "
+                f"exclusive_end_flags={edge['exclusive_end_boundary_flags']}"
+            )
+        if result["exclusive_end_sample_count"]:
+            print(
+                f"[CineTwin] Unreal exclusive endpoint: "
+                f"{result['target_exclusive_end_time_seconds']:.6f}s, "
+                f"active_samples={result['active_sample_count']}, "
+                f"boundary_samples={result['exclusive_end_sample_count']}. "
+                "Endpoint accuracy is not established by a seek to playback end."
             )
         print(
             "[CineTwin] Source/target assets unchanged. "
             f"Sampled result only. Report: {args.output}"
         )
-        return 1 if result["status"] == "MISMATCH_DETECTED" else 0
+        return 0 if result["status"] == "MATCH_AT_SAMPLED_TIMES" else 1
 
     if args.command == "hierarchy":
         csir = json.loads(args.csir.read_text(encoding="utf-8-sig"))
