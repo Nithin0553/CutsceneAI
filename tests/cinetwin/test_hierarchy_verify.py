@@ -183,3 +183,71 @@ def test_source_and_target_evidence_are_not_mutated():
     before = copy.deepcopy(fixture)
     verify_hierarchy(*fixture)
     assert fixture == before
+
+
+def _exclusive_end_fixture():
+    plan, source, target, hierarchy = _fixtures()
+    plan["timing"] = {
+        "display_rate": {"numerator": 24, "denominator": 1},
+        "playback_start_seconds": 0.0,
+        "playback_end_seconds": 9.0,
+    }
+    target["target"] = {"engine": "unreal"}
+    end_sample = copy.deepcopy(target["samples"][-1])
+    end_sample["time_seconds"] = 9.0
+    end_sample["entities"][0]["world_transform"]["position_m"][0] = 0.9
+    end_sample["entities"][1]["world_transform"]["position_m"][0] = 2.9
+    target["samples"].append(end_sample)
+    target["coverage"]["sample_count"] = 6
+    return plan, source, target, hierarchy
+
+
+def test_unreal_exclusive_end_discrepancy_is_retained_but_not_interior_error():
+    plan, source, target, hierarchy = _exclusive_end_fixture()
+    for actor in target["samples"][-1]["entities"]:
+        actor["world_transform"]["position_m"][0] += 1.012033
+    report = verify_hierarchy(plan, source, target, hierarchy)
+    edge = report["attachments"][0]
+    assert report["status"] == "EXCLUSIVE_END_BOUNDARY_UNVERIFIED"
+    assert report["sample_count"] == 6
+    assert report["active_sample_count"] == 5
+    assert report["exclusive_end_sample_count"] == 1
+    assert edge["max_child_world_position_error_cm"] == pytest.approx(101.2033)
+    assert edge["max_active_child_world_error_cm"] == 0
+    assert edge["max_active_local_offset_error_cm"] == 0
+    assert edge["flags"] == ["CHILD_WORLD_POSITION_MISMATCH"]
+    assert edge["active_range_flags"] == []
+    assert edge["exclusive_end_boundary_flags"] == [
+        "CHILD_WORLD_POSITION_MISMATCH"
+    ]
+
+
+def test_interior_error_is_never_excused_by_an_exclusive_end_mismatch():
+    plan, source, target, hierarchy = _exclusive_end_fixture()
+    for record in target["samples"][2]["entities"]:
+        record["world_transform"]["position_m"][0] += 0.3
+    for record in target["samples"][-1]["entities"]:
+        record["world_transform"]["position_m"][0] += 1.012033
+    report = verify_hierarchy(plan, source, target, hierarchy)
+    assert report["status"] == "MISMATCH_DETECTED"
+    assert report["attachments"][0]["max_active_child_world_error_cm"] == 30.0
+    assert report["attachments"][0]["active_range_flags"] == [
+        "CHILD_WORLD_POSITION_MISMATCH"
+    ]
+
+
+def test_non_unreal_endpoint_mismatch_is_not_silently_classified_as_exclusive():
+    plan, source, target, hierarchy = _exclusive_end_fixture()
+    target["target"]["engine"] = "other"
+    target["samples"][-1]["entities"][1]["world_transform"]["position_m"][0] += 0.2
+    report = verify_hierarchy(plan, source, target, hierarchy)
+    assert report["status"] == "MISMATCH_DETECTED"
+    assert report["exclusive_end_sample_count"] == 0
+    assert report["attachments"][0]["max_active_child_world_error_cm"] == 20.0
+
+
+def test_unreal_observation_after_playback_end_is_rejected():
+    plan, source, target, hierarchy = _exclusive_end_fixture()
+    plan["timing"]["playback_end_seconds"] = 8.0
+    with pytest.raises(HierarchyVerificationError, match="beyond source playback end"):
+        verify_hierarchy(plan, source, target, hierarchy)
