@@ -157,6 +157,18 @@ def verify_hierarchy(
         raise HierarchyVerificationError("Comparison tolerances must be positive.")
     _validate_provenance(plan, source, target, hierarchy)
     pairs = _source_and_target_samples(plan, source, target)
+    # The target's 12-second playback END is exclusive in Unreal Sequencer.
+    # Keep endpoint measurements visible, but do not mistake an unevaluated
+    # boundary for an interior trajectory error.
+    end_time = None
+    if target.get("target", {}).get("engine") == "unreal":
+        raw_end = plan.get("timing", {}).get("playback_end_seconds")
+        if raw_end is not None:
+            end_time = _time(raw_end, "playback_end_seconds")
+    if end_time is not None and any(t > end_time + 1e-7 for _, _, t in pairs):
+        raise HierarchyVerificationError(
+            "Target samples extend beyond source playback end."
+        )
     edges = hierarchy.get("planned_actor_attachments", [])
     if not edges:
         raise HierarchyVerificationError("No directly mapped actor attachments.")
@@ -226,6 +238,30 @@ def verify_hierarchy(
             flags.append("PARENT_RELATIVE_OFFSET_MISMATCH")
         if max_world > world_limit:
             flags.append("CHILD_WORLD_POSITION_MISMATCH")
+        active_rows = [
+            row for row in series
+            if end_time is None or row["time_seconds"] < end_time - 1e-7
+        ]
+        boundary_rows = [
+            row for row in series
+            if end_time is not None and abs(row["time_seconds"] - end_time) <= 1e-7
+        ]
+        if not active_rows:
+            raise HierarchyVerificationError("No samples in active playback range.")
+        active_flags = []
+        if any(not row["attachment_matches"] for row in active_rows):
+            active_flags.append("TARGET_PARENT_ATTACHMENT_MISMATCH")
+        if max(row["relative_offset_error_cm"] for row in active_rows) > relative_limit:
+            active_flags.append("PARENT_RELATIVE_OFFSET_MISMATCH")
+        if max(row["child_world_position_error_cm"] for row in active_rows) > world_limit:
+            active_flags.append("CHILD_WORLD_POSITION_MISMATCH")
+        boundary_flags = []
+        if any(not row["attachment_matches"] for row in boundary_rows):
+            boundary_flags.append("TARGET_PARENT_ATTACHMENT_MISMATCH")
+        if any(row["relative_offset_error_cm"] > relative_limit for row in boundary_rows):
+            boundary_flags.append("PARENT_RELATIVE_OFFSET_MISMATCH")
+        if any(row["child_world_position_error_cm"] > world_limit for row in boundary_rows):
+            boundary_flags.append("CHILD_WORLD_POSITION_MISMATCH")
         outputs.append({
             "source_child_entity_id": child_id,
             "source_parent_entity_id": parent_id,
@@ -239,15 +275,40 @@ def verify_hierarchy(
                 row["parent_world_position_error_cm"] for row in series
             ),
             "flags": flags,
+            "active_range_flags": active_flags,
+            "exclusive_end_boundary_flags": boundary_flags,
+            "max_active_child_world_error_cm": max(
+                row["child_world_position_error_cm"] for row in active_rows
+            ),
+            "max_active_local_offset_error_cm": max(
+                row["relative_offset_error_cm"] for row in active_rows
+            ),
+            "exclusive_end_world_error_cm": (
+                max(row["child_world_position_error_cm"] for row in boundary_rows)
+                if boundary_rows else None
+            ),
             "samples": series,
         })
 
-    issues = any(edge["flags"] for edge in outputs)
+    active_issues = any(edge["active_range_flags"] for edge in outputs)
+    boundary_issues = any(edge["exclusive_end_boundary_flags"] for edge in outputs)
+    status = (
+        "MISMATCH_DETECTED" if active_issues else
+        "EXCLUSIVE_END_BOUNDARY_UNVERIFIED" if boundary_issues else
+        "MATCH_AT_SAMPLED_TIMES"
+    )
+    end_sample_count = sum(
+        1 for _, _, t in pairs
+        if end_time is not None and abs(t - end_time) <= 1e-7
+    )
     return {
         "schema_version": "0.1.0",
         "kind": "cinetwin.sampled_hierarchy_verification",
         "cutscene_id": plan["cutscene_id"],
-        "status": "MISMATCH_DETECTED" if issues else "MATCH_AT_SAMPLED_TIMES",
+        "status": status,
+        "active_sample_count": len(pairs) - end_sample_count,
+        "exclusive_end_sample_count": end_sample_count,
+        "target_exclusive_end_time_seconds": end_time,
         "sample_count": len(pairs),
         "total_source_sample_count": len(plan["samples"]),
         "verified_direct_attachment_count": len(outputs),
@@ -259,6 +320,9 @@ def verify_hierarchy(
         "attachments": outputs,
         "limitations": [
             "Sampled timestamps only; not proof of all-frame animation equivalence.",
+            "An Unreal observation at the exclusive playback end is not "
+            "equivalent to an interior Sequencer evaluation; its raw error "
+            "is retained but must be verified independently.",
             "TRS local-offset approximation cannot represent sheared transforms.",
             "Only independently mapped direct actor attachments are checked.",
             "Target level attachment exists in editor memory; persistence not checked.",
