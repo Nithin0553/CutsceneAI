@@ -641,6 +641,19 @@ def _add_audio(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
     section.set_range(int(action["start_frame"]), int(action["end_frame"]))
     section.set_sound(sound)
     section.set_looping(bool(action.get("loop", False)))
+    # Audio fades are source Timeline easing semantics. Require native section
+    # easing instead of silently discarding authored envelopes.
+    rate = sequence.get_display_rate()
+    fps = float(rate.numerator) / float(rate.denominator)
+    for fade, setter_name in (("fade_in_seconds", "set_ease_in_duration"),
+                              ("fade_out_seconds", "set_ease_out_duration")):
+        seconds = float(action.get(fade, 0.0))
+        if seconds <= 0.0:
+            continue
+        setter = getattr(section, setter_name, None)
+        if not callable(setter):
+            raise UnrealBuildError(f"Cannot transfer audio {fade}: missing {setter_name}.")
+        setter(unreal.FrameNumber(max(1, int(round(seconds * fps)))))
 
 
 def _add_marker(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
