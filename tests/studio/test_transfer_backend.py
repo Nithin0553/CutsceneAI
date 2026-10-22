@@ -211,7 +211,7 @@ def test_runtime_builder_checks_recomputed_prepared_plan_and_generates_receipt()
     code = (ROOT / "integrations" / "unreal" / "build_level_sequence.py").read_text()
     assert "def build_prepared_files(" in code
     assert "transfer_backend.compose_files(" in code
-    assert "submitted_plan != expected_plan" in code
+    assert "transfer_backend.verify_prepared_artifacts(" in code
     assert 'receipt["status"] = "GENERATED_UNVERIFIED"' in code
     assert "return _build_prepared_plan(csir, mapping, plan)" in code
 
