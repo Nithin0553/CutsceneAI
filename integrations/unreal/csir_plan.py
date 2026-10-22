@@ -794,7 +794,10 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                         "end_frame": seconds_to_frame(rational_seconds(section["end"]), fps_n, fps_d),
                         "source_start_seconds": source_offset_seconds,
                         "source_end_seconds": source_offset_seconds + timeline_duration_seconds * time_scale,
+                        "blend_in_seconds": float(section.get("native_payload", {}).get("blend_in_seconds", 0.0)),
+                        "blend_out_seconds": float(section.get("native_payload", {}).get("blend_out_seconds", 0.0)),
                         "time_scale": time_scale,
+                        "source_offset_seconds": source_offset_seconds,
                         "base_actor_rotation_rpy_degrees": [
                             float(base_roll),
                             float(base_pitch),
@@ -835,7 +838,7 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
             if ced_type == "camera.transform":
                 for section in track.get("sections", []):
                     for curve in section.get("payload", {}).get("animation", {}).get("curves", []):
-                        if str(curve.get("property_name", "")).lower() == "field of view":
+                        if str(curve.get("canonical_semantic", "")) == "camera.vertical_fov_degrees" or str(curve.get("property_name", "")).lower() == "field of view":
                             plan["actions"].append(
                                 {
                                     "kind": "camera_fov",
@@ -878,6 +881,8 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                 plan["actions"].append(
                     {
                         "kind": "audio",
+                        "fade_in_seconds": float(section.get("payload", {}).get("audio", {}).get("fade_in", {}).get("duration_seconds", 0.0) or 0.0),
+                        "fade_out_seconds": float(section.get("payload", {}).get("audio", {}).get("fade_out", {}).get("duration_seconds", 0.0) or 0.0),
                         "unreal_asset_path": _mapping_asset(mapping, asset["name"]),
                         "start_frame": seconds_to_frame(rational_seconds(section["start"]), fps_n, fps_d),
                         "end_frame": seconds_to_frame(rational_seconds(section["end"]), fps_n, fps_d),
