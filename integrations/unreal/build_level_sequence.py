@@ -383,6 +383,18 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
         channels[3].add_key(frame, float(rotation[0]))
         channels[4].add_key(frame, float(rotation[1]))
         channels[5].add_key(frame, float(rotation[2]))
+    # Frame-baked curves must not be re-smoothed by Unreal auto tangents.
+    if action.get("baked_source_curves"):
+        interpolation = getattr(unreal, "MovieSceneKeyInterpolation", None)
+        linear = getattr(interpolation, "LINEAR", None) if interpolation else None
+        if linear is None:
+            raise UnrealBuildError("Baked source curves require explicit LINEAR interpolation.")
+        for channel in channels[:6]:
+            for key in channel.get_keys():
+                setter = getattr(key, "set_interpolation_mode", None)
+                if not callable(setter):
+                    raise UnrealBuildError("Cannot configure interpolation of baked keys.")
+                setter(linear)
 
 
 def _add_skeletal_animation(
@@ -395,9 +407,40 @@ def _add_skeletal_animation(
     section.set_range(int(action["start_frame"]), int(action["end_frame"]))
     params = section.get_editor_property("params")
     params.set_editor_property("animation", animation)
+    # Unity clipIn refers to source media time, not the Sequencer section start.
+    # Unreal uses frame offsets into the imported animation; fail rather than
+    # silently sampling a different pose when the adapter cannot represent it.
+    source_offset = float(action.get("source_offset_seconds", 0.0))
+    if source_offset > 1e-9:
+        frame_rate = plan_rate = sequence.get_display_rate()
+        frames_per_second = float(frame_rate.numerator) / float(frame_rate.denominator)
+        offset_frames = int(round(source_offset * frames_per_second))
+        offset_applied = False
+        for property_name in ("start_frame_offset", "first_loop_start_frame_offset"):
+            try:
+                params.set_editor_property(property_name, unreal.FrameNumber(offset_frames))
+                offset_applied = True
+                break
+            except Exception:
+                continue
+        if not offset_applied:
+            raise UnrealBuildError("Unreal does not expose a supported skeletal source trim offset.")
     play_rate = unreal_compat.make_fixed_play_rate(float(action.get("time_scale", 1.0)))
     params.set_editor_property("play_rate", play_rate)
     section.set_editor_property("params", params)
+    # Unlike a hard cut, the Unity source explicitly crossfades overlapping
+    # clips. Unreal section easing controls how these sections combine.
+    for name, setter_name in (("blend_in_seconds", "set_ease_in_duration"),
+                              ("blend_out_seconds", "set_ease_out_duration")):
+        seconds = float(action.get(name, 0.0))
+        if seconds <= 0.0:
+            continue
+        rate = sequence.get_display_rate()
+        frames = int(round(seconds * float(rate.numerator) / float(rate.denominator)))
+        setter = getattr(section, setter_name, None)
+        if not callable(setter):
+            raise UnrealBuildError(f"Cannot preserve {name}: {setter_name} unavailable.")
+        setter(unreal.FrameNumber(max(1, frames)))
 
     hold_end_frame = int(action.get("hold_end_frame", action["end_frame"]))
     post_roll_frames = max(0, hold_end_frame - int(action["end_frame"]))
