@@ -728,6 +728,7 @@ def validate_runtime_capabilities(required_actions: set[str]) -> None:
         "transform": "MovieScene3DTransformTrack",
         "skeletal_animation": "MovieSceneSkeletalAnimationTrack",
         "camera_fov": "MovieSceneFloatTrack",
+        "light_intensity": "MovieSceneFloatTrack",
         "camera_cut": "MovieSceneCameraCutTrack",
         "audio": "MovieSceneAudioTrack",
         "marker": "MovieSceneMarkedFrame",
@@ -743,6 +744,9 @@ def validate_runtime_capabilities(required_actions: set[str]) -> None:
             + ", ".join(missing)
             + f". Runtime: {engine_version()}."
         )
+
+    if "light_intensity" in required_actions and getattr(unreal, "LightComponentBase", None) is None:
+        raise UnrealCompatibilityError("LightComponentBase unavailable for animated light binding.")
 
     if {"transform", "camera_fov"} & required_actions and section_channel_strategy() == "instance_probe":
         # Some older builds only expose the scripting method on section instances. We
