@@ -287,3 +287,42 @@ def test_static_only_cutscene_produces_source_derived_pose_in_sequence():
     assert only["source_behavior_strategy"] == "source_static_world_pose"
     assert only["keys"][0]["location_cm"] == [300.0, 100.0, 200.0]
     assert only["keys"][0]["rotation_rpy_degrees"] == [0.0, 0.0, 0.0]
+
+
+
+def test_persisted_preparation_verification_matches_cli_json_semantics():
+    """Regression for an actual Unreal startup failure: Python tuple != JSON list."""
+    plan, report = transfer_backend.compose(source(), mapping())
+    evidence = {"csir_sha256": "A" * 64, "mapping_sha256": "B" * 64}
+    saved = [json.loads(json.dumps(item)) for item in (plan, report, evidence)]
+    # Native adapter emits tuples for transforms. CLI writes them as JSON
+    # arrays; the Unreal editor must accept that honest round trip.
+    action = next(a for a in plan["actions"] if a["kind"] == "transform")
+    assert any(isinstance(key["location_cm"], tuple) for key in action["keys"])
+    assert saved[0] != plan
+    transfer_backend.verify_prepared_artifacts(
+        saved[0], saved[1], saved[2], plan, report, evidence
+    )
+
+
+def test_preparation_verification_still_rejects_changed_values_and_evidence():
+    plan, report = transfer_backend.compose(source(), mapping())
+    evidence = {"csir_sha256": "A" * 64, "mapping_sha256": "B" * 64}
+    saved = [json.loads(json.dumps(item)) for item in (plan, report, evidence)]
+    saved[0]["duration_frames"] += 1
+    with pytest.raises(transfer_backend.TransferBackendError, match=r"transfer-plan.json.*duration_frames"):
+        transfer_backend.verify_prepared_artifacts(
+            saved[0], saved[1], saved[2], plan, report, evidence
+        )
+    saved = [json.loads(json.dumps(item)) for item in (plan, report, evidence)]
+    saved[2]["mapping_sha256"] = "tampered"
+    with pytest.raises(transfer_backend.TransferBackendError, match=r"evidence.json.*mapping_sha256"):
+        transfer_backend.verify_prepared_artifacts(
+            saved[0], saved[1], saved[2], plan, report, evidence
+        )
+
+
+def test_engine_builder_calls_shared_semantically_exact_preparation_verifier():
+    code = (ROOT / "integrations" / "unreal" / "build_level_sequence.py").read_text()
+    assert "transfer_backend.verify_prepared_artifacts(" in code
+    assert "submitted_plan != expected_plan" not in code
