@@ -110,7 +110,9 @@ def fake_capture(src, source_sha="sha-here"):
                     "scale_xyz": [1.0, 1.0, 1.0],
                 },
                 **({"camera": {"vertical_fov_degrees": 55.0}} if eid == "lens" else {}),
-            } for eid in ("moving", "lens")],
+                **({"light": {"intensity": 5.0 + entry["time_seconds"]}}
+                   if eid == "light" else {}),
+            } for eid in (x["entity_id"] for x in src["entities"])],
         } for entry in plan["samples"]],
         "errors": [],
     }
@@ -212,3 +214,50 @@ def test_runtime_builder_checks_recomputed_prepared_plan_and_generates_receipt()
     assert "submitted_plan != expected_plan" in code
     assert 'receipt["status"] = "GENERATED_UNVERIFIED"' in code
     assert "return _build_prepared_plan(csir, mapping, plan)" in code
+
+
+
+def test_unhandled_camera_track_bakes_source_lens_and_world_pose():
+    src = source()
+    src["tracks"].append({
+        "track_id": "cam:extra",
+        "ced_type": "camera.transform",
+        "binding_entity_id": "lens",
+        "sections": [{"section_id": "unsupported-camera-animation",
+                      "start": rt(0), "end": rt(2),
+                      "payload": {"animation": {"curves": []}}}],
+    })
+    plan, report = transfer_backend.compose(src, mapping(), capture=fake_capture(src))
+    assert report["tracks"][-1]["outcome"] == "BAKED_PARTIAL"
+    assert len([a for a in plan["actions"] if a["kind"] == "camera_fov"]) == 1
+    assert len([a for a in plan["actions"] if a["kind"] == "transform"]) == 2
+    assert next(a for a in plan["actions"] if a["kind"] == "camera_fov")["keys"][0] == {
+        "frame": 0, "value": 55.0,
+    }
+
+
+def test_unknown_light_animation_bakes_independently_measured_intensity():
+    src = source()
+    src["entities"].append({
+        "entity_id": "light", "name": "LIGHT", "ced_type": "entity.light",
+    })
+    src["tracks"].append({
+        "track_id": "light:unknown",
+        "ced_type": "light.animation",
+        "binding_entity_id": "light",
+        "sections": [{"section_id": "light:section",
+                      "start": rt(0), "end": rt(2),
+                      "payload": {"animation": {"curves": [
+                          {"canonical_semantic": "light.color.r", "keys": []},
+                      ]}}}],
+    })
+    mapping_result = mapping()
+    mapping_result["entities"]["LIGHT"] = {"actor_label": "LightUE"}
+    plan, report = transfer_backend.compose(
+        src, mapping_result, capture=fake_capture(src)
+    )
+    assert report["tracks"][-1]["outcome"] == "BAKED_PARTIAL"
+    intensity = [a for a in plan["actions"] if a["kind"] == "light_intensity"]
+    assert len(intensity) == 1
+    assert intensity[0]["keys"][0] == {"frame": 0, "value": 5.0}
+    assert intensity[0]["keys"][-1] == {"frame": 3, "value": 6.5}
