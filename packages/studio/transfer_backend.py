@@ -288,4 +288,5 @@ def compose_files(
     }
     if capture_path is not None:
         evidence["source_capture_sha256"] = _sha(Path(capture_path))
+        evidence["source_capture_path"] = str(Path(capture_path).resolve())
     return plan, report, evidence
