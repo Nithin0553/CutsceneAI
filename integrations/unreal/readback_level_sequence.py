@@ -358,6 +358,7 @@ def _skeletal_track(
     actor: Any | None,
     display_rate: dict[str, int],
     root_corrections: dict[tuple[int, int], dict[str, Any]] | None = None,
+    tick_rate: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     fps = float(display_rate["numerator"]) / float(display_rate["denominator"])
@@ -365,7 +366,23 @@ def _skeletal_track(
         start_frame, end_frame = _section_range(section)
         params = _editor_property(section, "params")
         animation = _editor_property(params, "animation") if params is not None else None
+        tick_fps = (
+            float(tick_rate["numerator"]) / float(tick_rate["denominator"])
+            if tick_rate is not None else fps
+        )
+        source_offset_seconds = (
+            _frame_number_value(_editor_property(params, "start_frame_offset", 0)) / tick_fps
+            if params is not None else 0.0
+        )
+        easing_ext = getattr(unreal, "MovieSceneSectionEasingExtensions", None)
+        ease_in_getter = getattr(easing_ext, "get_ease_in_duration", None)
+        ease_out_getter = getattr(easing_ext, "get_ease_out_duration", None)
+        ease_in = int(ease_in_getter(section)) if callable(ease_in_getter) else None
+        ease_out = int(ease_out_getter(section)) if callable(ease_out_getter) else None
         item: dict[str, Any] = {
+            "source_offset_seconds": source_offset_seconds,
+            "ease_in_frames": ease_in,
+            "ease_out_frames": ease_out,
             "kind": "skeletal_animation",
             "start_frame": start_frame,
             "end_frame": end_frame,
@@ -383,8 +400,8 @@ def _skeletal_track(
             try:
                 local_delta, strategy = unreal_compat.extract_animation_root_delta_cm(
                     animation,
-                    0.0,
-                    duration_seconds * float(item["play_rate"]),
+                    source_offset_seconds,
+                    source_offset_seconds + duration_seconds * float(item["play_rate"]),
                 )
                 rotation = actor.get_actor_rotation()
                 matrix = readback_math.unreal_rpy_to_matrix(
@@ -672,7 +689,12 @@ def readback(
                     record["tracks"].append(item)
             elif isinstance(track, unreal.MovieSceneSkeletalAnimationTrack):
                 record["tracks"].extend(
-                    _skeletal_track(track, actor, rate, root_corrections)
+                    _skeletal_track(
+                        track, actor, rate, root_corrections,
+                        tick_rate=_frame_rate(
+                            unreal.MovieSceneSequenceExtensions.get_tick_resolution(sequence)
+                        ),
+                    )
                 )
             elif isinstance(track, unreal.MovieSceneFloatTrack):
                 component = bound_object
