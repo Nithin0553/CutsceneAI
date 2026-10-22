@@ -26,6 +26,8 @@ def main(argv: list[str] | None = None) -> int:
     fingerprint = commands.add_parser("review-template", help="Write an unapproved review template")
     fingerprint.add_argument("--csir", type=Path, required=True)
     fingerprint.add_argument("--mapping", type=Path, required=True)
+    fingerprint.add_argument("--resolved", type=Path, required=True)
+    fingerprint.add_argument("--validation", type=Path, required=True)
     fingerprint.add_argument("--out", type=Path, required=True)
 
     capture = commands.add_parser("record", help="Record candidate/verified example")
@@ -58,11 +60,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "review-template":
             csir = case_memory.read_json(args.csir)
             mapping = case_memory.read_json(args.mapping)
+            resolved = case_memory.read_json(args.resolved)
+            validation = case_memory.read_json(args.validation)
             template = {
                 "approve_mapping_examples": False,
                 "reviewer": "",
                 "source_sha256": case_memory._digest(csir),
                 "mapping_sha256": case_memory._digest(mapping),
+                "resolved_sha256": case_memory._digest(resolved),
+                "validation_sha256": case_memory._digest(validation),
                 "notes": "Approve only after independent passing target readback "
                          "and human verification of mapping labels. Full visual/pose "
                          "fidelity is NOT implied by this approval.",
