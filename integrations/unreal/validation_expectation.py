@@ -158,6 +158,17 @@ def build_expectation(
                 }
             )
 
+        elif kind == "light_intensity":
+            name = str(action["entity_name"])
+            if name in bindings:
+                bindings[name]["tracks"].append({
+                    "kind": "light_intensity",
+                    "keys": [
+                        {"frame": int(key["frame"]), "value": float(key["value"])}
+                        for key in action["keys"]
+                    ],
+                })
+
         elif kind == "camera_cut":
             camera_cuts.append(
                 {
