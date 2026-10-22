@@ -361,6 +361,47 @@ def apply_skeletal_root_yaw(section: Any, yaw_degrees: float) -> str:
     )
 
 
+def set_section_easing_frames(section: Any, *, ease_in: int = 0, ease_out: int = 0) -> str:
+    """Apply Unreal Sequencer section easing via the scripting extension API.
+
+    Unlike per-section optional methods, the documented UE 5.8 extension accepts
+    integer DISPLAY-RATE frame counts. A missing extension is a transfer error.
+    """
+    if ease_in < 0 or ease_out < 0:
+        raise UnrealCompatibilityError("Negative section easing duration.")
+    if not ease_in and not ease_out:
+        return "no_source_easing"
+    extension = getattr(unreal, "MovieSceneSectionEasingExtensions", None)
+    if extension is None:
+        raise UnrealCompatibilityError(
+            "Sequencer Scripting's MovieSceneSectionEasingExtensions is unavailable."
+        )
+    for count, method in ((ease_in, "set_ease_in_duration"),
+                          (ease_out, "set_ease_out_duration")):
+        if not count:
+            continue
+        setter = getattr(extension, method, None)
+        if not callable(setter):
+            raise UnrealCompatibilityError(f"Unreal section easing method missing: {method}")
+        setter(section, int(count))
+    return "MovieSceneSectionEasingExtensions"
+
+
+def add_linear_channel_key(channel: Any, frame: int, value: float) -> Any:
+    """Use AddKey's MovieSceneKeyInterpolation enum, not RichCurveInterpMode.
+
+    set_interpolation_mode on the returned key expects a *different* enum;
+    selecting interpolation during add_key avoids that type mismatch.
+    """
+    interpolation_type = getattr(unreal, "MovieSceneKeyInterpolation", None)
+    linear = getattr(interpolation_type, "LINEAR", None)
+    if linear is None:
+        raise UnrealCompatibilityError("LINEAR MovieSceneKeyInterpolation is unavailable.")
+    return channel.add_key(
+        unreal.FrameNumber(int(frame)), float(value), interpolation=linear
+    )
+
+
 def set_section_post_roll_frames(section: Any, frames: int) -> str:
     """Hold a section's final evaluated frame for the requested post-roll duration."""
     count = max(0, int(frames))
