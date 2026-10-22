@@ -179,9 +179,10 @@ def compose(
                     source_sections = len(track.get("sections") or [])
                     if (str(track.get("ced_type")) in {"animation.track", "audio.track"}
                         and len(native_actions) < source_sections):
+                        status = "NATIVE_PARTIAL"
                         reasons.append(
                             f"Only {len(native_actions)} of {source_sections} "
-                            "source sections produced transfer actions."
+                            "source sections produced transfer actions; remainder not transferred."
                         )
                 else:
                     reasons.append("No native target action for active source track.")
@@ -196,7 +197,7 @@ def compose(
                     "Fallback: evaluated actor world transforms only; no "
                     "skeletal joint equivalence, custom property, script or physics guarantee."
                 )
-        if status == "NATIVE_UNVERIFIED":
+        if status in {"NATIVE_UNVERIFIED", "NATIVE_PARTIAL"}:
             additions.extend(native_actions)
         ledger.append({
             "track_index": index,
@@ -205,7 +206,7 @@ def compose(
             "track_kind": str(track.get("ced_type", "")),
             "entity_name": entity.get("name", "") if entity else "",
             "source_section_count": len(track.get("sections", [])),
-            "native_action_count": len(native_actions) if status == "NATIVE_UNVERIFIED" else 0,
+            "native_action_count": len(native_actions) if status in {"NATIVE_UNVERIFIED", "NATIVE_PARTIAL"} else 0,
             "outcome": status,
             "details": reasons,
         })
