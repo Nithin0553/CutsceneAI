@@ -147,6 +147,7 @@ def test_motion_without_supported_curves_does_not_fake_motion():
 
 def test_shared_planner_loader_accepts_windows_powershell_utf8_bom(tmp_path):
     import json
+
     import csir_plan
 
     document = source([prop_motion()])
