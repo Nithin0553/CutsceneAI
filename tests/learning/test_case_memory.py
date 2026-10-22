@@ -187,3 +187,20 @@ def test_muted_tracks_excluded_from_feature_learning():
     features = case_memory._track_features(source)
     assert "track:animation.track" not in features["features"]
     assert features["track_counts"] == {}
+
+
+
+def test_learning_health_requires_independent_project_groups():
+    first = checked_case(group="project-x")
+    another_scene_same_project = checked_case(group="project-x", camera=True)
+    same_project = case_memory.dataset_health([first, another_scene_same_project])
+    assert same_project["verified_cases"] == 2
+    assert same_project["distinct_source_projects"] == 1
+    assert same_project["independent_project_holdout_possible"] is False
+    assert same_project["recommendation"] == "COLLECT_INDEPENDENT_PROJECTS"
+
+    truly_separate_project = checked_case(group="project-y")
+    independent = case_memory.dataset_health([first, truly_separate_project])
+    assert independent["distinct_source_projects"] == 2
+    assert independent["independent_project_holdout_possible"] is True
+    assert independent["model_finetuning_performed"] is False
