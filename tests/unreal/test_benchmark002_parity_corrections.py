@@ -201,7 +201,7 @@ def test_unreal_compat_uses_documented_easing_and_linear_api(monkeypatch):
         ),
     )
     monkeypatch.setitem(sys.modules, "unreal", fake_unreal)
-    path = ROOT / "integrations" / "unreal" / "unreal_compat.py"
+    path = Path(__file__).resolve().parents[2] / "integrations" / "unreal" / "unreal_compat.py"
     spec = importlib.util.spec_from_file_location("unreal_compat_correction_test", path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
