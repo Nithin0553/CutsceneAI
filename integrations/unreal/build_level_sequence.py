@@ -377,24 +377,14 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
         frame = unreal.FrameNumber(int(key["frame"]))
         location = key["location_cm"]
         rotation = key["rotation_rpy_degrees"]
-        channels[0].add_key(frame, float(location[0]))
-        channels[1].add_key(frame, float(location[1]))
-        channels[2].add_key(frame, float(location[2]))
-        channels[3].add_key(frame, float(rotation[0]))
-        channels[4].add_key(frame, float(rotation[1]))
-        channels[5].add_key(frame, float(rotation[2]))
-    # Frame-baked curves must not be re-smoothed by Unreal auto tangents.
-    if action.get("baked_source_curves"):
-        interpolation = getattr(unreal, "MovieSceneKeyInterpolation", None)
-        linear = getattr(interpolation, "LINEAR", None) if interpolation else None
-        if linear is None:
-            raise UnrealBuildError("Baked source curves require explicit LINEAR interpolation.")
-        for channel in channels[:6]:
-            for key in channel.get_keys():
-                setter = getattr(key, "set_interpolation_mode", None)
-                if not callable(setter):
-                    raise UnrealBuildError("Cannot configure interpolation of baked keys.")
-                setter(linear)
+        values = (*location, *rotation)
+        for channel, value in zip(channels[:6], values):
+            if action.get("baked_source_curves"):
+                unreal_compat.add_linear_channel_key(channel, int(key["frame"]), float(value))
+            else:
+                channel.add_key(frame, float(value))
+    # Frame-baked curves must not be smoothed by Unreal auto tangents.
+    # AddKey's explicit interpolation argument is MovieSceneKeyInterpolation.
 
 
 def _add_skeletal_animation(
@@ -412,35 +402,30 @@ def _add_skeletal_animation(
     # silently sampling a different pose when the adapter cannot represent it.
     source_offset = float(action.get("source_offset_seconds", 0.0))
     if source_offset > 1e-9:
-        frame_rate = plan_rate = sequence.get_display_rate()
-        frames_per_second = float(frame_rate.numerator) / float(frame_rate.denominator)
-        offset_frames = int(round(source_offset * frames_per_second))
-        offset_applied = False
-        for property_name in ("start_frame_offset", "first_loop_start_frame_offset"):
-            try:
-                params.set_editor_property(property_name, unreal.FrameNumber(offset_frames))
-                offset_applied = True
-                break
-            except Exception:
-                continue
-        if not offset_applied:
-            raise UnrealBuildError("Unreal does not expose a supported skeletal source trim offset.")
+        tick_rate = unreal.MovieSceneSequenceExtensions.get_tick_resolution(sequence)
+        ticks_per_second = float(tick_rate.numerator) / float(tick_rate.denominator)
+        offset_ticks = int(round(source_offset * ticks_per_second))
+        try:
+            params.set_editor_property("start_frame_offset", unreal.FrameNumber(offset_ticks))
+        except Exception as exc:
+            raise UnrealBuildError(
+                "Unreal does not expose a supported skeletal source trim offset."
+            ) from exc
     play_rate = unreal_compat.make_fixed_play_rate(float(action.get("time_scale", 1.0)))
     params.set_editor_property("play_rate", play_rate)
     section.set_editor_property("params", params)
     # Unlike a hard cut, the Unity source explicitly crossfades overlapping
     # clips. Unreal section easing controls how these sections combine.
-    for name, setter_name in (("blend_in_seconds", "set_ease_in_duration"),
-                              ("blend_out_seconds", "set_ease_out_duration")):
-        seconds = float(action.get(name, 0.0))
-        if seconds <= 0.0:
-            continue
-        rate = sequence.get_display_rate()
-        frames = int(round(seconds * float(rate.numerator) / float(rate.denominator)))
-        setter = getattr(section, setter_name, None)
-        if not callable(setter):
-            raise UnrealBuildError(f"Cannot preserve {name}: {setter_name} unavailable.")
-        setter(unreal.FrameNumber(max(1, frames)))
+    fps = sequence.get_display_rate()
+    frames_per_second = float(fps.numerator) / float(fps.denominator)
+    blend_in_frames = round(float(action.get("blend_in_seconds", 0.0)) * frames_per_second)
+    blend_out_frames = round(float(action.get("blend_out_seconds", 0.0)) * frames_per_second)
+    try:
+        unreal_compat.set_section_easing_frames(
+            section, ease_in=int(blend_in_frames), ease_out=int(blend_out_frames)
+        )
+    except unreal_compat.UnrealCompatibilityError as exc:
+        raise UnrealBuildError(str(exc)) from exc
 
     hold_end_frame = int(action.get("hold_end_frame", action["end_frame"]))
     post_roll_frames = max(0, hold_end_frame - int(action["end_frame"]))
@@ -582,14 +567,10 @@ def _add_camera_fov(sequence: unreal.LevelSequence, actor: unreal.Actor, action:
     if len(channels) != 1:
         raise UnrealBuildError("Unexpected camera lens channel layout; expected one float/double channel.")
     for key in fov_spec["keys"]:
-        channels[0].add_key(unreal.FrameNumber(int(key["frame"])), float(key["value"]))
-    if action.get("baked_source_curves"):
-        interpolation = getattr(unreal, "MovieSceneKeyInterpolation", None)
-        linear = getattr(interpolation, "LINEAR", None) if interpolation else None
-        if linear is None:
-            raise UnrealBuildError("Cannot preserve frame-baked camera lens interpolation.")
-        for key in channels[0].get_keys():
-            key.set_interpolation_mode(linear)
+        if action.get("baked_source_curves"):
+            unreal_compat.add_linear_channel_key(channels[0], int(key["frame"]), float(key["value"]))
+        else:
+            channels[0].add_key(unreal.FrameNumber(int(key["frame"])), float(key["value"]))
 
     unreal.log(
         "[CutSceneAI] Camera lens adapter "
@@ -631,13 +612,7 @@ def _add_light_intensity(sequence: unreal.LevelSequence, actor: unreal.Actor, ac
     if len(channels) != 1:
         raise UnrealBuildError("Light intensity requires exactly one float channel.")
     for key in action["keys"]:
-        channels[0].add_key(unreal.FrameNumber(int(key["frame"])), float(key["value"]))
-    interp = getattr(unreal, "MovieSceneKeyInterpolation", None)
-    linear = getattr(interp, "LINEAR", None) if interp is not None else None
-    if linear is None:
-        raise UnrealBuildError("Unable to set linear interpolation on sampled light curves.")
-    for key in channels[0].get_keys():
-        key.set_interpolation_mode(linear)
+        unreal_compat.add_linear_channel_key(channels[0], int(key["frame"]), float(key["value"]))
 
 
 def _add_audio(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
@@ -652,15 +627,14 @@ def _add_audio(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
     # easing instead of silently discarding authored envelopes.
     rate = sequence.get_display_rate()
     fps = float(rate.numerator) / float(rate.denominator)
-    for fade, setter_name in (("fade_in_seconds", "set_ease_in_duration"),
-                              ("fade_out_seconds", "set_ease_out_duration")):
-        seconds = float(action.get(fade, 0.0))
-        if seconds <= 0.0:
-            continue
-        setter = getattr(section, setter_name, None)
-        if not callable(setter):
-            raise UnrealBuildError(f"Cannot transfer audio {fade}: missing {setter_name}.")
-        setter(unreal.FrameNumber(max(1, int(round(seconds * fps)))))
+    try:
+        unreal_compat.set_section_easing_frames(
+            section,
+            ease_in=int(round(float(action.get("fade_in_seconds", 0.0)) * fps)),
+            ease_out=int(round(float(action.get("fade_out_seconds", 0.0)) * fps)),
+        )
+    except unreal_compat.UnrealCompatibilityError as exc:
+        raise UnrealBuildError(str(exc)) from exc
 
 
 def _add_marker(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
