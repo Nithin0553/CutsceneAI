@@ -852,11 +852,25 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                                     or None,
                                     "keys": [
                                         {
-                                            "frame": seconds_to_frame(float(key["time_seconds"]), fps_n, fps_d),
-                                            "value": float(key["value"]),
+                                            "frame": frame,
+                                            "value": _curve_value(
+                                                curve,
+                                                rational_seconds(section.get(
+                                                    "source_offset", {"value": 0, "rate": {"numerator": 1, "denominator": 1}}
+                                                )) + (frame * fps_d / fps_n - rational_seconds(section["start"]))
+                                                * float(section.get("time_scale", 1.0)),
+                                            ),
                                         }
-                                        for key in curve.get("keys", [])
+                                        for frame in (
+                                            range(
+                                                seconds_to_frame(rational_seconds(section["start"]), fps_n, fps_d),
+                                                seconds_to_frame(rational_seconds(section["end"]), fps_n, fps_d) + 1
+                                            ) if curve.get("native_keys") else
+                                            [seconds_to_frame(float(key["time_seconds"]), fps_n, fps_d)
+                                             for key in curve.get("keys", [])]
+                                        )
                                     ],
+                                    "baked_source_curves": bool(curve.get("native_keys")),
                                 }
                             )
 
