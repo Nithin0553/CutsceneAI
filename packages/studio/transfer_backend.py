@@ -120,6 +120,46 @@ def _world_keys(
     return result
 
 
+def _scalar_bake_keys(
+    csir: dict[str, Any],
+    capture: dict[str, Any],
+    entity: dict[str, Any],
+    *,
+    component_name: str,
+    field_name: str,
+) -> list[dict[str, Any]]:
+    """Build sampled camera/light value tracks at source display-frame timestamps."""
+    rate = csir["timing"].get("display_rate") or csir["timing"]["source_rate"]
+    hz = float(rate["numerator"]) / float(rate["denominator"])
+    start = csir_plan.rational_seconds(csir["timing"]["playback_start"])
+    end = csir_plan.rational_seconds(csir["timing"]["playback_end"])
+    by_time = {
+        round(float(s["time_seconds"]), 8): s
+        for s in capture["samples"]
+    }
+    result = []
+    for frame in range(int(math.floor((end - start) * hz + 1e-7))):
+        moment = start + frame / hz
+        sample = by_time.get(round(moment, 8))
+        if sample is None:
+            raise TransferBackendError(
+                f"Missing source camera/light frame at {moment:.9f}s."
+            )
+        observed = next(
+            (entry for entry in sample["entities"] if entry["entity_id"] == entity["entity_id"]),
+            None,
+        )
+        if observed is None:
+            raise TransferBackendError(f"Missing source state for {entity['name']}.")
+        value = float(observed.get(component_name, {}).get(field_name, float("nan")))
+        if not math.isfinite(value):
+            raise TransferBackendError(
+                f"Missing finite {component_name}.{field_name} for {entity['name']}."
+            )
+        result.append({"frame": frame, "value": value})
+    return result
+
+
 def _native_track(
     csir: dict[str, Any], mapping: dict[str, Any], track: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -236,8 +276,59 @@ def compose(
             "keys": keys, "baked_source_curves": True,
             "source_behavior_strategy": "frame_sampled_world_pose",
         })
+        # Preserve directly measured optical/light behavior as well when the
+        # unknown source track belongs to that domain. Do not guess custom
+        # exposure, shader, light color or component-specific semantics.
+        kinds = {str(csir["tracks"][index].get("ced_type")) for index in track_ids}
+        try:
+            if entity.get("ced_type") == "entity.camera" and "camera.transform" in kinds:
+                fov = _scalar_bake_keys(
+                    csir, capture, entity,
+                    component_name="camera", field_name="vertical_fov_degrees",
+                )
+                plan["actions"] = [
+                    a for a in plan["actions"] if not (
+                        a["kind"] == "camera_fov"
+                        and a.get("entity_name") == entity["name"]
+                    )
+                ]
+                plan["actions"].append({
+                    "kind": "camera_fov", "entity_name": entity["name"],
+                    "actor_label": str(actor_label),
+                    "source_fov_axis": "vertical",
+                    "target_output_aspect": plan["output_aspect"],
+                    "baked_source_curves": True,
+                    "keys": fov,
+                })
+            elif entity.get("ced_type") == "entity.light" and "light.animation" in kinds:
+                intensity = _scalar_bake_keys(
+                    csir, capture, entity,
+                    component_name="light", field_name="intensity",
+                )
+                plan["actions"] = [
+                    a for a in plan["actions"] if not (
+                        a["kind"] == "light_intensity"
+                        and a.get("entity_name") == entity["name"]
+                    )
+                ]
+                plan["actions"].append({
+                    "kind": "light_intensity",
+                    "entity_name": entity["name"],
+                    "actor_label": str(actor_label),
+                    "keys": intensity,
+                    "source_behavior_strategy": "sampled_light_intensity",
+                })
+        except (KeyError, ValueError, TypeError, IndexError) as exc:
+            for index in track_ids:
+                ledger[index]["details"].append(
+                    f"Optical/light scalar fallback unavailable: {exc}"
+                )
         for index in track_ids:
-            ledger[index]["native_action_count"] = 1
+            ledger[index]["native_action_count"] = sum(
+                action.get("entity_name") == entity["name"]
+                and action["kind"] in {"transform", "camera_fov", "light_intensity"}
+                for action in plan["actions"]
+            )
     # Bound actors with neither native actions nor fallback still require
     # static scene mapping; keep all explicitly mapped entities from baseline.
     if not plan["actions"]:
