@@ -1,9 +1,13 @@
 """Regression checks for reusable Benchmark002 conversion behavior (pure Python)."""
+import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "integrations" / "unreal"))
 import csir_plan
+import scene_prep
 
 
 def rt(t):
@@ -135,3 +139,84 @@ def test_only_final_skeletal_section_holds_last_pose():
     assert actions[0]["hold_end_frame"] == actions[0]["end_frame"]
     assert actions[0]["completion_mode"] == "project_default"
     assert actions[1]["hold_end_frame"] == 96
+
+
+def test_provenance_checked_source_first_frame_places_dynamic_actor(tmp_path):
+    doc = document([section(1, 3, [
+        curve("transform.position.x", [(0, 0), (2, 2)])
+    ])])
+    doc["cutscene_id"] = "unity:fixed:7"
+    doc["source"].update({"sequence_ref": "Timeline|123",
+                          "project_fingerprint": "sha256:source"})
+    capture = {
+        "kind": "cinetwin.behavior_capture",
+        "cutscene_id": doc["cutscene_id"],
+        "source": {"sequence_ref": "Timeline|123", "project_fingerprint": "sha256:source"},
+        "samples": [{"time_seconds": 0.0, "entities": [{
+            "entity_id": "prop",
+            "world_transform": {
+                "position_m": [1.0, 2.0, -3.0],
+                "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+                "scale_xyz": [1.0, 1.0, 1.0],
+            },
+        }]}],
+    }
+    source_file = tmp_path / "source.capture.json"
+    source_file.write_text(json.dumps(capture), encoding="utf-8")
+    mapping = {**mapped(), "source_behavior_capture_path": str(source_file)}
+    operations = scene_prep.build_scene_prep(doc, mapping)
+    assert len(operations) == 1
+    assert operations[0]["source"] == "cinetwin.source_evaluated_first_frame"
+    assert operations[0]["location_cm"] == (300.0, 100.0, 200.0)
+
+
+def test_first_frame_capture_rejects_stale_project_identity(tmp_path):
+    doc = document([])
+    doc["cutscene_id"] = "unity:fixed"
+    doc["source"].update({"sequence_ref": "A", "project_fingerprint": "sha256:correct"})
+    capture_file = tmp_path / "wrong.json"
+    capture_file.write_text(json.dumps({
+        "kind": "cinetwin.behavior_capture",
+        "cutscene_id": "unity:fixed",
+        "source": {"sequence_ref": "A", "project_fingerprint": "sha256:wrong"},
+        "samples": [{"time_seconds": 0, "entities": []}],
+    }), encoding="utf-8")
+    with pytest.raises(csir_plan.PlanError, match="provenance mismatch"):
+        scene_prep.build_scene_prep(
+            doc, {**mapped(), "source_behavior_capture_path": str(capture_file)})
+
+
+def test_unreal_compat_uses_documented_easing_and_linear_api(monkeypatch):
+    import importlib.util
+    from types import SimpleNamespace
+
+    easing_calls = []
+    linear = object()
+    fake_unreal = SimpleNamespace(
+        FrameNumber=int,
+        MovieSceneKeyInterpolation=SimpleNamespace(LINEAR=linear),
+        MovieSceneSectionEasingExtensions=SimpleNamespace(
+            set_ease_in_duration=lambda sec, frames: easing_calls.append(("in", frames)),
+            set_ease_out_duration=lambda sec, frames: easing_calls.append(("out", frames)),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "unreal", fake_unreal)
+    path = ROOT / "integrations" / "unreal" / "unreal_compat.py"
+    spec = importlib.util.spec_from_file_location("unreal_compat_correction_test", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    assert module.set_section_easing_frames(object(), ease_in=6, ease_out=12) == (
+        "MovieSceneSectionEasingExtensions"
+    )
+    assert easing_calls == [("in", 6), ("out", 12)]
+
+    calls = []
+
+    class Channel:
+        def add_key(self, frame, value, *, interpolation):
+            calls.append((frame, value, interpolation))
+            return "native-key"
+
+    assert module.add_linear_channel_key(Channel(), 24, 1.25) == "native-key"
+    assert calls == [(24, 1.25, linear)]
