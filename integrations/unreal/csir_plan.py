@@ -757,6 +757,11 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
         )
 
     for track in csir.get("tracks", []):
+        # A muted source Timeline track contributes no evaluated behavior.
+        # Skipping it must happen in the generator itself, not just in the
+        # transfer-readiness report.
+        if track.get("muted") is True:
+            continue
         entity = entities.get(track.get("binding_entity_id", ""))
         ced_type = track.get("ced_type")
 
