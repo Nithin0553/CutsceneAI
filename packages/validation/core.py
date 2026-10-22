@@ -445,6 +445,31 @@ def compare(
                         error=play_rate_error,
                     )
 
+                if match is not None:
+                    for metric, threshold, domain in (
+                        ("source_offset_seconds", 0.0001, "TIMING"),
+                        ("ease_in_frames", 0.0, "ANIMATION"),
+                        ("ease_out_frames", 0.0, "ANIMATION"),
+                    ):
+                        if metric not in exp_track:
+                            continue
+                        actual_value = match.get(metric)
+                        error = (
+                            abs(float(exp_track[metric]) - float(actual_value))
+                            if actual_value is not None else math.inf
+                        )
+                        _check(
+                            checks,
+                            f"animation.{metric}.{name}",
+                            domain,
+                            "INCOMPLETE" if actual_value is None else
+                            _status_from_bool(error <= threshold),
+                            exp_track[metric],
+                            actual_value,
+                            f"Saved Unreal animation {metric} must match the Unity clip.",
+                            error=None if math.isinf(error) else error,
+                        )
+
                 if match is not None and "effective_root_delta_cm" in exp_track:
                     actual_delta = match.get("effective_root_delta_cm")
                     if actual_delta is None:
