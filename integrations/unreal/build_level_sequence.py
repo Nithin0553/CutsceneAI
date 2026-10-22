@@ -36,6 +36,7 @@ if str(CINETWIN_DIR) not in sys.path:
 
 import cinetwin_hierarchy_runtime
 import hierarchy_realization
+import transfer_readiness
 import csir_plan
 import scene_prep
 import unreal_compat
@@ -705,6 +706,27 @@ def _add_marker(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
 def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str]) -> unreal.LevelSequence:
     csir = csir_plan.load_json(csir_path)
     mapping = csir_plan.load_json(mapping_path)
+    # Do not silently construct a partial target when the source requires
+    # unsupported tracks or a mapped clip is missing.
+    readiness = transfer_readiness.audit(csir, mapping)
+    if readiness["generation"] == "BLOCKED":
+        failures = [
+            f"{entry['track_name'] or entry['track_id']}: {'; '.join(entry['reasons'])}"
+            for entry in readiness["tracks"] if entry["state"] == "BLOCKED"
+        ]
+        if readiness.get("plan_error"):
+            failures.append(str(readiness["plan_error"]))
+        raise UnrealBuildError(
+            "Source readiness BLOCKED before level mutation: " +
+            " | ".join(failures) +
+            ". Run tools/transfer_readiness.py for a complete source-track ledger."
+        )
+    if readiness["unverified_behavior_count"]:
+        unreal.log_warning(
+            "[CutSceneAI] Transfer coverage PARTIAL for "
+            f"{readiness['unverified_behavior_count']} source tracks. "
+            "Generation is not cinematic fidelity acceptance."
+        )
     plan = csir_plan.build_plan(csir, mapping)
 
     # Hierarchy realization remains opt-in until a staging target project and
