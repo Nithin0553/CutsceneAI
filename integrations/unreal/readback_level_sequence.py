@@ -513,6 +513,8 @@ def _lens_track(
     component: Any,
     target_aspect: float,
 ) -> dict[str, Any] | None:
+    if _track_display_name(track) != "CutSceneAI Camera Lens":
+        return None
     sections = _sections(track)
     if not sections:
         return None
@@ -542,6 +544,25 @@ def _lens_track(
             )
         keys.append({"frame": int(frame), "vertical_fov_degrees": float(vertical)})
     return {"kind": "camera_lens", "keys": keys}
+
+
+def _light_intensity_track(track: Any) -> dict[str, Any] | None:
+    """Read the native Unreal numeric intensity curve, not camera FOV."""
+    if _track_display_name(track) != "CutSceneAI Light Intensity":
+        return None
+    sections = _sections(track)
+    if len(sections) != 1:
+        raise UnrealReadbackError("Expected one light-intensity track section.")
+    channels = unreal_compat.get_section_channels(sections[0])
+    if len(channels) != 1:
+        raise UnrealReadbackError("Expected one light-intensity channel.")
+    return {
+        "kind": "light_intensity",
+        "keys": [
+            {"frame": int(frame), "value": float(value)}
+            for frame, value in sorted(_key_map(channels[0]).items())
+        ],
+    }
 
 
 def _audio_section(section: Any) -> dict[str, Any]:
@@ -705,6 +726,8 @@ def readback(
                         component = None
                 if component is not None:
                     item = _lens_track(track, component, target_aspect)
+                    if item is None:
+                        item = _light_intensity_track(track)
                     if item is not None:
                         record["tracks"].append(item)
 
