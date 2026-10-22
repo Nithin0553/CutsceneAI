@@ -35,12 +35,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--csir", type=Path, required=True)
     parser.add_argument("--mapping", type=Path, required=True)
     parser.add_argument("--capture", type=Path, help="Verified CineTwin source behavior capture")
-    parser.add_argument("--out", type=Path, required=True, help="New empty output folder")
+    parser.add_argument("--out", type=Path, required=True, help="Plan output directory")
+    parser.add_argument(
+        "--verify-existing", action="store_true",
+        help="Read-only: recompute and compare existing plan/report/evidence JSON",
+    )
     args = parser.parse_args(argv)
     try:
         plan, report, evidence = transfer_backend.compose_files(
             args.csir, args.mapping, capture_path=args.capture
         )
+        if args.verify_existing:
+            if not args.out.is_dir():
+                raise transfer_backend.TransferBackendError(
+                    "Existing transfer directory does not exist."
+                )
+            transfer_backend.verify_prepared_artifacts(
+                transfer_backend._load(args.out / "transfer-plan.json"),
+                transfer_backend._load(args.out / "coverage-report.json"),
+                transfer_backend._load(args.out / "evidence.json"),
+                plan, report, evidence,
+            )
+            print("[CutSceneAI] PREPARED FILES: VERIFIED")
+            print("[CutSceneAI] All source/mapping/capture hashes and JSON values match.")
+            print("[CutSceneAI] No Unreal project or output files were changed.")
+            return 0
         if args.out.exists():
             raise transfer_backend.TransferBackendError(
                 "Refusing to reuse an existing transfer plan directory."
