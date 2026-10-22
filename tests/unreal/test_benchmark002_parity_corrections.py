@@ -103,3 +103,35 @@ def test_skeletal_animation_metadata_contains_trim_and_blend():
     assert action["source_offset_seconds"] == 0.5
     assert action["blend_in_seconds"] == 0.25
     assert action["blend_out_seconds"] == 0.5
+
+
+def test_light_intensity_is_converted_to_sampled_target_track():
+    doc = document([])
+    doc["entities"][0]["ced_type"] = "entity.light"
+    doc["tracks"][0]["ced_type"] = "light.animation"
+    doc["tracks"][0]["sections"] = [
+        section(0, 1, [curve("light.intensity", [(0, 2), (1, 6)], native=True)])
+    ]
+    action = next(a for a in csir_plan.build_plan(doc, mapped())["actions"]
+                  if a["kind"] == "light_intensity")
+    assert len(action["keys"]) == 25
+    assert action["keys"][0] == {"frame": 0, "value": 2.0}
+    assert action["keys"][-1] == {"frame": 24, "value": 6.0}
+
+
+def test_only_final_skeletal_section_holds_last_pose():
+    doc = document([])
+    doc["entities"][0]["ced_type"] = "entity.character"
+    doc["assets"] = [{"asset_id": "walk", "name": "Walk"},
+                     {"asset_id": "idle", "name": "Idle"}]
+    first = section(0, 2, [])
+    first["payload"]["asset_id"] = "walk"
+    second = section(1.75, 3, [])
+    second["payload"]["asset_id"] = "idle"
+    doc["tracks"][0]["sections"] = [first, second]
+    mapping = {**mapped(), "assets": {"Walk": "/Game/Walk", "Idle": "/Game/Idle"}}
+    actions = [a for a in csir_plan.build_plan(doc, mapping)["actions"]
+               if a["kind"] == "skeletal_animation"]
+    assert actions[0]["hold_end_frame"] == actions[0]["end_frame"]
+    assert actions[0]["completion_mode"] == "project_default"
+    assert actions[1]["hold_end_frame"] == 96
