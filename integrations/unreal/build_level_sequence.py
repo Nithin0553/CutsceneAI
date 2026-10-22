@@ -89,6 +89,37 @@ def _preflight(plan: dict[str, Any]) -> None:
     except unreal_compat.UnrealCompatibilityError as exc:
         raise UnrealBuildError(str(exc)) from exc
 
+    # New cinematic features are preflighted BEFORE changing any level actor.
+    needs_easing = any(
+        a.get("kind") == "skeletal_animation"
+        and (float(a.get("blend_in_seconds", 0.0)) > 0
+             or float(a.get("blend_out_seconds", 0.0)) > 0)
+        or a.get("kind") == "audio"
+        and (float(a.get("fade_in_seconds", 0.0)) > 0
+             or float(a.get("fade_out_seconds", 0.0)) > 0)
+        for a in plan.get("actions", [])
+    )
+    needs_linear_keys = any(
+        a.get("kind") == "light_intensity"
+        or bool(a.get("baked_source_curves"))
+        for a in plan.get("actions", [])
+    )
+    if needs_easing:
+        easing = getattr(unreal, "MovieSceneSectionEasingExtensions", None)
+        if any(not callable(getattr(easing, name, None))
+               for name in ("set_ease_in_duration", "set_ease_out_duration")):
+            raise UnrealBuildError("Sequencer section easing extension missing; no level changes made.")
+    if needs_linear_keys:
+        interp = getattr(unreal, "MovieSceneKeyInterpolation", None)
+        if getattr(interp, "LINEAR", None) is None:
+            raise UnrealBuildError("Sequencer linear interpolation unavailable; no level changes made.")
+    if any(a.get("kind") == "skeletal_animation"
+           and float(a.get("source_offset_seconds", 0.0)) > 0
+           for a in plan.get("actions", [])):
+        seq_ext = getattr(unreal, "MovieSceneSequenceExtensions", None)
+        if not callable(getattr(seq_ext, "get_tick_resolution", None)):
+            raise UnrealBuildError("Sequencer tick resolution accessor missing; no level changes made.")
+
     profile = unreal_compat.runtime_profile()
     unreal.log(
         "[CutSceneAI] Runtime capability profile: "
