@@ -90,11 +90,15 @@ Use the learning branch and operate from the repository root:
     python tools/cutscene_learning.py review-template \
       --csir "<frozen source.csir.json>" \
       --mapping "<mapping.json>" \
+      --resolved "<resolved-dictionary.json>" \
+      --validation "<independent.validation.json>" \
       --out "<case.review.json>"
 
 This creates an UNAPPROVED review. A human compares independent target
 validation and source semantics, then fills review reviewer name and
-approve_mapping_examples=true only if labels really match source intent.
+approve_mapping_examples=true only if labels really match source intent. The
+review is bound to immutable CSIR, mapping, resolved dictionary, and validation
+hashes; editing any of these files invalidates the prior approval.
 Reviewing a mapping does NOT approve visual, audio, event or pose fidelity.
 
     python tools/cutscene_learning.py record \
