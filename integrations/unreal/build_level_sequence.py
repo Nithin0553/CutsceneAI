@@ -604,6 +604,35 @@ def _add_camera_cuts(sequence: unreal.LevelSequence, actions: list[dict[str, Any
         section.set_camera_binding_id(binding_id)
 
 
+def _add_light_intensity(sequence: unreal.LevelSequence, actor: unreal.Actor, action: dict[str, Any]) -> None:
+    """Create a native intensity track bound to the existing light component."""
+    cls = getattr(unreal, "LightComponentBase", None)
+    if cls is None:
+        raise UnrealBuildError("Unreal runtime lacks LightComponentBase.")
+    components = actor.get_components_by_class(cls)
+    if len(components) != 1:
+        raise UnrealBuildError(
+            f"Expected one light component on {actor.get_actor_label()}, found {len(components)}.")
+    component = components[0]
+    binding = unreal.MovieSceneSequenceExtensions.add_possessable(sequence, component)
+    track = binding.add_track(unreal.MovieSceneFloatTrack)
+    track.set_display_name("CutSceneAI Light Intensity")
+    track.set_property_name_and_path("Intensity", "Intensity")
+    section = track.add_section()
+    section.set_range(0, sequence.get_playback_end())
+    channels = unreal_compat.get_section_channels(section)
+    if len(channels) != 1:
+        raise UnrealBuildError("Light intensity requires exactly one float channel.")
+    for key in action["keys"]:
+        channels[0].add_key(unreal.FrameNumber(int(key["frame"])), float(key["value"]))
+    interp = getattr(unreal, "MovieSceneKeyInterpolation", None)
+    linear = getattr(interp, "LINEAR", None) if interp is not None else None
+    if linear is None:
+        raise UnrealBuildError("Unable to set linear interpolation on sampled light curves.")
+    for key in channels[0].get_keys():
+        key.set_interpolation_mode(linear)
+
+
 def _add_audio(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
     sound = _load_asset(action["unreal_asset_path"])
     track = unreal.MovieSceneSequenceExtensions.add_track(sequence, unreal.MovieSceneAudioTrack)
@@ -680,6 +709,8 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
                 _add_camera_fov(sequence, bindings[action["entity_name"]]["actor"], action)
             elif kind == "camera_cut":
                 camera_cuts.append(action)
+            elif kind == "light_intensity":
+                _add_light_intensity(sequence, bindings[action["entity_name"]]["actor"], action)
             elif kind == "audio":
                 _add_audio(sequence, action)
             elif kind == "marker":
