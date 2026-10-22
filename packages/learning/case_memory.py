@@ -123,6 +123,9 @@ def build_case(
         review and review.get("approve_mapping_examples") is True
         and review.get("source_sha256") == source_sha
         and review.get("mapping_sha256") == mapping_sha
+        and review.get("resolved_sha256") == _digest(resolved)
+        and validation is not None
+        and review.get("validation_sha256") == _digest(validation)
         and isinstance(review.get("reviewer"), str)
         and str(review["reviewer"]).strip()
     )
@@ -150,12 +153,6 @@ def build_case(
     )
     data = {
         "case_version": CASE_VERSION,
-        "case_id": _digest({
-            "csir": source_sha,
-            "mapping": mapping_sha,
-            "resolved": _digest(resolved),
-            "validation": _digest(validation) if validation is not None else None,
-        })[:24],
         "source": {"engine": src_engine, "cutscene_id": source_id,
                    "project_fingerprint": src_group, "sha256": source_sha,
                    "profile_id": source_profile.get("profile_id", ""),
@@ -174,6 +171,9 @@ def build_case(
         "track_counts": features["track_counts"],
         "mapping_labels": labels,
     }
+    # Hash the immutable complete record; a post-review promotion writes a
+    # distinct approved case instead of mutating older candidate evidence.
+    data["case_id"] = _digest(data)[:24]
     return data
 
 
@@ -199,6 +199,10 @@ def list_cases(store: str | Path) -> list[dict[str, Any]]:
         data = read_json(path)
         if data.get("case_version") != CASE_VERSION:
             raise LearningDataError(f"Unsupported case format: {path}")
+        copy = {key: value for key, value in data.items() if key != "case_id"}
+        expected_id = _digest(copy)[:24]
+        if data.get("case_id") != expected_id or path.stem != expected_id:
+            raise LearningDataError(f"Case content identity failed verification: {path}")
         cases.append(data)
     return cases
 
