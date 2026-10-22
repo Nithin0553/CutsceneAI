@@ -18,7 +18,8 @@ class PlanError(ValueError):
 
 
 def load_json(path: str | Path) -> dict[str, Any]:
-    with Path(path).open("r", encoding="utf-8") as handle:
+    # Accept BOM-prefixed UTF-8 from Windows PowerShell and ordinary UTF-8 alike.
+    with Path(path).open("r", encoding="utf-8-sig") as handle:
         return json.load(handle)
 
 
