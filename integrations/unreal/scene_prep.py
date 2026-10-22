@@ -135,6 +135,7 @@ def _character_clip_transform(
 
 def build_scene_prep(csir: dict[str, Any], mapping: dict[str, Any]) -> list[dict[str, Any]]:
     entities = {entity["entity_id"]: entity for entity in csir.get("entities", [])}
+    rate = csir.get("timing", {}).get("source_rate", {"numerator": 24, "denominator": 1})
     mapped_names = set(mapping.get("entities", {}))
     dynamically_transformed: set[str] = set()
     operations: list[dict[str, Any]] = []
@@ -145,7 +146,12 @@ def build_scene_prep(csir: dict[str, Any], mapping: dict[str, Any]) -> list[dict
             continue
         ced_type = track.get("ced_type")
         if ced_type == "camera.transform":
-            dynamically_transformed.add(entity["name"])
+            action = csir_plan._transform_action(
+                track, entity, str(mapping["entities"][entity["name"]]["actor_label"]),
+                int(rate["numerator"]), int(rate["denominator"]), entities,
+            ) if track.get("sections") else None
+            if action is not None:
+                dynamically_transformed.add(entity["name"])
         elif ced_type == "animation.track":
             if entity.get("ced_type") == "entity.character":
                 op = _character_clip_transform(
