@@ -702,7 +702,7 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
     if csir.get("schema_version") != "0.1.0":
         raise PlanError(f"Unsupported CSIR schema: {csir.get('schema_version')}")
     if csir.get("source", {}).get("engine") != "unity":
-        raise PlanError("Benchmark001 Unreal generator currently expects a Unity CSIR source.")
+        raise PlanError("Unity-to-Unreal adapter requires a Unity CSIR source; other sources need their own engine adapter.")
 
     source_rate = csir["timing"]["source_rate"]
     fps_n = int(source_rate["numerator"])
