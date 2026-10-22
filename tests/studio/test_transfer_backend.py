@@ -261,3 +261,29 @@ def test_unknown_light_animation_bakes_independently_measured_intensity():
     assert len(intensity) == 1
     assert intensity[0]["keys"][0] == {"frame": 0, "value": 5.0}
     assert intensity[0]["keys"][-1] == {"frame": 3, "value": 6.5}
+
+
+
+def test_static_only_cutscene_produces_source_derived_pose_in_sequence():
+    src = source()
+    src["tracks"] = []
+    src["entities"] = [{
+        "entity_id": "static-prop",
+        "name": "MY_PROP",
+        "ced_type": "entity.prop",
+        "metadata": {"world_transform": {
+            "position": {"x": 1.0, "y": 2.0, "z": -3.0},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+        }},
+    }]
+    target = mapping()
+    target["entities"] = {"MY_PROP": {"actor_label": "PropUE"}}
+    plan, report = transfer_backend.compose(src, target)
+    assert report["source_track_count"] == 0
+    assert len(plan["actions"]) == 1
+    only = plan["actions"][0]
+    assert only["kind"] == "transform"
+    assert only["source_behavior_strategy"] == "source_static_world_pose"
+    assert only["keys"][0]["location_cm"] == [300.0, 100.0, 200.0]
+    assert only["keys"][0]["rotation_rpy_degrees"] == [0.0, 0.0, 0.0]
