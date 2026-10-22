@@ -51,12 +51,14 @@ def validation(*, passed=True):
                         "id": "spatial.rotation", "domain": "SPATIAL"}]}
 
 
-def review(source, target, *, approved=True):
+def review(source, target, *, approved=True, decision=None, report=None):
     return {
         "approve_mapping_examples": approved,
         "reviewer": "human-verifier",
         "source_sha256": case_memory._digest(source),
         "mapping_sha256": case_memory._digest(target),
+        "resolved_sha256": case_memory._digest(decision or resolved()),
+        "validation_sha256": case_memory._digest(report or validation()),
     }
 
 
@@ -84,7 +86,7 @@ def test_failed_validation_stays_diagnostic_even_with_human_approval():
     target = mapping()
     example = case_memory.build_case(
         source, target, resolved(), validation=validation(passed=False),
-        review=review(source, target),
+        review=review(source, target, report=validation(passed=False)),
     )
     assert example["status"] == "DIAGNOSTIC_ONLY"
     assert example["fidelity_scope"] == "MAPPING_RULES_ONLY_NOT_FULL_CUTSCENE_PARITY"
@@ -107,9 +109,10 @@ def test_unresolved_mapping_decisions_cannot_be_trained():
     target = mapping()
     example = case_memory.build_case(
         source, target, resolved(valid=False),
-        validation=validation(), review=review(source, target),
+        validation=validation(), review=review(source, target, decision=resolved(valid=False)),
     )
     assert example["status"] == "CANDIDATE"
+    assert example["review_approved"] is True
     assert example["unresolved_decisions"] == 1
     assert example["mapping_labels"] == []
 
