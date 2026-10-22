@@ -931,10 +931,21 @@ def build_prepared_files(
         )
         submitted_plan = csir_plan.load_json(plan_path)
         submitted_report = csir_plan.load_json(report_path)
-        if (submitted_plan != expected_plan
-                or submitted_report != expected_report
-                or expected_evidence != evidence):
-            raise UnrealBuildError("Prepared plan/coverage report differs from source-derived result.")
+        # Compare to the JSON encoding that wrote the prepared files.
+        # Native planner vectors may be tuples; JSON round-trips into lists.
+        # Never weaken exact value/provenance checking just to accommodate
+        # representational differences.
+        try:
+            transfer_backend.verify_prepared_artifacts(
+                submitted_plan,
+                submitted_report,
+                evidence,
+                expected_plan,
+                expected_report,
+                expected_evidence,
+            )
+        except transfer_backend.TransferBackendError as exc:
+            raise UnrealBuildError(str(exc)) from exc
         if (submitted_report.get("mode") != "BEST_EFFORT"
                 or submitted_report.get("source_track_count")
                 != len(original_csir.get("tracks", []))):
