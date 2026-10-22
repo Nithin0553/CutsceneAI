@@ -872,6 +872,34 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                     }
                 )
 
+        elif ced_type == "light.animation" and entity:
+            actor_label = _mapping_actor(mapping, entity["name"])
+            for section in track.get("sections", []):
+                intensity = next((
+                    curve for curve in section.get("payload", {}).get("animation", {}).get("curves", [])
+                    if str(curve.get("canonical_semantic", "")) == "light.intensity"
+                    or str(curve.get("property_name", "")).lower() in {"m_intensity", "intensity"}
+                ), None)
+                if intensity is None:
+                    raise PlanError(f"Light animation on {entity['name']} has no transferable intensity curve.")
+                start = rational_seconds(section["start"])
+                end = rational_seconds(section["end"])
+                offset = rational_seconds(section.get(
+                    "source_offset", {"value": 0, "rate": {"numerator": 1, "denominator": 1}}))
+                speed = float(section.get("time_scale", 1.0))
+                by_frame: dict[int, dict[str, float | int]] = {}
+                for frame in range(seconds_to_frame(start, fps_n, fps_d),
+                                   seconds_to_frame(end, fps_n, fps_d) + 1):
+                    time = frame * fps_d / fps_n
+                    source_time = offset + (time - start) * speed
+                    by_frame[frame] = {"frame": frame, "value": _curve_value(intensity, source_time)}
+                plan["actions"].append({
+                    "kind": "light_intensity",
+                    "entity_name": entity["name"],
+                    "actor_label": actor_label,
+                    "keys": list(by_frame.values()),
+                })
+
         elif ced_type == "audio.track":
             for section in track.get("sections", []):
                 asset_id = section.get("payload", {}).get("asset_id")
