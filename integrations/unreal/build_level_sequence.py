@@ -388,11 +388,17 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
 
 
 def _add_skeletal_animation(
-    sequence: unreal.LevelSequence, binding: Any, action: dict[str, Any]
-) -> None:
+    sequence: unreal.LevelSequence, binding: Any, action: dict[str, Any],
+    existing_track: Any | None = None,
+) -> Any:
     animation = _load_asset(action["unreal_asset_path"])
-    track = binding.add_track(unreal.MovieSceneSkeletalAnimationTrack)
-    track.set_display_name(action.get("track_name", "CutSceneAI Animation"))
+    # Sections from the SAME Unity animation track must share one Unreal track.
+    # A separate Unreal track per overlapping clip can override the intended
+    # crossfade and produces incorrect weighting at the transition.
+    track = existing_track
+    if track is None:
+        track = binding.add_track(unreal.MovieSceneSkeletalAnimationTrack)
+        track.set_display_name(action.get("track_name", "CutSceneAI Animation"))
     section = track.add_section()
     section.set_range(int(action["start_frame"]), int(action["end_frame"]))
     params = section.get_editor_property("params")
@@ -451,6 +457,7 @@ def _add_skeletal_animation(
         "[CutSceneAI] Animation completion "
         f"{action['entity_name']}: mode={completion}, strategy={completion_strategy}"
     )
+    return track
 
 
 def _add_root_motion_correction(
@@ -685,15 +692,18 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
 
         camera_cuts: list[dict[str, Any]] = []
         root_corrections: list[dict[str, Any]] = []
+        skeletal_tracks: dict[tuple[str, str], Any] = {}
         for action in plan["actions"]:
             kind = action["kind"]
             if kind == "transform":
                 _add_transform(sequence, bindings[action["entity_name"]]["binding"], action)
             elif kind == "skeletal_animation":
-                _add_skeletal_animation(
+                cache_key = (str(action["entity_name"]), str(action.get("track_name", "")))
+                skeletal_tracks[cache_key] = _add_skeletal_animation(
                     sequence,
                     bindings[action["entity_name"]]["binding"],
                     action,
+                    existing_track=skeletal_tracks.get(cache_key),
                 )
                 if action.get("root_motion_correction_samples"):
                     root_corrections.append(action)
