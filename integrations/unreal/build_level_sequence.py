@@ -729,6 +729,13 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
         )
     plan = csir_plan.build_plan(csir, mapping)
 
+    return _build_prepared_plan(csir, mapping, plan)
+
+
+def _build_prepared_plan(
+    csir: dict[str, Any], mapping: dict[str, Any], plan: dict[str, Any]
+) -> unreal.LevelSequence:
+    """Shared realization of strict or independently audited partial transfer plans."""
     # Hierarchy realization remains opt-in until a staging target project and
     # evaluated child-motion verification have been proven in the user's engine.
     # Compute all constraints BEFORE making any level actor changes.
@@ -842,6 +849,103 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
                         f"[CutSceneAI] Unable to restore actor {label}: {restore_error}"
                     )
         raise
+
+
+
+def build_prepared_files(
+    csir_path: str | os.PathLike[str],
+    mapping_path: str | os.PathLike[str],
+    plan_path: str | os.PathLike[str],
+    report_path: str | os.PathLike[str],
+    evidence_path: str | os.PathLike[str],
+    runtime_receipt_path: str | os.PathLike[str],
+) -> unreal.LevelSequence:
+    """Execute a deterministic best-effort plan after independently checking inputs.
+
+    The engine does not trust a client-supplied action plan: it recomputes
+    generation from source/mapping/verified capture and compares the result
+    before calling any code that changes actors or assets.
+    """
+    import hashlib
+    import json
+    import traceback
+
+    STUDIO_DIR = SCRIPT_DIR.parents[1] / "packages" / "studio"
+    if str(STUDIO_DIR) not in sys.path:
+        sys.path.insert(0, str(STUDIO_DIR))
+    import transfer_backend
+
+    receipt = {
+        "kind": "cutsceneai.unreal.best_effort_receipt",
+        "schema_version": "0.1.0",
+        "stage": "source_verification",
+        "status": "BLOCKED",
+        "scene_modified": False,
+        "target_fidelity_established": False,
+    }
+    output = Path(runtime_receipt_path)
+    if output.exists():
+        raise UnrealBuildError(f"Refusing to overwrite existing runtime receipt: {output}")
+    if not output.parent.is_dir():
+        raise UnrealBuildError("Receipt parent directory does not exist.")
+    try:
+        evidence = csir_plan.load_json(evidence_path)
+        actual_source_hash = hashlib.sha256(Path(csir_path).read_bytes()).hexdigest()
+        actual_mapping_hash = hashlib.sha256(Path(mapping_path).read_bytes()).hexdigest()
+        if (evidence.get("csir_sha256") != actual_source_hash
+                or evidence.get("mapping_sha256") != actual_mapping_hash):
+            raise UnrealBuildError("Prepared plan is stale: source/mapping file changed.")
+        capture_path = evidence.get("source_capture_path")
+        if capture_path and (
+            hashlib.sha256(Path(capture_path).read_bytes()).hexdigest()
+            != evidence.get("source_capture_sha256")
+        ):
+            raise UnrealBuildError("Source CineTwin capture has changed since planning.")
+
+        original_csir = csir_plan.load_json(csir_path)
+        original_mapping = csir_plan.load_json(mapping_path)
+        expected_plan, expected_report, expected_evidence = transfer_backend.compose_files(
+            csir_path, mapping_path, capture_path=capture_path
+        )
+        submitted_plan = csir_plan.load_json(plan_path)
+        submitted_report = csir_plan.load_json(report_path)
+        if (submitted_plan != expected_plan
+                or submitted_report != expected_report
+                or expected_evidence != evidence):
+            raise UnrealBuildError("Prepared plan/coverage report differs from source-derived result.")
+        if (submitted_report.get("mode") != "BEST_EFFORT"
+                or submitted_report.get("source_track_count")
+                != len(original_csir.get("tracks", []))):
+            raise UnrealBuildError("Missing source feature-accountability evidence.")
+        if original_mapping.get("overwrite_sequence", False):
+            raise UnrealBuildError("Best-effort runs cannot overwrite a target sequence.")
+        receipt["source_track_count"] = submitted_report["source_track_count"]
+        receipt["track_outcomes"] = submitted_report["outcomes"]
+        receipt["planned_actions"] = submitted_report["actions"]
+        receipt["stage"] = "unreal_capability_and_generation"
+        # This call checks actual assets/actors/engine features before mutation.
+        sequence = _build_prepared_plan(original_csir, original_mapping, submitted_plan)
+        receipt["status"] = "GENERATED_UNVERIFIED"
+        receipt["stage"] = "complete"
+        receipt["scene_modified"] = True
+        receipt["generated_sequence"] = sequence.get_path_name()
+        unreal.log_warning(
+            "[CutSceneAI] Best-effort generation finished with losses disclosed. "
+            "No saved target behavior or fidelity comparison has passed yet."
+        )
+        return sequence
+    except Exception as exc:
+        receipt["exception"] = {
+            "type": type(exc).__name__,
+            "message": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+        unreal.log_error(
+            f"[CutSceneAI] Best-effort transfer stopped at {receipt['stage']}: {exc}"
+        )
+        raise
+    finally:
+        output.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":
