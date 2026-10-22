@@ -945,6 +945,20 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                     }
                 )
 
+    # Only the final clip of a skeletal binding should hold its last pose.
+    # Holding every section through the entire sequence allows post-roll from
+    # an earlier clip to compete with later authored animation sections.
+    skeletal: dict[str, list[dict[str, Any]]] = {}
+    for action in plan["actions"]:
+        if action.get("kind") == "skeletal_animation":
+            skeletal.setdefault(str(action["entity_name"]), []).append(action)
+    for clips in skeletal.values():
+        clips.sort(key=lambda action: (int(action["start_frame"]), int(action["end_frame"])))
+        for clip in clips[:-1]:
+            clip["hold_end_frame"] = int(clip["end_frame"])
+            clip["completion_mode"] = "project_default"
+            clip["hold_strategy"] = "next_source_clip_controls_pose"
+
     return plan
 
 
