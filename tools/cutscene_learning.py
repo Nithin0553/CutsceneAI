@@ -45,6 +45,10 @@ def main(argv: list[str] | None = None) -> int:
     recommend.add_argument("--limit", type=int, default=5)
     recommend.add_argument("--output", type=Path)
 
+    status = commands.add_parser("status", help="Audit case coverage and independent-project holdout")
+    status.add_argument("--store", type=Path, required=True)
+    status.add_argument("--output", type=Path)
+
     export = commands.add_parser("export", help="Export only verified mapping labels as JSONL")
     export.add_argument("--store", type=Path, required=True)
     export.add_argument("--output", type=Path, required=True)
@@ -96,6 +100,12 @@ def main(argv: list[str] | None = None) -> int:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(json.dumps(output, indent=2), encoding="utf-8")
             print(json.dumps(output, indent=2))
+        elif args.command == "status":
+            report = case_memory.dataset_health(case_memory.list_cases(args.store))
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            print(json.dumps(report, indent=2))
         elif args.command == "export":
             count = case_memory.export_training_jsonl(
                 case_memory.list_cases(args.store), args.output
