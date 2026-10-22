@@ -583,6 +583,13 @@ def _add_camera_fov(sequence: unreal.LevelSequence, actor: unreal.Actor, action:
         raise UnrealBuildError("Unexpected camera lens channel layout; expected one float/double channel.")
     for key in fov_spec["keys"]:
         channels[0].add_key(unreal.FrameNumber(int(key["frame"])), float(key["value"]))
+    if action.get("baked_source_curves"):
+        interpolation = getattr(unreal, "MovieSceneKeyInterpolation", None)
+        linear = getattr(interpolation, "LINEAR", None) if interpolation else None
+        if linear is None:
+            raise UnrealBuildError("Cannot preserve frame-baked camera lens interpolation.")
+        for key in channels[0].get_keys():
+            key.set_interpolation_mode(linear)
 
     unreal.log(
         "[CutSceneAI] Camera lens adapter "
