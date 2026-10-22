@@ -298,6 +298,20 @@ def _preflight(plan: dict[str, Any]) -> None:
                 f"lens={fov_spec['strategy']}"
             )
 
+    # World-space correction tracks for overlapping clips cannot be combined
+    # safely until a weighted root trajectory model is available.
+    corrected_by_actor: dict[str, int] = {}
+    for action in plan.get("actions", []):
+        if action.get("root_motion_correction_samples"):
+            label = str(action["actor_label"])
+            corrected_by_actor[label] = corrected_by_actor.get(label, 0) + 1
+    for label, count in corrected_by_actor.items():
+        if count > 1:
+            raise UnrealBuildError(
+                "Multiple sampled root-motion corrections are not yet composable: "
+                f"{label}. Rejecting before actor mutation."
+            )
+
     unreal.log("[CutSceneAI] Runtime preflight PASS")
 
 
@@ -709,15 +723,21 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
         )
 
     _preflight(plan)
-    _apply_scene_prep(csir, mapping)
-    _apply_root_motion_alignment(plan)
+    # Level actors are shared scene state. Restore their world poses if any
+    # construction step fails; do not leave partly placed cameras/characters.
+    previous_poses = {
+        str(label): (_find_actor(str(label)), _find_actor(str(label)).get_actor_transform())
+        for label in plan.get("bindings", {}).values()
+    }
     attachment_changes: list[dict[str, Any]] = []
-    if hierarchy_operations is not None:
-        attachment_changes = cinetwin_hierarchy_runtime.apply_hierarchy(
-            hierarchy_operations
-        )
     sequence: unreal.LevelSequence | None = None
     try:
+        _apply_scene_prep(csir, mapping)
+        _apply_root_motion_alignment(plan)
+        if hierarchy_operations is not None:
+            attachment_changes = cinetwin_hierarchy_runtime.apply_hierarchy(
+                hierarchy_operations
+            )
         sequence = _create_sequence(plan)
         bindings = _binding_cache(sequence, plan)
 
@@ -792,6 +812,13 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
                     "[CineTwin] Rolled back newly created actor attachments "
                     "because sequence construction failed."
                 )
+            for label, (actor, transform) in previous_poses.items():
+                try:
+                    actor.set_actor_transform(transform, False, True)
+                except Exception as restore_error:
+                    unreal.log_error(
+                        f"[CutSceneAI] Unable to restore actor {label}: {restore_error}"
+                    )
         raise
 
 
