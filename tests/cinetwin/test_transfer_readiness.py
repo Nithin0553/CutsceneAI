@@ -143,3 +143,18 @@ def test_motion_without_supported_curves_does_not_fake_motion():
     report = transfer_readiness.audit(source([unknown]), mapping())
     assert report["generation"] == "BLOCKED"
     assert "No supported animated" in report["tracks"][0]["reasons"][0]
+
+
+def test_shared_planner_loader_accepts_windows_powershell_utf8_bom(tmp_path):
+    import json
+    import csir_plan
+
+    document = source([prop_motion()])
+    target = mapping()
+    csir_file = tmp_path / "timeline.csir.json"
+    map_file = tmp_path / "target_mapping.json"
+    csir_file.write_text(json.dumps(document), encoding="utf-8-sig")
+    map_file.write_text(json.dumps(target), encoding="utf-8-sig")
+    report = transfer_readiness.audit_files(csir_file, map_file)
+    assert report["generation"] == "READY_FOR_ENGINE_PREFLIGHT"
+    assert csir_plan.build_plan_from_files(csir_file, map_file)["duration_frames"] == 48
