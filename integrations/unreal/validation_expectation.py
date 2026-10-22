@@ -103,6 +103,20 @@ def build_expectation(
                 "completion_mode": str(action.get("completion_mode", "project_default")),
                 "play_rate": float(action.get("time_scale", 1.0)),
             }
+            frame_rate = (
+                float(plan["display_rate"]["numerator"])
+                / float(plan["display_rate"]["denominator"])
+            )
+            if float(action.get("source_offset_seconds", 0.0)) > 0:
+                track["source_offset_seconds"] = float(action["source_offset_seconds"])
+            if float(action.get("blend_in_seconds", 0.0)) > 0:
+                track["ease_in_frames"] = int(
+                    round(float(action["blend_in_seconds"]) * frame_rate)
+                )
+            if float(action.get("blend_out_seconds", 0.0)) > 0:
+                track["ease_out_frames"] = int(
+                    round(float(action["blend_out_seconds"]) * frame_rate)
+                )
             expected_root_delta = action.get("expected_root_delta_cm")
             if expected_root_delta is not None:
                 track["effective_root_delta_cm"] = [
@@ -143,6 +157,17 @@ def build_expectation(
                     ],
                 }
             )
+
+        elif kind == "light_intensity":
+            name = str(action["entity_name"])
+            if name in bindings:
+                bindings[name]["tracks"].append({
+                    "kind": "light_intensity",
+                    "keys": [
+                        {"frame": int(key["frame"]), "value": float(key["value"])}
+                        for key in action["keys"]
+                    ],
+                })
 
         elif kind == "camera_cut":
             camera_cuts.append(

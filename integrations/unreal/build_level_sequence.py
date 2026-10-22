@@ -36,6 +36,7 @@ if str(CINETWIN_DIR) not in sys.path:
 
 import cinetwin_hierarchy_runtime
 import hierarchy_realization
+import transfer_readiness
 import csir_plan
 import scene_prep
 import unreal_compat
@@ -88,6 +89,37 @@ def _preflight(plan: dict[str, Any]) -> None:
         unreal_compat.validate_runtime_capabilities(required_actions)
     except unreal_compat.UnrealCompatibilityError as exc:
         raise UnrealBuildError(str(exc)) from exc
+
+    # New cinematic features are preflighted BEFORE changing any level actor.
+    needs_easing = any(
+        a.get("kind") == "skeletal_animation"
+        and (float(a.get("blend_in_seconds", 0.0)) > 0
+             or float(a.get("blend_out_seconds", 0.0)) > 0)
+        or a.get("kind") == "audio"
+        and (float(a.get("fade_in_seconds", 0.0)) > 0
+             or float(a.get("fade_out_seconds", 0.0)) > 0)
+        for a in plan.get("actions", [])
+    )
+    needs_linear_keys = any(
+        a.get("kind") == "light_intensity"
+        or bool(a.get("baked_source_curves"))
+        for a in plan.get("actions", [])
+    )
+    if needs_easing:
+        easing = getattr(unreal, "MovieSceneSectionEasingExtensions", None)
+        if any(not callable(getattr(easing, name, None))
+               for name in ("set_ease_in_duration", "set_ease_out_duration")):
+            raise UnrealBuildError("Sequencer section easing extension missing; no level changes made.")
+    if needs_linear_keys:
+        interp = getattr(unreal, "MovieSceneKeyInterpolation", None)
+        if getattr(interp, "LINEAR", None) is None:
+            raise UnrealBuildError("Sequencer linear interpolation unavailable; no level changes made.")
+    if any(a.get("kind") == "skeletal_animation"
+           and float(a.get("source_offset_seconds", 0.0)) > 0
+           for a in plan.get("actions", [])):
+        seq_ext = getattr(unreal, "MovieSceneSequenceExtensions", None)
+        if not callable(getattr(seq_ext, "get_tick_resolution", None)):
+            raise UnrealBuildError("Sequencer tick resolution accessor missing; no level changes made.")
 
     profile = unreal_compat.runtime_profile()
     unreal.log(
@@ -267,6 +299,20 @@ def _preflight(plan: dict[str, Any]) -> None:
                 f"lens={fov_spec['strategy']}"
             )
 
+    # World-space correction tracks for overlapping clips cannot be combined
+    # safely until a weighted root trajectory model is available.
+    corrected_by_actor: dict[str, int] = {}
+    for action in plan.get("actions", []):
+        if action.get("root_motion_correction_samples"):
+            label = str(action["actor_label"])
+            corrected_by_actor[label] = corrected_by_actor.get(label, 0) + 1
+    for label, count in corrected_by_actor.items():
+        if count > 1:
+            raise UnrealBuildError(
+                "Multiple sampled root-motion corrections are not yet composable: "
+                f"{label}. Rejecting before actor mutation."
+            )
+
     unreal.log("[CutSceneAI] Runtime preflight PASS")
 
 
@@ -377,27 +423,61 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
         frame = unreal.FrameNumber(int(key["frame"]))
         location = key["location_cm"]
         rotation = key["rotation_rpy_degrees"]
-        channels[0].add_key(frame, float(location[0]))
-        channels[1].add_key(frame, float(location[1]))
-        channels[2].add_key(frame, float(location[2]))
-        channels[3].add_key(frame, float(rotation[0]))
-        channels[4].add_key(frame, float(rotation[1]))
-        channels[5].add_key(frame, float(rotation[2]))
+        values = (*location, *rotation)
+        for channel, value in zip(channels[:6], values):
+            if action.get("baked_source_curves"):
+                unreal_compat.add_linear_channel_key(channel, int(key["frame"]), float(value))
+            else:
+                channel.add_key(frame, float(value))
+    # Frame-baked curves must not be smoothed by Unreal auto tangents.
+    # AddKey's explicit interpolation argument is MovieSceneKeyInterpolation.
 
 
 def _add_skeletal_animation(
-    sequence: unreal.LevelSequence, binding: Any, action: dict[str, Any]
-) -> None:
+    sequence: unreal.LevelSequence, binding: Any, action: dict[str, Any],
+    existing_track: Any | None = None,
+) -> Any:
     animation = _load_asset(action["unreal_asset_path"])
-    track = binding.add_track(unreal.MovieSceneSkeletalAnimationTrack)
-    track.set_display_name(action.get("track_name", "CutSceneAI Animation"))
+    # Sections from the SAME Unity animation track must share one Unreal track.
+    # A separate Unreal track per overlapping clip can override the intended
+    # crossfade and produces incorrect weighting at the transition.
+    track = existing_track
+    if track is None:
+        track = binding.add_track(unreal.MovieSceneSkeletalAnimationTrack)
+        track.set_display_name(action.get("track_name", "CutSceneAI Animation"))
     section = track.add_section()
     section.set_range(int(action["start_frame"]), int(action["end_frame"]))
     params = section.get_editor_property("params")
     params.set_editor_property("animation", animation)
+    # Unity clipIn refers to source media time, not the Sequencer section start.
+    # Unreal uses frame offsets into the imported animation; fail rather than
+    # silently sampling a different pose when the adapter cannot represent it.
+    source_offset = float(action.get("source_offset_seconds", 0.0))
+    if source_offset > 1e-9:
+        tick_rate = unreal.MovieSceneSequenceExtensions.get_tick_resolution(sequence)
+        ticks_per_second = float(tick_rate.numerator) / float(tick_rate.denominator)
+        offset_ticks = int(round(source_offset * ticks_per_second))
+        try:
+            params.set_editor_property("start_frame_offset", unreal.FrameNumber(offset_ticks))
+        except Exception as exc:
+            raise UnrealBuildError(
+                "Unreal does not expose a supported skeletal source trim offset."
+            ) from exc
     play_rate = unreal_compat.make_fixed_play_rate(float(action.get("time_scale", 1.0)))
     params.set_editor_property("play_rate", play_rate)
     section.set_editor_property("params", params)
+    # Unlike a hard cut, the Unity source explicitly crossfades overlapping
+    # clips. Unreal section easing controls how these sections combine.
+    fps = sequence.get_display_rate()
+    frames_per_second = float(fps.numerator) / float(fps.denominator)
+    blend_in_frames = round(float(action.get("blend_in_seconds", 0.0)) * frames_per_second)
+    blend_out_frames = round(float(action.get("blend_out_seconds", 0.0)) * frames_per_second)
+    try:
+        unreal_compat.set_section_easing_frames(
+            section, ease_in=int(blend_in_frames), ease_out=int(blend_out_frames)
+        )
+    except unreal_compat.UnrealCompatibilityError as exc:
+        raise UnrealBuildError(str(exc)) from exc
 
     hold_end_frame = int(action.get("hold_end_frame", action["end_frame"]))
     post_roll_frames = max(0, hold_end_frame - int(action["end_frame"]))
@@ -423,6 +503,7 @@ def _add_skeletal_animation(
         "[CutSceneAI] Animation completion "
         f"{action['entity_name']}: mode={completion}, strategy={completion_strategy}"
     )
+    return track
 
 
 def _add_root_motion_correction(
@@ -539,7 +620,10 @@ def _add_camera_fov(sequence: unreal.LevelSequence, actor: unreal.Actor, action:
     if len(channels) != 1:
         raise UnrealBuildError("Unexpected camera lens channel layout; expected one float/double channel.")
     for key in fov_spec["keys"]:
-        channels[0].add_key(unreal.FrameNumber(int(key["frame"])), float(key["value"]))
+        if action.get("baked_source_curves"):
+            unreal_compat.add_linear_channel_key(channels[0], int(key["frame"]), float(key["value"]))
+        else:
+            channels[0].add_key(unreal.FrameNumber(int(key["frame"])), float(key["value"]))
 
     unreal.log(
         "[CutSceneAI] Camera lens adapter "
@@ -561,6 +645,29 @@ def _add_camera_cuts(sequence: unreal.LevelSequence, actions: list[dict[str, Any
         section.set_camera_binding_id(binding_id)
 
 
+def _add_light_intensity(sequence: unreal.LevelSequence, actor: unreal.Actor, action: dict[str, Any]) -> None:
+    """Create a native intensity track bound to the existing light component."""
+    cls = getattr(unreal, "LightComponentBase", None)
+    if cls is None:
+        raise UnrealBuildError("Unreal runtime lacks LightComponentBase.")
+    components = actor.get_components_by_class(cls)
+    if len(components) != 1:
+        raise UnrealBuildError(
+            f"Expected one light component on {actor.get_actor_label()}, found {len(components)}.")
+    component = components[0]
+    binding = unreal.MovieSceneSequenceExtensions.add_possessable(sequence, component)
+    track = binding.add_track(unreal.MovieSceneFloatTrack)
+    track.set_display_name("CutSceneAI Light Intensity")
+    track.set_property_name_and_path("Intensity", "Intensity")
+    section = track.add_section()
+    section.set_range(0, sequence.get_playback_end())
+    channels = unreal_compat.get_section_channels(section)
+    if len(channels) != 1:
+        raise UnrealBuildError("Light intensity requires exactly one float channel.")
+    for key in action["keys"]:
+        unreal_compat.add_linear_channel_key(channels[0], int(key["frame"]), float(key["value"]))
+
+
 def _add_audio(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
     sound = _load_asset(action["unreal_asset_path"])
     track = unreal.MovieSceneSequenceExtensions.add_track(sequence, unreal.MovieSceneAudioTrack)
@@ -569,6 +676,18 @@ def _add_audio(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
     section.set_range(int(action["start_frame"]), int(action["end_frame"]))
     section.set_sound(sound)
     section.set_looping(bool(action.get("loop", False)))
+    # Audio fades are source Timeline easing semantics. Require native section
+    # easing instead of silently discarding authored envelopes.
+    rate = sequence.get_display_rate()
+    fps = float(rate.numerator) / float(rate.denominator)
+    try:
+        unreal_compat.set_section_easing_frames(
+            section,
+            ease_in=int(round(float(action.get("fade_in_seconds", 0.0)) * fps)),
+            ease_out=int(round(float(action.get("fade_out_seconds", 0.0)) * fps)),
+        )
+    except unreal_compat.UnrealCompatibilityError as exc:
+        raise UnrealBuildError(str(exc)) from exc
 
 
 def _add_marker(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
@@ -587,6 +706,27 @@ def _add_marker(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
 def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str]) -> unreal.LevelSequence:
     csir = csir_plan.load_json(csir_path)
     mapping = csir_plan.load_json(mapping_path)
+    # Do not silently construct a partial target when the source requires
+    # unsupported tracks or a mapped clip is missing.
+    readiness = transfer_readiness.audit(csir, mapping)
+    if readiness["generation"] == "BLOCKED":
+        failures = [
+            f"{entry['track_name'] or entry['track_id']}: {'; '.join(entry['reasons'])}"
+            for entry in readiness["tracks"] if entry["state"] == "BLOCKED"
+        ]
+        if readiness.get("plan_error"):
+            failures.append(str(readiness["plan_error"]))
+        raise UnrealBuildError(
+            "Source readiness BLOCKED before level mutation: " +
+            " | ".join(failures) +
+            ". Run tools/transfer_readiness.py for a complete source-track ledger."
+        )
+    if readiness["unverified_behavior_count"]:
+        unreal.log_warning(
+            "[CutSceneAI] Transfer coverage PARTIAL for "
+            f"{readiness['unverified_behavior_count']} source tracks. "
+            "Generation is not cinematic fidelity acceptance."
+        )
     plan = csir_plan.build_plan(csir, mapping)
 
     # Hierarchy realization remains opt-in until a staging target project and
@@ -605,29 +745,38 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
         )
 
     _preflight(plan)
-    _apply_scene_prep(csir, mapping)
-    _apply_root_motion_alignment(plan)
+    # Level actors are shared scene state. Restore their world poses if any
+    # construction step fails; do not leave partly placed cameras/characters.
+    previous_poses = {
+        str(label): (_find_actor(str(label)), _find_actor(str(label)).get_actor_transform())
+        for label in plan.get("bindings", {}).values()
+    }
     attachment_changes: list[dict[str, Any]] = []
-    if hierarchy_operations is not None:
-        attachment_changes = cinetwin_hierarchy_runtime.apply_hierarchy(
-            hierarchy_operations
-        )
     sequence: unreal.LevelSequence | None = None
     try:
+        _apply_scene_prep(csir, mapping)
+        _apply_root_motion_alignment(plan)
+        if hierarchy_operations is not None:
+            attachment_changes = cinetwin_hierarchy_runtime.apply_hierarchy(
+                hierarchy_operations
+            )
         sequence = _create_sequence(plan)
         bindings = _binding_cache(sequence, plan)
 
         camera_cuts: list[dict[str, Any]] = []
         root_corrections: list[dict[str, Any]] = []
+        skeletal_tracks: dict[tuple[str, str], Any] = {}
         for action in plan["actions"]:
             kind = action["kind"]
             if kind == "transform":
                 _add_transform(sequence, bindings[action["entity_name"]]["binding"], action)
             elif kind == "skeletal_animation":
-                _add_skeletal_animation(
+                cache_key = (str(action["entity_name"]), str(action.get("track_name", "")))
+                skeletal_tracks[cache_key] = _add_skeletal_animation(
                     sequence,
                     bindings[action["entity_name"]]["binding"],
                     action,
+                    existing_track=skeletal_tracks.get(cache_key),
                 )
                 if action.get("root_motion_correction_samples"):
                     root_corrections.append(action)
@@ -637,6 +786,8 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
                 _add_camera_fov(sequence, bindings[action["entity_name"]]["actor"], action)
             elif kind == "camera_cut":
                 camera_cuts.append(action)
+            elif kind == "light_intensity":
+                _add_light_intensity(sequence, bindings[action["entity_name"]]["actor"], action)
             elif kind == "audio":
                 _add_audio(sequence, action)
             elif kind == "marker":
@@ -683,6 +834,13 @@ def build(csir_path: str | os.PathLike[str], mapping_path: str | os.PathLike[str
                     "[CineTwin] Rolled back newly created actor attachments "
                     "because sequence construction failed."
                 )
+            for label, (actor, transform) in previous_poses.items():
+                try:
+                    actor.set_actor_transform(transform, False, True)
+                except Exception as restore_error:
+                    unreal.log_error(
+                        f"[CutSceneAI] Unable to restore actor {label}: {restore_error}"
+                    )
         raise
 
 

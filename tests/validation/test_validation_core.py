@@ -345,3 +345,40 @@ def test_material_vertical_excursion_requires_sampled_trajectory_validation() ->
 
     assert item["status"] == "INCOMPLETE"
     assert item["actual"]["policy"]["mode"] == "requires_sampled_vertical_trajectory"
+
+
+def test_light_intensity_track_is_not_silently_ignored() -> None:
+    expected = _snapshot()
+    expected["bindings"].append({
+        "name": "LIGHT_KEY",
+        "binding_id": "light",
+        "tracks": [{"kind": "light_intensity", "keys": [
+            {"frame": 0, "value": 1.0},
+            {"frame": 24, "value": 2.0},
+        ]}],
+    })
+    actual = copy.deepcopy(expected)
+    actual["bindings"][-1]["tracks"][0]["keys"][-1]["value"] = 5.0
+    report = core.compare(expected, actual)
+    failed = {check["id"] for check in report["checks"] if check["status"] == "FAIL"}
+    assert "light.intensity_keys.LIGHT_KEY" in failed
+
+
+def test_skeletal_source_trim_and_easing_are_readback_gates() -> None:
+    expected = _snapshot()
+    track = expected["bindings"][1]["tracks"][0]
+    track["source_offset_seconds"] = 0.5
+    track["ease_in_frames"] = 6
+    track["ease_out_frames"] = 12
+    actual = copy.deepcopy(expected)
+    actual_track = actual["bindings"][1]["tracks"][0]
+    actual_track["source_offset_seconds"] = 0.0
+    actual_track["ease_in_frames"] = 0
+    actual_track["ease_out_frames"] = 0
+    report = core.compare(expected, actual)
+    failed = {check["id"] for check in report["checks"] if check["status"] == "FAIL"}
+    assert {
+        "animation.source_offset_seconds.CHARACTER_Guard",
+        "animation.ease_in_frames.CHARACTER_Guard",
+        "animation.ease_out_frames.CHARACTER_Guard",
+    } <= failed

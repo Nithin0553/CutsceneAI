@@ -445,6 +445,31 @@ def compare(
                         error=play_rate_error,
                     )
 
+                if match is not None:
+                    for metric, threshold, domain in (
+                        ("source_offset_seconds", 0.0001, "TIMING"),
+                        ("ease_in_frames", 0.0, "ANIMATION"),
+                        ("ease_out_frames", 0.0, "ANIMATION"),
+                    ):
+                        if metric not in exp_track:
+                            continue
+                        actual_value = match.get(metric)
+                        error = (
+                            abs(float(exp_track[metric]) - float(actual_value))
+                            if actual_value is not None else math.inf
+                        )
+                        _check(
+                            checks,
+                            f"animation.{metric}.{name}",
+                            domain,
+                            "INCOMPLETE" if actual_value is None else
+                            _status_from_bool(error <= threshold),
+                            exp_track[metric],
+                            actual_value,
+                            f"Saved Unreal animation {metric} must match the Unity clip.",
+                            error=None if math.isinf(error) else error,
+                        )
+
                 if match is not None and "effective_root_delta_cm" in exp_track:
                     actual_delta = match.get("effective_root_delta_cm")
                     if actual_delta is None:
@@ -610,6 +635,41 @@ def compare(
                             "Maximum canonical transform-key angular error.",
                             error=worst_rotation,
                         )
+
+            elif kind == "light_intensity":
+                match = candidates[0] if candidates else None
+                _check(
+                    checks,
+                    f"light.intensity_track.{name}",
+                    "LIGHT",
+                    _status_from_bool(match is not None),
+                    True,
+                    match is not None,
+                    "A mapped native Unreal light-intensity curve must be present.",
+                )
+                if match is not None:
+                    source_keys = list(exp_track.get("keys", []))
+                    target_keys = list(match.get("keys", []))
+                    same_frames = (
+                        [int(k.get("frame", -1)) for k in source_keys]
+                        == [int(k.get("frame", -2)) for k in target_keys]
+                    )
+                    value_error = math.inf
+                    if same_frames and len(source_keys) == len(target_keys):
+                        value_error = _max_abs(
+                            float(a.get("value", 0.0)) - float(b.get("value", 0.0))
+                            for a, b in zip(source_keys, target_keys)
+                        )
+                    _check(
+                        checks,
+                        f"light.intensity_keys.{name}",
+                        "LIGHT",
+                        _status_from_bool(same_frames and value_error <= 1e-4),
+                        source_keys,
+                        target_keys,
+                        "Numeric light intensity track parity; photometric output remains unverified.",
+                        error=None if math.isinf(value_error) else value_error,
+                    )
 
             elif kind == "camera_lens":
                 match = candidates[0] if candidates else None

@@ -18,7 +18,8 @@ class PlanError(ValueError):
 
 
 def load_json(path: str | Path) -> dict[str, Any]:
-    with Path(path).open("r", encoding="utf-8") as handle:
+    # Accept BOM-prefixed UTF-8 from Windows PowerShell and ordinary UTF-8 alike.
+    with Path(path).open("r", encoding="utf-8-sig") as handle:
         return json.load(handle)
 
 
@@ -91,6 +92,12 @@ def _quat_offset(curves: dict[str, dict[str, Any]], prefix: str) -> tuple[float,
 
 
 def _curve_value(curve: dict[str, Any] | None, time_seconds: float, default: float = 0.0) -> float:
+    """Evaluate a source curve; use authored Hermite tangents when native keys exist.
+
+    Synthetic offset curves and older fixtures have no native_keys and retain
+    the legacy linear behavior. Weighted Unity tangents are not equivalent to
+    unweighted Hermite; reject them instead of silently altering motion.
+    """
     if not curve or not curve.get("keys"):
         return default
     keys = curve["keys"]
@@ -103,8 +110,22 @@ def _curve_value(curve: dict[str, Any] | None, time_seconds: float, default: flo
         t1 = float(right["time_seconds"])
         if t0 <= time_seconds <= t1:
             alpha = 0.0 if t1 == t0 else (time_seconds - t0) / (t1 - t0)
-            return float(left["value"]) + (float(right["value"]) - float(left["value"])) * alpha
+            a, b = float(left["value"]), float(right["value"])
+            if not curve.get("native_keys"):
+                return a + (b - a) * alpha
+            if int(left.get("weighted_mode", 0)) or int(right.get("weighted_mode", 0)):
+                raise PlanError("Weighted Unity curve tangents require a dedicated evaluator.")
+            m0 = float(left.get("out_tangent", 0.0))
+            m1 = float(right.get("in_tangent", 0.0))
+            if not all(math.isfinite(value) for value in (m0, m1)):
+                raise PlanError("Nonfinite Unity curve tangents cannot be reconstructed.")
+            span = t1 - t0
+            return ((2 * alpha**3 - 3 * alpha**2 + 1) * a
+                    + (alpha**3 - 2 * alpha**2 + alpha) * span * m0
+                    + (-2 * alpha**3 + 3 * alpha**2) * b
+                    + (alpha**3 - alpha**2) * span * m1)
     return default
+
 
 
 def _source_root_delta_unreal_cm(
@@ -545,6 +566,101 @@ def canonical_quat_to_unreal_rotator(
     return (math.degrees(roll), math.degrees(pitch), math.degrees(yaw))
 
 
+def _section_curve_channels(section: dict[str, Any]) -> tuple[
+    dict[str, dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]]
+]:
+    curves = _curve_map(section)
+    position = {axis: curves.get("transform.position." + axis) for axis in "xyz"}
+    quaternion = {axis: curves.get("transform.rotation." + axis) for axis in "xyzw"}
+    euler = {
+        axis: next((c for c in section.get("payload", {}).get("animation", {}).get("curves", [])
+                    if str(c.get("property_name", "")).lower() in {
+                        "localeuleranglesraw." + axis,
+                        "m_localeulerangleshint." + axis,
+                    }), None)
+        for axis in "xyz"
+    }
+    return position, quaternion, euler
+
+
+def _sample_section_transform(
+    section: dict[str, Any],
+    entity: dict[str, Any],
+    entities: dict[str, dict[str, Any]],
+    fps_n: int,
+    fps_d: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    curves = _curve_map(section)
+    position_curves, quaternion_curves, euler_curves = _section_curve_channels(section)
+    active_curves = [c for c in [*position_curves.values(),
+                                 *quaternion_curves.values(), *euler_curves.values()] if c]
+    if not active_curves:
+        return [], False
+
+    has_quat = any(quaternion_curves.values())
+    if has_quat and not all(quaternion_curves.values()):
+        raise PlanError("Partial quaternion animation cannot be reconstructed safely.")
+
+    source_start = rational_seconds(section.get(
+        "source_offset", {"value": 0, "rate": {"numerator": 1, "denominator": 1}}))
+    time_scale = float(section.get("time_scale", 1.0))
+    if time_scale <= 0:
+        raise PlanError("Non-positive transform clip speed is unsupported.")
+    section_start = rational_seconds(section["start"])
+    section_end = rational_seconds(section["end"])
+    source_end = source_start + (section_end - section_start) * time_scale
+    bake = any(c.get("native_keys") for c in active_curves)
+    sample_source_times = set()
+    for curve in active_curves:
+        for key in curve.get("keys", []):
+            time_value = float(key["time_seconds"])
+            if source_start <= time_value <= source_end:
+                sample_source_times.add(time_value)
+    if bake:
+        start_frame = seconds_to_frame(section_start, fps_n, fps_d)
+        end_frame = seconds_to_frame(section_end, fps_n, fps_d)
+        for frame in range(start_frame, end_frame + 1):
+            timeline_time = frame * fps_d / fps_n
+            if section_start <= timeline_time <= section_end:
+                sample_source_times.add(source_start + (timeline_time - section_start) * time_scale)
+        sample_source_times.update((source_start, source_end))
+    if not sample_source_times:
+        return [], False
+
+    track_position = _vector_offset(curves, "transform.track_offset.position")
+    infinite_position = _vector_offset(curves, "transform.infinite_offset.position")
+    base_position = tuple(track_position[i] + infinite_position[i] for i in range(3))
+    track_rotation = _quat_offset(curves, "transform.track_offset.rotation")
+    infinite_rotation = _quat_offset(curves, "transform.infinite_offset.rotation")
+    base_rotation = _quat_mul(track_rotation, infinite_rotation)
+    parent_position, parent_rotation, parent_scale = parent_world_transform(entity, entities)
+
+    by_frame: dict[int, dict[str, Any]] = {}
+    for source_time in sorted(sample_source_times):
+        timeline_time = section_start + (source_time - source_start) / time_scale
+        frame = seconds_to_frame(timeline_time, fps_n, fps_d)
+        relative = tuple(_curve_value(position_curves[axis], source_time) for axis in "xyz")
+        local_position = tuple(base_position[i] + relative[i] for i in range(3))
+        if has_quat:
+            sampled = _normalize_quat(tuple(
+                _curve_value(quaternion_curves[axis], source_time, 1.0 if axis == "w" else 0.0)
+                for axis in "xyzw"))
+            delta_q = sampled
+        else:
+            delta_q = unity_euler_delta_to_canonical_quat(*(
+                _curve_value(euler_curves[axis], source_time) for axis in "xyz"))
+        local_rotation = _quat_mul(base_rotation, delta_q)
+        world_position, world_rotation, _ = compose_canonical_transform(
+            parent_position, parent_rotation, parent_scale, local_position, local_rotation)
+        by_frame[frame] = {
+            "frame": frame,
+            "time_seconds": timeline_time,
+            "location_cm": canonical_position_to_unreal_cm(world_position),
+            "rotation_rpy_degrees": canonical_quat_to_unreal_rotator(world_rotation),
+        }
+    return [by_frame[frame] for frame in sorted(by_frame)], bake
+
+
 def _transform_action(
     track: dict[str, Any],
     entity: dict[str, Any],
@@ -553,80 +669,33 @@ def _transform_action(
     fps_d: int,
     entities: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
-    if not track.get("sections"):
+    """Compile every non-overlapping animated section in timeline coordinates."""
+    keys_by_frame: dict[int, dict[str, Any]] = {}
+    baked = False
+    last_end: float | None = None
+    sections = sorted(track.get("sections", []), key=lambda s: rational_seconds(s["start"]))
+    for section in sections:
+        start, end = rational_seconds(section["start"]), rational_seconds(section["end"])
+        if last_end is not None and start < last_end - 1e-8:
+            raise PlanError(f"Overlapping transform clips on {entity['name']} need explicit blending.")
+        section_keys, section_baked = _sample_section_transform(
+            section, entity, entities, fps_n, fps_d)
+        if section_keys:
+            baked = baked or section_baked
+            for key in section_keys:
+                keys_by_frame[int(key["frame"])] = key
+        last_end = end
+    if not keys_by_frame:
         return None
-    section = track["sections"][0]
-    curves = _curve_map(section)
-
-    track_position = _vector_offset(curves, "transform.track_offset.position")
-    infinite_position = _vector_offset(curves, "transform.infinite_offset.position")
-    base_position = tuple(track_position[i] + infinite_position[i] for i in range(3))
-
-    track_rotation = _quat_offset(curves, "transform.track_offset.rotation")
-    infinite_rotation = _quat_offset(curves, "transform.infinite_offset.rotation")
-    base_rotation = _quat_mul(track_rotation, infinite_rotation)
-
-    position_curves = {
-        "x": curves.get("transform.position.x"),
-        "y": curves.get("transform.position.y"),
-        "z": curves.get("transform.position.z"),
-    }
-    euler_curves = {
-        "x": next((c for c in section["payload"]["animation"]["curves"] if c.get("property_name") == "localEulerAnglesRaw.x"), None),
-        "y": next((c for c in section["payload"]["animation"]["curves"] if c.get("property_name") == "localEulerAnglesRaw.y"), None),
-        "z": next((c for c in section["payload"]["animation"]["curves"] if c.get("property_name") == "localEulerAnglesRaw.z"), None),
-    }
-
-    times: set[float] = set()
-    for curve in [*position_curves.values(), *euler_curves.values()]:
-        if curve:
-            times.update(float(key["time_seconds"]) for key in curve.get("keys", []))
-    if not times:
-        return None
-
-    keys: list[dict[str, Any]] = []
-    for time_seconds in sorted(times):
-        relative_position = (
-            _curve_value(position_curves["x"], time_seconds),
-            _curve_value(position_curves["y"], time_seconds),
-            _curve_value(position_curves["z"], time_seconds),
-        )
-        local_position = tuple(
-            base_position[i] + relative_position[i] for i in range(3)
-        )
-
-        delta_q = unity_euler_delta_to_canonical_quat(
-            _curve_value(euler_curves["x"], time_seconds),
-            _curve_value(euler_curves["y"], time_seconds),
-            _curve_value(euler_curves["z"], time_seconds),
-        )
-        local_rotation = _quat_mul(base_rotation, delta_q)
-        parent_position, parent_rotation, parent_scale = parent_world_transform(
-            entity, entities
-        )
-        world_position, world_rotation, _world_scale = compose_canonical_transform(
-            parent_position,
-            parent_rotation,
-            parent_scale,
-            local_position,
-            local_rotation,
-        )
-        keys.append(
-            {
-                "frame": seconds_to_frame(time_seconds, fps_n, fps_d),
-                "time_seconds": time_seconds,
-                "location_cm": canonical_position_to_unreal_cm(world_position),
-                "rotation_rpy_degrees": canonical_quat_to_unreal_rotator(world_rotation),
-            }
-        )
-
     return {
         "kind": "transform",
         "track_name": track.get("name", ""),
         "entity_name": entity["name"],
         "actor_label": actor_label,
-        "keys": keys,
+        "keys": [keys_by_frame[frame] for frame in sorted(keys_by_frame)],
+        "baked_source_curves": baked,
     }
+
 
 
 def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
@@ -689,6 +758,11 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
         )
 
     for track in csir.get("tracks", []):
+        # A muted source Timeline track contributes no evaluated behavior.
+        # Skipping it must happen in the generator itself, not just in the
+        # transfer-readiness report.
+        if track.get("muted") is True:
+            continue
         entity = entities.get(track.get("binding_entity_id", ""))
         ced_type = track.get("ced_type")
 
@@ -726,7 +800,10 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                         "end_frame": seconds_to_frame(rational_seconds(section["end"]), fps_n, fps_d),
                         "source_start_seconds": source_offset_seconds,
                         "source_end_seconds": source_offset_seconds + timeline_duration_seconds * time_scale,
+                        "blend_in_seconds": float(section.get("native_payload", {}).get("blend_in_seconds", 0.0)),
+                        "blend_out_seconds": float(section.get("native_payload", {}).get("blend_out_seconds", 0.0)),
                         "time_scale": time_scale,
+                        "source_offset_seconds": source_offset_seconds,
                         "base_actor_rotation_rpy_degrees": [
                             float(base_roll),
                             float(base_pitch),
@@ -767,7 +844,7 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
             if ced_type == "camera.transform":
                 for section in track.get("sections", []):
                     for curve in section.get("payload", {}).get("animation", {}).get("curves", []):
-                        if str(curve.get("property_name", "")).lower() == "field of view":
+                        if str(curve.get("canonical_semantic", "")) == "camera.vertical_fov_degrees" or str(curve.get("property_name", "")).lower() == "field of view":
                             plan["actions"].append(
                                 {
                                     "kind": "camera_fov",
@@ -781,11 +858,25 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                                     or None,
                                     "keys": [
                                         {
-                                            "frame": seconds_to_frame(float(key["time_seconds"]), fps_n, fps_d),
-                                            "value": float(key["value"]),
+                                            "frame": frame,
+                                            "value": _curve_value(
+                                                curve,
+                                                rational_seconds(section.get(
+                                                    "source_offset", {"value": 0, "rate": {"numerator": 1, "denominator": 1}}
+                                                )) + (frame * fps_d / fps_n - rational_seconds(section["start"]))
+                                                * float(section.get("time_scale", 1.0)),
+                                            ),
                                         }
-                                        for key in curve.get("keys", [])
+                                        for frame in (
+                                            range(
+                                                seconds_to_frame(rational_seconds(section["start"]), fps_n, fps_d),
+                                                seconds_to_frame(rational_seconds(section["end"]), fps_n, fps_d) + 1
+                                            ) if curve.get("native_keys") else
+                                            [seconds_to_frame(float(key["time_seconds"]), fps_n, fps_d)
+                                             for key in curve.get("keys", [])]
+                                        )
                                     ],
+                                    "baked_source_curves": bool(curve.get("native_keys")),
                                 }
                             )
 
@@ -801,6 +892,34 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                     }
                 )
 
+        elif ced_type == "light.animation" and entity:
+            actor_label = _mapping_actor(mapping, entity["name"])
+            for section in track.get("sections", []):
+                intensity = next((
+                    curve for curve in section.get("payload", {}).get("animation", {}).get("curves", [])
+                    if str(curve.get("canonical_semantic", "")) == "light.intensity"
+                    or str(curve.get("property_name", "")).lower() in {"m_intensity", "intensity"}
+                ), None)
+                if intensity is None:
+                    raise PlanError(f"Light animation on {entity['name']} has no transferable intensity curve.")
+                start = rational_seconds(section["start"])
+                end = rational_seconds(section["end"])
+                offset = rational_seconds(section.get(
+                    "source_offset", {"value": 0, "rate": {"numerator": 1, "denominator": 1}}))
+                speed = float(section.get("time_scale", 1.0))
+                by_frame: dict[int, dict[str, float | int]] = {}
+                for frame in range(seconds_to_frame(start, fps_n, fps_d),
+                                   seconds_to_frame(end, fps_n, fps_d) + 1):
+                    time = frame * fps_d / fps_n
+                    source_time = offset + (time - start) * speed
+                    by_frame[frame] = {"frame": frame, "value": _curve_value(intensity, source_time)}
+                plan["actions"].append({
+                    "kind": "light_intensity",
+                    "entity_name": entity["name"],
+                    "actor_label": actor_label,
+                    "keys": list(by_frame.values()),
+                })
+
         elif ced_type == "audio.track":
             for section in track.get("sections", []):
                 asset_id = section.get("payload", {}).get("asset_id")
@@ -810,6 +929,8 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                 plan["actions"].append(
                     {
                         "kind": "audio",
+                        "fade_in_seconds": float(section.get("payload", {}).get("audio", {}).get("fade_in", {}).get("duration_seconds", 0.0) or 0.0),
+                        "fade_out_seconds": float(section.get("payload", {}).get("audio", {}).get("fade_out", {}).get("duration_seconds", 0.0) or 0.0),
                         "unreal_asset_path": _mapping_asset(mapping, asset["name"]),
                         "start_frame": seconds_to_frame(rational_seconds(section["start"]), fps_n, fps_d),
                         "end_frame": seconds_to_frame(rational_seconds(section["end"]), fps_n, fps_d),
@@ -829,6 +950,20 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                         "frame": seconds_to_frame(rational_seconds(section["start"]), fps_n, fps_d),
                     }
                 )
+
+    # Only the final clip of a skeletal binding should hold its last pose.
+    # Holding every section through the entire sequence allows post-roll from
+    # an earlier clip to compete with later authored animation sections.
+    skeletal: dict[str, list[dict[str, Any]]] = {}
+    for action in plan["actions"]:
+        if action.get("kind") == "skeletal_animation":
+            skeletal.setdefault(str(action["entity_name"]), []).append(action)
+    for clips in skeletal.values():
+        clips.sort(key=lambda action: (int(action["start_frame"]), int(action["end_frame"])))
+        for clip in clips[:-1]:
+            clip["hold_end_frame"] = int(clip["end_frame"])
+            clip["completion_mode"] = "project_default"
+            clip["hold_strategy"] = "next_source_clip_controls_pose"
 
     return plan
 
