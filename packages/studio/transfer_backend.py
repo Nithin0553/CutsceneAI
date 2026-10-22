@@ -42,6 +42,67 @@ def _load(path: Path) -> dict[str, Any]:
     return value
 
 
+def _serialized_json(value: Any) -> Any:
+    """Compare persisted preparation with the *JSON* form of source-derived data.
+
+    Native planners can contain tuples for vectors/quaternions. JSON correctly
+    persists them as arrays; tuple != list must not invalidate honest plans.
+    Reject NaN/Infinity because they do not represent interoperable JSON.
+    """
+    return json.loads(json.dumps(value, allow_nan=False))
+
+
+def _first_difference(actual: Any, expected: Any, path: str = "$") -> str:
+    """Return the first actionable mismatch path, never weaken exact checking."""
+    if type(actual) is not type(expected):
+        return f"{path} ({type(actual).__name__} != {type(expected).__name__})"
+    if isinstance(expected, dict):
+        keys_a, keys_b = set(actual), set(expected)
+        if keys_a != keys_b:
+            extra = sorted(keys_a - keys_b)
+            missing = sorted(keys_b - keys_a)
+            return f"{path} (extra keys={extra[:5]}, missing keys={missing[:5]})"
+        for key in sorted(expected):
+            if actual[key] != expected[key]:
+                return _first_difference(actual[key], expected[key], f"{path}.{key}")
+    elif isinstance(expected, list):
+        if len(actual) != len(expected):
+            return f"{path} (length {len(actual)} != {len(expected)})"
+        for i, (left, right) in enumerate(zip(actual, expected)):
+            if left != right:
+                return _first_difference(left, right, f"{path}[{i}]")
+    return path
+
+
+def verify_prepared_artifacts(
+    submitted_plan: dict[str, Any],
+    submitted_report: dict[str, Any],
+    submitted_evidence: dict[str, Any],
+    expected_plan: dict[str, Any],
+    expected_report: dict[str, Any],
+    expected_evidence: dict[str, Any],
+) -> None:
+    """Verify exact persisted meaning, not incompatible Python tuple/list types.
+
+    Every value remains checked. A stale source, missing event or manually
+    altered mapping still fails closed; only JSON representation differences
+    that the producer itself necessarily creates are normalized.
+    """
+    for name, actual, expected in (
+        ("transfer-plan.json", submitted_plan, expected_plan),
+        ("coverage-report.json", submitted_report, expected_report),
+        ("evidence.json", submitted_evidence, expected_evidence),
+    ):
+        normalized = _serialized_json(expected)
+        if actual != normalized:
+            difference = _first_difference(actual, normalized)
+            raise TransferBackendError(
+                f"{name} differs from source-derived JSON at {difference}. "
+                "Do not edit prepared artifacts; regenerate into a new folder "
+                "if the input files or backend version changed."
+            )
+
+
 def _capture_validated(
     csir: dict[str, Any], path: Path, csir_hash: str
 ) -> tuple[dict[str, Any], dict[str, Any]]:
