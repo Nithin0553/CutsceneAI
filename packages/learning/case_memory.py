@@ -274,3 +274,43 @@ def export_training_jsonl(cases: list[dict[str, Any]], output: str | Path) -> in
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("".join(json.dumps(x, sort_keys=True) + "\n" for x in entries), encoding="utf-8")
     return len(entries)
+
+
+
+def dataset_health(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    """Measure evidence and leakage risk before considering parametric fine-tuning."""
+    status = Counter(case.get("status", "UNKNOWN") for case in cases)
+    verified = [case for case in cases if case.get("status") == "MAPPING_VERIFIED"]
+    source_projects = {
+        case.get("source", {}).get("project_fingerprint") for case in verified
+        if case.get("source", {}).get("project_fingerprint")
+    }
+    target_profiles = {
+        case.get("target", {}).get("profile_id") for case in verified
+        if case.get("target", {}).get("profile_id")
+    }
+    track_kinds = set()
+    decisions = set()
+    for case in verified:
+        track_kinds.update(case.get("track_counts", {}))
+        decisions.update(
+            (label.get("ced"), label.get("resolver"))
+            for label in case.get("mapping_labels", [])
+        )
+    # Grouped evaluation is impossible with <2 independent source projects.
+    # Even with 2 projects, do not infer model improvement from a tiny sample.
+    return {
+        "verified_cases": len(verified),
+        "candidate_cases": int(status.get("CANDIDATE", 0)),
+        "diagnostic_cases": int(status.get("DIAGNOSTIC_ONLY", 0)),
+        "distinct_source_projects": len(source_projects),
+        "distinct_target_profiles": len(target_profiles),
+        "distinct_track_types": len(track_kinds),
+        "distinct_mapping_decisions": len(decisions),
+        "independent_project_holdout_possible": len(source_projects) >= 2,
+        "model_finetuning_performed": False,
+        "recommendation": (
+            "COLLECT_INDEPENDENT_PROJECTS"
+            if len(source_projects) < 2 else "EVALUATE_RETRIEVAL_BASELINE_FIRST"
+        ),
+    }
