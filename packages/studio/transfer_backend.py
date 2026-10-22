@@ -366,6 +366,22 @@ def compose(
         )
 
     counts = dict(Counter(row["outcome"] for row in ledger))
+    entity_coverage = [{
+        "entity_id": str(e.get("entity_id", "")),
+        "source_name": str(e.get("name", "")),
+        "source_kind": str(e.get("ced_type", "")),
+        "status": ("MAPPED_ACTOR_UNVERIFIED"
+                   if e.get("name") in mapping.get("entities", {})
+                   else "NO_INDEPENDENT_TARGET_ACTOR"),
+    } for e in csir.get("entities", [])]
+    asset_coverage = [{
+        "asset_id": str(a.get("asset_id", "")),
+        "source_name": str(a.get("name", "")),
+        "status": ("TARGET_PATH_SPECIFIED_UNVERIFIED"
+                   if a.get("name") in mapping.get("assets", {})
+                   else "NO_TARGET_ASSET_MAPPING"),
+    } for a in csir.get("assets", [])]
+    relationships = csir.get("relationships", [])
     summary = {
         "report_kind": "cutsceneai.best_effort_transfer",
         "schema_version": "0.1.0",
@@ -376,6 +392,10 @@ def compose(
         "source_track_count": len(ledger),
         "accounted_track_count": len(ledger),
         "outcomes": counts,
+        "source_entities": entity_coverage,
+        "source_assets": asset_coverage,
+        "source_relationship_count": len(relationships),
+        "relationship_fidelity_verified": False,
         "unverified_domains": [
             "skeletal_joint_correspondence", "executable_event_payloads",
             "custom_shader_and_script_behavior", "physics_equivalence",
