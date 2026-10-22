@@ -18,6 +18,7 @@ from typing import Any
 
 import csir_plan
 import sampling_plan
+import scene_prep
 
 NATIVE_GAPS = {
     "event.trigger": "Preserves event timestamp/identity as a marked frame, NOT executable payload.",
@@ -329,8 +330,36 @@ def compose(
                 and action["kind"] in {"transform", "camera_fov", "light_intensity"}
                 for action in plan["actions"]
             )
-    # Bound actors with neither native actions nor fallback still require
-    # static scene mapping; keep all explicitly mapped entities from baseline.
+    # Preserve static actors as native Sequencer poses whenever their CSIR
+    # includes an authoritative world transform. A cutscene may contain only
+    # static actors or camera cuts; those are valid supported source semantics.
+    already_animated = {
+        str(a["entity_name"]) for a in plan["actions"]
+        if a.get("entity_name") and a["kind"] in {"transform", "skeletal_animation"}
+    }
+    for entity in csir.get("entities", []):
+        if (entity["name"] in already_animated
+            or entity["name"] not in mapping.get("entities", {})
+            or not isinstance(entity.get("metadata", {}).get("world_transform"), dict)):
+            continue
+        operation = scene_prep._world_transform(
+            entity, str(mapping["entities"][entity["name"]]["actor_label"])
+        )
+        if operation is None:
+            continue
+        pitch, yaw, roll = operation["rotation_pitch_yaw_roll_degrees"]
+        plan["actions"].append({
+            "kind": "transform", "entity_name": entity["name"],
+            "actor_label": operation["actor_label"],
+            "track_name": "CutSceneAI Static Scene Pose",
+            "keys": [{
+                "frame": 0,
+                "location_cm": list(operation["location_cm"]),
+                "rotation_rpy_degrees": [roll, pitch, yaw],
+            }],
+            "baked_source_curves": False,
+            "source_behavior_strategy": "source_static_world_pose",
+        })
     if not plan["actions"]:
         raise TransferBackendError(
             "No representable target action. An empty sequence would be misleading."
