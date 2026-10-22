@@ -25,6 +25,7 @@ def source(*, unsupported=False):
             ],
         })
     return {
+        "schema_version": "0.1.0",
         "cutscene_id": "arbitrary-demo",
         "source": {"engine": "unity", "project_fingerprint": "source-1"},
         "timing": {"source_rate": {"numerator": 24, "denominator": 1},
