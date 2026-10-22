@@ -945,6 +945,9 @@ def build_prepared_files(
         receipt["track_outcomes"] = submitted_report["outcomes"]
         receipt["planned_actions"] = submitted_report["actions"]
         receipt["stage"] = "unreal_capability_and_generation"
+        # Once the Unreal builder begins, modifications are possible even
+        # when actor rollback subsequently succeeds. Never claim otherwise.
+        receipt["scene_modified"] = "POSSIBLE_MUST_INSPECT"
         # This call checks actual assets/actors/engine features before mutation.
         sequence = _build_prepared_plan(original_csir, original_mapping, submitted_plan)
         receipt["status"] = "GENERATED_UNVERIFIED"
