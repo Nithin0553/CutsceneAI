@@ -636,6 +636,41 @@ def compare(
                             error=worst_rotation,
                         )
 
+            elif kind == "light_intensity":
+                match = candidates[0] if candidates else None
+                _check(
+                    checks,
+                    f"light.intensity_track.{name}",
+                    "LIGHT",
+                    _status_from_bool(match is not None),
+                    True,
+                    match is not None,
+                    "A mapped native Unreal light-intensity curve must be present.",
+                )
+                if match is not None:
+                    source_keys = list(exp_track.get("keys", []))
+                    target_keys = list(match.get("keys", []))
+                    same_frames = (
+                        [int(k.get("frame", -1)) for k in source_keys]
+                        == [int(k.get("frame", -2)) for k in target_keys]
+                    )
+                    value_error = math.inf
+                    if same_frames and len(source_keys) == len(target_keys):
+                        value_error = _max_abs(
+                            float(a.get("value", 0.0)) - float(b.get("value", 0.0))
+                            for a, b in zip(source_keys, target_keys)
+                        )
+                    _check(
+                        checks,
+                        f"light.intensity_keys.{name}",
+                        "LIGHT",
+                        _status_from_bool(same_frames and value_error <= 1e-4),
+                        source_keys,
+                        target_keys,
+                        "Numeric light intensity track parity; photometric output remains unverified.",
+                        error=None if math.isinf(value_error) else value_error,
+                    )
+
             elif kind == "camera_lens":
                 match = candidates[0] if candidates else None
                 _check(
