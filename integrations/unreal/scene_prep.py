@@ -7,6 +7,9 @@ creates the Level Sequence.
 
 from __future__ import annotations
 
+import json
+import math
+from pathlib import Path
 from typing import Any
 
 import csir_plan
@@ -133,7 +136,76 @@ def _character_clip_transform(
     )
 
 
+def _observed_first_frame_scene_prep(
+    csir: dict[str, Any], mapping: dict[str, Any],
+) -> list[dict[str, Any]] | None:
+    """Use source-evaluated world poses when a verified CineTwin capture is provided.
+
+    This is an opt-in mapping input, not an edit to the canonical CSIR.
+    It deliberately uses evaluated frame zero, including Unity Timeline offsets
+    and the current attachment hierarchy, instead of an arbitrary editor pose.
+    """
+    source_path = mapping.get("source_behavior_capture_path")
+    if not source_path:
+        return None
+    capture = json.loads(Path(source_path).read_text(encoding="utf-8"))
+    if capture.get("kind") != "cinetwin.behavior_capture":
+        raise csir_plan.PlanError("Expected a CineTwin Unity source behavior capture.")
+    if capture.get("cutscene_id") != csir.get("cutscene_id"):
+        raise csir_plan.PlanError("CineTwin capture cutscene ID differs from frozen CSIR.")
+    for key in ("sequence_ref", "project_fingerprint"):
+        expected = csir.get("source", {}).get(key)
+        observed = capture.get("source", {}).get(key)
+        if not expected or expected != observed:
+            raise csir_plan.PlanError(f"CineTwin frame-zero provenance mismatch: {key}.")
+    samples = capture.get("samples", [])
+    if not samples:
+        raise csir_plan.PlanError("CineTwin behavior capture has no samples.")
+    zero = samples[0]
+    expected_start = csir_plan.rational_seconds(
+        csir.get("timing", {}).get("playback_start", {
+            "value": 0, "rate": {"numerator": 1, "denominator": 1}
+        }))
+    if abs(float(zero.get("time_seconds", -1000)) - expected_start) > 1e-7:
+        raise csir_plan.PlanError("CineTwin source capture does not start at playback frame zero.")
+    observations: dict[str, dict[str, Any]] = {}
+    for observed in zero.get("entities", []):
+        identifier = str(observed.get("entity_id", ""))
+        if not identifier or identifier in observations:
+            raise csir_plan.PlanError("Duplicate or missing source entity ID in first-frame capture.")
+        observations[identifier] = observed
+    placements: list[dict[str, Any]] = []
+    for entity in csir.get("entities", []):
+        name = entity.get("name")
+        if name not in mapping.get("entities", {}) or entity.get("ced_type") == "entity.audio_source":
+            continue
+        record = observations.get(str(entity["entity_id"]))
+        if record is None:
+            raise csir_plan.PlanError(f"Source first-frame observation missing mapped entity: {name}.")
+        transform = record.get("world_transform", {})
+        position = transform.get("position_m")
+        rotation = transform.get("rotation_xyzw")
+        scale = transform.get("scale_xyz")
+        if (not isinstance(position, list) or len(position) != 3
+                or not isinstance(rotation, list) or len(rotation) != 4
+                or not isinstance(scale, list) or len(scale) != 3):
+            raise csir_plan.PlanError(f"Invalid source first-frame world transform for {name}.")
+        values = [float(x) for x in [*position, *rotation, *scale]]
+        if not all(math.isfinite(x) for x in values):
+            raise csir_plan.PlanError(f"Nonfinite source first-frame transform for {name}.")
+        placements.append(_transform_operation(
+            str(name),
+            str(mapping["entities"][name]["actor_label"]),
+            tuple(values[:3]), tuple(values[3:7]), tuple(values[7:10]),
+            "cinetwin.source_evaluated_first_frame",
+        ))
+    return placements
+
+
 def build_scene_prep(csir: dict[str, Any], mapping: dict[str, Any]) -> list[dict[str, Any]]:
+    observed = _observed_first_frame_scene_prep(csir, mapping)
+    if observed is not None:
+        return observed
     entities = {entity["entity_id"]: entity for entity in csir.get("entities", [])}
     rate = csir.get("timing", {}).get("source_rate", {"numerator": 24, "denominator": 1})
     mapped_names = set(mapping.get("entities", {}))
