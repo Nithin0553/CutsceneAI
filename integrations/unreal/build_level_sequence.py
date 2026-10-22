@@ -859,6 +859,9 @@ def build_prepared_files(
     report_path: str | os.PathLike[str],
     evidence_path: str | os.PathLike[str],
     runtime_receipt_path: str | os.PathLike[str],
+    *,
+    expected_project_path: str,
+    expected_level_path: str,
 ) -> unreal.LevelSequence:
     """Execute a deterministic best-effort plan after independently checking inputs.
 
@@ -889,6 +892,25 @@ def build_prepared_files(
     if not output.parent.is_dir():
         raise UnrealBuildError("Receipt parent directory does not exist.")
     try:
+        # This is staging code: bind the run to a known Unreal project/level.
+        # Never modify an unrelated editor window by accident.
+        if not expected_project_path or not expected_level_path:
+            raise UnrealBuildError("Expected project and level must be specified.")
+        project = str(unreal.Paths.get_project_file_path())
+        if os.path.normcase(os.path.abspath(project)) != os.path.normcase(
+            os.path.abspath(expected_project_path)
+        ):
+            raise UnrealBuildError(
+                f"Wrong Unreal project loaded: {project}; expected {expected_project_path}"
+            )
+        world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+        level = str(world.get_path_name()).split(".")[0]
+        if level != expected_level_path:
+            raise UnrealBuildError(
+                f"Wrong Unreal level loaded: {level}; expected {expected_level_path}"
+            )
+        receipt["verified_project"] = project
+        receipt["verified_level"] = level
         evidence = csir_plan.load_json(evidence_path)
         actual_source_hash = hashlib.sha256(Path(csir_path).read_bytes()).hexdigest()
         actual_mapping_hash = hashlib.sha256(Path(mapping_path).read_bytes()).hexdigest()
