@@ -326,3 +326,77 @@ def test_engine_builder_calls_shared_semantically_exact_preparation_verifier():
     code = (ROOT / "integrations" / "unreal" / "build_level_sequence.py").read_text()
     assert "transfer_backend.verify_prepared_artifacts(" in code
     assert "submitted_plan != expected_plan" not in code
+
+
+
+def test_cross_runtime_float_noise_does_not_reject_verified_rotation_keys():
+    """C-math library last-bit drift must not falsely reject an identical CSIR."""
+    plan, report = transfer_backend.compose(source(), mapping())
+    evidence = {"csir_sha256": "A" * 64, "mapping_sha256": "B" * 64}
+    saved = [json.loads(json.dumps(value)) for value in (plan, report, evidence)]
+    key = next(
+        key
+        for action in saved[0]["actions"] if action["kind"] == "transform"
+        for key in action["keys"]
+    )
+    key["rotation_rpy_degrees"][0] += 2e-10
+    transfer_backend.verify_prepared_artifacts(
+        saved[0], saved[1], saved[2], plan, report, evidence
+    )
+
+
+def test_cross_runtime_float_difference_greater_than_bound_is_rejected():
+    plan, report = transfer_backend.compose(source(), mapping())
+    evidence = {"csir_sha256": "A" * 64, "mapping_sha256": "B" * 64}
+    saved = [json.loads(json.dumps(value)) for value in (plan, report, evidence)]
+    key = next(
+        key
+        for action in saved[0]["actions"] if action["kind"] == "transform"
+        for key in action["keys"]
+    )
+    key["rotation_rpy_degrees"][0] += 0.0001
+    with pytest.raises(
+        transfer_backend.TransferBackendError, match=r"rotation_rpy_degrees\[0\].*observed="
+    ):
+        transfer_backend.verify_prepared_artifacts(
+            saved[0], saved[1], saved[2], plan, report, evidence
+        )
+
+
+def test_plan_rotation_plus_360_is_not_a_harmless_serialization_difference():
+    plan, report = transfer_backend.compose(source(), mapping())
+    evidence = {"csir_sha256": "A" * 64, "mapping_sha256": "B" * 64}
+    saved = [json.loads(json.dumps(value)) for value in (plan, report, evidence)]
+    key = next(
+        key
+        for action in saved[0]["actions"] if action["kind"] == "transform"
+        for key in action["keys"]
+    )
+    key["rotation_rpy_degrees"][0] += 360.0
+    with pytest.raises(transfer_backend.TransferBackendError, match="rotation_rpy_degrees"):
+        transfer_backend.verify_prepared_artifacts(
+            saved[0], saved[1], saved[2], plan, report, evidence
+        )
+
+
+def test_float_tolerance_never_softens_timeline_structure_or_provenance():
+    plan, report = transfer_backend.compose(source(), mapping())
+    evidence = {"csir_sha256": "A" * 64, "mapping_sha256": "B" * 64}
+    saved = [json.loads(json.dumps(value)) for value in (plan, report, evidence)]
+    key = next(
+        key
+        for action in saved[0]["actions"] if action["kind"] == "transform"
+        for key in action["keys"]
+    )
+    key["frame"] += 1
+    with pytest.raises(transfer_backend.TransferBackendError, match="frame"):
+        transfer_backend.verify_prepared_artifacts(
+            saved[0], saved[1], saved[2], plan, report, evidence
+        )
+
+    saved = [json.loads(json.dumps(value)) for value in (plan, report, evidence)]
+    saved[2]["extra_floating_timestamp"] = 2e-10
+    with pytest.raises(transfer_backend.TransferBackendError, match="provenance"):
+        transfer_backend.verify_prepared_artifacts(
+            saved[0], saved[1], saved[2], plan, report, evidence
+        )
