@@ -19,6 +19,7 @@ from typing import Any
 import csir_plan
 import sampling_plan
 import scene_prep
+import hierarchy_local
 
 NATIVE_GAPS = {
     "event.trigger": "Preserves event timestamp/identity as a marked frame, NOT executable payload.",
@@ -463,6 +464,29 @@ def compose(
             "baked_source_curves": False,
             "source_behavior_strategy": "source_static_world_pose",
         })
+    hierarchy_results: list[dict[str, Any]] = []
+    if bool(mapping.get("enable_cinetwin_hierarchy", False)):
+        try:
+            plan["actions"], hierarchy_results = hierarchy_local.reconcile_hierarchy(
+                csir, mapping, plan["actions"], capture
+            )
+        except hierarchy_local.HierarchyLocalError as exc:
+            raise TransferBackendError(
+                f"Source hierarchy requires a supported parent-relative policy: {exc}"
+            ) from exc
+        for adjustment in hierarchy_results:
+            if adjustment["outcome"] != "CAPTURED_PARENT_LOCAL_BEST_EFFORT":
+                continue
+            for row in ledger:
+                if (row["entity_name"] == adjustment["entity_name"]
+                    and row["outcome"] not in {"INACTIVE", "SKIPPED"}):
+                    row["outcome"] = "BAKED_PARTIAL"
+                    row["details"].append(
+                        "Independent source world motion converted to "
+                        "parent-local evaluated actor motion; skeletal/rig "
+                        "and visual equivalence not verified."
+                    )
+
     if not plan["actions"]:
         raise TransferBackendError(
             "No representable target action. An empty sequence would be misleading."
@@ -499,6 +523,7 @@ def compose(
         "source_assets": asset_coverage,
         "source_relationship_count": len(relationships),
         "relationship_fidelity_verified": False,
+        "hierarchy_reconstruction": hierarchy_results,
         "unverified_domains": [
             "skeletal_joint_correspondence", "executable_event_payloads",
             "custom_shader_and_script_behavior", "physics_equivalence",
