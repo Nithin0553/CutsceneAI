@@ -400,3 +400,118 @@ def test_float_tolerance_never_softens_timeline_structure_or_provenance():
         transfer_backend.verify_prepared_artifacts(
             saved[0], saved[1], saved[2], plan, report, evidence
         )
+
+
+
+def test_parented_synthetic_static_pose_uses_source_hierarchy_instead_of_double_transform():
+    src = source()
+    src["entities"].append({
+        "entity_id": "child", "name": "PROP_PARENTED",
+        "ced_type": "entity.prop", "parent_entity_id": "moving",
+        "metadata": {"world_transform": {
+            "position": {"x": 0.0, "y": 0.0, "z": 2.0},
+            "rotation": {"x": 0, "y": 0, "z": 0, "w": 1},
+            "scale": {"x": 1, "y": 1, "z": 1},
+        }},
+    })
+    target = mapping()
+    target["entities"]["PROP_PARENTED"] = {"actor_label": "ChildUE"}
+    target["enable_cinetwin_hierarchy"] = True
+    plan, report = transfer_backend.compose(src, target)
+    assert report["hierarchy_reconstruction"] == [{
+        "entity_name": "PROP_PARENTED",
+        "outcome": "STATIC_CHILD_INHERITS_PARENT",
+        "source_parent_name": "MOVING_PROP",
+        "removed_synthetic_world_pose_tracks": 1,
+    }]
+    assert not any(
+        a["kind"] == "transform" and a.get("entity_name") == "PROP_PARENTED"
+        for a in plan["actions"]
+    )
+    assert any(
+        a["kind"] == "transform" and a.get("entity_name") == "MOVING_PROP"
+        for a in plan["actions"]
+    )
+
+
+def test_parented_independently_animated_child_gets_local_keys_from_capture():
+    src = source()
+    src["entities"].append({
+        "entity_id": "child", "name": "PROP_PARENTED",
+        "ced_type": "entity.prop", "parent_entity_id": "moving",
+    })
+    original = copy.deepcopy(src["tracks"][0])
+    original["track_id"] = "child-dynamic"
+    original["binding_entity_id"] = "child"
+    original["name"] = "Child authored movement"
+    src["tracks"].append(original)
+    target = mapping()
+    target["entities"]["PROP_PARENTED"] = {"actor_label": "ChildUE"}
+    target["enable_cinetwin_hierarchy"] = True
+    capture = fake_capture(src)
+    for sample in capture["samples"]:
+        t = sample["time_seconds"]
+        for pose in sample["entities"]:
+            if pose["entity_id"] == "child":
+                pose["world_transform"]["position_m"] = [2.0 + 2*t, 0, 0]
+            elif pose["entity_id"] == "moving":
+                pose["world_transform"]["position_m"] = [t, 0, 0]
+    plan, report = transfer_backend.compose(src, target, capture=capture)
+    child = [
+        a for a in plan["actions"]
+        if a["kind"] == "transform" and a.get("entity_name") == "PROP_PARENTED"
+    ]
+    assert len(child) == 1
+    assert child[0]["transform_space"] == "PARENT_LOCAL"
+    assert child[0]["source_parent_entity_id"] == "moving"
+    assert [k["frame"] for k in child[0]["keys"]] == [0, 1, 2, 3]
+    assert child[0]["keys"][0]["location_cm"] == [0.0, 200.0, 0.0]
+    assert child[0]["keys"][-1]["location_cm"] == [0.0, 350.0, 0.0]
+    assert report["hierarchy_reconstruction"][0]["outcome"] == (
+        "CAPTURED_PARENT_LOCAL_BEST_EFFORT"
+    )
+    assert report["tracks"][-1]["outcome"] == "BAKED_PARTIAL"
+
+
+def test_parented_independent_child_is_blocked_if_source_capture_missing():
+    src = source()
+    src["entities"].append({
+        "entity_id": "child", "name": "PROP_PARENTED",
+        "ced_type": "entity.prop", "parent_entity_id": "moving",
+    })
+    original = copy.deepcopy(src["tracks"][0])
+    original["track_id"] = "child-dynamic"
+    original["binding_entity_id"] = "child"
+    src["tracks"].append(original)
+    target = mapping()
+    target["entities"]["PROP_PARENTED"] = {"actor_label": "ChildUE"}
+    target["enable_cinetwin_hierarchy"] = True
+    with pytest.raises(transfer_backend.TransferBackendError, match="verified CineTwin"):
+        transfer_backend.compose(src, target)
+
+
+def test_generic_hierarchy_planner_accepts_only_provenance_checked_child_local_motion():
+    from hierarchy_realization import build_attachment_operations
+    src = source()
+    src["entities"].append({
+        "entity_id": "child", "name": "PROP_PARENTED",
+        "ced_type": "entity.prop", "parent_entity_id": "moving",
+    })
+    target = mapping()
+    target["entities"]["PROP_PARENTED"] = {"actor_label": "ChildUE"}
+    child = {
+        "kind": "transform", "entity_name": "PROP_PARENTED",
+        "source_parent_entity_id": "moving",
+        "transform_space": "PARENT_LOCAL",
+        "source_behavior_strategy": "captured_parent_child_relative_trs",
+        "keys": [{"frame": 0, "location_cm": [0.0, 200.0, 0.0],
+                  "rotation_rpy_degrees": [0.0, 0.0, 0.0]}],
+    }
+    result = build_attachment_operations(src, target, [child])
+    assert len(result["attachments"]) == 1
+    assert result["attachments"][0]["parent_actor_label"] == "PropUE"
+
+    unsafe = dict(child, source_behavior_strategy="source_world_curve")
+    from hierarchy_realization import HierarchyRealizationError
+    with pytest.raises(HierarchyRealizationError, match="verified conversion provenance"):
+        build_attachment_operations(src, target, [unsafe])
