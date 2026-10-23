@@ -31,13 +31,37 @@ def build_attachment_operations(
     animated_world = {
         action["entity_name"] for action in actions
         if action.get("kind") == "transform"
+        and action.get("transform_space") != "PARENT_LOCAL"
     }
+    local_actions = [
+        action for action in actions
+        if action.get("kind") == "transform"
+        and action.get("transform_space") == "PARENT_LOCAL"
+    ]
+    for action in local_actions:
+        # Avoid accepting merely relabelled world keys as local motion.
+        if (action.get("source_behavior_strategy")
+            != "captured_parent_child_relative_trs"
+            or not action.get("source_parent_entity_id")
+            or not action.get("keys")):
+            raise HierarchyRealizationError(
+                "Parent-local child track has no verified conversion provenance."
+            )
     corrected_roots = {
         action["entity_name"] for action in actions
         if action.get("kind") == "skeletal_animation"
         and action.get("root_motion_correction_samples")
     }
     edges = source["planned_actor_attachments"]
+    for action in local_actions:
+        if not any(
+            edge["entity_name"] == action["entity_name"]
+            and edge["source_parent_entity_id"] == action["source_parent_entity_id"]
+            for edge in edges
+        ):
+            raise HierarchyRealizationError(
+                "Parent-local child track does not match a directly mapped source parent."
+            )
     for edge in edges:
         if edge["entity_name"] in animated_world | corrected_roots:
             raise HierarchyRealizationError(
@@ -70,7 +94,7 @@ def build_attachment_operations(
             raise HierarchyRealizationError(
                 f"Animated parent {parent_name!r} has no sampled transform keys."
             )
-        first = min(keys, key=lambda item: (int(item["frame"]), float(item["time_seconds"])))
+        first = min(keys, key=lambda item: (int(item["frame"]), float(item.get("time_seconds", 0.0))))
         if int(first["frame"]) < 0:
             raise HierarchyRealizationError(
                 f"Animated parent {parent_name!r} starts before the playback window."
@@ -123,6 +147,7 @@ def build_attachment_operations(
             "Parent actors with transform tracks are positioned at their first "
             "key before attached children establish KEEP_WORLD offsets.",
             "Unmapped source parents are reported and left unchanged.",
+            "Only provenance-checked parent-local evaluated child transform keys are allowed.",
             "Children with their own world-space transform tracks are rejected.",
         ],
     }
