@@ -57,6 +57,27 @@ Output files:
 **Do not rewrite any of these files after planning.** The runtime will
 recompute the plan and refuse modified input.
 
+## Hierarchy source conversion (moving parent + child)
+
+When the mapping enables `enable_cinetwin_hierarchy=true`, the best-effort
+planner reconciles source parent/child behavior before Unreal runs:
+
+- A child with only a synthesized static source world pose has that redundant
+  world-transform action removed. It inherits its parent's Unreal actor motion.
+- A child with independent world-transform animation requires a verified
+  CineTwin source capture. Both source world poses are sampled at each frame
+  and converted to the child's parent-local transform using parent inverse TRS.
+  Unreal's Sequencer TransformTrack receives those `PARENT_LOCAL` keys.
+- Missing capture frames, zero-scale parents, unknown/foreign attachments,
+  skeletal-root corrections or unexpected world tracks still block safely.
+- `coverage-report.json` includes `hierarchy_reconstruction` naming the
+  inheritance/conversion policy; child animation is `BAKED_PARTIAL`.
+  Source/target dynamics and rendered fidelity remain unverified.
+
+This change requires generating a fresh plan into a **new output directory**.
+Do not reuse old plans or overwrite earlier failed runtime receipts.
+Restart Unreal after pulling the new Python code; module imports are cached.
+
 ## Step 3: Unreal Engine runtime generation
 
 Use a BACKED-UP copy of the Unreal target project and open the EXACT intended
