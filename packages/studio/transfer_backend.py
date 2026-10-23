@@ -52,26 +52,59 @@ def _serialized_json(value: Any) -> Any:
     return json.loads(json.dumps(value, allow_nan=False))
 
 
-def _first_difference(actual: Any, expected: Any, path: str = "$") -> str:
-    """Return the first actionable mismatch path, never weaken exact checking."""
+# Sub-nanometer / sub-nanodegree absolute tolerance for recomputed float
+# values across CPython/Unreal math libraries. This is NOT a cinematic
+# fidelity tolerance, and it cannot hide a materially changed key.
+PREPARATION_FLOAT_ABS_TOLERANCE = 1e-8
+
+
+def _first_difference(
+    actual: Any, expected: Any, path: str = "$"
+) -> str | None:
+    """Return first material preparation mismatch, with numerical evidence.
+
+    JSON arrays/maps, keys, action ordering, IDs, booleans, integers and strings
+    must match exactly. Finite floating values may differ only by <=1e-8 in
+    source-derived units because Unreal and external Python use different math
+    libraries. A ±360-degree angle representation change is NOT accepted:
+    despite equivalent individual rotations it may affect interpolation.
+    """
     if type(actual) is not type(expected):
-        return f"{path} ({type(actual).__name__} != {type(expected).__name__})"
+        return (
+            f"{path}: type mismatch: observed={type(actual).__name__}, "
+            f"recomputed={type(expected).__name__}"
+        )
     if isinstance(expected, dict):
-        keys_a, keys_b = set(actual), set(expected)
-        if keys_a != keys_b:
-            extra = sorted(keys_a - keys_b)
-            missing = sorted(keys_b - keys_a)
-            return f"{path} (extra keys={extra[:5]}, missing keys={missing[:5]})"
+        actual_keys, expected_keys = set(actual), set(expected)
+        if actual_keys != expected_keys:
+            extra = sorted(actual_keys - expected_keys)
+            missing = sorted(expected_keys - actual_keys)
+            return f"{path}: extra keys={extra[:5]}, missing keys={missing[:5]}"
         for key in sorted(expected):
-            if actual[key] != expected[key]:
-                return _first_difference(actual[key], expected[key], f"{path}.{key}")
+            difference = _first_difference(actual[key], expected[key], f"{path}.{key}")
+            if difference is not None:
+                return difference
     elif isinstance(expected, list):
         if len(actual) != len(expected):
-            return f"{path} (length {len(actual)} != {len(expected)})"
-        for i, (left, right) in enumerate(zip(actual, expected)):
-            if left != right:
-                return _first_difference(left, right, f"{path}[{i}]")
-    return path
+            return f"{path}: length observed={len(actual)}, recomputed={len(expected)}"
+        for index, (observed, recalculated) in enumerate(zip(actual, expected)):
+            difference = _first_difference(observed, recalculated, f"{path}[{index}]")
+            if difference is not None:
+                return difference
+    elif isinstance(expected, float):
+        if (
+            not math.isfinite(expected)
+            or not math.isfinite(actual)
+            or abs(actual - expected) > PREPARATION_FLOAT_ABS_TOLERANCE
+        ):
+            return (
+                f"{path}: observed={actual!r}, recomputed={expected!r}, "
+                f"absolute_difference={abs(actual - expected)!r}, "
+                f"allowed={PREPARATION_FLOAT_ABS_TOLERANCE}"
+            )
+    elif actual != expected:
+        return f"{path}: observed={actual!r}, recomputed={expected!r}"
+    return None
 
 
 def verify_prepared_artifacts(
@@ -82,11 +115,12 @@ def verify_prepared_artifacts(
     expected_report: dict[str, Any],
     expected_evidence: dict[str, Any],
 ) -> None:
-    """Verify exact persisted meaning, not incompatible Python tuple/list types.
+    """Check the prepared artifacts against source-derived serialized values.
 
-    Every value remains checked. A stale source, missing event or manually
-    altered mapping still fails closed; only JSON representation differences
-    that the producer itself necessarily creates are normalized.
+    The immutable source/mapping/capture hashes and all nonfloating values
+    remain exact. Finite floating calculations receive a *tiny* bound to
+    accommodate cross-runtime math differences, not a fuzzy motion match.
+    This must be called only after recomputing expected input-file digests.
     """
     for name, actual, expected in (
         ("transfer-plan.json", submitted_plan, expected_plan),
@@ -94,12 +128,20 @@ def verify_prepared_artifacts(
         ("evidence.json", submitted_evidence, expected_evidence),
     ):
         normalized = _serialized_json(expected)
-        if actual != normalized:
-            difference = _first_difference(actual, normalized)
+        # Provenance must match exactly, even if it contains floats someday.
+        if name == "evidence.json":
+            if actual != normalized:
+                difference = _first_difference(actual, normalized)
+                raise TransferBackendError(
+                    f"{name} provenance mismatch at {difference or '$'}."
+                )
+            continue
+        difference = _first_difference(actual, normalized)
+        if difference is not None:
             raise TransferBackendError(
-                f"{name} differs from source-derived JSON at {difference}. "
-                "Do not edit prepared artifacts; regenerate into a new folder "
-                "if the input files or backend version changed."
+                f"{name} differs materially from source-derived JSON at {difference}. "
+                "Do not edit prepared artifacts; diagnose or regenerate into a "
+                "new folder if the source files or backend version changed."
             )
 
 
