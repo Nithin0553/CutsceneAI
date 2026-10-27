@@ -37,6 +37,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--capture", type=Path, help="Verified CineTwin source behavior capture")
     parser.add_argument("--out", type=Path, required=True, help="Plan output directory")
     parser.add_argument(
+        "--strict-ced", action="store_true",
+        help="Block planning if preflight finds any active unresolved or partial CED feature",
+    )
+    parser.add_argument(
         "--verify-existing", action="store_true",
         help="Read-only: recompute and compare existing plan/report/evidence JSON",
     )
@@ -45,6 +49,13 @@ def main(argv: list[str] | None = None) -> int:
         plan, report, evidence = transfer_backend.compose_files(
             args.csir, args.mapping, capture_path=args.capture
         )
+        preflight = report["ced_preflight"]
+        if args.strict_ced and not preflight["strict_transfer_allowed"]:
+            raise transfer_backend.TransferBackendError(
+                "CED strict preflight blocked: "
+                + str(preflight["active_alert_count"]) + " active warnings. "
+                "Inspect first with tools/ced_preflight.py."
+            )
         if args.verify_existing:
             if not args.out.is_dir():
                 raise transfer_backend.TransferBackendError(
@@ -74,6 +85,11 @@ def main(argv: list[str] | None = None) -> int:
             _write_new(args.out / name, document)
         print("[CutSceneAI] Best-effort target:", plan["sequence_asset_path"])
         print("[CutSceneAI] Planned actions:", report["actions"])
+        print("[CutSceneAI] CED-FIRST PREFLIGHT:", preflight["status"])
+        print("[CutSceneAI] CED active alerts:", preflight["active_alert_count"])
+        if preflight["active_alert_count"]:
+            print("[CutSceneAI] Review coverage-report.json -> ced_preflight.findings.")
+            print("[CutSceneAI] Known converter actions do NOT establish full fidelity.")
         print("[CutSceneAI] Track coverage:", report["outcomes"])
         print("[CutSceneAI] Real Unreal generation and behavior fidelity NOT YET VERIFIED.")
         print("[CutSceneAI] Prepared:", args.out)
