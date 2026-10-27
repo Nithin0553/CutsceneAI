@@ -12,7 +12,7 @@ CutSceneAI is research software with frozen experimental evidence and a currentl
 ## Local checks
 
 ```powershell
-python -m pip install -e ".[dev]"
+python -m pip install pytest ruff jsonschema
 python -m pytest -q
 python -m ruff check tests
 python tools/repo_check.py
