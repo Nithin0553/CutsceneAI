@@ -222,14 +222,14 @@ def audit(
         path = f"entities[{i}]"
         eid = str(entity.get("entity_id") or "")
         classify("entity", path, eid, str(entity.get("ced_type") or ""),
-                 str(entity.get("native_ref") or ""))
+                 str(entity.get("metadata", {}).get("native_type") or ""))
     for i, asset in enumerate(csir.get("assets", [])):
         if not isinstance(asset, dict):
             continue
         aid = str(asset.get("asset_id") or "")
         path = f"assets[{i}]"
         classify("asset", path, aid, str(asset.get("ced_type") or ""),
-                 str(asset.get("source_ref") or ""))
+                 str(asset.get("metadata", {}).get("native_type") or ""))
         if aid in required_asset_ids and not _mapping_name(
             mapping, str(asset.get("name") or ""), "assets"
         ):
@@ -294,7 +294,7 @@ def audit(
         "kind": "cutsceneai.ced_preflight",
         "version": "0.1.0",
         "ced_version": str(ced.get("version", "")),
-        "ced_sha256": _sha(CED_PATH) if ced is not None and CED_PATH.is_file() else "",
+        "ced_sha256": _sha(CED_PATH) if CED_PATH.is_file() else "",
         "capabilities_version": str(capabilities.get("version", "")),
         "capabilities_sha256": _sha(CAPABILITIES_PATH) if CAPABILITIES_PATH.is_file() else "",
         "source_cutscene_id": str(csir.get("cutscene_id", "")),
