@@ -67,7 +67,7 @@ See [Repository Guide](docs/REPOSITORY_GUIDE.md) for file ownership and safe dev
 **Requirements:** Python 3.11+, Git. Unity and Unreal are needed only for actual engine operations.
 
 ```powershell
-python -m pip install -e ".[dev]"
+python -m pip install pytest ruff jsonschema
 python -m pytest -q
 python -m ruff check tests
 ```
