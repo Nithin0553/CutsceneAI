@@ -1,1 +1,0 @@
-CineTwin motion diagnostics distinguish world placement differences from actor-relative trajectory differences. Stationary target actors with moving target bones indicate a possible motion representation difference, not proof of pose parity.
