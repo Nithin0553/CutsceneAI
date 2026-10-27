@@ -1,26 +1,88 @@
+# Python tooling and caches
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.tox/
+.nox/
 .venv/
 venv/
-.env
-.env.*
-node_modules/
+*.egg-info/
 dist/
 build/
 coverage/
+htmlcov/
 .coverage
-*.log
-.DS_Store
-Thumbs.db
+.coverage.*
+.pyright/
+pip-wheel-metadata/
+
+# Editors, operating systems and local secrets
 .idea/
 .vscode/
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Web/build outputs
+node_modules/
+
+# Unity local scene/project caches (not the Editor package source)
+Library/
+Temp/
+Obj/
+Build/
+Builds/
+Logs/
+UserSettings/
+MemoryCaptures/
+Recordings/
+
+# Unreal generated project files and asset caches
+Binaries/
+Intermediate/
+DerivedDataCache/
+Saved/
+.vs/
+*.sln
+*.suo
+*.VC.db
+*.VC.opendb
+
+# Local assets, experiment plans, captures and receipts
+# Versioned benchmark SPEC JSON and frozen manifest files are intentionally tracked.
 research/artifacts/
 research/checkpoints/
 research/datasets/local/
-
-# Local CineTwin experiments / derived evidence
+TransferPlans/
+StudioSessions/
+Datasets/
+Results/
 *.cinetwin.behavior.json
 *.cinetwin.sampling-plan.json
+*.csir.json
+*.transfer-plan.json
+transfer-plan.json
+coverage-report.json
+evidence.json
+runtime-receipt*.json
+
+# Large model checkpoints and local scene media should be stored out of Git
+*.ckpt
+*.safetensors
+*.onnx
+*.pth
+*.pt
+*.uasset
+*.umap
+*.fbx
+*.blend
+*.wav
+*.mp4
