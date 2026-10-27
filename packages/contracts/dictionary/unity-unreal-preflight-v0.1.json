@@ -1,0 +1,75 @@
+{
+  "version": "0.1.0",
+  "source_engine": "unity",
+  "target_engine": "unreal",
+  "status": "adapter-capabilities-unverified",
+  "note": "Recognition/structural conversion availability is NOT independent native-engine parity. Unknown generic source types must be reported.",
+  "tracks": {
+    "animation.track": {
+      "state": "SUPPORTED_UNVERIFIED",
+      "detail": "Unreal animation/transform track construction; skeletal, interpolation and blending parity remain unverified."
+    },
+    "camera.transform": {
+      "state": "SUPPORTED_UNVERIFIED",
+      "detail": "Camera transforms and field-of-view conversion; final framing unverified."
+    },
+    "camera.cut": {
+      "state": "SUPPORTED_UNVERIFIED",
+      "detail": "Creates Camera Cut tracks from recognized source sections."
+    },
+    "audio.track": {
+      "state": "KNOWN_PARTIAL",
+      "detail": "Audio sections only; waveform/mixing and fades not verified."
+    },
+    "event.trigger": {
+      "state": "KNOWN_PARTIAL",
+      "detail": "Signals become timed markers, not executed payloads."
+    },
+    "light.animation": {
+      "state": "KNOWN_PARTIAL",
+      "detail": "Experimental light intensity curves; physical illumination unverified."
+    },
+    "event.state": {
+      "state": "KNOWN_UNSUPPORTED",
+      "detail": "Activation/enable-state semantics not yet implemented as equivalent Unreal behavior."
+    }
+  },
+  "sections": {
+    "animation.section": "SUPPORTED_UNVERIFIED",
+    "audio.section": "KNOWN_PARTIAL",
+    "camera.cut": "SUPPORTED_UNVERIFIED",
+    "camera.transform": "SUPPORTED_UNVERIFIED",
+    "light.animation": "KNOWN_PARTIAL",
+    "event.trigger": "KNOWN_PARTIAL",
+    "event.state": "KNOWN_UNSUPPORTED"
+  },
+  "generic_native_tracks": {
+    "UnityEngine.Timeline.GroupTrack": {
+      "ced": "timeline.group",
+      "state": "KNOWN_UNSUPPORTED"
+    }
+  },
+  "generic_native_sections": {
+    "UnityEngine.Timeline.AnimationPlayableAsset": {
+      "ced": "animation.section",
+      "state": "SUPPORTED_UNVERIFIED"
+    },
+    "UnityEngine.Timeline.AudioPlayableAsset": {
+      "ced": "audio.section",
+      "state": "KNOWN_PARTIAL"
+    }
+  },
+  "curve_semantics": {
+    "transform.position": "SUPPORTED_UNVERIFIED",
+    "transform.rotation": "SUPPORTED_UNVERIFIED",
+    "camera.fov": "SUPPORTED_UNVERIFIED",
+    "light.intensity": "KNOWN_PARTIAL"
+  },
+  "curve_aliases": {
+    "camera.vertical_fov_degrees": "camera.fov",
+    "m_localeuleranglesraw.": "transform.rotation",
+    "m_localeulerangleshint.": "transform.rotation",
+    "field of view": "camera.fov",
+    "m_intensity": "light.intensity"
+  }
+}
