@@ -506,7 +506,7 @@ def compose(
             and (x["source_location"] == f"tracks[{index}]"
                  or x["source_location"].startswith(f"tracks[{index}]."))
             and x["state"] in {
-                "UNKNOWN_CED", "UNKNOWN_NATIVE", "NEEDS_EVIDENCE",
+                "UNKNOWN_CED", "UNKNOWN_NATIVE",
                 "KNOWN_UNSUPPORTED", "MISSING_TARGET_MAPPING",
             }
         ), None)
