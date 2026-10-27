@@ -2,21 +2,28 @@ name: CI
 
 on:
   push:
-    branches: [main, "foundation/**", "feature/**", "engine/**"]
+    branches: [main, "foundation/**", "feature/**", "engine/**", "fix/**", "chore/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "feature/**", "chore/**"]
 
 jobs:
-  contracts:
+  python-contracts:
+    name: Python tests, source syntax and repository hygiene
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install test tools
+      - name: Install check tools
         run: python -m pip install --upgrade pip && pip install pytest ruff jsonschema
-      - name: Run contract tests
-        run: pytest -q
-      - name: Ruff check
-        run: ruff check tests
+      - name: Check Python module syntax
+        run: python -m compileall -q packages tools integrations/unreal
+      - name: Run test suite
+        run: python -m pytest -q
+      - name: Ruff test checks
+        run: python -m ruff check tests
+      - name: Repository hygiene and docs navigation
+        run: python tools/repo_check.py
