@@ -20,6 +20,7 @@ import csir_plan
 import sampling_plan
 import scene_prep
 import hierarchy_local
+import ced_preflight
 
 NATIVE_GAPS = {
     "event.trigger": "Preserves event timestamp/identity as a marked frame, NOT executable payload.",
@@ -290,6 +291,9 @@ def compose(
         raise TransferBackendError("Refusing to overwrite an existing Level Sequence.")
     if csir.get("schema_version") != "0.1.0" or csir.get("source", {}).get("engine") != "unity":
         raise TransferBackendError("This adapter supports source Unity CSIR v0.1.0.")
+    # CED analysis MUST precede source-to-target action generation. Membership
+    # in CED does not prove the Unreal adapter can execute that semantic.
+    discovery = ced_preflight.audit(csir, mapping)
     entities = {str(e["entity_id"]): e for e in csir.get("entities", [])}
     # A malformed frame-zero/nonmatching capture must not be used for baking.
     if capture is not None and capture.get("cutscene_id") != csir.get("cutscene_id"):
@@ -492,6 +496,32 @@ def compose(
             "No representable target action. An empty sequence would be misleading."
         )
 
+    # If conversion could create some actions but a specific source section or
+    # animated channel is unrecognized, do not call the whole track native.
+    for row in ledger:
+        index = row["track_index"]
+        problem = next((
+            x for x in discovery["findings"]
+            if x["active"]
+            and (x["source_location"] == f"tracks[{index}]"
+                 or x["source_location"].startswith(f"tracks[{index}]."))
+            and x["state"] in {
+                "UNKNOWN_CED", "UNKNOWN_NATIVE", "NEEDS_EVIDENCE",
+                "KNOWN_UNSUPPORTED", "MISSING_TARGET_MAPPING",
+            }
+        ), None)
+        if problem and row["outcome"] == "NATIVE_UNVERIFIED":
+            row["outcome"] = "NATIVE_PARTIAL"
+            row["details"].append(
+                "CED preflight identified unresolved source behavior at "
+                + problem["source_location"] + ": " + problem["state"]
+            )
+    plan["ced_registry"] = {
+        "version": discovery["ced_version"],
+        "sha256": discovery["ced_sha256"],
+        "adapter_capabilities_version": discovery["capabilities_version"],
+        "adapter_capabilities_sha256": discovery["capabilities_sha256"],
+    }
     counts = dict(Counter(row["outcome"] for row in ledger))
     entity_coverage = [{
         "entity_id": str(e.get("entity_id", "")),
@@ -513,6 +543,8 @@ def compose(
         "report_kind": "cutsceneai.best_effort_transfer",
         "schema_version": "0.1.0",
         "mode": "BEST_EFFORT",
+        "ced_preflight": discovery,
+        "ced_preflight_status": discovery["status"],
         "cutscene_id": csir.get("cutscene_id", ""),
         "generation_readiness": "AWAITING_REAL_ENGINE_PREFLIGHT",
         "target_sequence_asset": plan["sequence_asset_path"],
@@ -554,6 +586,8 @@ def compose_files(
     evidence = {
         "csir_sha256": _sha(csir_file),
         "mapping_sha256": _sha(mapping_file),
+        "ced_sha256": report["ced_preflight"]["ced_sha256"],
+        "ced_adapter_capabilities_sha256": report["ced_preflight"]["capabilities_sha256"],
     }
     if capture_path is not None:
         evidence["source_capture_sha256"] = _sha(Path(capture_path))
