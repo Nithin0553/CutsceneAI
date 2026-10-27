@@ -289,7 +289,13 @@ def audit(
                  str(relationship.get("relationship_id") or ""),
                  str(relationship.get("ced_type") or ""))
     alerts = [f for f in findings if f["active"] and f["state"] in DISCOVERY_STATES]
-    fingerprints = sorted({row["feature_fingerprint"] for row in alerts})
+    # A known-but-partial converter needs user review, but is not a
+    # *newly discovered semantic*. Keep these counts separate.
+    newly_discovered = [
+        row for row in alerts
+        if row["state"] in {"UNKNOWN_CED", "UNKNOWN_NATIVE", "NEEDS_EVIDENCE"}
+    ]
+    fingerprints = sorted({row["feature_fingerprint"] for row in newly_discovered})
     return {
         "kind": "cutsceneai.ced_preflight",
         "version": "0.1.0",
