@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any, Mapping
@@ -66,7 +67,8 @@ def _mapping_name(mapping: Mapping[str, Any], name: str, key: str) -> bool:
 
 
 def _curve_semantic(
-    curve: Mapping[str, Any], known: set[str], capabilities: Mapping[str, Any]
+    curve: Mapping[str, Any], known: set[str], capabilities: Mapping[str, Any],
+    *, unity_animation_clip: bool = False,
 ) -> tuple[str, str, str]:
     raw = str(curve.get("canonical_semantic") or "").strip()
     native = str(curve.get("property_name") or "").strip()
@@ -80,6 +82,19 @@ def _curve_semantic(
     )
     if alias:
         return alias, native, "ALIAS"
+    # Extractor-specific canonical channels have known engine-neutral meaning.
+    # Do not edit or expand the core CED taxonomy for each native axis.
+    for rule in capabilities.get("canonical_curve_patterns", []):
+        if re.fullmatch(str(rule["pattern"]), raw):
+            return str(rule["ced"]), native, "UNITY_CANONICAL_EXTENSION"
+    # Unity's AnimationClip root and Humanoid muscle curves commonly lack a
+    # canonical_semantic field. Recognize only explicit documented patterns in
+    # a Unity AnimationTrack/AnimationClip context; do not assume that these
+    # channels are successfully transferred or retargeted.
+    if not raw and unity_animation_clip:
+        for rule in capabilities.get("native_curve_patterns", []):
+            if re.fullmatch(str(rule["pattern"]), native):
+                return str(rule["ced"]), native, "UNITY_ANIMATION_CLIP_CHANNEL"
     if raw in known:
         return raw, native, "CANONICAL"
     for prefix in ("transform.position", "transform.rotation", "transform.scale"):
@@ -128,6 +143,14 @@ def audit(
                 raise CEDPreflightError(
                     f"Native alias references unknown CED element: {entry.get('ced')}"
                 )
+    for domain in ("canonical_curve_patterns", "native_curve_patterns"):
+        for entry in capabilities.get(domain, []):
+            if entry.get("ced") not in known or not isinstance(entry.get("pattern"), str):
+                raise CEDPreflightError(f"Invalid CED pattern entry in {domain}")
+            try:
+                re.compile(entry["pattern"])
+            except re.error as exc:
+                raise CEDPreflightError(f"Invalid CED pattern in {domain}: {exc}") from exc
 
     findings: list[dict[str, Any]] = []
     def add(
@@ -205,6 +228,10 @@ def audit(
         str(row.get("asset_id", "")): row
         for row in csir.get("assets", []) if isinstance(row, dict)
     }
+    # An event/activation payload can reference a Unity-side asset without
+    # needing an imported Unreal AnimationSequence or SoundWave. Missing
+    # native asset mappings are reported only for source media that the
+    # adapter can actually consume as a target asset.
     required_asset_ids: set[str] = set()
     for track in csir.get("tracks", []):
         if not isinstance(track, dict) or track.get("muted") is True:
@@ -230,8 +257,9 @@ def audit(
         path = f"assets[{i}]"
         classify("asset", path, aid, str(asset.get("ced_type") or ""),
                  str(asset.get("metadata", {}).get("native_type") or ""))
-        if aid in required_asset_ids and not _mapping_name(
-            mapping, str(asset.get("name") or ""), "assets"
+        if (aid in required_asset_ids
+            and str(asset.get("ced_type") or "") in {"animation.clip", "audio.asset"}
+            and not _mapping_name(mapping, str(asset.get("name") or ""), "assets")
         ):
             add("mapping", path, aid, str(asset.get("ced_type") or ""), "",
                 "MISSING_TARGET_MAPPING",
@@ -272,7 +300,15 @@ def audit(
                 if not isinstance(curve, dict):
                     continue
                 curve_path = f"{section_path}.payload.animation.curves[{k}]"
-                parsed, native_channel, provenance = _curve_semantic(curve, known, capabilities)
+                parsed, native_channel, provenance = _curve_semantic(
+                    curve, known, capabilities,
+                    unity_animation_clip=(
+                        ced_id == "animation.track"
+                        and section_kind == "animation.section"
+                        and native_type in {"UnityEngine.AnimationClip",
+                                            "UnityEngine.Timeline.AnimationPlayableAsset"}
+                    ),
+                )
                 if not parsed and native_channel:
                     add("curve", curve_path, sid, "", native_channel,
                         "NEEDS_EVIDENCE",
@@ -296,6 +332,23 @@ def audit(
         if row["state"] in {"UNKNOWN_CED", "UNKNOWN_NATIVE", "NEEDS_EVIDENCE"}
     ]
     fingerprints = sorted({row["feature_fingerprint"] for row in newly_discovered})
+    # Group repetitive section and bone-curve observations for the user while
+    # retaining every indexed source occurrence in the inspectable JSON.
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for finding in alerts:
+        key = (str(finding["state"]), str(finding["ced"]))
+        grouped.setdefault(key, []).append(finding)
+    review_groups = [
+        {
+            "state": state,
+            "ced": ced_id,
+            "occurrences": len(rows),
+            "distinct_native_types": len({r["native_type"] for r in rows}),
+            "sample_locations": [r["source_location"] for r in rows[:3]],
+            "example_native_types": sorted({r["native_type"] for r in rows})[:3],
+        }
+        for (state, ced_id), rows in sorted(grouped.items())
+    ]
     return {
         "kind": "cutsceneai.ced_preflight",
         "version": "0.1.0",
@@ -309,6 +362,8 @@ def audit(
         "strict_transfer_allowed": not any(x["state"] in BLOCKING_STATES for x in alerts),
         "counts": dict(sorted(Counter(x["state"] for x in findings).items())),
         "active_alert_count": len(alerts),
+        "review_group_count": len(review_groups),
+        "review_groups": review_groups,
         "unique_discovery_count": len(fingerprints),
         "discovery_fingerprints": fingerprints,
         "findings": findings,
