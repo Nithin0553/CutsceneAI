@@ -71,8 +71,13 @@ def discoveries(report: Mapping[str, Any]) -> list[dict[str, Any]]:
             raise DiscoveryRegistryError("Source CSIR digest must be SHA-256.")
     else:
         # Backward compatibility for V1/V2 preflight files without source hash.
-        # Do not persist the actual source cutscene ID, only its digest.
-        source_hash = _sha(str(report.get("source_cutscene_id", "")))
+        # Require a nonempty source identity to avoid conflating unrelated data.
+        cutscene_id = str(report.get("source_cutscene_id", "")).strip()
+        if not cutscene_id:
+            raise DiscoveryRegistryError(
+                "Report needs source_csir_sha256 or source_cutscene_id."
+            )
+        source_hash = _sha(cutscene_id)
 
     results = []
     for fingerprint in sorted(grouped):
@@ -94,12 +99,15 @@ def discoveries(report: Mapping[str, Any]) -> list[dict[str, Any]]:
             "source_digest": source_hash,
             "ced_version": report["ced_version"],
             "capabilities_version": report["capabilities_version"],
+            "ced_sha256": str(report.get("ced_sha256", "")),
+            "capabilities_sha256": str(report.get("capabilities_sha256", "")),
             "occurrences": len(observations),
         }
         # Event ID is deterministic per fingerprint, source snapshot and rules.
         candidate["observation_id"] = _sha([
             candidate["fingerprint"], candidate["source_digest"],
             candidate["ced_version"], candidate["capabilities_version"],
+            candidate["ced_sha256"], candidate["capabilities_sha256"],
         ])
         results.append(candidate)
     return results
