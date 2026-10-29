@@ -71,6 +71,29 @@ The normal `tools/transfer_backend.py` command now automatically includes the CE
 
 **Compatibility warning:** this changes the content of future transfer plans, coverage reports and evidence. **Do not reuse or overwrite Benchmark002 V5 prepared artifacts or old runtime receipts.** Use a new directory and restart Unreal after adopting the feature; comparison against old versions must be explicit. PR #52 remains the independent experimental transfer baseline until this feature has been reviewed.
 
+## Benchmark 002 real-source diagnostic (2026-10-28)
+
+The first read-only CED preflight of Benchmark 002 reported **516 active findings** across **155 discovery fingerprints**: 390 `NEEDS_EVIDENCE`, 108 `UNKNOWN_CED`, 11 `KNOWN_PARTIAL`, 7 `MISSING_TARGET_MAPPING` and 102 `SUPPORTED_UNVERIFIED` source observations.
+
+Review showed this was a **classification-noise problem**, not evidence of 516 new cinematic component types:
+
+- The 390 unlabeled native Unity animation curves (`RootT/Q`, hand/foot T/Q and Humanoid muscle channels such as `Spine Front-Back`) match known `animation.root_motion` / `animation.bone_curve` concepts. This recognition applies **only** to source Unity `AnimationTrack` + known animation-clip section provenance. They are classified **KNOWN_PARTIAL**, not transferred joint/retarget parity.
+- The 108 previously `UNKNOWN_CED` entries consist of track/clip/infinite transform offsets, source track offset mode, and native Euler rotations. They map to existing CED concepts `animation.offset` or `transform.rotation` through explicit versioned adapter aliases. **No new CED IDs were created** for each native X/Y/Z/W channel.
+- Three event-state source assets were falsely being treated as requiring Unreal imported animation assets. The mapping audit now requires target asset paths only for *consumed* `animation.clip` and `audio.asset` records; four animation asset references still need operator verification.
+- The CLI now prints **review groups** by canonical CED concept and state, while the JSON retains indexed occurrences and distinct native channel names. Counts of source *occurrences* are not counts of development tasks.
+
+These patterns cover every native channel displayed in the original operator log, but the updated preflight **has not yet been run against the private Benchmark 002 source**. Rerun read-only with a new report filename (for example `Benchmark002_CED_Preflight_V2.json`) and review the output; do not infer exact updated counts from pattern coverage. The complete original V1 report remains unchanged.
+
+For a concise summary in PowerShell after the rerun:
+
+```powershell
+$report = Get-Content "B:\Research\CutSceneAI\TransferPlans\Benchmark002_CED_Preflight_V2.json" -Raw | ConvertFrom-Json
+$report.review_groups | Sort-Object occurrences -Descending |
+    Format-Table state, ced, occurrences, distinct_native_types -AutoSize
+```
+
+These recognition rules **do not** make skeletal retargeting, root-motion conversion, source-to-target asset mapping, animation blending or visual/audio parity verified.
+
 ## Safety and remaining work
 
 - The current best-effort planner reports warnings but does **not yet require interactive acceptance** of each omission; strict mode blocks all reviewed/partial paths. The explicit user-review gate is a separate follow-up.
