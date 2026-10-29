@@ -220,3 +220,65 @@ def test_unreal_compat_uses_documented_easing_and_linear_api(monkeypatch):
 
     assert module.add_linear_channel_key(Channel(), 24, 1.25) == "native-key"
     assert calls == [(24, 1.25, linear)]
+
+
+
+@pytest.mark.parametrize(
+    "native,expected",
+    [
+        ({"blend_in_seconds": -1.0, "ease_in_seconds": 0.0}, 0.0),
+        ({"blend_in_seconds": -1.0, "ease_in_seconds": 0.5}, 0.5),
+        ({"blend_in_seconds": 0.0, "ease_in_seconds": 0.25}, 0.25),
+        ({"blend_in_seconds": 0.75, "ease_in_seconds": 0.25}, 0.75),
+        ({"blend_in_seconds": 0.0}, 0.0),
+        ({}, 0.0),
+    ],
+)
+def test_unity_timeline_blend_sentinel_and_explicit_ease(native, expected):
+    assert csir_plan.timeline_clip_easing_seconds(native, "in") == expected
+
+
+@pytest.mark.parametrize("invalid", [-2.0, -0.5, float("nan"), float("inf"), "bad"])
+def test_unexpected_blend_value_blocks_planning(invalid):
+    with pytest.raises(csir_plan.PlanError):
+        csir_plan.timeline_clip_easing_seconds(
+            {"blend_out_seconds": invalid}, "out"
+        )
+
+
+def test_negative_unity_ease_is_not_silently_discarded():
+    with pytest.raises(csir_plan.PlanError, match="Negative Timeline"):
+        csir_plan.timeline_clip_easing_seconds(
+            {"blend_in_seconds": -1.0, "ease_in_seconds": -0.1}, "in"
+        )
+
+
+def test_skeletal_plan_normalizes_unset_unity_blend_before_runtime():
+    doc = document([])
+    doc["entities"][0]["ced_type"] = "entity.character"
+    doc["assets"] = [{"asset_id": "clip", "name": "Walk"}]
+    src_section = section(0, 3, [])
+    src_section["payload"]["asset_id"] = "clip"
+    src_section["native_payload"] = {
+        "blend_in_seconds": -1.0,
+        "blend_out_seconds": -1.0,
+        "ease_in_seconds": 0.0,
+        "ease_out_seconds": 0.0,
+    }
+    doc["tracks"][0]["sections"] = [src_section]
+    mapping = {**mapped(), "assets": {"Walk": "/Game/Walk"}}
+    action = next(
+        x for x in csir_plan.build_plan(doc, mapping)["actions"]
+        if x["kind"] == "skeletal_animation"
+    )
+    assert action["blend_in_seconds"] == 0.0
+    assert action["blend_out_seconds"] == 0.0
+
+    src_section["native_payload"]["ease_in_seconds"] = 0.25
+    src_section["native_payload"]["blend_out_seconds"] = 0.4
+    updated = next(
+        x for x in csir_plan.build_plan(doc, mapping)["actions"]
+        if x["kind"] == "skeletal_animation"
+    )
+    assert updated["blend_in_seconds"] == 0.25
+    assert updated["blend_out_seconds"] == 0.4
