@@ -48,13 +48,17 @@ def main(argv: list[str] | None = None) -> int:
         print("[CutSceneAI] Feature states:", report["counts"])
         print("[CutSceneAI] Active alerts:", report["active_alert_count"])
         print("[CutSceneAI] Unique discovery signatures:", report["unique_discovery_count"])
-        for finding in report["findings"]:
-            if finding["active"] and finding["state"] in ced_preflight.DISCOVERY_STATES:
-                print(
-                    f"  [{finding['state']}] {finding['source_location']} "
-                    f"CED={finding['ced'] or '<missing>'} "
-                    f"native={finding['native_type'] or '<unknown>'}"
-                )
+        print("[CutSceneAI] Review groups:", report["review_group_count"])
+        for group in report["review_groups"]:
+            examples = ", ".join(group["example_native_types"])
+            print(
+                f"  [{group['state']}] "
+                f"CED={group['ced'] or '<missing>'} "
+                f"occurrences={group['occurrences']} "
+                f"native_samples={examples or '<unknown>'}"
+            )
+        if report["active_alert_count"]:
+            print("[CutSceneAI] Full indexed findings are in the JSON report.")
         if args.strict and not report["strict_transfer_allowed"]:
             print("[CutSceneAI] STRICT CED PREFLIGHT: BLOCKED", file=sys.stderr)
             return 2
