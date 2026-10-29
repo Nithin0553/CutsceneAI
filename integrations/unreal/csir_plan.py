@@ -17,6 +17,29 @@ class PlanError(ValueError):
     pass
 
 
+def timeline_clip_easing_seconds(native_payload: dict[str, Any], side: str) -> float:
+    """Resolve Timeline blend/ease durations without leaking Unity's -1 sentinel.
+
+    Unity reports -1 for a clip that is not currently blended. This is not a
+    negative fade; an explicit ease duration may still apply instead. Keep
+    actual positive blend durations, but reject other negative/nonfinite data.
+    """
+    if side not in {"in", "out"}:
+        raise PlanError(f"Invalid Timeline easing direction: {side}")
+    try:
+        blend = float(native_payload.get(f"blend_{side}_seconds", 0.0))
+        ease = float(native_payload.get(f"ease_{side}_seconds", 0.0))
+    except (TypeError, ValueError) as exc:
+        raise PlanError(f"Invalid Timeline {side} blend/ease duration.") from exc
+    if not math.isfinite(blend) or not math.isfinite(ease):
+        raise PlanError(f"Non-finite Timeline {side} blend/ease duration.")
+    if blend < 0.0 and blend != -1.0:
+        raise PlanError(f"Unsupported negative Timeline {side} blend duration: {blend}")
+    if ease < 0.0:
+        raise PlanError(f"Negative Timeline {side} ease duration: {ease}")
+    return blend if blend > 0.0 else ease
+
+
 def load_json(path: str | Path) -> dict[str, Any]:
     # Accept BOM-prefixed UTF-8 from Windows PowerShell and ordinary UTF-8 alike.
     with Path(path).open("r", encoding="utf-8-sig") as handle:
@@ -800,8 +823,12 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                         "end_frame": seconds_to_frame(rational_seconds(section["end"]), fps_n, fps_d),
                         "source_start_seconds": source_offset_seconds,
                         "source_end_seconds": source_offset_seconds + timeline_duration_seconds * time_scale,
-                        "blend_in_seconds": float(section.get("native_payload", {}).get("blend_in_seconds", 0.0)),
-                        "blend_out_seconds": float(section.get("native_payload", {}).get("blend_out_seconds", 0.0)),
+                        "blend_in_seconds": timeline_clip_easing_seconds(
+                            section.get("native_payload", {}), "in"
+                        ),
+                        "blend_out_seconds": timeline_clip_easing_seconds(
+                            section.get("native_payload", {}), "out"
+                        ),
                         "time_scale": time_scale,
                         "source_offset_seconds": source_offset_seconds,
                         "base_actor_rotation_rpy_degrees": [
