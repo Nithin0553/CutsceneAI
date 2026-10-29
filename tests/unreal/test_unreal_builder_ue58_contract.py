@@ -115,3 +115,31 @@ def test_unreal_rotators_are_constructed_by_semantic_field_name() -> None:
     assert "rotator_type(roll=float(roll), pitch=float(pitch), yaw=float(yaw))" in compat
     assert "unreal.Rotator(float(pitch), float(yaw), float(roll))" not in builder
     assert "unreal.Rotator(0.0, float(yaw_degrees), 0.0)" not in compat
+
+
+def test_failed_generation_does_not_force_delete_in_use_sequence() -> None:
+    """An Unreal package can remain referenced after failed construction."""
+    import ast
+
+    builder = (Path(__file__).resolve().parents[2]
+               / "integrations" / "unreal" / "build_level_sequence.py"
+               ).read_text(encoding="utf-8")
+    tree = ast.parse(builder)
+    generate = next(
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "_build_prepared_plan"
+    )
+    calls = [
+        n.func.attr for n in ast.walk(generate)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+    ]
+    assert "delete_asset" not in calls
+    assert "INCOMPLETE_UNSAVED_SEQUENCE" in builder
+
+    preflight = next(
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "_preflight"
+    )
+    code = ast.get_source_segment(builder, preflight)
+    assert "Invalid {field}" in code
+    assert "Re-prepare an immutable new plan" in code
