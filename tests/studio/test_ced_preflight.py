@@ -195,3 +195,101 @@ def test_cli_reports_unknown_and_strict_blocks_without_engine_mutation(tmp_path:
     unchanged = subprocess.run(cmd, text=True, capture_output=True, check=False)
     assert unchanged.returncode == 2
     assert "Refusing to overwrite" in unchanged.stderr
+
+
+
+def test_unity_humanoid_root_muscles_and_offsets_are_known_but_not_verified():
+    src = _source()
+    sec = src["tracks"][0]["sections"][0]
+    sec["native_payload"] = {
+        "native_asset_type": "UnityEngine.Timeline.AnimationPlayableAsset"
+    }
+    sec["payload"]["animation"]["curves"] = [
+        {"property_name": "RootT.x"},
+        {"property_name": "RootQ.w"},
+        {"property_name": "LeftFootT.z"},
+        {"property_name": "RightHandQ.y"},
+        {"property_name": "Spine Front-Back"},
+        {"property_name": "Neck Nod Down-Up"},
+        {"property_name": "RightHand.Index.3 Stretched"},
+        {"property_name": "LeftHand.Thumb.Spread"},
+        {"property_name": "CutSceneAI.AnimationTrack.position.x",
+         "canonical_semantic": "transform.track_offset.position.x"},
+        {"property_name": "CutSceneAI.AnimationTrack.trackOffset",
+         "canonical_semantic": "timeline.animation_track.track_offset_mode"},
+        {"property_name": "CutSceneAI.AnimationTrack.infiniteClipOffsetRotation.w",
+         "canonical_semantic": "transform.infinite_offset.rotation.w"},
+        {"property_name": "localEulerAnglesRaw.x",
+         "canonical_semantic": "transform.rotation.euler_native"},
+    ]
+    out = ced_preflight.audit(src, _mapping())
+    curves = [x for x in out["findings"] if x["kind"] == "curve"]
+    assert [r["ced"] for r in curves] == [
+        "animation.root_motion", "animation.root_motion",
+        "animation.bone_curve", "animation.bone_curve",
+        "animation.bone_curve", "animation.bone_curve",
+        "animation.bone_curve", "animation.bone_curve",
+        "animation.offset", "animation.offset", "animation.offset",
+        "transform.rotation",
+    ]
+    assert [r["state"] for r in curves[:11]] == ["KNOWN_PARTIAL"] * 11
+    assert curves[11]["state"] == "SUPPORTED_UNVERIFIED"
+    assert out["counts"].get("UNKNOWN_CED", 0) == 0
+    assert out["counts"].get("NEEDS_EVIDENCE", 0) == 0
+    assert out["unique_discovery_count"] == 0
+    # The original per-curve evidence remains inspectable; the CLI can group it.
+    assert out["active_alert_count"] == 11
+    offset_group = next(x for x in out["review_groups"] if x["ced"] == "animation.offset")
+    assert offset_group["occurrences"] == 3
+    assert offset_group["distinct_native_types"] == 3
+
+
+def test_humanoid_native_name_outside_animation_clip_does_not_get_guessed():
+    src = _source()
+    sec = src["tracks"][0]["sections"][0]
+    sec["payload"]["animation"]["curves"] = [{"property_name": "Spine Front-Back"}]
+    # No native source AnimationPlayableAsset proof.
+    out = ced_preflight.audit(src, _mapping())
+    curve = next(x for x in out["findings"] if x["kind"] == "curve")
+    assert curve["state"] == "NEEDS_EVIDENCE"
+    src["tracks"][0]["ced_type"] = "camera.transform"
+    sec["native_payload"] = {
+        "native_asset_type": "UnityEngine.Timeline.AnimationPlayableAsset"
+    }
+    out = ced_preflight.audit(src, _mapping())
+    curve = next(x for x in out["findings"] if x["kind"] == "curve")
+    assert curve["state"] == "NEEDS_EVIDENCE"
+
+
+def test_referenced_signal_state_assets_do_not_require_imported_unreal_animation():
+    src = _source()
+    src["assets"].append({
+        "asset_id": "signal", "name": "EnableTrigger",
+        "ced_type": "event.state",
+    })
+    src["tracks"].append({
+        "track_id": "signals",
+        "ced_type": "event.trigger",
+        "sections": [{"section_id": "signal-section",
+                      "ced_type": "event.trigger",
+                      "payload": {"asset_id": "signal"}}],
+    })
+    out = ced_preflight.audit(src, _mapping())
+    assert out["counts"].get("MISSING_TARGET_MAPPING", 0) == 0
+    assert out["counts"].get("KNOWN_PARTIAL", 0) >= 2
+
+
+def test_root_motion_channel_unrelated_custom_property_is_not_auto_classified():
+    src = _source()
+    sec = src["tracks"][0]["sections"][0]
+    sec["native_payload"] = {
+        "native_asset_type": "UnityEngine.Timeline.AnimationPlayableAsset"
+    }
+    sec["payload"]["animation"]["curves"] = [
+        {"property_name": "RootT.extra"},
+        {"property_name": "Spine CustomUserProperty"},
+        {"property_name": "game.CustomRig.boneX"},
+    ]
+    out = ced_preflight.audit(src, _mapping())
+    curves = [x for x in out["findings"] if x["kind"] == "curve"]
+    assert all(x["state"] == "NEEDS_EVIDENCE" for x in curves)
