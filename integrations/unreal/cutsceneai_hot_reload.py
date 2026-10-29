@@ -2,7 +2,7 @@
 
 Typical Unreal Python Output Log command:
     import sys
-    sys.path.insert(0, r"B:\Research\CutsceneAI\CutsceneAI\integrations\unreal")
+    sys.path.insert(0, "B:/Research/CutsceneAI/CutsceneAI/integrations/unreal")
     import cutsceneai_hot_reload
     cutsceneai_hot_reload.reload_project_python()
 
