@@ -117,6 +117,28 @@ transaction. Camera component changes, attachment state or assets changed
 by external editor plugins may survive a failed attempt. Do not save
 the target level until its results have been inspected.
 
+## V7 runtime failure and source-easing recovery (2026-10-29)
+
+A real Benchmark002 V7 Unreal 5.8.3 run passed source-bound plan verification, runtime capability preflight, actor preparation, camera setup and root-motion calibration, but **failed while building the first skeletal section** with `UnrealBuildError: Negative section easing duration.`
+
+The Unity CSIR stores `native_payload.blend_in_seconds=-1` / `blend_out_seconds=-1` for *unset/no-blend* clips. The former planner propagated these negative sentinels to the Unreal sequence builder; Unreal `MovieSceneSectionEasingExtensions` requires nonnegative display-rate frame durations.
+
+The corrected **pure Python planner** now:
+- Interprets the documented source `-1.0` blend sentinel as *no explicit overlap blend*; uses a nonnegative source `ease_in_seconds` / `ease_out_seconds` value, if present, instead.
+- Preserves positive authored crossfade durations.
+- Rejects any other negative, nonfinite, or invalid source easing values at planning time.
+- Adds Unreal-side early easing validation as defense in depth, *before* changing level actors or creating a Level Sequence.
+
+A second V7 failure occurred during attempted rollback: the runtime called `EditorAssetLibrary.delete_asset()` on the incomplete Level Sequence while Unreal still held native references. Unreal reported `ForceDeleteObject failed` and a **potentially corrupt package**. The generator now refuses in-process force-deletion of a referenced, incomplete sequence; it logs `INCOMPLETE_UNSAVED_SEQUENCE` and makes best-effort actor pose/attachment restoration while leaving the session for manual recovery. This does **not** guarantee complete transactional rollback of camera components, attachments or externally saved files.
+
+**Recovery requirements before rerun:**
+1. Do not rerun V7, force-delete the package, or save the affected level from the failed editor session. Exit without saving.
+2. Back up the target Unreal project and inspect the project after a fresh Unreal restart. If V7 exists or the editor reports damage, preserve it for diagnosis and prefer restoring a known-good project copy.
+3. Preserve V7's `transfer-plan.json`, `coverage-report.json`, `evidence.json` and `runtime-receipt.json`; never edit/overwrite them. Plan V8 using a **separate cloned mapping** with an unoccupied `LS_Benchmark002_CED_V8` target and a **new output directory**.
+4. Perform the same `--verify-existing` check on V8 before any Unreal execution and restart Unreal to load the corrected Python modules. A successful preparation/readback is not proof of target behavior equivalence.
+
+This fix is reusable for all Unity Timeline clips; no Benchmark-specific special-casing, no original Unity asset modification, and no silent correction of malformed authored ease durations.
+
 ## Step 4: independent runtime validation
 
 After generation, inspect the generated Unreal sequence, confirm target actor
