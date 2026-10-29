@@ -90,6 +90,27 @@ def _preflight(plan: dict[str, Any]) -> None:
     except unreal_compat.UnrealCompatibilityError as exc:
         raise UnrealBuildError(str(exc)) from exc
 
+    # Fail on malformed easing before moving actors or creating a Level
+    # Sequence. In particular, never pass Unity's -1 "no blend" sentinel to
+    # Sequencer; new plans must normalize it in csir_plan first.
+    easing_fields = {
+        "skeletal_animation": ("blend_in_seconds", "blend_out_seconds"),
+        "audio": ("fade_in_seconds", "fade_out_seconds"),
+    }
+    for action in plan.get("actions", []):
+        for field in easing_fields.get(str(action.get("kind", "")), ()):
+            try:
+                seconds = float(action.get(field, 0.0))
+            except (TypeError, ValueError) as exc:
+                raise UnrealBuildError(
+                    f"Invalid {field} in prepared action; no scene changes made."
+                ) from exc
+            if not math.isfinite(seconds) or seconds < 0:
+                raise UnrealBuildError(
+                    f"Invalid {field}={seconds} in prepared action; "
+                    "no scene changes made. Re-prepare an immutable new plan."
+                )
+
     # New cinematic features are preflighted BEFORE changing any level actor.
     needs_easing = any(
         a.get("kind") == "skeletal_animation"
@@ -827,27 +848,38 @@ def _build_prepared_plan(
         unreal.log(f"[CutSceneAI] Generated Level Sequence: {plan['sequence_asset_path']}")
         return sequence
     except Exception:
-        try:
-            if sequence is not None:
-                asset_path = str(plan["sequence_asset_path"])
-                unreal.EditorAssetLibrary.delete_asset(asset_path)
-                unreal.log_warning(
-                    f"[CutSceneAI] Rolled back incomplete generated sequence after build failure: {asset_path}"
-                )
-        finally:
-            if attachment_changes:
+        # Do NOT call EditorAssetLibrary.delete_asset() here: it force-deletes
+        # a newly allocated package while native Sequencer bindings/sections
+        # may still reference it. Unreal can then report a potentially corrupt
+        # package. Preserve the original traceback, restore actor state where
+        # possible, and require a fresh editor session/target for the retry.
+        if sequence is not None:
+            unreal.log_error(
+                "[CutSceneAI] INCOMPLETE_UNSAVED_SEQUENCE: "
+                + str(plan["sequence_asset_path"])
+                + ". Do not save this asset or the modified level. "
+                "Close the editor without saving, inspect a backed-up project "
+                "after restart, then retry with a NEW target path."
+            )
+        if attachment_changes:
+            try:
                 cinetwin_hierarchy_runtime.rollback_hierarchy(attachment_changes)
                 unreal.log_warning(
-                    "[CineTwin] Rolled back newly created actor attachments "
-                    "because sequence construction failed."
+                    "[CineTwin] Restored newly created actor attachments "
+                    "after generation failure (persistence not verified)."
                 )
-            for label, (actor, transform) in previous_poses.items():
-                try:
-                    actor.set_actor_transform(transform, False, True)
-                except Exception as restore_error:
-                    unreal.log_error(
-                        f"[CutSceneAI] Unable to restore actor {label}: {restore_error}"
-                    )
+            except Exception as restore_error:
+                unreal.log_error(
+                    "[CineTwin] Failed to restore actor attachments: "
+                    + str(restore_error)
+                )
+        for label, (actor, transform) in previous_poses.items():
+            try:
+                actor.set_actor_transform(transform, False, True)
+            except Exception as restore_error:
+                unreal.log_error(
+                    f"[CutSceneAI] Unable to restore actor {label}: {restore_error}"
+                )
         raise
 
 
