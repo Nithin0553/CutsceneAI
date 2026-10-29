@@ -124,6 +124,7 @@ def test_unreal_rotators_are_constructed_by_semantic_field_name() -> None:
 def test_failed_generation_does_not_force_delete_in_use_sequence() -> None:
     """An Unreal package can remain referenced after failed construction."""
     import ast
+    from pathlib import Path
 
     builder = (Path(__file__).resolve().parents[2]
                / "integrations" / "unreal" / "build_level_sequence.py"
