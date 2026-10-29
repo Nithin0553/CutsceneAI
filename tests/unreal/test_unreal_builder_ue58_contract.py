@@ -51,10 +51,14 @@ def test_runtime_preflight_occurs_before_target_mutation() -> None:
     assert "Runtime preflight PASS" in builder
 
 
-def test_failed_unreal_build_rolls_back_partial_sequence() -> None:
+def test_failed_unreal_build_restores_actor_poses_but_never_force_deletes_in_use_sequence() -> None:
     builder = _read("integrations/unreal/build_level_sequence.py")
-    assert "Rolled back incomplete generated sequence after build failure" in builder
-    assert "unreal.EditorAssetLibrary.delete_asset(asset_path)" in builder
+    assert "INCOMPLETE_UNSAVED_SEQUENCE" in builder
+    assert "actor.set_actor_transform(transform, False, True)" in builder
+    # Created package may still have native MovieScene references. See
+    # the more focused AST regression that guards the _build_prepared_plan
+    # failure handler from forcibly deleting its own sequence.
+    assert "Do not save this asset or the modified level." in builder
 
 
 def test_camera_setup_uses_stable_output_gate_and_preflights_without_mutation() -> None:
