@@ -228,20 +228,31 @@ def audit(
         str(row.get("asset_id", "")): row
         for row in csir.get("assets", []) if isinstance(row, dict)
     }
-    # An event/activation payload can reference a Unity-side asset without
-    # needing an imported Unreal AnimationSequence or SoundWave. Missing
-    # native asset mappings are reported only for source media that the
-    # adapter can actually consume as a target asset.
+    # A Timeline AnimationClip can contain property curves for a prop, camera
+    # or light. Those curves are realized directly as Unreal Sequencer keys;
+    # they do NOT need an imported Unreal AnimSequence. Only a skeletal
+    # animation track bound to a character, or an audio track, consumes a
+    # separately mapped native target asset. Match csir_plan.build_plan().
     required_asset_ids: set[str] = set()
     for track in csir.get("tracks", []):
-        if not isinstance(track, dict) or track.get("muted") is True:
+        if (not isinstance(track, dict) or track.get("muted") is True
+            or not track.get("sections")):
+            continue
+        track_kind = str(track.get("ced_type") or "")
+        bound = entities.get(str(track.get("binding_entity_id") or ""), {})
+        needs_clip = (
+            track_kind == "animation.track"
+            and bound.get("ced_type") == "entity.character"
+        )
+        needs_audio = track_kind == "audio.track"
+        if not (needs_clip or needs_audio):
             continue
         for section in track.get("sections", []):
             if not isinstance(section, dict):
                 continue
-            aid = str(section.get("payload", {}).get("asset_id") or "")
-            if aid:
-                required_asset_ids.add(aid)
+            asset_id = str(section.get("payload", {}).get("asset_id") or "")
+            if asset_id:
+                required_asset_ids.add(asset_id)
 
     for i, entity in enumerate(csir.get("entities", [])):
         if not isinstance(entity, dict):
