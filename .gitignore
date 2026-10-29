@@ -73,6 +73,9 @@ transfer-plan.json
 coverage-report.json
 evidence.json
 runtime-receipt*.json
+*CED_Preflight*.json
+*ced-preflight*.json
+*ced-discovery*.json
 
 # Large model checkpoints and local scene media should be stored out of Git
 *.ckpt

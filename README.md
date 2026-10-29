@@ -85,6 +85,9 @@ The Unreal generation procedure and safety gates are documented in [Best-Effort 
 
 ## Documentation
 
+- [CED preflight and unknown-element reporting](docs/architecture/CED_FIRST_PREFLIGHT_V0_1.md)
+
+
 - [Documentation Index](docs/INDEX.md) — start here for architecture, workflow and benchmarks.
 - [Project Status and Issues](docs/ISSUES_AND_MILESTONES.md) — twenty tracked conversion gaps and acceptance criteria.
 - [Development Guide](CONTRIBUTING.md) — isolated branches, test requirements, artifact policy.

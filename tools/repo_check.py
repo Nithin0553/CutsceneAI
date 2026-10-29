@@ -56,6 +56,9 @@ def is_generated_artifact(path: str) -> bool:
         or name.endswith(".cinetwin.behavior.json")
         or name.endswith(".cinetwin.sampling-plan.json")
         or name.endswith(".csir.json")
+        or (name.endswith(".json") and any(
+            marker in name for marker in ("ced_preflight", "ced-preflight", "ced-discovery")
+        ))
         or name == ".env"
         or name.startswith(".env.") and name != ".env.example"
     )

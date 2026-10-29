@@ -24,6 +24,10 @@ def test_refuse_generated_artifacts_without_blocking_versioned_specs() -> None:
         "docs/benchmarks/BENCHMARK_001_TARGET_FREEZE_MANIFEST.json"
     )
     assert not repo_check.is_generated_artifact(".env.example")
+    assert repo_check.is_generated_artifact("my-local-ced-preflight-report.json")
+    assert repo_check.is_generated_artifact("Benchmark002_CED_Preflight_V1.json")
+    assert not repo_check.is_generated_artifact("packages/studio/ced_preflight.py")
+    assert not repo_check.is_generated_artifact("tests/studio/test_ced_preflight.py")
 
 
 def test_check_markdown_links_against_original_document_directory(tmp_path: Path) -> None:

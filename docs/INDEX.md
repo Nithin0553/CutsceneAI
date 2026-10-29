@@ -4,6 +4,9 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 
 ## Start here
 
+- [CED-first pre-conversion discovery](architecture/CED_FIRST_PREFLIGHT_V0_1.md)
+
+
 | Question | Read |
 | --- | --- |
 | What works today? | [Project status and transfer issues](ISSUES_AND_MILESTONES.md) |
