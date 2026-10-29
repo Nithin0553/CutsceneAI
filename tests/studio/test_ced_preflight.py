@@ -293,3 +293,82 @@ def test_root_motion_channel_unrelated_custom_property_is_not_auto_classified():
     out = ced_preflight.audit(src, _mapping())
     curves = [x for x in out["findings"] if x["kind"] == "curve"]
     assert all(x["state"] == "NEEDS_EVIDENCE" for x in curves)
+
+
+
+def test_recorded_unity_property_curves_do_not_require_unreal_animation_assets():
+    """Benchmark002's Recorded clips drive prop/camera/light properties, not rigs."""
+    src = _source()
+    src["entities"] = [
+        {"entity_id": "prop", "name": "PROP_MOVING", "ced_type": "entity.prop"},
+        {"entity_id": "cam_b", "name": "CAM_B_Move", "ced_type": "entity.camera"},
+        {"entity_id": "cam_c", "name": "CAM_C_Close", "ced_type": "entity.camera"},
+        {"entity_id": "light", "name": "LIGHT_KEY", "ced_type": "entity.light"},
+        {"entity_id": "character", "name": "CHARACTER_A", "ced_type": "entity.character"},
+    ]
+    clips = ["Recorded", "Recorded (1)", "Recorded (2)", "Recorded (3)"]
+    src["assets"] = [
+        {"asset_id": f"recorded-{idx}", "name": name, "ced_type": "animation.clip",
+         "metadata": {"asset_type": "UnityEngine.AnimationClip"}}
+        for idx, name in enumerate(clips)
+    ] + [{"asset_id": "walk", "name": "A_Walk", "ced_type": "animation.clip"},
+         {"asset_id": "ambience", "name": "Ambience", "ced_type": "audio.asset"}]
+    configurations = [
+        ("animation.track", "prop", "animation.section", "recorded-0"),
+        ("camera.transform", "cam_b", "camera.transform", "recorded-1"),
+        ("camera.transform", "cam_c", "camera.transform", "recorded-2"),
+        ("light.animation", "light", "light.animation", "recorded-3"),
+        ("animation.track", "character", "animation.section", "walk"),
+        ("audio.track", "", "audio.section", "ambience"),
+    ]
+    src["tracks"] = [
+        {
+            "track_id": f"track-{idx}", "ced_type": track_kind,
+            "binding_entity_id": entity_id,
+            "sections": [{
+                "section_id": f"section-{idx}", "ced_type": section_kind,
+                "payload": {"asset_id": asset_id},
+            }],
+        }
+        for idx, (track_kind, entity_id, section_kind, asset_id)
+        in enumerate(configurations)
+    ]
+    mapping = {"assets": {}, "entities": {
+        obj["name"]: {"actor_label": obj["name"] + "UE"}
+        for obj in src["entities"]
+    }}
+    before = copy.deepcopy(src), copy.deepcopy(mapping)
+    result = ced_preflight.audit(src, mapping)
+    failures = [f for f in result["findings"]
+                if f["state"] == "MISSING_TARGET_MAPPING"]
+    assert {f["source_id"] for f in failures} == {"walk", "ambience"}
+    assert not {f["source_id"] for f in failures} & {
+        "recorded-0", "recorded-1", "recorded-2", "recorded-3",
+    }
+    assert (src, mapping) == before
+
+    # Native clips are required for skeletal character and audio tracks.
+    mapping["assets"] = {
+        "A_Walk": "/Game/Animations/A_Walk",
+        "Ambience": "/Game/Audio/Ambience",
+    }
+    resolved = ced_preflight.audit(src, mapping)
+    assert not any(f["state"] == "MISSING_TARGET_MAPPING"
+                   for f in resolved["findings"])
+
+
+def test_unmapped_recorded_asset_still_blocks_if_used_as_skeletal_animation():
+    src = _source()
+    src["assets"] = [{
+        "asset_id": "recorded", "name": "Recorded",
+        "ced_type": "animation.clip",
+    }]
+    src["tracks"][0]["sections"][0]["payload"]["asset_id"] = "recorded"
+    src["tracks"][0]["binding_entity_id"] = "hero"
+    result = ced_preflight.audit(src, {"entities": {
+        "Hero": {"actor_label": "HeroUE"}
+    }, "assets": {}})
+    missing = [f for f in result["findings"]
+               if f["state"] == "MISSING_TARGET_MAPPING"]
+    assert len(missing) == 1
+    assert missing[0]["source_id"] == "recorded"
