@@ -1,5 +1,4 @@
 """Studio transfer-handoff regression tests: no engine, no mutation, no false claims."""
-import copy
 import json
 import sys
 from pathlib import Path
