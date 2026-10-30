@@ -114,6 +114,25 @@ def _source_bone(
     return canonical_to_unreal_cm(bone["world_transform"]["position_m"]), str(bone["bone_id"])
 
 
+def _active_playback_frames(
+    source_frames: dict[int, dict[str, Any]], playback_start: int, playback_end: int,
+) -> tuple[list[int], list[int]]:
+    """Exclude target playback end, which is an exclusive boundary in Sequencer.
+
+    A source CineTwin capture may include the exact sequence end to verify
+    boundary semantics. At that point Unreal evaluation may return the LEVEL
+    default rather than an authored movie-scene pose. It is not a valid active
+    playback frame for pose-error aggregation.
+    """
+    if playback_end <= playback_start:
+        raise ParityDiagnosticError("Target sequence has an invalid playback range.")
+    active = sorted(f for f in source_frames if playback_start <= f < playback_end)
+    excluded = sorted(set(source_frames) - set(active))
+    if not active:
+        raise ParityDiagnosticError("Source and target have no matching active playback frames.")
+    return active, excluded
+
+
 def _summarize(samples: list[dict[str, Any]]) -> dict[str, Any]:
     if not samples:
         return {"status": "NO_MATCHED_POSES", "sample_count": 0}
@@ -266,6 +285,10 @@ def run(
         raise ParityDiagnosticError("Target Level Sequence missing: " + sequence_path)
     if mapping.get("overwrite_sequence") is True:
         raise ParityDiagnosticError("Unsafe mapping requests sequence overwrite.")
+    playback_frames, excluded_boundary_frames = _active_playback_frames(
+        source_frames, int(sequence.get_playback_start()),
+        int(sequence.get_playback_end()),
+    )
 
     actor_list = unreal_api.get_editor_subsystem(
         unreal_api.EditorActorSubsystem
@@ -299,7 +322,7 @@ def run(
     records = {name: {"actor": [], "root_bone": []} for name in target_actors}
     try:
         lib.open_level_sequence(sequence)
-        for frame in sorted(source_frames):
+        for frame in playback_frames:
             sample = source_frames[frame]
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
@@ -328,7 +351,7 @@ def run(
                     "frame": frame, "source_cm": source_bone,
                     "target_cm": _vec(mesh.get_socket_location(bone_name)),
                 })
-            if frame == min(source_frames):
+            if frame == playback_frames[0]:
                 for name, actor in target_actors.items():
                     entity_report[name]["actor_world_cm_frame0"] = _vec(actor.get_actor_location())
                     entity_report[name]["component_info_frame0"] = _component_info(
@@ -369,6 +392,8 @@ def run(
             "mapping_sha256": _sha256(mapping_path),
             "cutscene_id": csir.get("cutscene_id"),
             "source_frames": len(source_frames),
+            "evaluated_playback_frames": len(playback_frames),
+            "excluded_frames_outside_playback": excluded_boundary_frames,
             "missing_source_frames": missing_frames,
             "fps": fps,
         },
@@ -385,6 +410,7 @@ def run(
         "frames": records,
         "errors": errors,
         "limitations": [
+            "The saved Unreal playback end is exclusive; out-of-range source end frames are excluded from error aggregates.",
             "Unreal evaluated editor actor and root-bone poses, not rendered pixels.",
             "Matching bones by normalized name does not verify complete rig parity.",
             "Camera image, audio waveforms, event execution and joint-by-joint pose not tested.",
