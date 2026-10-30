@@ -147,3 +147,30 @@ def test_empty_summary_does_not_claim_fidelity():
     assert diagnosis._summarize([]) == {
         "status": "NO_MATCHED_POSES", "sample_count": 0,
     }
+
+
+def test_active_playback_excludes_end_boundary_and_preserves_src_source_frame():
+    source = {frame: {"time_seconds": frame / 24.0} for frame in range(289)}
+    active, excluded = diagnosis._active_playback_frames(source, 0, 288)
+    assert len(active) == 288
+    assert active[0] == 0 and active[-1] == 287
+    assert excluded == [288]
+    assert 288 in source
+
+
+def test_active_playback_respects_nonzero_start_and_outside_samples():
+    source = {f: {} for f in [0, 2, 3, 4, 5, 6]}
+    active, excluded = diagnosis._active_playback_frames(source, 2, 5)
+    assert active == [2, 3, 4]
+    assert excluded == [0, 5, 6]
+
+
+@pytest.mark.parametrize("start,end", [(4, 4), (6, 2)])
+def test_invalid_playback_range_blocks_metric_generation(start, end):
+    with pytest.raises(diagnosis.ParityDiagnosticError, match="invalid playback"):
+        diagnosis._active_playback_frames({4: {}}, start, end)
+
+
+def test_nonoverlapping_source_target_frames_block_metric_generation():
+    with pytest.raises(diagnosis.ParityDiagnosticError, match="no matching active"):
+        diagnosis._active_playback_frames({288: {}}, 0, 288)
