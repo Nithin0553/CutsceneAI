@@ -154,6 +154,11 @@ def run(
                 task.set_editor_property(key, value)
             mutation_started = True
             unreal_api.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+            imported = task.get_editor_property("imported_object_paths")
+            if target_path not in {str(path).split(".", 1)[0] for path in imported or []}:
+                raise UnrealImportError(
+                    f"Unreal import task did not confirm destination: {target_path}"
+                )
             asset = unreal_api.load_asset(target_path)
             if asset is None or _asset_class(asset) != "SoundWave":
                 raise UnrealImportError(
