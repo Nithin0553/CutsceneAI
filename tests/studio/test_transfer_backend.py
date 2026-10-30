@@ -515,3 +515,121 @@ def test_generic_hierarchy_planner_accepts_only_provenance_checked_child_local_m
     from hierarchy_realization import HierarchyRealizationError
     with pytest.raises(HierarchyRealizationError, match="verified conversion provenance"):
         build_attachment_operations(src, target, [unsafe])
+
+
+def test_capture_world_camera_replaces_locally_compiled_camera_trajectory():
+    src = source()
+    src["tracks"].append({
+        "track_id": "cam:authored", "name": "CameraMove",
+        "ced_type": "camera.transform", "binding_entity_id": "lens",
+        "sections": [{
+            "section_id": "c1", "start": rt(0), "end": rt(2),
+            "source_offset": rt(0), "time_scale": 1.0,
+            "payload": {"animation": {"curves": [{
+                "canonical_semantic": "transform.position.x",
+                "keys": [{"time_seconds": 0, "value": 0},
+                         {"time_seconds": 2, "value": 25}],
+            }]}},
+        }],
+    })
+    cap = fake_capture(src)
+    plan, report = transfer_backend.compose(src, mapping(), capture=cap)
+    camera = [a for a in plan["actions"] if
+              a["kind"] == "transform" and a.get("entity_name") == "CAM"]
+    assert len(camera) == 1
+    assert camera[0]["source_behavior_strategy"] == "verified_cinetwin_camera_world_pose"
+    assert camera[0]["track_name"] == "CutSceneAI Evaluated Camera World Motion"
+    assert camera[0]["keys"][-1]["location_cm"] == [0.0, 150.0, 0.0]
+    assert camera[0]["baked_source_curves"] is True
+    assert report["tracks"][-1]["outcome"] == "BAKED_PARTIAL"
+    assert report["tracks"][-1]["native_action_count"] == 0
+
+
+def test_without_capture_authored_camera_remains_native_unverified():
+    src = source()
+    src["tracks"].append({
+        "track_id": "cam:authored", "name": "CameraMove",
+        "ced_type": "camera.transform", "binding_entity_id": "lens",
+        "sections": [{
+            "section_id": "c1", "start": rt(0), "end": rt(2),
+            "source_offset": rt(0), "time_scale": 1.0,
+            "payload": {"animation": {"curves": [{
+                "canonical_semantic": "transform.position.x",
+                "keys": [{"time_seconds": 0, "value": 0},
+                         {"time_seconds": 2, "value": 25}],
+            }]}},
+        }],
+    })
+    plan, report = transfer_backend.compose(src, mapping())
+    camera = [a for a in plan["actions"] if
+              a["kind"] == "transform" and a.get("entity_name") == "CAM"]
+    assert len(camera) == 1
+    assert camera[0].get("source_behavior_strategy") != "verified_cinetwin_camera_world_pose"
+    assert report["tracks"][-1]["outcome"] == "NATIVE_UNVERIFIED"
+
+
+def test_stationary_animated_character_persists_cinetwin_world_pose_as_transform():
+    src = source()
+    src["assets"].append({"asset_id": "wave", "name": "B_Waving"})
+    src["entities"].append({
+        "entity_id": "b", "name": "B", "ced_type": "entity.character",
+        "metadata": {"world_transform": {
+            "position": {"x": 1.0, "y": 0, "z": -5.0},
+            "rotation": {"x": 0, "y": 0, "z": 0, "w": 1},
+            "scale": {"x": 1, "y": 1, "z": 1},
+        }},
+    })
+    src["tracks"].append({
+        "track_id": "b.wave", "name": "B animation",
+        "ced_type": "animation.track", "binding_entity_id": "b",
+        "sections": [{
+            "section_id": "b1", "start": rt(0), "end": rt(2),
+            "source_offset": rt(0), "time_scale": 1.0,
+            "payload": {"asset_id": "wave", "animation": {"curves": []}},
+        }],
+    })
+    target = mapping()
+    target["entities"]["B"] = {"actor_label": "CharacterB"}
+    target["assets"]["B_Waving"] = "/Game/Animations/B_Waving"
+    cap = fake_capture(src)
+    for sample in cap["samples"]:
+        for pose in sample["entities"]:
+            if pose["entity_id"] == "b":
+                pose["world_transform"]["position_m"] = [1.51705, 0, -5.90216]
+    plan, report = transfer_backend.compose(src, target, capture=cap)
+    b_poses = [a for a in plan["actions"]
+               if a["kind"] == "transform" and a.get("entity_name") == "B"]
+    assert len(b_poses) == 1
+    assert b_poses[0]["source_behavior_strategy"] == (
+        "cinetwin_verified_first_frame_static_actor"
+    )
+    assert b_poses[0]["keys"][0]["location_cm"] == [590.216, 151.705, 0.0]
+    assert sum(a["kind"] == "skeletal_animation" and
+               a.get("entity_name") == "B" for a in plan["actions"]) == 1
+    assert report["no_full_fidelity_claim"] is True
+
+
+def test_moving_animated_character_does_not_get_competing_static_transform():
+    src = source()
+    src["assets"].append({"asset_id": "walk", "name": "Walking"})
+    src["entities"].append({
+        "entity_id": "a", "name": "A", "ced_type": "entity.character",
+    })
+    src["tracks"].append({
+        "track_id": "a.walk", "ced_type": "animation.track",
+        "binding_entity_id": "a",
+        "sections": [{
+            "section_id": "a1", "start": rt(0), "end": rt(2),
+            "source_offset": rt(0), "time_scale": 1.0,
+            "payload": {"asset_id": "walk", "animation": {"curves": []}},
+        }],
+    })
+    target = mapping()
+    target["entities"]["A"] = {"actor_label": "CharacterA"}
+    target["assets"]["Walking"] = "/Game/Animations/Walking"
+    cap = fake_capture(src)
+    plan, report = transfer_backend.compose(src, target, capture=cap)
+    assert not any(a["kind"] == "transform" and
+                   a.get("entity_name") == "A" for a in plan["actions"])
+    assert any(a["kind"] == "skeletal_animation" and
+               a.get("entity_name") == "A" for a in plan["actions"])
