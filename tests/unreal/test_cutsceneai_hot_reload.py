@@ -79,3 +79,17 @@ def test_no_unreal_scene_mutation_calls_in_hot_reload_helper():
     assert "save_loaded_asset" not in source
     assert "delete_asset(" not in source
     assert "build_prepared_files(" not in source
+
+
+
+def test_validation_readback_modules_are_hot_reloaded_in_dependency_order():
+    modules = helper.MODULE_ORDER
+    for name in (
+        "core", "readback_level_sequence", "validation_expectation",
+        "validate_transfer",
+    ):
+        assert name in modules
+    assert modules.index("core") < modules.index("validate_transfer")
+    assert modules.index("readback_level_sequence") < modules.index("validate_transfer")
+    assert modules.index("validation_expectation") < modules.index("validate_transfer")
+    assert modules.index("unreal_compat") < modules.index("readback_level_sequence")
