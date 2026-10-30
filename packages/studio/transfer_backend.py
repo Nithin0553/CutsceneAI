@@ -485,7 +485,9 @@ def compose(
         name = str(entity["name"])
         if (name in already_transformed
             or name not in mapping.get("entities", {})
-            or entity.get("ced_type") == "entity.audio_source"):
+            or entity.get("ced_type") == "entity.audio_source"
+            or (name not in skeletal_entities
+                and not isinstance(entity.get("metadata", {}).get("world_transform"), dict))):
             continue
         # If a verified capture is available it authoritatively distinguishes
         # a nonmoving actor from a moving actor, even when all its animations
