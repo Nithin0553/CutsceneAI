@@ -58,7 +58,7 @@ def test_source_bone_paths_normalize_to_unreal_hips(source):
 def test_source_frame_index_excludes_subframe_transition_samples():
     csir, capture, hash_value = source_pair()
     frames, missing, fps = diagnosis._get_source_index(csir, capture, hash_value)
-    assert list(sorted(frames)) == [0, 1, 2]
+    assert sorted(frames) == [0, 1, 2]
     assert missing == []
     assert fps == 24
     assert frames[1]["time_seconds"] == pytest.approx(1 / 24)
