@@ -165,7 +165,7 @@ def test_wav_import_generates_new_mapping_and_truthful_partial_receipt(tmp_path)
 
 
 def test_source_change_invalidates_manifest_prior_to_import(tmp_path):
-    manifest, path, src, mapping, audio = make_manifest(tmp_path)
+    _manifest, path, src, mapping, audio = make_manifest(tmp_path)
     audio.write_bytes(b"tampered")
     api = FakeAPI(tmp_path / "Target.uproject")
     with pytest.raises(asset_staging.AssetStagingError, match="changed"):
@@ -176,7 +176,7 @@ def test_source_change_invalidates_manifest_prior_to_import(tmp_path):
 
 
 def test_rights_and_wrong_unreal_project_block_before_import(tmp_path):
-    manifest, path, src, mapping, audio = make_manifest(tmp_path)
+    _manifest, path, src, mapping, _audio = make_manifest(tmp_path)
     api = FakeAPI(tmp_path / "Target.uproject")
     with pytest.raises(stage_asset_import.UnrealImportError, match="rights_confirmed"):
         import_run(tmp_path, api, path, src, mapping, rights=False)
@@ -193,7 +193,7 @@ def test_rights_and_wrong_unreal_project_block_before_import(tmp_path):
 
 
 def test_existing_destination_folder_or_asset_blocks_without_mutation(tmp_path):
-    manifest, path, src, mapping, audio = make_manifest(tmp_path)
+    manifest, path, src, mapping, _audio = make_manifest(tmp_path)
     api = FakeAPI(tmp_path / "Target.uproject")
     api.folders.add(manifest["target_folder"])
     with pytest.raises(stage_asset_import.UnrealImportError, match="directory already exists"):
@@ -208,7 +208,7 @@ def test_existing_destination_folder_or_asset_blocks_without_mutation(tmp_path):
 
 
 def test_missing_dependency_blocks_that_import_safely(tmp_path):
-    project, src, mapping, audio = setup_source(tmp_path)
+    project, src, mapping, _audio = setup_source(tmp_path)
     doc = json.loads(src.read_text())
     doc["assets"][0]["metadata"]["dependency_asset_ids"] = ["missing"]
     src.write_text(json.dumps(doc))
@@ -227,7 +227,7 @@ def test_missing_dependency_blocks_that_import_safely(tmp_path):
 
 
 def test_traversal_symlink_or_ambiguous_name_is_never_importable(tmp_path):
-    project, src, mapping, audio = setup_source(tmp_path)
+    project, src, mapping, _audio = setup_source(tmp_path)
     doc = json.loads(src.read_text())
     doc["assets"][0]["metadata"]["asset_path"] = "../secret.wav"
     src.write_text(json.dumps(doc))
@@ -249,7 +249,7 @@ def test_traversal_symlink_or_ambiguous_name_is_never_importable(tmp_path):
 
 
 def test_manifest_and_target_directory_are_immutable(tmp_path):
-    manifest, path, src, mapping, audio = make_manifest(tmp_path)
+    manifest, path, src, mapping, _audio = make_manifest(tmp_path)
     asset_staging.verify_files(manifest, src, mapping)
     with pytest.raises(asset_staging.AssetStagingError, match="overwrite"):
         asset_staging.write_new(path, manifest)
