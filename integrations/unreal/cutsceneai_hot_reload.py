@@ -30,6 +30,10 @@ MODULE_ORDER = (
     "unreal_compat",
     "cinetwin_hierarchy_runtime",
     "transfer_backend",
+    "core",
+    "readback_level_sequence",
+    "validation_expectation",
+    "validate_transfer",
     "build_level_sequence",
 )
 
@@ -67,6 +71,7 @@ def reload_project_python() -> dict[str, object]:
         root / "integrations" / "unreal",
         root / "packages" / "cinetwin",
         root / "packages" / "studio",
+        root / "packages" / "validation",
     ):
         directory_str = str(directory)
         if directory_str not in sys.path:
