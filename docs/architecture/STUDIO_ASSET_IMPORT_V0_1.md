@@ -37,9 +37,11 @@ The editor preflight verifies exact project path, source bytes, manifest, existi
 ## Step 3 — produce a normal verified transfer plan
 
 ~~~powershell
-python tools/studio_transfer.py prepare --csir "D:\source\scene.csir.json" --mapping "D:\session\mapping-imported-v1.json" --out "D:\session\transfer-v1" --target-project "D:\UnrealProject\UnrealProject.uproject"
+python tools/studio_transfer.py prepare --csir "D:\source\scene.csir.json" --mapping "D:\session\mapping-imported-v1.json" --out "D:\session\transfer-v1" --target-project "D:\UnrealProject\UnrealProject.uproject" --asset-manifest "D:\session\assets-import-v1.json" --asset-receipt "D:\session\assets-import-receipt-v1.json" --asset-original-mapping "D:\session\mapping.json"
 python tools/studio_transfer.py verify --out "D:\session\transfer-v1"
 ~~~
+
+Studio now checks that the editor import receipt, original mapping, source WAV hashes and new target mapping are a consistent provenance chain; any later evidence edits block verification. This does not independently prove actual Unreal content persistence or playback.
 
 Now use the existing build_level_sequence.build_prepared_files(...) in the target Unreal Editor using the resulting plan/report/evidence and fresh generation receipt. Validate the saved sequence with independent validate_transfer and CineTwin checks.
 
