@@ -67,6 +67,16 @@ def _scale_error(expected: Iterable[float], actual: Iterable[float]) -> float:
     return _position_error(expected, actual)
 
 
+def _valid_vector(values: Any, length: int) -> bool:
+    """Do not turn an absent, partial or nonfinite measurement into a PASS."""
+    if not isinstance(values, (list, tuple)) or len(values) != length:
+        return False
+    try:
+        return all(math.isfinite(float(value)) for value in values)
+    except (TypeError, ValueError):
+        return False
+
+
 def root_motion_metrics(
     expected: Iterable[float],
     actual: Iterable[float],
@@ -307,50 +317,45 @@ def compare(
                     "Target binding did not provide a canonical world transform.",
                 )
             else:
-                p_error = _position_error(
-                    exp_transform.get("position_m", []),
-                    act_transform.get("position_m", []),
+                # Some saved static Sequencer transforms key location/rotation
+                # but not scale. Validate only the actual independent evidence;
+                # never assume the level's unsaved actor scale is persisted.
+                fields = (
+                    ("position_m", "position", 3, "position_m", _position_error,
+                     "Canonical world-position comparison."),
+                    ("rotation_xyzw", "rotation", 4, "rotation_deg",
+                     quaternion_angle_error_degrees,
+                     "Canonical world-orientation angular error."),
+                    ("scale_xyz", "scale", 3, "scale", _scale_error,
+                     "Canonical scale comparison."),
                 )
-                _check(
-                    checks,
-                    f"spatial.position.{name}",
-                    "SPATIAL",
-                    _status_from_bool(p_error <= tol["position_m"]),
-                    exp_transform.get("position_m"),
-                    act_transform.get("position_m"),
-                    "Canonical world-position comparison.",
-                    error=p_error,
-                )
-
-                r_error = quaternion_angle_error_degrees(
-                    exp_transform.get("rotation_xyzw", [0, 0, 0, 1]),
-                    act_transform.get("rotation_xyzw", [0, 0, 0, 1]),
-                )
-                _check(
-                    checks,
-                    f"spatial.rotation.{name}",
-                    "SPATIAL",
-                    _status_from_bool(r_error <= tol["rotation_deg"]),
-                    exp_transform.get("rotation_xyzw"),
-                    act_transform.get("rotation_xyzw"),
-                    "Canonical world-orientation angular error.",
-                    error=r_error,
-                )
-
-                s_error = _scale_error(
-                    exp_transform.get("scale_xyz", []),
-                    act_transform.get("scale_xyz", []),
-                )
-                _check(
-                    checks,
-                    f"spatial.scale.{name}",
-                    "SPATIAL",
-                    _status_from_bool(s_error <= tol["scale"]),
-                    exp_transform.get("scale_xyz"),
-                    act_transform.get("scale_xyz"),
-                    "Canonical scale comparison.",
-                    error=s_error,
-                )
+                for field, label, length, tolerance, distance, details in fields:
+                    expected_vector = exp_transform.get(field)
+                    actual_vector = act_transform.get(field)
+                    if (not _valid_vector(expected_vector, length)
+                            or not _valid_vector(actual_vector, length)):
+                        _check(
+                            checks,
+                            f"spatial.{label}.{name}",
+                            "SPATIAL",
+                            "INCOMPLETE",
+                            expected_vector,
+                            actual_vector,
+                            f"{details} A complete independent target "
+                            "measurement was not available.",
+                        )
+                        continue
+                    error = distance(expected_vector, actual_vector)
+                    _check(
+                        checks,
+                        f"spatial.{label}.{name}",
+                        "SPATIAL",
+                        _status_from_bool(error <= tol[tolerance]),
+                        expected_vector,
+                        actual_vector,
+                        details,
+                        error=error,
+                    )
 
         exp_camera = exp_binding.get("camera_state")
         if isinstance(exp_camera, Mapping):

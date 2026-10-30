@@ -160,6 +160,40 @@ CineTwin behavior comparison; source features marked SKIPPED must never be
 relabelled PASS. Skeletal bone-equivalence, executable events, waveforms,
 physics and visual parity remain unverified unless tested separately.
 
+## V8 static Sequencer transform readback evidence
+
+The real V8 structural readback reported 46 PASS / 0 FAIL / 3 INCOMPLETE
+(`CAM_A_Wide`, `CAM_C_Close`, `LIGHT_KEY`). The operator independently
+inspected the saved readback JSON: all three actors have a **single frame-0
+transform key**, with position and rotation nearly identical to the source
+expectation. The missing `canonical_world_transform` field was a readback
+representation gap, not proof of missing transform keys.
+
+The revised **generic** target reader recognizes a single, explicitly labeled
+`CutSceneAI Static Scene Pose` track, only when exactly one transform track
+exists, its only key is at frame zero, it has no skeletal animation, and the
+actor has **no attachment parent**. Its persisted Sequencer position/rotation
+keys may then independently satisfy the expected static world position/rotation.
+A moving track with one accidental key, parent-local attachment, or authored
+skeletal track cannot pass by this fallback.
+
+**Scale remains INCOMPLETE:** the existing generator keys only 6 channels
+(location and rotation) in a static transform track. It does not persist scale
+on this specific Sequence track. The reader deliberately does NOT fabricate
+source scale or rely on transient, potentially unsaved editor level state.
+The comparison core now checks every canonical static component separately
+and marks missing/nonfinite position, quaternion or scale measurements
+INCOMPLETE, never PASS.
+
+After pulling this updated Python branch, rerun the **read-only**
+`validate_transfer.run(...)` into a NEW result directory. For V8, the
+expected outcome is six additional PASS position/rotation checks, with
+three scale INCOMPLETE checks, assuming matching actual track labels/actor
+attachment state. Structural readback still cannot establish root/pose
+behavior, camera framing, waveform parity, or visual fidelity. A later
+reusable generator improvement may persist all nine static transform
+channels and independently verify saved level state on a new version.
+
 ## Research scope and roadmap
 
 Implemented now: source coverage ledger; independent native per-track

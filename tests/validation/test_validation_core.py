@@ -382,3 +382,41 @@ def test_skeletal_source_trim_and_easing_are_readback_gates() -> None:
         "animation.ease_in_frames.CHARACTER_Guard",
         "animation.ease_out_frames.CHARACTER_Guard",
     } <= failed
+
+
+
+def test_partially_keyed_static_pose_verifies_position_and_rotation_only() -> None:
+    """Saved Sequencer keys prove 6-DOF, not unkeyed scale or full fidelity."""
+    expected = _snapshot()
+    actual = copy.deepcopy(expected)
+    actor = actual["bindings"][0]
+    actor["canonical_world_transform"] = {
+        "position_m": [0.000000001, -0.1, -5.0],
+        "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+    }
+    actor["canonical_world_transform_provenance"] = (
+        "saved_sequence_single_frame_world_transform_key"
+    )
+    report = core.compare(expected, actual)
+    checks = {item["id"]: item for item in report["checks"]}
+    assert checks["spatial.position.Floor"]["status"] == "PASS"
+    assert checks["spatial.rotation.Floor"]["status"] == "PASS"
+    assert checks["spatial.scale.Floor"]["status"] == "INCOMPLETE"
+    assert report["status"] == "INCOMPLETE"
+    assert report["summary"]["failed"] == 0
+
+
+def test_invalid_or_missing_static_vector_cannot_be_reported_as_pass() -> None:
+    expected = _snapshot()
+    actual = copy.deepcopy(expected)
+    actual["bindings"][0]["canonical_world_transform"] = {
+        "position_m": [],
+        "rotation_xyzw": [float("nan"), 0.0, 0.0, 1.0],
+        "scale_xyz": [8.0, 0.2, 12.0],
+    }
+    report = core.compare(expected, actual)
+    checks = {item["id"]: item for item in report["checks"]}
+    assert checks["spatial.position.Floor"]["status"] == "INCOMPLETE"
+    assert checks["spatial.rotation.Floor"]["status"] == "INCOMPLETE"
+    assert checks["spatial.scale.Floor"]["status"] == "PASS"
+    assert report["status"] == "INCOMPLETE"
