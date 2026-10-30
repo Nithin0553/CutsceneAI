@@ -628,7 +628,7 @@ def test_moving_animated_character_does_not_get_competing_static_transform():
     target["entities"]["A"] = {"actor_label": "CharacterA"}
     target["assets"]["Walking"] = "/Game/Animations/Walking"
     cap = fake_capture(src)
-    plan, report = transfer_backend.compose(src, target, capture=cap)
+    plan, _report = transfer_backend.compose(src, target, capture=cap)
     assert not any(a["kind"] == "transform" and
                    a.get("entity_name") == "A" for a in plan["actions"])
     assert any(a["kind"] == "skeletal_animation" and
