@@ -726,6 +726,7 @@ def validate_runtime_capabilities(required_actions: set[str]) -> None:
     """Fail before target mutation when the runtime clearly lacks required feature classes."""
     required_types = {
         "transform": "MovieScene3DTransformTrack",
+        "skeletal_world_root_lock": "MovieScene3DTransformTrack",
         "skeletal_animation": "MovieSceneSkeletalAnimationTrack",
         "camera_fov": "MovieSceneFloatTrack",
         "light_intensity": "MovieSceneFloatTrack",
