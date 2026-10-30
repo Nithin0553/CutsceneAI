@@ -320,7 +320,36 @@ def compose(
         else:
             try:
                 native_actions = _native_track(csir, mapping, track)
-                if native_actions:
+                if (capture is not None and entity is not None
+                    and entity.get("ced_type") == "entity.camera"
+                    and track.get("ced_type") == "camera.transform"
+                    and entity.get("name") in mapping.get("entities", {})
+                    and any(action.get("kind") == "transform" for action in native_actions)):
+                    # Curves can be editor/parent-local even when they look like
+                    # world motion. A verified CineTwin capture is the source
+                    # ground truth; use its evaluated world camera trajectory,
+                    # keeping native FOV and camera-cut actions independent.
+                    world_keys = _world_keys(csir, capture, entity)
+                    native_actions = [
+                        action for action in native_actions
+                        if action.get("kind") != "transform"
+                    ]
+                    native_actions.append({
+                        "kind": "transform",
+                        "entity_name": entity["name"],
+                        "actor_label": str(mapping["entities"][entity["name"]]["actor_label"]),
+                        "track_name": "CutSceneAI Evaluated Camera World Motion",
+                        "keys": world_keys,
+                        "baked_source_curves": True,
+                        "source_behavior_strategy": "verified_cinetwin_camera_world_pose",
+                    })
+                    status = "BAKED_PARTIAL"
+                    reasons.append(
+                        "Verified CineTwin world-camera trajectory replaces unverified "
+                        "native/local curves; source-sampled world position and orientation "
+                        "only, without image/FOV/render fidelity claim."
+                    )
+                if native_actions and status != "BAKED_PARTIAL":
                     status = "NATIVE_UNVERIFIED"
                     warnings = NATIVE_GAPS.get(str(track.get("ced_type")))
                     if warnings:
@@ -346,7 +375,7 @@ def compose(
                     "Fallback: evaluated actor world transforms only; no "
                     "skeletal joint equivalence, custom property, script or physics guarantee."
                 )
-        if status in {"NATIVE_UNVERIFIED", "NATIVE_PARTIAL"}:
+        if status in {"NATIVE_UNVERIFIED", "NATIVE_PARTIAL", "BAKED_PARTIAL"}:
             additions.extend(native_actions)
         ledger.append({
             "track_index": index,
@@ -356,6 +385,7 @@ def compose(
             "entity_name": entity.get("name", "") if entity else "",
             "source_section_count": len(track.get("sections", [])),
             "native_action_count": len(native_actions) if status in {"NATIVE_UNVERIFIED", "NATIVE_PARTIAL"} else 0,
+            "source_baked_action_count": len(native_actions) if status == "BAKED_PARTIAL" else 0,
             "outcome": status,
             "details": reasons,
         })
@@ -438,35 +468,79 @@ def compose(
                 and action["kind"] in {"transform", "camera_fov", "light_intensity"}
                 for action in plan["actions"]
             )
-    # Preserve static actors as native Sequencer poses whenever their CSIR
-    # includes an authoritative world transform. A cutscene may contain only
-    # static actors or camera cuts; those are valid supported source semantics.
-    already_animated = {
+    # An actor that plays a skeletal animation is not necessarily an actor
+    # whose WORLD origin moves: skeletal motion can be entirely within its bones.
+    # Persist source-authored static scene poses even for animated characters
+    # (e.g. a stationary waving actor), rather than relying only on level actor
+    # mutation, which is not reliably serialized as Sequencer animation.
+    already_transformed = {
         str(a["entity_name"]) for a in plan["actions"]
-        if a.get("entity_name") and a["kind"] in {"transform", "skeletal_animation"}
+        if a.get("entity_name") and a["kind"] == "transform"
+    }
+    skeletal_entities = {
+        str(a["entity_name"]) for a in plan["actions"]
+        if a.get("entity_name") and a["kind"] == "skeletal_animation"
     }
     for entity in csir.get("entities", []):
-        if (entity["name"] in already_animated
-            or entity["name"] not in mapping.get("entities", {})
-            or not isinstance(entity.get("metadata", {}).get("world_transform"), dict)):
+        name = str(entity["name"])
+        if (name in already_transformed
+            or name not in mapping.get("entities", {})
+            or entity.get("ced_type") == "entity.audio_source"):
             continue
+        # If a verified capture is available it authoritatively distinguishes
+        # a nonmoving actor from a moving actor, even when all its animations
+        # are skeletal. Do not add a competing static transform track to a
+        # dynamically moving character with root-motion corrections.
+        captured = None
+        if capture is not None:
+            observed_world = _world_keys(csir, capture, entity)
+            first_world = observed_world[0]["location_cm"]
+            movement_cm = max(
+                math.dist(first_world, key["location_cm"])
+                for key in observed_world
+            )
+            if movement_cm > 0.1:
+                if name in skeletal_entities:
+                    continue
+                # An unmapped dynamic actor would need source-world motion,
+                # not a single static frame. Do not falsely mark it static.
+                plan["actions"].append({
+                    "kind": "transform", "entity_name": name,
+                    "actor_label": str(mapping["entities"][name]["actor_label"]),
+                    "track_name": "CutSceneAI Evaluated World Motion",
+                    "keys": observed_world, "baked_source_curves": True,
+                    "source_behavior_strategy": "captured_untracked_world_motion",
+                })
+                continue
+            captured = observed_world[0]
+        elif name in skeletal_entities:
+            # Without evaluated evidence, a native root-motion animation may
+            # require a moving actor; do not install a competing static track.
+            continue
+
         operation = scene_prep._world_transform(
-            entity, str(mapping["entities"][entity["name"]]["actor_label"])
+            entity, str(mapping["entities"][name]["actor_label"])
         )
-        if operation is None:
+        if operation is None and captured is None:
             continue
-        pitch, yaw, roll = operation["rotation_pitch_yaw_roll_degrees"]
-        plan["actions"].append({
-            "kind": "transform", "entity_name": entity["name"],
-            "actor_label": operation["actor_label"],
-            "track_name": "CutSceneAI Static Scene Pose",
-            "keys": [{
+        if captured is not None:
+            key = captured
+            strategy = "cinetwin_verified_first_frame_static_actor"
+        else:
+            pitch, yaw, roll = operation["rotation_pitch_yaw_roll_degrees"]
+            key = {
                 "frame": 0,
                 "location_cm": list(operation["location_cm"]),
                 "rotation_rpy_degrees": [roll, pitch, yaw],
-            }],
+            }
+            strategy = "source_static_world_pose"
+        plan["actions"].append({
+            "kind": "transform", "entity_name": name,
+            "actor_label": str(mapping["entities"][name]["actor_label"]),
+            "track_name": "CutSceneAI Static Scene Pose",
+            "keys": [key],
             "baked_source_curves": False,
-            "source_behavior_strategy": "source_static_world_pose",
+            "source_behavior_strategy": strategy,
         })
     hierarchy_results: list[dict[str, Any]] = []
     if bool(mapping.get("enable_cinetwin_hierarchy", False)):
