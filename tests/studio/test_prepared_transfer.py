@@ -99,6 +99,17 @@ def test_unsafe_target_and_strict_ced_block_without_creating_folder(tmp_path):
     valid = json.loads(mapping.read_text())
     valid["sequence_asset_path"] = "/Game/Studio/LS_New"
     mapping.write_text(json.dumps(valid), encoding="utf-8")
+    source_doc = json.loads(src.read_text())
+    source_doc["tracks"].append({
+        "ced_type": "timeline.track", "track_id": "unknown-native-track",
+        "metadata": {"native_type": "CustomUnknownTrack"},
+        "sections": [{"ced_type": "timeline.clip",
+                      "native_payload": {"native_asset_type": "UnrecognizedClip"},
+                      "start": {"value": 0, "rate": {"numerator": 1, "denominator": 1}},
+                      "end": {"value": 1, "rate": {"numerator": 1, "denominator": 1}},
+                      "payload": {}}],
+    })
+    src.write_text(json.dumps(source_doc), encoding="utf-8")
     with pytest.raises(prepared_transfer.PreparedTransferError, match="strict transfer"):
         prepared_transfer.prepare(src, mapping, tmp_path / "strict", strict_ced=True)
     assert not (tmp_path / "strict").exists()
