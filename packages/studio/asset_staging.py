@@ -147,6 +147,8 @@ def discover(
         elif kind == "audio.asset" and Path(path).suffix.lower() == ".wav":
             if source_file is None:
                 status, reason = "MISSING_SOURCE_FILE", file_reason
+            elif source_file.open("rb").read(12)[:4] != b"RIFF" or source_file.open("rb").read(12)[8:12] != b"WAVE":
+                status, reason = "UNSUPPORTED_WAV_CONTAINER", "Expected a native RIFF/WAVE header."
             else:
                 status, reason = "READY_WAV_IMPORT", "Requires explicit rights confirmation and editor check."
                 stem = re.sub(r"[^A-Za-z0-9_]", "_", Path(path).stem).strip("_")[:40] or "Audio"
