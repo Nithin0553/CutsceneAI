@@ -29,6 +29,9 @@ def main(argv: list[str] | None = None) -> int:
     prepare.add_argument("--target-project", type=Path)
     prepare.add_argument("--case-store", type=Path)
     prepare.add_argument("--strict-ced", action="store_true")
+    prepare.add_argument("--asset-manifest", type=Path)
+    prepare.add_argument("--asset-receipt", type=Path)
+    prepare.add_argument("--asset-original-mapping", type=Path)
     prepare.add_argument("--out", type=Path, required=True)
     verify = actions.add_parser("verify", help="Read-only verification of existing prepared handoff")
     verify.add_argument("--out", type=Path, required=True)
@@ -42,6 +45,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.csir, args.mapping, args.out, capture_path=args.capture,
                 target_project=args.target_project, case_store=args.case_store,
                 strict_ced=args.strict_ced,
+                asset_manifest_path=args.asset_manifest,
+                asset_receipt_path=args.asset_receipt,
+                asset_original_mapping_path=args.asset_original_mapping,
             )
             print("[CutSceneAI Studio] PREPARED HANDOFF: GENERATED, NOT EXECUTED")
         print("[CutSceneAI Studio] Session:", record["session_id"])

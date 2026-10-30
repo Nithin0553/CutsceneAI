@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import asset_staging
 import case_memory
 import transfer_backend
 
@@ -41,6 +42,67 @@ def _identity(source: str, mapping: str, capture: str | None, target: str | None
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:20]
 
 
+
+def _check_asset_import(
+    source_file: Path,
+    new_mapping_file: Path,
+    target_project: str | None,
+    manifest_file: Path,
+    receipt_file: Path,
+    original_mapping_file: Path,
+) -> dict[str, Any]:
+    """Bind engine import evidence to the exact unchanged inputs, without claiming fidelity."""
+    if target_project is None:
+        raise PreparedTransferError("Target project is required when attaching import evidence.")
+    manifest = asset_staging.read_json(manifest_file)
+    receipt = asset_staging.read_json(receipt_file)
+    if manifest.get("kind") != "cutsceneai.studio.asset_import_manifest":
+        raise PreparedTransferError("Unexpected asset import manifest type.")
+    if (receipt.get("kind") != "cutsceneai.unreal.asset_import_receipt"
+        or receipt.get("stage") != "complete"
+        or receipt.get("status") not in {"IMPORTED_PARTIAL", "IMPORTED_UNVERIFIED"}
+        or receipt.get("behavioral_fidelity_verified") is not False
+        or receipt.get("source_assets_modified") is not False):
+        raise PreparedTransferError("Asset import was not a completed, unverified engine receipt.")
+    asset_staging.verify_files(manifest, source_file, original_mapping_file)
+    if (receipt.get("manifest_sha256") != _sha(manifest_file)
+        or receipt.get("source_csir_sha256") != _sha(source_file)
+        or receipt.get("resolved_mapping_sha256") != _sha(new_mapping_file)):
+        raise PreparedTransferError("Asset receipt mismatches manifest, source or resolved mapping.")
+    if Path(str(receipt.get("target_project") or "")).resolve() != Path(target_project).resolve():
+        raise PreparedTransferError("Asset import was for a different Unreal project.")
+    original = asset_staging.read_json(original_mapping_file)
+    proposed = asset_staging.read_json(new_mapping_file)
+    expected = json.loads(json.dumps(original))
+    expected.setdefault("assets", {})
+    rows = [row for row in manifest["assets"] if row["status"] == "READY_WAV_IMPORT"]
+    observed = {
+        str(row["asset_id"]): row for row in receipt.get("imported", [])
+        if isinstance(row, dict) and row.get("asset_id")
+    }
+    if len(observed) != len(receipt.get("imported", [])) or set(observed) != {
+        row["asset_id"] for row in rows
+    }:
+        raise PreparedTransferError("Asset receipt lacks exact imported source IDs.")
+    for row in rows:
+        record = observed[row["asset_id"]]
+        if (record.get("status") != "IMPORTED_NATIVE_UNVERIFIED"
+            or record.get("source_sha256") != row["source_sha256"]
+            or record.get("target_asset_path") != row["target_asset_path"]
+            or record.get("target_class") != "SoundWave"):
+            raise PreparedTransferError("Imported asset provenance differs from source manifest.")
+        expected["assets"][row["name"]] = row["target_asset_path"]
+    if proposed != expected:
+        raise PreparedTransferError("Resolved mapping was not produced solely by verified imports.")
+    return {
+        "manifest_path": str(manifest_file), "manifest_sha256": _sha(manifest_file),
+        "receipt_path": str(receipt_file), "receipt_sha256": _sha(receipt_file),
+        "original_mapping_path": str(original_mapping_file),
+        "original_mapping_sha256": _sha(original_mapping_file),
+        "imported_count": len(rows), "status": receipt["status"],
+        "behavioral_fidelity_verified": False,
+    }
+
 def prepare(
     csir_path: str | Path,
     mapping_path: str | Path,
@@ -50,6 +112,9 @@ def prepare(
     target_project: str | Path | None = None,
     case_store: str | Path | None = None,
     strict_ced: bool = False,
+    asset_manifest_path: str | Path | None = None,
+    asset_receipt_path: str | Path | None = None,
+    asset_original_mapping_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Make a new, checkable engine handoff; fail before creating any output on preflight errors."""
     source_file = Path(csir_path).resolve()
@@ -91,6 +156,18 @@ def prepare(
     mapping_hash = _sha(mapping_file)
     capture_hash = _sha(capture_file) if capture_file is not None else None
     target_name = str(Path(target_project).resolve()) if target_project is not None else None
+    import_inputs = (asset_manifest_path, asset_receipt_path, asset_original_mapping_path)
+    if any(value is not None for value in import_inputs) and not all(
+        value is not None for value in import_inputs
+    ):
+        raise PreparedTransferError("All three asset import evidence files are required together.")
+    import_evidence = None
+    if all(value is not None for value in import_inputs):
+        import_evidence = _check_asset_import(
+            source_file, mapping_file, target_name,
+            Path(asset_manifest_path).resolve(), Path(asset_receipt_path).resolve(),
+            Path(asset_original_mapping_path).resolve(),
+        )
     docs = {
         "transfer-plan.json": plan,
         "coverage-report.json": report,
@@ -119,6 +196,7 @@ def prepare(
         "ced_preflight": report["ced_preflight_status"],
         "track_coverage": report["outcomes"],
         "learning_case_count": len(proposals),
+        "asset_import": import_evidence,
         "learning_applied": False,
         "asset_import_executed": False,
         "engine_generation_executed": False,
@@ -156,6 +234,15 @@ def verify(output_dir: str | Path) -> dict[str, Any]:
         capture["sha256"] if capture else None, target.get("project_path"),
     ):
         raise PreparedTransferError("Session identity mismatch.")
+    attached = session.get("asset_import")
+    if attached is not None:
+        refreshed = _check_asset_import(
+            src_path, map_path, target.get("project_path"),
+            Path(attached["manifest_path"]), Path(attached["receipt_path"]),
+            Path(attached["original_mapping_path"]),
+        )
+        if refreshed != attached:
+            raise PreparedTransferError("Linked asset import provenance changed.")
     for name, expected in session["artifact_sha256"].items():
         if name not in {
             "transfer-plan.json", "coverage-report.json", "evidence.json", "suggestions.json"
