@@ -17,7 +17,7 @@ def setup_source(tmp_path, *, unsupported=False):
     project = tmp_path / "UnityProject"
     audio = project / "Assets" / "Sfx" / "whoosh.wav"
     audio.parent.mkdir(parents=True)
-    audio.write_bytes(b"RIFF" + b"\x00" * 48 + b"WAVE")
+    audio.write_bytes(b"RIFF" + (40).to_bytes(4, "little") + b"WAVE" + b"\x00" * 40)
     assets = [{
         "asset_id": "asset:a1", "name": "Whoosh", "ced_type": "audio.asset",
         "source_ref": "unity-asset:a1", "metadata": {
@@ -79,6 +79,9 @@ class FakeTask:
     def set_editor_property(self, key, value):
         self.properties[key] = value
 
+    def get_editor_property(self, key):
+        return self.properties.get(key)
+
 
 class FakeLibrary:
     def __init__(self, api):
@@ -105,6 +108,7 @@ class FakeToolset:
             assert props["replace_existing_settings"] is False
             path = props["destination_path"] + "/" + props["destination_name"]
             self.api.objects[path] = FakeSound()
+            task.set_editor_property("imported_object_paths", [path + "." + props["destination_name"]])
 
 
 class FakeAPI:
@@ -259,3 +263,12 @@ def test_manifest_and_target_directory_are_immutable(tmp_path):
                 src, mapping, source_project=tmp_path / "UnityProject",
                 target_folder=bad,
             )
+
+
+def test_invalid_wav_header_is_not_native_import_candidate(tmp_path):
+    project, src, mapping, audio = setup_source(tmp_path)
+    audio.write_bytes(b"not a valid wave file")
+    manifest = asset_staging.compose_files(
+        src, mapping, source_project=project, target_folder="/Game/Studio/Fresh"
+    )
+    assert manifest["status_counts"] == {"UNSUPPORTED_WAV_CONTAINER": 1}
