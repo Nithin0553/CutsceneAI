@@ -35,6 +35,7 @@ if str(CINETWIN_DIR) not in sys.path:
     sys.path.insert(0, str(CINETWIN_DIR))
 
 import cinetwin_hierarchy_runtime
+import cinetwin_root_world_lock
 import hierarchy_realization
 import transfer_readiness
 import csir_plan
@@ -45,6 +46,7 @@ importlib.reload(csir_plan)
 importlib.reload(scene_prep)
 importlib.reload(unreal_compat)
 importlib.reload(cinetwin_hierarchy_runtime)
+importlib.reload(cinetwin_root_world_lock)
 importlib.reload(hierarchy_realization)
 
 
@@ -124,6 +126,7 @@ def _preflight(plan: dict[str, Any]) -> None:
     needs_linear_keys = any(
         a.get("kind") == "light_intensity"
         or bool(a.get("baked_source_curves"))
+        or a.get("kind") == "skeletal_world_root_lock"
         for a in plan.get("actions", [])
     )
     if needs_easing:
@@ -773,6 +776,11 @@ def _build_prepared_plan(
         )
 
     _preflight(plan)
+    root_lock_actions = [
+        action for action in plan["actions"]
+        if action["kind"] == "skeletal_world_root_lock"
+    ]
+    root_lock_names = {action["entity_name"] for action in root_lock_actions}
     # Level actors are shared scene state. Restore their world poses if any
     # construction step fails; do not leave partly placed cameras/characters.
     previous_poses = {
@@ -806,8 +814,12 @@ def _build_prepared_plan(
                     action,
                     existing_track=skeletal_tracks.get(cache_key),
                 )
-                if action.get("root_motion_correction_samples"):
+                if (action.get("root_motion_correction_samples")
+                    and action.get("entity_name") not in root_lock_names):
                     root_corrections.append(action)
+            elif kind == "skeletal_world_root_lock":
+                # Realized after source animation sections are built.
+                pass
             elif kind == "camera_setup":
                 _apply_camera_setup(bindings[action["entity_name"]]["actor"], action)
             elif kind == "camera_fov":
@@ -842,6 +854,23 @@ def _build_prepared_plan(
             )
 
         _add_camera_cuts(sequence, camera_cuts, bindings)
+        if root_lock_actions:
+            try:
+                root_tracks = cinetwin_root_world_lock.prepare_corrections(
+                    sequence, root_lock_actions, bindings, unreal
+                )
+            except cinetwin_root_world_lock.UnrealRootWorldLockError as exc:
+                raise UnrealBuildError(str(exc)) from exc
+            for correction in root_tracks:
+                _add_transform(
+                    sequence, bindings[correction["entity_name"]]["binding"],
+                    correction,
+                )
+                unreal.log_warning(
+                    "[CutSceneAI] Source-observed skeletal world root compensation "
+                    "created for " + correction["entity_name"]
+                    + "; independently validate actual target bone trajectory."
+                )
         unreal.EditorAssetLibrary.save_loaded_asset(sequence)
         unreal.LevelSequenceEditorBlueprintLibrary.open_level_sequence(sequence)
         unreal.LevelSequenceEditorBlueprintLibrary.refresh_current_level_sequence()
