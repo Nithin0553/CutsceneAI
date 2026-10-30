@@ -308,7 +308,48 @@ def _transform_track(track: Any) -> dict[str, Any] | None:
                 "rotation_xyzw": canonical["rotation_xyzw"],
             }
         )
-    return {"kind": "transform", "keys": keys}
+    result = {"kind": "transform", "keys": keys}
+    # Static pose is an actual saved Sequencer key, not a transient actor pose.
+    # Preserve its authored track identity so the validator can distinguish it
+    # from a dynamic track that happens to contain one key.
+    if _track_display_name(track) == "CutSceneAI Static Scene Pose":
+        result["track_name"] = "CutSceneAI Static Scene Pose"
+    return result
+
+
+def _static_world_pose_from_keyed_track(
+    tracks: list[dict[str, Any]], actor: Any,
+) -> dict[str, Any] | None:
+    """Read 6-DOF static world pose from ONE saved, labelled frame-zero track.
+
+    It is not safe to reinterpret a local/attached or generic transform as a
+    static world pose. The generator only keys position/rotation (not scale),
+    so scale is intentionally absent and remains INCOMPLETE in validation.
+    """
+    parent_getter = getattr(actor, "get_attach_parent_actor", None)
+    if not callable(parent_getter) or parent_getter() is not None:
+        return None
+    if any(track.get("kind") == "skeletal_animation" for track in tracks):
+        return None
+    transforms = [t for t in tracks if t.get("kind") == "transform"]
+    if len(transforms) != 1:
+        return None
+    track = transforms[0]
+    if track.get("track_name") != "CutSceneAI Static Scene Pose":
+        return None
+    keys = track.get("keys", [])
+    if len(keys) != 1 or keys[0].get("frame") != 0:
+        return None
+    key = keys[0]
+    position = key.get("position_m")
+    rotation = key.get("rotation_xyzw")
+    if (not isinstance(position, list) or len(position) != 3
+            or not isinstance(rotation, list) or len(rotation) != 4):
+        return None
+    return {
+        "position_m": list(position),
+        "rotation_xyzw": list(rotation),
+    }
 
 
 def _asset_path(value: Any) -> str:
@@ -752,6 +793,18 @@ def readback(
         )
         if not has_transform_track and not has_skeletal_track:
             record["canonical_world_transform"] = _canonical_actor_transform(actor)
+        elif has_transform_track and not has_skeletal_track:
+            # Purely source-derived static pose tracks are saved on the sequence
+            # and can be validated independently of current editor scrubbing.
+            # Do not synthesize unkeyed scale from an unsaved level actor.
+            static_pose = _static_world_pose_from_keyed_track(
+                record["tracks"], actor
+            )
+            if static_pose is not None:
+                record["canonical_world_transform"] = static_pose
+                record["canonical_world_transform_provenance"] = (
+                    "saved_sequence_single_frame_world_transform_key"
+                )
 
         if isinstance(actor, (unreal.CameraActor, unreal.CineCameraActor)):
             record["camera_state"] = _camera_state(actor, target_aspect)
