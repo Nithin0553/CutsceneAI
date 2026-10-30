@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 for folder in ("packages/studio", "integrations/unreal"):
     sys.path.insert(0, str(ROOT / folder))
 
-import root_world_lock
 import cinetwin_root_world_lock
+import root_world_lock
 
 
 def fixture():
