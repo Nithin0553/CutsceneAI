@@ -21,6 +21,7 @@ import sampling_plan
 import scene_prep
 import hierarchy_local
 import ced_preflight
+import root_world_lock
 
 NATIVE_GAPS = {
     "event.trigger": "Preserves event timestamp/identity as a marked frame, NOT executable payload.",
@@ -566,6 +567,54 @@ def compose(
                         "parent-local evaluated actor motion; skeletal/rig "
                         "and visual equivalence not verified."
                     )
+
+    # Explicitly opted-in, target-editor-evaluated skeletal-root world alignment.
+    # Only emit a candidate when the source rig root has meaningful observed
+    # world travel. Static waving characters retain their single scene pose.
+    # Root correction is applied in Unreal AFTER the skeletal sections are
+    # built; it is not a claim about retargeted joint animation parity.
+    if mapping.get("enable_cinetwin_skeletal_world_lock", False):
+        if capture is None:
+            raise TransferBackendError(
+                "Skeletal world lock requires source-authenticated CineTwin capture."
+            )
+        for entity in csir.get("entities", []):
+            name = str(entity["name"])
+            if name not in skeletal_entities or name not in mapping.get("entities", {}):
+                continue
+            try:
+                root_plan = root_world_lock.source_root_world_keys(csir, capture, entity)
+            except root_world_lock.RootWorldLockError as exc:
+                raise TransferBackendError(f"Source skeletal root cannot be locked for {name}: {exc}") from exc
+            if root_plan["source_root_excursion_cm"] < 25.0:
+                continue
+            if any(a["kind"] == "transform" and a.get("entity_name") == name
+                   for a in plan["actions"]):
+                raise TransferBackendError(
+                    f"Skeletal world lock for {name} conflicts with an authored actor "
+                    "transform; cannot safely combine independent motion owners."
+                )
+            # An attached actor needs parent-local correction and cannot be
+            # independently world-locked by this restricted v0.1 feature.
+            if entity.get("parent_entity_id") and any(
+                parent.get("entity_id") == entity["parent_entity_id"]
+                and parent.get("name") in mapping.get("entities", {})
+                for parent in csir.get("entities", [])
+            ):
+                raise TransferBackendError(
+                    f"Attached character {name} requires parent-local root-motion correction."
+                )
+            plan["actions"].append({
+                "kind": "skeletal_world_root_lock",
+                "entity_name": name,
+                "actor_label": str(mapping["entities"][name]["actor_label"]),
+                "root_source_bone_id": root_plan["root_source_bone_id"],
+                "root_bone_alias": root_plan["root_bone_alias"],
+                "source_root_excursion_cm": root_plan["source_root_excursion_cm"],
+                "keys": root_plan["keys"],
+                "source_behavior_strategy": "source_observed_skeletal_world_root_and_target_editor_calibration",
+                "fidelity_status": "ROOT_POSITION_ONLY_UNVERIFIED",
+            })
 
     if not plan["actions"]:
         raise TransferBackendError(
