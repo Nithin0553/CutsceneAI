@@ -182,7 +182,34 @@ def test_queue_requires_alive_editor_and_immutable_handoff(tmp_path, monkeypatch
     bridge.atomic_json(work / 'unreal-worker.json', {
         'heartbeat': datetime.now(timezone.utc).isoformat(), 'project': config['target_project'], 'level': config['level_path']
     })
-    # With explicit editor heartbeat, a new job is queued but not claimed completed.
+    # Valid editor heartbeat is insufficient when its scene is missing actors.
+    with pytest.raises(ValueError, match='Destination not ready'):
+        bridge.queue_trial(candidate_id, work)
+    import hashlib
+    bridge.atomic_json(work / 'active-candidate.json', {
+        'candidate_id': candidate_id, 'sequence_path': '/Game/Trials/LS_New'
+    })
+    (folder / 'transfer-plan.json').write_text('{}')
+    bridge.atomic_json(work / 'destination-readiness.json', {
+        'kind': 'cutsceneai.studio.destination_readiness',
+        'checked_at': datetime.now(timezone.utc).isoformat(),
+        'candidate_id': candidate_id, 'sequence_path': '/Game/Trials/LS_New',
+        'plan_sha256': hashlib.sha256((folder / 'transfer-plan.json').read_bytes()).hexdigest(),
+        'expected_project': config['target_project'], 'observed_project': config['target_project'],
+        'expected_level': config['level_path'], 'observed_level': config['level_path'],
+        'status': 'SCENE_SETUP_REQUIRED', 'ready': False, 'missing_actors': [{'actor_label':'CSAI_Test_CAM_A'}],
+        'next_action': 'Create the required actors.'
+    })
+    with pytest.raises(ValueError, match='missing actors'):
+        bridge.queue_trial(candidate_id, work)
+    valid = bridge.load_json(work / 'destination-readiness.json')
+    valid['status'] = 'READY'
+    valid['ready'] = True
+    valid['missing_actors'] = []
+    valid['next_action'] = 'Ready.'
+    bridge.atomic_json(work / 'destination-readiness.json', valid)
+    assert bridge.destination_readiness(work)['ready'] is True
+    # With a verified ready-scene report, a new job can now be queued.
     result = bridge.queue_trial(candidate_id, work)
     assert result['status'] == 'QUEUED'
     job = bridge.job_status(result['job_id'], work)
@@ -302,3 +329,49 @@ def test_review_flags_expose_cross_namespace_and_unverified_audio():
     assert bridge.review_flags({'base_sequence':'/Game/Tests/LS_Demo',
                                 'level_path':'/Game/Tests/L_Target'},
                                {'audio':0}) == []
+
+
+def test_readiness_refuses_stale_or_different_candidate(tmp_path):
+    from datetime import datetime, timezone, timedelta
+    import hashlib
+    cfg = fixture_files(tmp_path)
+    work = tmp_path / 'runs'
+    work.mkdir(parents=True)
+    bridge.atomic_json(work / 'connection.json', bridge.config_check(cfg))
+    cid = '20261031T123456Z_aaaabbbb'
+    folder = work / 'candidates' / cid
+    folder.mkdir(parents=True)
+    plan = folder / 'transfer-plan.json'
+    plan.write_text('{"actions":[]}', encoding='utf-8')
+    bridge.atomic_json(work / 'active-candidate.json', {'candidate_id':cid, 'sequence_path':'/Game/New'})
+    bridge.atomic_json(work / 'unreal-worker.json', {'heartbeat':datetime.now(timezone.utc).isoformat(),
+                                                  'project':cfg['target_project'],'level':cfg['level_path']})
+    report = {'kind':'cutsceneai.studio.destination_readiness',
+              'candidate_id':cid, 'sequence_path':'/Game/New',
+              'plan_sha256':hashlib.sha256(plan.read_bytes()).hexdigest(),
+              'expected_project':cfg['target_project'], 'observed_project':cfg['target_project'],
+              'expected_level':cfg['level_path'], 'observed_level':cfg['level_path'],
+              'checked_at':datetime.now(timezone.utc).isoformat(), 'ready':True,'status':'READY'}
+    bridge.atomic_json(work / 'destination-readiness.json', report)
+    assert bridge.destination_readiness(work)['ready'] is True
+    report['candidate_id'] = 'different'
+    bridge.atomic_json(work / 'destination-readiness.json', report)
+    assert bridge.destination_readiness(work)['status'] == 'CHECKING'
+    report['candidate_id'] = cid
+    report['checked_at'] = (datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat()
+    bridge.atomic_json(work / 'destination-readiness.json', report)
+    assert bridge.destination_readiness(work)['status'] == 'CHECKING'
+    report['checked_at'] = datetime.now(timezone.utc).isoformat()
+    bridge.atomic_json(work / 'destination-readiness.json', report)
+    plan.write_text('{"actions":["tampered"]}', encoding='utf-8')
+    assert bridge.destination_readiness(work)['status'] == 'CHECKING'
+
+
+def test_status_exposes_readiness_before_generate(service):
+    base, tmp = service
+    cfg = fixture_files(tmp)
+    token=call(base+'/api/status')[1]['token']
+    assert call(base+'/api/connect',cfg,token)[0]==200
+    status, data=call(base+'/api/status')
+    assert status==200 and data['destination_readiness']['ready'] is False
+    assert data['destination_readiness']['status']=='WAITING_FOR_PLAN'

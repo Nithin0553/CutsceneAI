@@ -7,6 +7,7 @@ immutable prepared transfers. All Unreal calls stay on the editor tick thread.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sys
 import time
@@ -78,6 +79,15 @@ def _execute(job):
         raise RuntimeError('Prepared evidence does not match submitted job.')
     if prepared['target']['sequence_asset_path'] != job['sequence_path']:
         raise RuntimeError('Sequence identity mismatch.')
+    # Last-second check: an actor may have been removed after the UI approved
+    # this job. Report a setup state, not a failed engine generation.
+    _update_destination_readiness()
+    latest = _load(WORKSPACE / 'destination-readiness.json')
+    if latest.get('candidate_id') != job['candidate_id'] or not latest.get('ready'):
+        job['status'] = 'BLOCKED_SETUP'
+        job['error'] = 'Destination setup changed: ' + str(latest.get('next_action', 'Inspect target scene.'))
+        job['generation_status'] = 'NOT_STARTED'
+        return job
     import build_level_sequence
     result = build_level_sequence.build_prepared_files(
         job['csir'], job['mapping'], str(candidate_dir / 'transfer-plan.json'),
@@ -115,6 +125,69 @@ def _execute(job):
     return job
 
 
+
+def _update_destination_readiness():
+    """Inspect the loaded editor and candidate; never create an actor/asset."""
+    active = WORKSPACE / 'active-candidate.json'
+    report_file = WORKSPACE / 'destination-readiness.json'
+    if not active.is_file():
+        report_file.unlink(missing_ok=True)
+        return
+    info = _load(active)
+    candidate_id = str(info['candidate_id'])
+    candidate_dir = (WORKSPACE / 'candidates' / candidate_id).resolve()
+    if not candidate_dir.is_relative_to((WORKSPACE / 'candidates').resolve()):
+        raise RuntimeError('Unsafe candidate path in destination readiness.')
+    plan_path = candidate_dir / 'transfer-plan.json'
+    plan_bytes = plan_path.read_bytes()
+    plan = json.loads(plan_bytes.decode('utf-8-sig'))
+    connection = _load(WORKSPACE / 'connection.json')
+    # Use the same project's paths as job execution and never trust a stale
+    # report for a different candidate or a different editor session.
+    project = _loaded_project()
+    level = _loaded_level()
+    matches_project = os.path.normcase(os.path.abspath(project)) == os.path.normcase(os.path.abspath(connection['target_project']))
+    matches_level = level == connection['level_path']
+    lookup = []
+    for actor in unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_all_level_actors():
+        class_name = actor.get_class().get_name()
+        if actor.get_component_by_class(unreal.SkeletalMeshComponent) is not None:
+            kind = 'skeletal'
+        elif actor.get_component_by_class(unreal.CineCameraComponent) is not None or class_name == 'CameraActor':
+            kind = 'camera'
+        elif class_name in ('PointLight', 'SpotLight', 'DirectionalLight'):
+            kind = 'light'
+        else:
+            kind = 'actor'
+        lookup.append({'label': str(actor.get_actor_label()), 'kind': kind})
+    asset_paths = {
+        str(a.get('unreal_asset_path')) for a in plan.get('actions', [])
+        if a.get('kind') in ('skeletal_animation', 'audio')
+        and a.get('unreal_asset_path')
+    }
+    registry = {}
+    for asset in sorted(asset_paths):
+        exists = bool(unreal.EditorAssetLibrary.does_asset_exist(asset))
+        loaded = unreal.load_asset(asset) if exists else None
+        registry[asset] = {'exists': exists, 'class_name': str(loaded.get_class().get_name()) if loaded else ('UNLOADABLE' if exists else '')}
+    import studio_destination_preflight as dp
+    output = dp.assess(
+        plan, lookup, registry,
+        sequence_exists=bool(unreal.EditorAssetLibrary.does_asset_exist(str(plan['sequence_asset_path']))),
+        project_matches=matches_project, level_matches=matches_level,
+    )
+    output.update({
+        'candidate_id': candidate_id,
+        'sequence_path': str(plan['sequence_asset_path']),
+        'plan_sha256': hashlib.sha256(plan_bytes).hexdigest(),
+        'expected_project': str(connection['target_project']),
+        'expected_level': str(connection['level_path']),
+        'observed_project': project, 'observed_level': level,
+        'checked_at': _now(),
+    })
+    _save(report_file, output)
+
+
 def _tick(_delta):
     global LAST_TICK, BUSY
     if BUSY or time.monotonic() - LAST_TICK < 1.0:
@@ -124,8 +197,13 @@ def _tick(_delta):
         WORKSPACE.mkdir(parents=True, exist_ok=True)
         _save(WORKSPACE / 'unreal-worker.json', {
             'heartbeat': _now(), 'project': _loaded_project(),
-            'level': _loaded_level(), 'worker': 'studio-editor-v0.1'
+            'level': _loaded_level(), 'worker': 'studio-editor-v0.2'
         })
+        try:
+            _update_destination_readiness()
+        except Exception as readiness_error:
+            (WORKSPACE / 'destination-readiness.json').unlink(missing_ok=True)
+            unreal.log_warning('[CutSceneAI Studio] Destination inspection unavailable: ' + str(readiness_error))
         jobs_folder = WORKSPACE / 'jobs'
         if not jobs_folder.is_dir():
             return

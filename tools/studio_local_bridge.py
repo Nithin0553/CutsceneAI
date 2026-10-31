@@ -7,6 +7,7 @@ Actual Unreal work runs separately in the Unreal editor bridge worker.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import secrets
@@ -116,10 +117,61 @@ def worker_connected(folder: Path = WORKSPACE) -> dict[str, Any]:
         data = load_json(marker)
         tick = datetime.fromisoformat(str(data['heartbeat']).replace('Z', '+00:00'))
         age = (datetime.now(timezone.utc) - tick).total_seconds()
-        return {'connected': 0 <= age < 8, 'project': data.get('project'), 'level': data.get('level'), 'age_seconds': round(age, 1)}
+        return {'connected': 0 <= age < 8, 'project': data.get('project'), 'level': data.get('level'), 'worker_version': data.get('worker'), 'age_seconds': round(age, 1)}
     except (ValueError, KeyError, OSError):
         return {'connected': False}
 
+
+
+def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
+    """Accept only a fresh Unreal-side preflight for the exact immutable plan.
+
+    Without it, UI generation stays disabled and queue_trial refuses to submit.
+    This rejects stale reports after reconnecting, repreparing, changing plan
+    content, switching levels, or stopping Unreal Editor.
+    """
+    candidate_file = folder / 'active-candidate.json'
+    if not candidate_file.is_file():
+        return {'status': 'WAITING_FOR_PLAN', 'ready': False,
+                'next_action': 'Prepare a transfer plan first.'}
+    worker = worker_connected(folder)
+    if not worker.get('connected'):
+        return {'status': 'WAITING_FOR_UNREAL', 'ready': False,
+                'next_action': 'Open the selected Unreal level and start the editor companion.'}
+    if worker.get('worker_version') == 'studio-editor-v0.1':
+        return {'status': 'UPGRADE_COMPANION', 'ready': False,
+                'next_action': 'Restart Unreal Editor and start the updated v0.4 Studio companion.'}
+    candidate = load_json(candidate_file)
+    connected = load_json(folder / 'connection.json')
+    candidate_id = str(candidate.get('candidate_id') or '')
+    if not candidate_id.isascii() or not candidate_id.replace('_', '').isalnum():
+        return {'status': 'CHECKING', 'ready': False, 'next_action': 'Prepare a valid candidate.'}
+    plan_file = folder / 'candidates' / candidate_id / 'transfer-plan.json'
+    report_file = folder / 'destination-readiness.json'
+    pending = {'status': 'CHECKING', 'ready': False,
+               'next_action': 'Checking actors and imported assets in the loaded Unreal level.'}
+    if not plan_file.is_file() or not report_file.is_file():
+        return pending
+    try:
+        report = load_json(report_file)
+        stamp = datetime.fromisoformat(str(report['checked_at']).replace('Z', '+00:00'))
+        age = (datetime.now(timezone.utc) - stamp).total_seconds()
+        if not 0 <= age < 8 or report.get('kind') != 'cutsceneai.studio.destination_readiness':
+            return pending
+        if report.get('candidate_id') != candidate_id or report.get('sequence_path') != candidate.get('sequence_path'):
+            return pending
+        if report.get('plan_sha256') != hashlib.sha256(plan_file.read_bytes()).hexdigest():
+            return pending
+        if (os.path.normcase(str(report.get('expected_project', ''))) != os.path.normcase(connected['target_project'])
+            or report.get('expected_level') != connected['level_path']):
+            return pending
+        if (os.path.normcase(str(report.get('observed_project', ''))) != os.path.normcase(connected['target_project'])
+            or report.get('observed_level') != connected['level_path']):
+            return {'status': 'WRONG_TARGET', 'ready': False,
+                    'next_action': 'Open the connected Unreal project and selected level.'}
+        return report
+    except (KeyError, ValueError, OSError, TypeError):
+        return pending
 
 
 def review_flags(config: dict[str, Any], action_counts: dict[str, int]) -> list[str]:
@@ -201,6 +253,7 @@ def prepare(folder: Path = WORKSPACE) -> dict[str, Any]:
             'behavioral_fidelity_established': False, 'source_capture_available': bool(config.get('capture')),
             'action_counts': action_counts, 'action_total': len(actions)}
     atomic_json(folder / 'active-candidate.json', info)
+    (folder / 'destination-readiness.json').unlink(missing_ok=True)
     (folder / 'active-job.json').unlink(missing_ok=True)
     return info
 
@@ -233,6 +286,13 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     if (os.path.normcase(str(heartbeat.get('project') or '')) != os.path.normcase(config['target_project'])
         or heartbeat.get('level') != config['level_path']):
         raise ValueError('Unreal worker is connected to a different project or level.')
+    readiness = destination_readiness(folder)
+    if not readiness.get('ready'):
+        issue = str(readiness.get('next_action') or 'Destination setup is incomplete.')
+        missing = len(readiness.get('missing_actors') or [])
+        assets = len(readiness.get('missing_assets') or [])
+        details = (f' ({missing} missing actors, {assets} missing assets)' if missing or assets else '')
+        raise ValueError('Destination not ready' + details + ': ' + issue)
     for old_job in (folder / 'jobs').glob('*.json') if (folder / 'jobs').is_dir() else []:
         if load_json(old_job).get('candidate_id') == candidate_id:
             raise ValueError('This candidate was already submitted; inspect its job instead of replaying it.')
@@ -384,6 +444,7 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                                         'repo_root': str(ROOT), 'token': TOKEN, 'connected': cfg.is_file(),
                                         'connection': load_json(cfg) if cfg.is_file() else None,
                                         'unreal_worker': worker_connected(folder),
+                                        'destination_readiness': destination_readiness(folder),
                                         'candidate': load_json(folder / 'active-candidate.json') if (folder / 'active-candidate.json').is_file() else None,
                                         'active_job': load_json(folder / 'active-job.json').get('job_id') if (folder / 'active-job.json').is_file() else None,
                                         'observation': load_json(folder / 'attached-observation.json') if (folder / 'attached-observation.json').is_file() else None,
@@ -431,7 +492,7 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                                 raise ValueError('Cannot change connections while an Unreal job is queued or running.')
                         result = config_check(data)
                         atomic_json(folder / 'connection.json', result)
-                        for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json'):
+                        for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json', 'destination-readiness.json'):
                             (folder / name).unlink(missing_ok=True)
                     elif route == '/api/prepare':
                         result = prepare(folder)
