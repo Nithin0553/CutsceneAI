@@ -128,7 +128,7 @@ def test_prepared_summary_tampering_is_detected(tmp_path):
 
 def test_prepared_hashes_survive_windows_text_mode_newline_translation(tmp_path, monkeypatch):
     # Simulate how Windows translates LF to CRLF for a text stream that
-    # omits newline="\\n". The prepared handoff hashes canonical LF bytes.
+    # omits newline="\n". The prepared handoff hashes canonical LF bytes.
     src, mapping = fixture_files(tmp_path)
     out = tmp_path / "win_candidate"
     original_open = Path.open
@@ -136,7 +136,7 @@ def test_prepared_hashes_survive_windows_text_mode_newline_translation(tmp_path,
     def windows_open(self, mode="r", buffering=-1, encoding=None,
                      errors=None, newline=None):
         if self.parent == out and mode == "x" and newline is None:
-            newline = "\\r\\n"
+            newline = "\r\n"
         return original_open(self, mode=mode, buffering=buffering,
                              encoding=encoding, errors=errors, newline=newline)
 
@@ -145,7 +145,7 @@ def test_prepared_hashes_survive_windows_text_mode_newline_translation(tmp_path,
     assert prepared_transfer.verify(out) == session
     for name, expected in session["artifact_sha256"].items():
         data = (out / name).read_bytes()
-        assert b"\\r\\n" not in data
+        assert b"\r\n" not in data
         assert prepared_transfer._sha(out / name) == expected
 
 
@@ -155,8 +155,8 @@ def test_crlf_rewriting_is_detected_not_silently_normalized(tmp_path):
     prepared_transfer.prepare(src, mapping, out)
     path = out / "coverage-report.json"
     original = path.read_bytes()
-    assert b"\\n" in original
-    path.write_bytes(original.replace(b"\\n", b"\\r\\n"))
+    assert b"\n" in original
+    path.write_bytes(original.replace(b"\n", b"\r\n"))
     with pytest.raises(prepared_transfer.PreparedTransferError,
                        match="coverage-report.json"):
         prepared_transfer.verify(out)
