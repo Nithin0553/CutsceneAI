@@ -208,7 +208,7 @@ def prepare(
     # Explicit 'x' creates fail closed on accidental races, rather than modifying artifacts.
     out.mkdir(parents=True, exist_ok=False)
     for name, doc in {**docs, "session.json": session}.items():
-        with (out / name).open("x", encoding="utf-8") as handle:
+        with (out / name).open("x", encoding="utf-8", newline="\n") as handle:
             handle.write(_serialize(doc))
     return session
 
