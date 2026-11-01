@@ -170,3 +170,16 @@ def test_incomplete_generation_receipt_cannot_be_claimed_saved(tmp_path):
     with pytest.raises(AUDIT.PersistenceAuditError, match="completed engine generation"):
         AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
     assert not (candidate / "audit.json").exists()
+
+
+def test_unreal_sequence_extensions_can_supply_readback_counts(tmp_path):
+    _root, jobfile, candidate, fake, assets, _actors = fixture(tmp_path)
+    assets["/Game/Testing/LS_New"] = Asset("LevelSequence", expose_tracks=False)
+    fake.MovieSceneSequenceExtensions = NS(
+        get_bindings=lambda sequence: [object(), object()],
+        get_tracks=lambda sequence: [object()],
+    )
+    result = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert result["status"] == "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
+    assert result["sequence"]["binding_count"] == 2
+    assert result["sequence"]["root_track_count"] == 1
