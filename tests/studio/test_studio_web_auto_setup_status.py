@@ -37,3 +37,10 @@ def test_unapproved_or_stale_setup_is_not_reported_as_ready():
 def test_new_auto_level_is_supported_only_with_connected_project():
     assert "c?.auto_create_level && d.status==='NEW_LEVEL_REQUIRED'" in APP
     assert "w.connected&&normPath(w.project)===normPath(c?.target_project)" in APP
+
+
+def test_previous_staging_does_not_advertise_reimport_after_import_failure():
+    assert "const alreadyStaged=state.job?.setup_status==='SETUP_SAVED_UNVERIFIED'" in APP
+    assert "recoverableReadinessImportFailure" in APP
+    assert "RECOVER_SEQUENCE_AFTER_READINESS_IMPORT.md" in APP
+    assert "state.job?.generation_status==='GENERATED_UNVERIFIED'" in APP
