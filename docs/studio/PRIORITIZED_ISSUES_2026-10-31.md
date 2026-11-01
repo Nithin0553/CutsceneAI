@@ -65,3 +65,10 @@ The first local editor experiment must retain: `automatic-setup.json`, `automati
 ## Git workflow
 
 The branch `feature/studio-ui-connected-v0.3` is the current working surface for Studio patches, not a mandate to blindly merge its 195-commit draft stack into `main`. Preserve the existing 13 open PRs while later reconciling dependencies/SHAs carefully. Develop the next P0 change as a focused commit, run Python + JavaScript + hygiene CI, report the commit, and only then have the user `git pull` and test the Unreal Editor companion.
+
+## Latest completed gate: saved native structure (2026-10-31 local test)
+
+The user ran the post-reopen native audit and reported:
+`native_structure_status=PASS`; imported saved assets **18/18**, unique correctly typed mapped actors **10/10**, target level saved, LevelSequence saved, **12 sequence bindings** and **3 root tracks**. This verifies the native package/class/actor inventory for the current run, **not** all source tracks, performance, source/target runtime motion, or semantic parity. Two older setup receipt identifiers remain missing (`setup_receipt.target_sequence` and `setup_receipt.target_namespace`), so provenance remains `INCOMPLETE_LEGACY_RECEIPT`. Issues #54/#55 retain other acceptance criteria, including independently authored cases and complete per-feature evidence.
+
+**Current next gate:** [#62 hierarchy persistence](https://github.com/Nithin0553/CutsceneAI/issues/62), using the read-only [Unreal hierarchy audit](POST_REOPEN_HIERARCHY_AUDIT.md). It compares direct actor parenting, socket and component mobility against authoritative Unity CSIR source IDs. Any unresolved intermediate transforms are `INCOMPLETE` and feed [#68](https://github.com/Nithin0553/CutsceneAI/issues/68). Actual CineTwin source-aligned world motion remains a separate [#72](https://github.com/Nithin0553/CutsceneAI/issues/72) acceptance gate. Mock CI for this audit: **508 passed, 7 skipped**; no native hierarchy result yet.
