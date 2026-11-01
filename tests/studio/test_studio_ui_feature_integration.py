@@ -111,6 +111,12 @@ def test_incomplete_census_may_be_reviewed_but_not_strictly_misrepresented(tmp_p
     opt = feat.source_surfaces(config)["options"][0]
     assert opt["state"] == "REVIEW_REQUIRED"
     assert opt["unresolved_components"] == 1
+    assert opt["unresolved_findings"] == [{
+        "native_type": "Vendor.CustomFX",
+        "object_path": "Root/CAM_A",
+        "scene_path": "Assets/Benchmark002.unity",
+        "state": "NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED",
+    }]
     with pytest.raises(ValueError, match="Strict source census"):
         feat.validate_options(config, {
             "source_feature_surface_path": str(census), "require_complete_source_features": True,
@@ -236,5 +242,7 @@ def test_source_ui_static_wiring_and_benchmark_guidance():
                  "enable_actor_visibility_fallback", "strict-source-census",
                  "source_feature_surface_path", "copy-audit-command",
                  "Benchmark002 regression", "2/2 direct",
-                 "Inspect all", "Declared scalar property mappings"):
+                 "Inspect all", "Declared scalar property mappings",
+                 "unresolved_findings", "exact source objects",
+                 "Best-effort mode selected", "Strict mode will block"):
         assert part in app
