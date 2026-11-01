@@ -455,3 +455,39 @@ def test_automatic_studio_preparation_requests_safe_hierarchy_reconstruction(tmp
     result = bridge.prepare(work)
     assert result["engine_generation_executed"] is False
     assert Path(config["mapping"]).read_bytes() == original
+
+
+def test_source_only_studio_candidate_uses_hierarchy_enabled_mapping_copy(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    config = fixture_files(tmp_path)
+    config.pop("capture")
+    unity = tmp_path / "Unity"
+    (unity / "Assets").mkdir(parents=True)
+    config["unity_project"] = str(unity)
+    config["source_scope"] = "Assets"
+    work = tmp_path / "runs"
+    bridge.atomic_json(work / "connection.json", bridge.config_check(config))
+    original = Path(config["mapping"]).read_bytes()
+    observed = {}
+
+    def fake_prepared(csir, copied_mapping, output, *, target_project):
+        mapping = json.loads(Path(copied_mapping).read_text(encoding="utf-8"))
+        observed["hierarchy"] = mapping.get("enable_cinetwin_hierarchy")
+        assert mapping["overwrite_sequence"] is False
+        assert mapping["sequence_asset_path"].startswith("/Game/Trials/LS_BenchmarkV8_STUDIO_")
+        output.mkdir(parents=True)
+        (output / "transfer-plan.json").write_text(json.dumps({
+            "sequence_asset_path": mapping["sequence_asset_path"],
+            "bindings": {}, "actions": [],
+        }))
+        return {"ced_preflight": "REVIEW_REQUIRED",
+                "track_coverage": {"NATIVE_UNVERIFIED": 1}}
+
+    monkeypatch.setitem(sys.modules, "prepared_transfer",
+                        SimpleNamespace(prepare=fake_prepared))
+    result = bridge.prepare(work)
+    assert observed["hierarchy"] is True
+    assert result["engine_generation_executed"] is False
+    assert Path(config["mapping"]).read_bytes() == original
