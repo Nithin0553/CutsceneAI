@@ -150,7 +150,7 @@ def test_prop_mesh_staged_as_static_mesh_when_source_is_identified(tmp_path):
     assert any(a['kind']=='StaticMesh' for a in receipt['assets_imported'])
 
 
-def test_mp3_source_imports_directly_without_ffmpeg(tmp_path, monkeypatch):
+def test_mp3_source_imports_directly_without_ffmpeg(tmp_path):
     root, files=create(tmp_path, missing_audio=True)
     (root/'Assets'/'Benchmark002'/'Audio'/'Cue.mp3').write_bytes(b'ID3'+bytes(20))
     stage=studio_auto_assets.inspect(*files,root,'Assets/Benchmark002',

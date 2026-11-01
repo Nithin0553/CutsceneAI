@@ -201,7 +201,7 @@ def test_identical_png_duplicates_are_deduplicated_without_blocking(tmp_path):
     nested = originals / 'Textures'
     copied.mkdir()
     nested.mkdir()
-    raw = b'\\x89PNG\\r\\n\\x1a\\n' + b'one-pixel-fixture'
+    raw = b'\x89PNG\r\n\x1a\n' + b'one-pixel-fixture'
     one = copied / 'Ch26_1001_Diffuse.png'
     two = nested / 'Ch26_1001_Diffuse.png'
     one.write_bytes(raw)
@@ -224,7 +224,7 @@ def test_duplicate_texture_drift_invalidates_prepared_manifest(tmp_path):
     first=chars/'Textures'/'Ch26_1001_Diffuse.png'
     second=chars/'Ch26_nonPBR.fbm'/'Ch26_1001_Diffuse.png'
     first.parent.mkdir();second.parent.mkdir()
-    valid=b'\\x89PNG\\r\\n\\x1a\\n'+b'common-texture'
+    valid=b'\x89PNG\r\n\x1a\n'+b'common-texture'
     first.write_bytes(valid);second.write_bytes(valid)
     result=auto.inspect(*files,root,'Assets','/Game/CutSceneAI/AutoTransfer/T_ABCD')
     assert result['ready']
