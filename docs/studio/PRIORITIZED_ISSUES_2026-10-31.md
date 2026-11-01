@@ -1,0 +1,66 @@
+# CutSceneAI Studio — prioritized GitHub issue queue (2026-10-31)
+
+This is the active **issue-triage and execution order**, not a statement that all features work. The 22 previously open technical issues remain open after a title/body audit; their acceptance criteria require missing implementation and/or actual Unreal runtime evidence. A passing mock-based Python CI suite or functioning browser UI does **not** satisfy those requirements. New issue #84 tracks safe recovery from partial native imports.
+
+## Current evidence baseline
+
+- Integrated working branch: `feature/studio-ui-connected-v0.3` (known-good preceding triage: `cc9c079`; GitHub CI: 475 passed, 7 external-evidence tests skipped; JavaScript, lint, repository hygiene passed).
+- `main` is behind the integrated Studio development branch; neither the draft PR chain nor Benchmark001 is merged/rewritten by this triage.
+- Latest user observation: the Studio frontend is functional and a read-only automatic preparation plan lists 18 source file imports and 10 actor creations; **actual native import/generation has not yet been demonstrated for this latest Studio trial**. Distinguish existing Benchmark002 V8 runtime evidence from the newer Studio flow.
+- Source project and frozen Benchmark001 remain read-only. Do not overwrite existing target Level Sequences or delete in-use Unreal UObjects.
+
+## Priority definitions
+
+**P0 — next supported end-to-end run and correctness gate.** A bug here prevents or invalidates first real source-backed transfer or safe recovery.
+
+**P1 — semantic fidelity, learning and generalization.** Begin once a real target can be built, saved, reopened and audited; can run in parallel when independently testable.
+
+**P2 — advanced feature extension.** Keep tracked, but do not block the first demonstrable research-quality vertical slice.
+
+## P0 — execute in this dependency order
+
+| Order | Issue | Immediate deliverable / gate |
+|---|---|---|
+| 1 | [#84 — Safe interrupted-import recovery](https://github.com/Nithin0553/CutsceneAI/issues/84) | Fail closed before native mutation; durable partial-operation receipt; no blind replay. Mock tests first, engine proof to close. |
+| 2 | [#55 — CUT-02 Asset/actor mapping](https://github.com/Nithin0553/CutsceneAI/issues/55) | Run authentic 18-source-file/10-actor preparation in backed-up Unreal 5.8; prove native assets, skeleton/type checks and exact source mappings. |
+| 3 | [#54 — CUT-01 Level Sequence persistence](https://github.com/Nithin0553/CutsceneAI/issues/54) | Run prepared sequence builder, Save All, close/reopen, independently read back native data, attach logs/hashes. |
+| 4 | [#62 — CUT-09 Hierarchy persistence](https://github.com/Nithin0553/CutsceneAI/issues/62) | Verify attachments, actor mobility and source/target hierarchy after Unreal restart. |
+| 5 | [#68 — CUT-15 Source hierarchy coverage](https://github.com/Nithin0553/CutsceneAI/issues/68) | Classify all 19 unbound source records as helper/component/rig/semantic actor and report required missing behavior explicitly. |
+| 6 | [#72 — CUT-19 Independent validator](https://github.com/Nithin0553/CutsceneAI/issues/72) | CineTwin source-target aligned observations, per-feature metrics and required-domain PASS/FAIL/INCOMPLETE. |
+| ongoing | [#80 — Studio master release checklist](https://github.com/Nithin0553/CutsceneAI/issues/80) | Track complete vertical slice, trustworthy verified case-memory loop, held-out experiment and paper-ready evidence. |
+
+## P1 — next fidelity and research work (rough dependency order)
+
+| Issue | Target |
+|---|---|
+| [#74 CED-01](https://github.com/Nithin0553/CutsceneAI/issues/74) | Full CED-first discovery/versioned policy for unknown/custom elements and partial actions |
+| [#61 CUT-08](https://github.com/Nithin0553/CutsceneAI/issues/61) | Moving-parent/child world-motion and attachment validation |
+| [#56 CUT-03](https://github.com/Nithin0553/CutsceneAI/issues/56) | Rendered character placement versus actor/component/root |
+| [#57 CUT-04](https://github.com/Nithin0553/CutsceneAI/issues/57) | Root-motion ownership, orientation and trajectory |
+| [#63 CUT-10](https://github.com/Nithin0553/CutsceneAI/issues/63) | Camera world pose, movement and framing |
+| [#59 CUT-06](https://github.com/Nithin0553/CutsceneAI/issues/59) | Skeletal blends/transitions and final-pose hold |
+| [#60 CUT-07](https://github.com/Nithin0553/CutsceneAI/issues/60) | Weighted/overlapping transform curves |
+| [#69 CUT-16](https://github.com/Nithin0553/CutsceneAI/issues/69) | Sequencer exclusive-end frame timing |
+| [#66 CUT-13](https://github.com/Nithin0553/CutsceneAI/issues/66) | Real WAV/MP3, audio section timing/fade/loop/mix verification |
+| [#70 CUT-17](https://github.com/Nithin0553/CutsceneAI/issues/70) | Materials, texture bindings, exposure and visual pipeline differences |
+| [#58 CUT-05](https://github.com/Nithin0553/CutsceneAI/issues/58) | Explicit rig compatibility and retargeting |
+| [#64 CUT-11](https://github.com/Nithin0553/CutsceneAI/issues/64) | Lens/filmback and measured composition parity |
+| [#73 CUT-20](https://github.com/Nithin0553/CutsceneAI/issues/73) | Generalization on independent/held-out Unity projects and research evaluation |
+
+## P2 — extend after P0/P1 baseline
+
+| Issue | Target |
+|---|---|
+| [#65 CUT-12](https://github.com/Nithin0553/CutsceneAI/issues/65) | Photometric light curve/rendered shadow equivalence |
+| [#67 CUT-14](https://github.com/Nithin0553/CutsceneAI/issues/67) | Safe executable signals/event payload semantics |
+| [#71 CUT-18](https://github.com/Nithin0553/CutsceneAI/issues/71) | Physics, constraints, sockets and nondeterministic simulation |
+
+## Closure policy and evidence contract
+
+Do not close based on: mock-only tests, source-inventory presence, planned action support, a green UI, a saved `.uasset` without reopen, or merely having a corresponding draft PR. A completed technical issue must link an exact tested implementation commit, reproducible input fingerprint, a target Unreal project/version, a saved/reopened generated target (when applicable), an independent readback or behavioral result, and all its acceptance items. Mark unsupported items INCOMPLETE or BLOCKED; never suppress them to create a false PASS.
+
+The first local editor experiment must retain: `automatic-setup.json`, `automatic-setup-receipt-*.json`, native asset-class/actor-label inventory, `transfer-plan.json`, `coverage-report.json`, `evidence.json`, native generation receipt, independently reopened readback report, and CineTwin sample comparison where present. Do not upload copyrighted third-party game assets to issues.
+
+## Git workflow
+
+The branch `feature/studio-ui-connected-v0.3` is the current working surface for Studio patches, not a mandate to blindly merge its 195-commit draft stack into `main`. Preserve the existing 13 open PRs while later reconciling dependencies/SHAs carefully. Develop the next P0 change as a focused commit, run Python + JavaScript + hygiene CI, report the commit, and only then have the user `git pull` and test the Unreal Editor companion.
