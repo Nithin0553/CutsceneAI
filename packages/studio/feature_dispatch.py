@@ -149,6 +149,24 @@ def recipe(semantic: str, *, features: Mapping[str, Any] | None = None) -> dict[
     }
 
 
+
+def verify_executable_actions(plan: Mapping[str, Any]) -> None:
+    """Reject unknown builder actions before an Unreal Editor mutation starts."""
+    actions = plan.get("actions")
+    if not isinstance(actions, list):
+        raise FeatureDispatchError("Transfer plan requires a list of native actions.")
+    for position, row in enumerate(actions):
+        if not isinstance(row, dict):
+            raise FeatureDispatchError("Invalid native action at index " + str(position))
+        kind = row.get("kind")
+        if kind not in BUILDER_ACTIONS:
+            raise FeatureDispatchError(
+                "No executable Unreal builder handler for action " + str(kind) +
+                " at index " + str(position) +
+                "; register/implement its target adapter before generation."
+            )
+
+
 def _source_rows(csir: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Inventory assets, entities, tracks, sections, channels, relationships.
 
