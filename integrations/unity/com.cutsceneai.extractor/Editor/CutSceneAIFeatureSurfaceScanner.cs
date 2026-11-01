@@ -114,23 +114,29 @@ namespace CutsceneAI.UnityExtractor
                     continue;
                 foreach (var root in scene.GetRootGameObjects())
                 {
-                    foreach (var component in root.GetComponentsInChildren<Component>(true))
+                    // Iterate source GameObjects first so even null/missing
+                    // MonoBehaviour components are recorded against the correct
+                    // child path, not incorrectly attributed to the scene root.
+                    foreach (var transform in root.GetComponentsInChildren<Transform>(true))
                     {
-                        var absent = component == null;
-                        var go = absent ? root : component.gameObject;
-                        data.loaded_scene_components.Add(new SceneComponent
+                        var go = transform.gameObject;
+                        foreach (var component in go.GetComponents<Component>())
                         {
-                            scene_path = scene.path,
-                            object_path = HierarchyPath(go.transform),
-                            global_object_id = GlobalObjectId.GetGlobalObjectIdSlow(go).ToString(),
-                            component_type = absent ? "MISSING_MONOBEHAVIOUR_SCRIPT" :
-                                component.GetType().FullName,
-                            component_assembly = absent ? "" :
-                                component.GetType().Assembly.GetName().Name,
-                            component_global_id = absent ? "" :
-                                GlobalObjectId.GetGlobalObjectIdSlow(component).ToString(),
-                            missing_script = absent,
-                        });
+                            var absent = component == null;
+                            data.loaded_scene_components.Add(new SceneComponent
+                            {
+                                scene_path = scene.path,
+                                object_path = HierarchyPath(go.transform),
+                                global_object_id = GlobalObjectId.GetGlobalObjectIdSlow(go).ToString(),
+                                component_type = absent ? "MISSING_MONOBEHAVIOUR_SCRIPT" :
+                                    component.GetType().FullName,
+                                component_assembly = absent ? "" :
+                                    component.GetType().Assembly.GetName().Name,
+                                component_global_id = absent ? "" :
+                                    GlobalObjectId.GetGlobalObjectIdSlow(component).ToString(),
+                                missing_script = absent,
+                            });
+                        }
                     }
                 }
             }
