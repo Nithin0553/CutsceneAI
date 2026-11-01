@@ -220,8 +220,11 @@ class HandlerRegistry:
                  name: str, version: str,
                  requires: tuple[str, ...] = ("SOURCE", "PLAN", "NATIVE_READBACK", "BEHAVIOR")
                  ) -> None:
-        if semantic not in self.features["_domain_for"]:
-            raise FeatureDispatchError("Register CED semantic before an engine handler: " + semantic)
+        # Plugins may introduce new namespaced CED semantics without requiring
+        # a source-project dictionary rewrite. Registration is explicit,
+        # never inferred from an arbitrary source payload.
+        if not re.fullmatch(r"[a-z][a-z0-9_]*\.[a-z0-9_]+", semantic):
+            raise FeatureDispatchError("Handler must use a namespaced CED semantic: " + semantic)
         if semantic in self.handlers:
             raise FeatureDispatchError("Duplicate handler for CED semantic: " + semantic)
         if not callable(handler) or not name.strip() or not version.strip():
