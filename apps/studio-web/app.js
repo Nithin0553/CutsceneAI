@@ -121,6 +121,10 @@
     const scanCmd=`import sys; sys.path.insert(0, r"${root}/integrations/unreal"); import studio_feature_surface as sf; sf.save_latest()`;
     return `<section class="panel pad"><div class="section-head"><h2>CED &amp; feature discovery</h2>${statusLabel('NOT PARITY-VERIFIED','warning')}</div>
       ${item('CED catalog',cap.catalog_version||'Loading…')}${item('Feature families',size(cap.feature_families))}${item('Recognized semantic elements',size(cap.semantic_elements))}${item('Native action kinds',size(cap.builder_actions?.length))}
+      ${item('Declared scalar property mappings',size(current.scalar_property_mapping_count))}
+      <details><summary>Inspect all ${size(cap.feature_families)} CED families and adapter gaps</summary>
+      ${(cap.families||[]).map(row=>item(row.id.replaceAll('_',' '),`${size(row.semantic_count)} concepts · ${size(row.native_action_candidates)} candidate actions · unverified`)).join('')}
+      </details>
       <div class="rule"></div><h3>Unity feature census</h3><p class="hint">In Unity: Tools → CutsceneAI → Discover Installed Feature Surface. Then refresh.</p>
       <label class="field"><span>Source-project census</span><select name="source-census"><option value="">No census — legacy extraction only</option>${options.map(o=>`<option value="${esc(o.path)}" ${state.selectedCensus===o.path?'selected':''}>${esc(o.name)} · ${esc(o.state)} · ${size(o.unresolved_components)} gaps</option>`).join('')}</select></label>
       ${scan.reason?`<p class="hint">${esc(scan.reason)}</p>`:''}${selected?`<p class="hint">Source identity: ${selected.project_identity_proven?'confirmed':'unproven'} · scoped components: ${size(selected.scoped_components)} · unresolved: ${size(selected.unresolved_components)}</p>`:''}

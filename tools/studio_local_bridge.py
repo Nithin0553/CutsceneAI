@@ -124,7 +124,9 @@ def config_check(payload: dict[str, Any]) -> dict[str, Any]:
             'source_entity_count': len(source_data.get('entities', [])),
             'source_fps': fps, 'source_duration_seconds': duration,
             'base_sequence': sequence, 'source_engine_version': str(source_data.get('source', {}).get('engine_version') or 'Unknown'),
-            'track_types': track_types, 'source_capture_available': capture is not None}
+            'track_types': track_types, 'source_capture_available': capture is not None,
+             'scalar_property_mapping_count': len(mapping_data.get('scalar_property_mappings', []))
+             if isinstance(mapping_data.get('scalar_property_mappings', []), list) else 0}
 
 
 def worker_connected(folder: Path = WORKSPACE) -> dict[str, Any]:

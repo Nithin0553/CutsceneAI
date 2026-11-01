@@ -24,7 +24,24 @@ def capabilities() -> dict[str, Any]:
         bool(feature_dispatch.recipe(key, features=catalog).get("potential_builder_actions"))
         for key in catalog["_domain_for"]
     )
+    families = []
+    for family in catalog["feature_families"]:
+        members = {
+            semantic for semantic, domain in catalog["_domain_for"].items()
+            if domain in family["ced_domains"]
+        }
+        candidate = sum(
+            bool(feature_dispatch.recipe(s, features=catalog)
+                 .get("potential_builder_actions"))
+            for s in members
+        )
+        families.append({
+            "id": family["id"], "semantic_count": len(members),
+            "native_action_candidates": candidate,
+            "state": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+        })
     return {
+        "families": families,
         "catalog_version": catalog["version"],
         "catalog_sha256": catalog["_sha256"],
         "feature_families": len(catalog["feature_families"]),
