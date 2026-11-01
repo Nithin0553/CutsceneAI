@@ -81,3 +81,28 @@ The user ran the post-reopen native audit and reported:
 **Code change:** Studio automatic preparation now enables the existing `enable_cinetwin_hierarchy` policy in the **fresh copied mapping** instead of silently leaving it off. The source-authenticated plan runs `hierarchy_local.reconcile_hierarchy`, then the Unreal builder runs `hierarchy_realization.build_attachment_operations` and `cinetwin_hierarchy_runtime.apply_hierarchy` only if supported. Unsafe world-space child tracks are converted to validated parent-local motion or rejected **before** native mutation. The imported actor scene is saved after builder attachment updates. This path requires a brand-new trial; the old tested sequence and Benchmark001 are immutable.
 
 **Verification so far:** source-to-plan prop regression + full repository CI, not yet a new real-editor hierarchy PASS. Re-run automatic transfer with a new candidate into a backed-up target, save/reopen Unreal, and rerun `studio_hierarchy_audit.audit_latest()`. The eight unresolved relationships remain #68 and will still be reported as incomplete until source intermediate nodes/proxies or other equivalent mappings are designed and independently checked. Keep #62 OPEN until real Unreal attached actor readback and motion parity are demonstrated. No amount of suppressed warnings substitutes for a verified source-parent transfer.
+
+
+## Source-parent coverage follow-up (2026-11-01)
+
+Real Unreal evidence confirms 2/2 mapped direct prop attachment links, and
+18/18 imported assets and 10/10 actors. The hierarchy audit still reports
+8 mapped actors with unmapped *source ancestor* GameObjects. A previous Unity
+Benchmark002 CSIR shows the organizational group objects Benchmark002,
+CHARACTER_A and CHARACTER_B at the ancestor levels. Benchmark002 has
+nonidentity source translation. These are distinct from the 19 source
+entities that have no independent actor bindings.
+
+**Shipped:** source-ID parent-chain analysis and evidence-based world-pose
+strategy classification in the transfer coverage report and read-only
+Unreal hierarchy audit. World-space source motion can be planned without
+blindly generating a parent that changes already-baked world keys. CI:
+543 passed, 7 skipped, lint/hygiene PASS. See
+[SOURCE_PARENT_RESOLUTION.md](SOURCE_PARENT_RESOLUTION.md).
+
+**Still open P0:** [#85](https://github.com/Nithin0553/CutsceneAI/issues/85)
+for full editable Unreal parent-group proxy actors, parent-local motion
+conversion and real-engine proof. Prior existing generated sequence remains
+untouched. Native structure PASS != all feature parity; #72 still requires
+independent matching-time evaluation. Do not claim that warning
+classification alone resolved incomplete transfer.
