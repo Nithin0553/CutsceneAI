@@ -156,3 +156,15 @@ def test_unattributed_native_action_never_claims_source_implementation():
     report = dispatch.audit(_source(), {"actions": [{"kind": "camera_cut"}]})
     track = next(row for row in report["source_occurrences"] if row["kind"] == "tracks")
     assert track["state"] == "NATIVE_ACTION_HANDLER_MISSING"
+
+
+def test_unknown_ue_action_is_blocked_before_studio_generation():
+    with pytest.raises(dispatch.FeatureDispatchError, match="No executable Unreal builder handler"):
+        dispatch.verify_executable_actions({
+            "actions": [{"kind": "plugin.execute_vendor_shader"}],
+        })
+    dispatch.verify_executable_actions({
+        "actions": [{"kind": "camera_cut"}, {"kind": "audio"}],
+    })
+    with pytest.raises(dispatch.FeatureDispatchError, match="requires a list"):
+        dispatch.verify_executable_actions({"actions": "fake_sequence"})
