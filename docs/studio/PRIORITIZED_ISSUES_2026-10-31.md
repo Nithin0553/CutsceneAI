@@ -6,7 +6,8 @@ This is the active **issue-triage and execution order**, not a statement that al
 
 - Integrated working branch: `feature/studio-ui-connected-v0.3` (known-good preceding triage: `cc9c079`; GitHub CI: 475 passed, 7 external-evidence tests skipped; JavaScript, lint, repository hygiene passed).
 - `main` is behind the integrated Studio development branch; neither the draft PR chain nor Benchmark001 is merged/rewritten by this triage.
-- Latest user observation: the Studio frontend is functional and a read-only automatic preparation plan lists 18 source file imports and 10 actor creations; **actual native import/generation has not yet been demonstrated for this latest Studio trial**. Distinguish existing Benchmark002 V8 runtime evidence from the newer Studio flow.
+- Latest user observation: **the user reported that the Studio test succeeded locally** after the automatic transfer run. Treat this as user-reported positive runtime evidence, but the specific native setup receipt, Unreal generated sequence receipt, saved/reopened asset inventory, and independent fidelity measurements have not been inspected in this tracker. Do not equate this report with a structurally proven saved scene or with source-to-target parity.
+- Added the opt-in, read-only [post-reopen persistence audit](POST_REOPEN_PERSISTENCE_AUDIT.md) to inspect the current Unreal project's saved assets, actors and sequence after reopening. Its report cannot independently prove a restart and does not claim fidelity.
 - Source project and frozen Benchmark001 remain read-only. Do not overwrite existing target Level Sequences or delete in-use Unreal UObjects.
 
 ## Priority definitions
