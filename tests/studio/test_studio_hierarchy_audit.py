@@ -181,3 +181,71 @@ def test_duplicate_real_unreal_actors_are_not_passed(tmp_path):
     result = AUDIT.audit(jobfile, candidate / "hierarchy.json", unreal_api=fake)
     assert result["status"] == "FAIL"
     assert any("MISSING_OR_DUPLICATE_MAPPED_ACTOR" in x for x in result["errors"])
+
+
+class UnrealPropertyActor(Actor):
+    """UE 5.8: Actor.root_component exposed through an editor property."""
+    get_root_component = None
+
+    def get_editor_property(self, name):
+        assert name == "root_component"
+        if self.mobility is None:
+            return None
+        return NS(get_editor_property=lambda key: NS(name=self.mobility))
+
+
+def test_unreal_58_root_editor_property_resolves_mobility(tmp_path):
+    jobfile, candidate, fake, actors, _csir, _mapping = prepared(tmp_path)
+    parent = UnrealPropertyActor("CSAI_Hero")
+    child = UnrealPropertyActor("CSAI_CAM", parent=parent)
+    actors[:] = [parent, child]
+    result = AUDIT.audit(jobfile, candidate / "hierarchy.json", unreal_api=fake)
+    assert result["status"] == "PASS"
+    assert result["direct_parent_links_verified"] == 1
+    assert result["direct_edges_verified"] == 1
+    assert result["direct_attachments"][0]["mobility"] == "MOVABLE"
+    assert result["direct_attachments"][0]["parent_mobility"] == "MOVABLE"
+
+
+def test_unreal_property_style_fallback_without_editor_property(tmp_path):
+    jobfile, candidate, fake, actors, _csir, _mapping = prepared(tmp_path)
+    parent = UnrealPropertyActor("CSAI_Hero")
+    child = UnrealPropertyActor("CSAI_CAM", parent=parent)
+    parent.get_editor_property = None
+    child.get_editor_property = None
+    parent.root_component = NS(mobility="MOVABLE")
+    child.root_component = NS(mobility="MOVABLE")
+    actors[:] = [parent, child]
+    report = AUDIT.audit(jobfile, candidate / "hierarchy.json", unreal_api=fake)
+    assert report["status"] == "PASS"
+    assert report["direct_edges_verified"] == 1
+
+
+def test_parent_link_can_pass_when_root_mobility_unavailable(tmp_path):
+    jobfile, candidate, fake, actors, _csir, _mapping = prepared(tmp_path)
+    actors[1].mobility = None
+    result = AUDIT.audit(jobfile, candidate / "hierarchy.json", unreal_api=fake)
+    assert result["status"] == "INCOMPLETE"
+    assert result["direct_parent_links_verified"] == 1
+    assert result["direct_edges_verified"] == 0
+    assert result["direct_attachments"][0]["parent_link_status"] == "PASS"
+    assert "MOBILITY_READBACK_UNAVAILABLE: CSAI_CAM" in result["incomplete"]
+
+
+def test_static_direct_child_not_falsely_verified(tmp_path):
+    jobfile, candidate, fake, actors, _csir, _mapping = prepared(tmp_path)
+    actors[1].mobility = "STATIC"
+    report = AUDIT.audit(jobfile, candidate / "hierarchy.json", unreal_api=fake)
+    assert report["status"] == "FAIL"
+    assert report["direct_parent_links_verified"] == 1
+    assert report["direct_edges_verified"] == 0
+    assert "NON_MOVABLE_ATTACHED_ACTOR: CSAI_CAM" in report["errors"]
+
+
+def test_wrong_parent_stays_failure_independently_of_root_mobility(tmp_path):
+    jobfile, candidate, fake, actors, _csir, _mapping = prepared(tmp_path)
+    actors[1].parent = None
+    report = AUDIT.audit(jobfile, candidate / "hierarchy.json", unreal_api=fake)
+    assert report["status"] == "FAIL"
+    assert report["direct_parent_links_verified"] == 0
+    assert report["direct_edges_verified"] == 0
