@@ -169,6 +169,7 @@ def _source_rows(csir: Mapping[str, Any]) -> list[dict[str, Any]]:
             row = {
                 "source_location": f"{collection}[{index}]",
                 "source_id": str(obj.get(identifier) or ""),
+                "source_name": str(obj.get("name") or ""),
                 "ced": semantic,
                 "source_native_type": str(native.get("native_type") or
                                           native.get("asset_type") or ""),
@@ -184,6 +185,7 @@ def _source_rows(csir: Mapping[str, Any]) -> list[dict[str, Any]]:
                 rows.append({
                     "source_location": sect_path,
                     "source_id": str(section.get("section_id") or ""),
+                    "source_name": str(obj.get("name") or ""),
                     "ced": str(section.get("ced_type") or ""),
                     "source_native_type": str(
                         (section.get("native_payload") or {}).get("native_asset_type") or ""),
@@ -197,6 +199,7 @@ def _source_rows(csir: Mapping[str, Any]) -> list[dict[str, Any]]:
                     rows.append({
                         "source_location": f"{sect_path}.payload.animation.curves[{curve_index}]",
                         "source_id": str(curve.get("curve_id") or ""),
+                        "source_name": str(obj.get("name") or ""),
                         "ced": str(curve.get("canonical_semantic") or ""),
                         "source_native_type": str(curve.get("property_name") or ""),
                         "kind": "curves",
@@ -253,12 +256,26 @@ def audit(csir: Mapping[str, Any], plan: Mapping[str, Any] | None = None, *,
         raise FeatureDispatchError("Expected list of actions.")
     planned = {str(a.get("kind") or "") for a in actions if isinstance(a, dict)}
     unsupported_actions = sorted(planned - BUILDER_ACTIONS)
+    # Native actions are attributable only if they point to this source
+    # track/entity. A camera cut in a completely different track cannot
+    # make every same-CED source feature appear planned.
+    attributed_actions: dict[str, set[str]] = {}
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        kind = str(action.get("kind") or "")
+        for key in ("entity_name", "track_name"):
+            name = str(action.get(key) or "")
+            if name:
+                attributed_actions.setdefault(name, set()).add(kind)
     observed = _source_rows(csir)
     rows = []
     for item in observed:
         semantic = item["ced"]
         candidate = recipe(semantic, features=features)
-        executable = list(set(candidate.get("potential_builder_actions", ())) & planned)
+        scope = item.get("source_name", "")
+        applicable = attributed_actions.get(scope, set()) if scope else set()
+        executable = sorted(set(candidate.get("potential_builder_actions", ())) & applicable)
         handler = handlers.handlers.get(semantic) if handlers is not None else None
         if handler:
             state = "CUSTOM_HANDLER_REGISTERED_UNVERIFIED"
@@ -274,7 +291,7 @@ def audit(csir: Mapping[str, Any], plan: Mapping[str, Any] | None = None, *,
             "state": state,
             "candidate_route": candidate["candidate_route"],
             "potential_builder_actions": candidate.get("potential_builder_actions", []),
-            "matching_plan_action_kinds": sorted(executable),
+            "matching_plan_action_kinds": executable,
             "custom_handler": {"name": handler["name"], "version": handler["version"]}
                               if handler else None,
             "target_readback_verified": False,
