@@ -1027,6 +1027,14 @@ def build_prepared_files(
             != evidence.get("source_capture_sha256")
         ):
             raise UnrealBuildError("Source CineTwin capture has changed since planning.")
+        surface_path = evidence.get("source_feature_surface_path")
+        if surface_path and (
+            hashlib.sha256(Path(surface_path).read_bytes()).hexdigest()
+            != evidence.get("source_feature_surface_sha256")
+        ):
+            raise UnrealBuildError(
+                "Unity source component/feature census changed since preparation."
+            )
 
         original_csir = csir_plan.load_json(csir_path)
         original_mapping = csir_plan.load_json(mapping_path)
