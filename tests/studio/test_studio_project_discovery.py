@@ -65,12 +65,13 @@ def test_multiple_timelines_return_choices_not_guessed(tmp_path):
 
 def test_wrong_folder_missing_export_or_missing_map_not_faked(tmp_path):
     u, ue, csirs=_projects(tmp_path)
-    with pytest.raises(d.DiscoveryError,match='Unity project root'):
-        d.scan_unity(str(u/'Assets'))
+    assert d.scan_unity(str(u/'Assets'))['folder'] == str(u.resolve())
     csirs[0].unlink()
     assert not d.scan_unity(str(u))['cutscenes']
     (ue/'Content'/'CutSceneAI'/'Tests'/'L_Fresh.umap').unlink()
-    assert not d.scan_unreal(str(ue))['levels']
+    candidate=d.scan_unreal(str(ue))
+    assert candidate['new_level_required']
+    assert candidate['levels']==['/Game/CutSceneAI/AutoTransfer/L_Studio_Fresh']
 
 
 def test_invalid_level_and_ambiguous_unreal_project_are_refused(tmp_path):
@@ -78,8 +79,10 @@ def test_invalid_level_and_ambiguous_unreal_project_are_refused(tmp_path):
     with pytest.raises(d.DiscoveryError,match='not part'):
         d.build_connection(str(u),str(ue),str(csirs[0]),'/Game/Other',workspace=tmp_path/'runs')
     (ue/'Other.uproject').write_text('{}')
-    with pytest.raises(d.DiscoveryError,match='exactly one'):
-        d.scan_unreal(str(ue))
+    choices=d.scan_unreal(str(ue))
+    assert len(choices['project_options'])==2 and not choices['project']
+    assert not d.discover(str(u),str(ue))['ready']
+    assert d.discover(str(u),str(ue),unreal_project=str(ue/'Trial.uproject'))['ready']
 
 
 def test_folder_picker_cancel_and_no_non_windows_secret_path(monkeypatch):

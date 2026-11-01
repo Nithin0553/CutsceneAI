@@ -69,3 +69,29 @@ def test_connect_rejects_nonexported_source(tmp_path):
     u,t,csir=_roots(tmp_path)
     with __import__('pytest').raises(d.DiscoveryError,match='not a verified export'):
         d.build_connection(str(u),str(t),str(tmp_path/'other.csir.json'),'/Game/Cinematics/LSample',workspace=tmp_path)
+
+
+def test_api_accepts_assets_folder_and_empty_unreal_map_project(tmp_path):
+    u,t,csir=_roots(tmp_path)
+    (t/'Content'/'Cinematics'/'LSample.umap').unlink()
+    web=tmp_path/'web';web.mkdir();(web/'index.html').write_text('test')
+    server=ThreadingHTTPServer(('127.0.0.1',0),bridge.create_handler(web,tmp_path/'work'))
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        base=f'http://127.0.0.1:{server.server_port}'
+        token=call(base+'/api/status')[1]['token']
+        code,options=call(base+'/api/discover',{'unity_folder':str(u/'Assets'),
+                                            'unreal_folder':str(t/'Content')},token)
+        assert code==200 and options['ready']
+        assert options['unreal']['new_level_required']
+        assert options['unity']['folder']==str(u.resolve())
+        plan_level='/Game/CutSceneAI/AutoTransfer/L_Studio_Fresh'
+        assert options['unreal']['levels']==[plan_level]
+        code,connected=call(base+'/api/connect-projects',{
+            'unity_folder':str(u/'Assets'), 'unreal_folder':str(t/'Content'),
+            'csir':str(csir.resolve()),'level':plan_level,'source_rights_confirmed':True},token)
+        assert code==200 and connected['auto_create_level'] is True
+        assert connected['level_path']==plan_level
+        assert not (t/'Content'/'CutSceneAI'/'AutoTransfer'/'L_Studio_Fresh.umap').exists()
+    finally:
+        server.shutdown();server.server_close();thread.join()

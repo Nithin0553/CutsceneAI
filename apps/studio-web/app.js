@@ -6,7 +6,7 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const state = { page:'overview', loading:true, busy:false, error:'', info:'', status:null,
     candidate:null, job:null, report:null, source:null, detailsOpen:false, evidencePath:'',
-    selectedFolders:{unity:'',unreal:''}, discovery:null, selectedCutscene:'', selectedLevel:'' };
+    selectedFolders:{unity:'',unreal:''}, discovery:null, selectedCutscene:'', selectedLevel:'', selectedUnrealProject:'', sourceRightsConfirmed:false };
   const steps = [['connect','Connect'],['select','Select'],['review','Review'],['transfer','Transfer'],['results','Results']];
   const mark = `<svg viewBox="0 0 36 36" fill="currentColor" aria-hidden="true"><path d="M18 2 3 30h11l4-7h-5l7-14zM23 18l10 12H19l-4-4h8l-4-5z"/></svg>`;
   const icons = {
@@ -63,19 +63,31 @@
     const target=d.unreal||{};
     const cutscenes=source.cutscenes||[];
     const levels=target.levels||[];
-    const pickedSource=state.selectedCutscene||cutscenes[0]?.path||'';
+    const unityProjects=d.unity_projects||[];
+    const unrealProjects=d.unreal_projects||[];
+    const projectOptions=target.project_options||[];
+    const needUnityChoice=unityProjects.length>1&&!source.folder;
+    const needUnrealChoice=unrealProjects.length>1&&!target.folder;
+    const needUnrealFile=projectOptions.length>1&&!target.project;
+    const projectChooser=(name,items)=>`<label class="field"><span>${name==='unity-project'?'Which Unity project?':name==='unreal-project-root'?'Which Unreal project?':'Which .uproject file?'}</span><select name="${name}"><option value="">Choose one of ${items.length}</option>${items.map(p=>`<option value="${esc(p)}">${esc(p.split(/[\\/]/).pop())} — ${esc(p)}</option>`).join('')}</select></label>`;
+    const pickedSource=state.selectedCutscene||(cutscenes.length===1?cutscenes[0].path:'');
     const pickedLevel=state.selectedLevel||target.active_level||(levels.length===1?levels[0]:'');
     const folderRow=(kind,label,path,description)=>`<div class="project-picker"><div class="project-folder-info"><strong>${esc(label)}</strong><span>${esc(path?path.split(/[\\/]/).pop():'Not selected')}</span><small title="${esc(path)}">${esc(path||description)}</small></div>${btn(path?'Change folder':'Browse folder',kind==='unity'?'browse-unity':'browse-unreal','secondary',state.busy)}</div>`;
-    const selectHtml=(name,items,selected,labelField,valueField)=>`<label class="field"><span>${name==='csir'?'Detected Unity cutscene':'Destination level'}</span><select name="${name}" required>${items.map(x=>`<option value="${esc(typeof x==='string'?x:x[valueField])}" ${selected===(typeof x==='string'?x:x[valueField])?'selected':''}>${esc(typeof x==='string'?x:x[labelField])}</option>`).join('')}</select></label>`;
+    const selectHtml=(name,items,selected,labelField,valueField)=>`<label class="field"><span>${name==='csir'?'Detected Unity cutscene':'Destination level'}</span><select name="${name}" required><option value="" ${!selected?'selected':''} disabled>${items.length===1?'Choose an option':'Choose from '+items.length+' options'}</option>${items.map(x=>`<option value="${esc(typeof x==='string'?x:x[valueField])}" ${selected===(typeof x==='string'?x:x[valueField])?'selected':''}>${esc(typeof x==='string'?x:(x[labelField]+' — '+(x.relative_path||x.path.split(/[\\/]/).pop())))}</option>`).join('')}</select></label>`;
     return `<div class="page-heading"><div class="eyebrow">01 / CONNECT</div><h1>Choose your projects</h1><p>Select two project folders. Studio will discover the exported timelines, Unreal project and level, and prepare the mapping automatically.</p></div>${stageRail()}<form id="project-folders-form" class="connect-layout"><section class="panel pad"><div class="form-heading">${icon('folder')} <h2>Project folders</h2>${statusLabel(d.ready?'DISCOVERED':'SELECT FOLDERS',d.ready?'good':'warning')}</div>
-    ${folderRow('unity','Unity project',folders.unity,'Folder containing Assets and ProjectSettings')}
-    ${folderRow('unreal','Unreal project',folders.unreal,'Folder containing a .uproject file')}
+    ${folderRow('unity','Unity project',source.folder||folders.unity,'Choose the project or any folder inside it')}
+    ${folderRow('unreal','Unreal project',target.folder||folders.unreal,'Choose the project or any folder inside it')}
+    ${needUnityChoice?projectChooser('unity-project',unityProjects):''}
+    ${needUnrealChoice?projectChooser('unreal-project-root',unrealProjects):''}
+    ${needUnrealFile?projectChooser('unreal-project-file',projectOptions):''}
+    ${Object.entries(d.errors||{}).map(([kind,message])=>`<p class="notice-inline" role="alert">${esc(kind==='unity'?'Unity':'Unreal')}: ${esc(message)}</p>`).join('')}
     ${source.message?`<p class="hint">${esc(source.message)}</p>`:''}${target.message?`<p class="hint">${esc(target.message)}</p>`:''}
     ${cutscenes.length?`<div class="rule"></div><h3>Detected cutscenes</h3>${selectHtml('csir',cutscenes,pickedSource,'name','path')}${cutscenes.length===1?'<p class="hint">One cutscene detected — already selected.</p>':''}`:''}
+    ${target.new_level_required?'<p class="hint">New Unreal project: Studio will create an empty CutSceneAI target map when you approve Generate.</p>':''}
     ${levels.length?`${selectHtml('level',levels,pickedLevel)}${levels.length===1?'<p class="hint">One target level detected — already selected.</p>':''}`:''}
-    <label class="checkbox"><input type="checkbox" name="source_rights_confirmed" ${c.source_rights_confirmed?'checked':''}><span>I have permission to copy the Unity project assets into the Unreal project</span></label>
-    <div class="form-actions"><button class="button primary" type="submit" ${!d.ready||state.busy?'disabled':''}>${state.busy?'Checking projects…':'Connect projects '+icon('arrow')}</button>${folders.unity&&folders.unreal?btn('Scan again','scan-folders','secondary',state.busy):''}</div>
-    </section><aside><div class="panel pad sidebar-panel"><h2>Detected automatically</h2>${item('Unity source',cutscenes.length?`${cutscenes.length} exported cutscene(s)`:'Not exported or not scanned')}${item('Unreal project',target.project?target.project.split(/[\\/]/).pop():'Not selected')}${item('Saved maps',size(levels.length))}${item('Asset scope',source.source_scope||'Waiting for Unity folder')}${item('Asset mapping',d.ready?'Auto-generated on connection':'Not generated')}${item('CineTwin capture','Auto-attached if an exact match exists')}<div class="rule"></div><p class="hint">Project discovery is read-only. The Generate action still requires Unreal Editor to be open, and it never overwrites an existing sequence.</p></div><div class="callout">${icon('shield')}<p>When multiple cutscenes or levels exist, select from the detected list. No JSON paths or manual mapping files are needed.</p></div></aside></form>`;
+    <label class="checkbox"><input type="checkbox" name="source_rights_confirmed" ${state.sourceRightsConfirmed?'checked':''}><span>I have permission to copy the Unity project assets into the Unreal project</span></label>
+    <div class="form-actions"><button class="button primary" type="submit" ${!d.ready||!pickedSource||!pickedLevel||state.busy?'disabled':''}>${state.busy?'Checking projects…':'Connect projects '+icon('arrow')}</button>${folders.unity&&folders.unreal?btn('Scan again','scan-folders','secondary',state.busy):''}</div>
+    </section><aside><div class="panel pad sidebar-panel"><h2>Detected automatically</h2>${item('Unity source',cutscenes.length?`${cutscenes.length} exported cutscene(s)`:'Not exported or not scanned')}${item('Unreal project',target.project?target.project.split(/[\\/]/).pop():'Not selected')}${item('Saved maps',size(levels.length))}${item('Asset scope',source.source_scope||'Waiting for Unity folder')}${item('Asset mapping',d.ready?'Generated upon connection':'Waiting for project selection')}${item('CineTwin capture','Auto-attached if an exact match exists')}<div class="rule"></div><p class="hint">Project discovery is read-only. The Generate action still requires Unreal Editor to be open, and it never overwrites an existing sequence.</p></div><div class="callout">${icon('shield')}<p>When multiple cutscenes or levels exist, select from the detected list. No JSON paths or manual mapping files are needed.</p></div></aside></form>`;
   }
   function select(){const c=state.status?.connection;
     if(!c)return missing('Select cutscene','Connect an existing Unity CSIR before selecting a cutscene.','connect');
@@ -119,12 +131,14 @@
   async function refresh(quiet=false){try{let oldId=state.status?.active_job;const status=await api('status');state.status=status;
       state.candidate=status.candidate||null;
       if(status.connection && !state.selectedFolders.unity && !state.selectedFolders.unreal){
+        state.sourceRightsConfirmed=Boolean(status.connection.source_rights_confirmed);
         state.selectedFolders.unity=status.connection.unity_project||'';
         state.selectedFolders.unreal=String(status.connection.target_project||'').replace(/[\\/][^\\/]+$/,'');
       }
       if(status.connection && !state.discovery && state.selectedFolders.unity && state.selectedFolders.unreal){
         try{
-          state.discovery=await api('discover',{unity_folder:state.selectedFolders.unity,unreal_folder:state.selectedFolders.unreal});
+          state.discovery=await api('discover',{unity_folder:state.selectedFolders.unity,unreal_folder:state.selectedFolders.unreal,unreal_project:status.connection.target_project||''});
+          state.selectedUnrealProject=status.connection.target_project||'';
           state.selectedCutscene=status.connection.csir||'';
           state.selectedLevel=status.connection.level_path||'';
         }catch{} // Project folders may have moved; allow Browse Folder again.
@@ -137,6 +151,16 @@
     }catch(err){state.loading=false;if(!quiet){state.error=err.message;render()}}}
   function notice(text,isError=false){state.error=isError?text:'';state.info=isError?'':text;render()}
   function navigate(page){state.page=page;state.error='';state.info='';render();window.scrollTo({top:0,behavior:'smooth'})}
+  async function scanProjects(){
+    state.discovery=await api('discover',{unity_folder:state.selectedFolders.unity,
+      unreal_folder:state.selectedFolders.unreal,unreal_project:state.selectedUnrealProject});
+    const src=state.discovery.unity?.cutscenes||[];
+    const levels=state.discovery.unreal?.levels||[];
+    state.selectedCutscene=src.length===1?src[0].path:'';
+    state.selectedLevel=state.discovery.unreal?.active_level||(levels.length===1?levels[0]:'');
+    if(state.discovery.unity?.folder)state.selectedFolders.unity=state.discovery.unity.folder;
+    if(state.discovery.unreal?.folder)state.selectedFolders.unreal=state.discovery.unreal.folder;
+  }
   async function action(name){if(state.busy)return;const c=state.status?.connection;
     if(['connect','select','review','transfer','results'].includes(name)){navigate(name);return}
     if(name==='continue'){navigate(state.job?'results':state.candidate?'transfer':c?'select':'connect');return}
@@ -151,15 +175,14 @@
           const picked=await api('pick-folder',{kind});
           if(picked.cancelled)return;
           state.selectedFolders[kind]=picked.path;
+          state.sourceRightsConfirmed=false;
+          if(kind==='unreal')state.selectedUnrealProject='';
           state.selectedCutscene='';state.selectedLevel='';
+          state.discovery=null; // Never keep readiness from a different project.
         }
-        state.discovery=await api('discover',{unity_folder:state.selectedFolders.unity,unreal_folder:state.selectedFolders.unreal});
-        const src=state.discovery.unity?.cutscenes||[];
-        const maps=state.discovery.unreal?.levels||[];
-        state.selectedCutscene=src.length?src[0].path:'';
-        state.selectedLevel=state.discovery.unreal?.active_level||(maps.length===1?maps[0]:'');
-        if(!state.discovery.ready)state.info='Folders selected. Review any missing exports or maps below.';
-        else state.info='Both projects inspected. Confirm the cutscene and level, then connect.';
+        await scanProjects();
+        if(!state.discovery.ready)state.info='Review project detection details below. You can choose a discovered project or scan again.';
+        else state.info='Projects discovered. Choose a cutscene and level if multiple were found, then connect.';
         state.error='';
       }catch(err){state.error=err.message;state.info='';}
       finally{state.busy=false;render()}
@@ -172,13 +195,27 @@
       if(!state.candidate){notice('Prepare a verified transfer first.',true);return}
       const d=state.status?.destination_readiness;
       const auto=state.candidate?.automatic_setup;
-      const autoReady=Boolean(auto?.available&&auto?.ready&&['READY','SCENE_SETUP_REQUIRED','ASSETS_REQUIRED'].includes(d?.status)&&!(d?.wrong_actor_types||[]).length&&!(d?.wrong_asset_types||[]).length&&!(d?.duplicate_actors||[]).length);
+      const autoReady=Boolean(auto?.available&&auto?.ready&&['READY','SCENE_SETUP_REQUIRED','ASSETS_REQUIRED','NEW_LEVEL_REQUIRED'].includes(d?.status)&&!(d?.wrong_actor_types||[]).length&&!(d?.wrong_asset_types||[]).length&&!(d?.duplicate_actors||[]).length);
       if((!d?.ready&&!autoReady) || d.candidate_id!==state.candidate.candidate_id){notice('Destination setup is not ready. Review the missing scene actors or assets on this page.',true);return}
-      const flags=state.candidate.review_flags||[];const prompt=(autoReady?'Import the verified Unity assets, create mapped actors and generate ONE new editable Level Sequence in this backed-up Unreal project?':'Generate ONE new editable Level Sequence in the backed-up Unreal project?')+' Existing sequences are not overwritten.'+(flags.length?'\n\nREVIEW FLAGS:\n'+flags.join('\n')+'\n\nOnly continue if you have confirmed the mapping and target assets.':'');if(!confirm(prompt))return;
+      const flags=state.candidate.review_flags||[];const prompt=(autoReady?(c?.auto_create_level?'Create a NEW empty Unreal map, import verified assets and actors, then generate ONE new Level Sequence in this backed-up project?':'Import the verified Unity assets, create mapped actors and generate ONE new editable Level Sequence in this backed-up Unreal project?'):'Generate ONE new editable Level Sequence in the backed-up Unreal project?')+' Existing sequences are not overwritten.'+(flags.length?'\n\nREVIEW FLAGS:\n'+flags.join('\n')+'\n\nOnly continue if you have confirmed the mapping and target assets.':'');if(!confirm(prompt))return;
       state.busy=true;render();try{state.job=await api('execute',{candidate_id:state.candidate.candidate_id});notice('Job queued. Unreal will verify inputs before generation.')}catch(err){notice('Unreal generation blocked: '+err.message,true)}finally{state.busy=false;render()}return;
     }
   }
   $('#app').addEventListener('click',e=>{const link=e.target.closest('[data-page]');if(link){navigate(link.dataset.page);return}const button=e.target.closest('[data-action]');if(button)void action(button.dataset.action)});
+  document.addEventListener('change', async event=>{
+    const name=event.target?.name;
+    if(name==='source_rights_confirmed'){state.sourceRightsConfirmed=event.target.checked;return}
+    if(name==='csir'){state.selectedCutscene=event.target.value;render();return}
+    if(name==='level'){state.selectedLevel=event.target.value;render();return}
+    if(!['unity-project','unreal-project-root','unreal-project-file'].includes(name)||!event.target.value)return;
+    if(name==='unity-project'){state.selectedFolders.unity=event.target.value;state.sourceRightsConfirmed=false}
+    if(name==='unreal-project-root'){state.selectedFolders.unreal=event.target.value;state.selectedUnrealProject='';state.sourceRightsConfirmed=false}
+    if(name==='unreal-project-file')state.selectedUnrealProject=event.target.value;
+    state.busy=true;render();
+    try{await scanProjects();state.error='';state.info='Project options updated.'}
+    catch(err){state.error=err.message}
+    finally{state.busy=false;render()}
+  });
   $('#app').addEventListener('submit',async e=>{
     const form=e.target.closest('form');if(!form)return;e.preventDefault();if(state.busy)return;
     state.busy=true;state.error='';state.info='';
@@ -190,6 +227,7 @@
         const result=await api('connect-projects',{
           unity_folder:state.selectedFolders.unity,
           unreal_folder:state.selectedFolders.unreal,
+          unreal_project:state.selectedUnrealProject,
           csir:body.csir,level:body.level,
           source_rights_confirmed:!!form.querySelector('[name=source_rights_confirmed]').checked
         });

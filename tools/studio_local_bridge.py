@@ -68,6 +68,13 @@ def config_check(payload: dict[str, Any]) -> dict[str, Any]:
     if payload.get('skeletal_root_world_lock') and capture is None:
         raise ValueError('Experimental skeletal root correction requires Unity CineTwin capture.')
     level = payload['level_path'].strip()
+    auto_create_level = bool(payload.get('auto_create_level', False))
+    if auto_create_level:
+        if level != '/Game/CutSceneAI/AutoTransfer/L_Studio_Fresh':
+            raise ValueError('Unsafe automatic level path; reconnect the Unreal project.')
+        content_map = target.parent / 'Content' / 'CutSceneAI' / 'AutoTransfer' / 'L_Studio_Fresh.umap'
+        if content_map.exists():
+            raise ValueError('Proposed new level already exists; Scan again to use the saved level.')
     if not level.startswith('/Game/') or '..' in level.split('/') or level.endswith('/'):
         raise ValueError('Target level must be a valid /Game/... asset path.')
     source_data = load_json(csir)
@@ -108,6 +115,7 @@ def config_check(payload: dict[str, Any]) -> dict[str, Any]:
     return {'csir': str(csir), 'capture': str(capture) if capture else '', 'mapping': str(mapping),
             'unity_project': str(unity_project) if unity_project else '', 'source_scope': scope,
             'source_rights_confirmed': bool(payload.get('source_rights_confirmed', False)),
+            'auto_create_level': auto_create_level,
             'target_project': str(target), 'level_path': level,
             'skeletal_root_world_lock': bool(payload.get('skeletal_root_world_lock', False)),
             'cutscene_id': str(source_data['cutscene_id']),
@@ -155,6 +163,12 @@ def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
                 'next_action': 'Restart Unreal Editor and start the updated v0.4 Studio companion.'}
     candidate = load_json(candidate_file)
     connected = load_json(folder / 'connection.json')
+    if connected.get('auto_create_level') and worker.get('level') != connected['level_path']:
+        if os.path.normcase(str(worker.get('project') or '')) != os.path.normcase(connected['target_project']):
+            return {'status': 'WRONG_TARGET', 'ready': False,
+                    'next_action': 'Open the selected Unreal project before creating the new map.'}
+        return {'status': 'NEW_LEVEL_REQUIRED', 'ready': False,
+                'next_action': 'Studio will create a new empty target map when you approve Generate.'}
     candidate_id = str(candidate.get('candidate_id') or '')
     if not candidate_id.isascii() or not candidate_id.replace('_', '').isalnum():
         return {'status': 'CHECKING', 'ready': False, 'next_action': 'Prepare a valid candidate.'}
@@ -319,7 +333,7 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     if not heartbeat['connected']:
         raise ValueError('Unreal bridge not connected: open staging project and start the editor companion.')
     if (os.path.normcase(str(heartbeat.get('project') or '')) != os.path.normcase(config['target_project'])
-        or heartbeat.get('level') != config['level_path']):
+        or (not config.get('auto_create_level') and heartbeat.get('level') != config['level_path'])):
         raise ValueError('Unreal worker is connected to a different project or level.')
     readiness = destination_readiness(folder)
     candidate_record = folder / 'active-candidate.json'
@@ -360,6 +374,7 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
            'sequence_path': session['target']['sequence_asset_path'],
            'expected_project': config['target_project'],
            'expected_level': config['level_path'],
+           'create_level': bool(config.get('auto_create_level')),
            'created_at': datetime.now(timezone.utc).isoformat(),
            'generation_status': 'NOT_STARTED', 'fidelity_verified': False}
     atomic_json(folder / 'jobs' / (job_id + '.json'), job)
@@ -550,7 +565,8 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         result = studio_project_discovery.discover(
                             str(data.get('unity_folder') or ''),
                             str(data.get('unreal_folder') or ''),
-                            worker=worker_connected(folder))
+                            worker=worker_connected(folder),
+                            unreal_project=str(data.get('unreal_project') or ''))
                     elif route in {'/api/connect', '/api/connect-projects'}:
                         active_job_file = folder / 'active-job.json'
                         if active_job_file.is_file():
@@ -563,6 +579,7 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                                 str(data.get('unreal_folder') or ''),
                                 str(data.get('csir') or ''), str(data.get('level') or ''),
                                 workspace=folder, worker=worker_connected(folder),
+                                unreal_project=str(data.get('unreal_project') or ''),
                                 source_rights_confirmed=bool(data.get('source_rights_confirmed')))
                         else:
                             fields = data

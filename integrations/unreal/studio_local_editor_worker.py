@@ -51,13 +51,55 @@ def _loaded_level():
     return str(world.get_path_name()).split('.')[0]
 
 
+def _world_has_unsaved_changes():
+    """Fail closed: UE new_level discards the currently open world without saving."""
+    try:
+        world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+        package = world.get_outermost()
+        return bool(package.is_dirty())
+    except Exception as exc:
+        raise RuntimeError('Cannot confirm current Unreal map is saved. Save it before automatic level creation.') from exc
+
+
+def _ensure_target_level(job):
+    """Create only the canonical fresh map after verifying the prepared job."""
+    expected = str(job['expected_level'])
+    if not job.get('create_level'):
+        if _loaded_level() != expected:
+            raise RuntimeError('Wrong Unreal level is loaded.')
+        return
+    if expected != '/Game/CutSceneAI/AutoTransfer/L_Studio_Fresh':
+        raise RuntimeError('Refusing noncanonical automatic level path.')
+    if unreal.EditorAssetLibrary.does_asset_exist(expected):
+        raise RuntimeError('Target level already exists. Reconnect and use the existing map; no overwrite.')
+    if _world_has_unsaved_changes():
+        raise RuntimeError('Current Unreal map contains unsaved changes. Save it before automatic level creation.')
+    # UE 5.8 supports LevelEditorSubsystem.new_level. It replaces the current
+    # world without saving; the guard above prevents silent loss of edits.
+    subsystem_type = getattr(unreal, 'LevelEditorSubsystem', None)
+    editor_level = unreal.get_editor_subsystem(subsystem_type) if subsystem_type else None
+    creator = getattr(editor_level, 'new_level', None)
+    if not callable(creator):
+        creator = getattr(getattr(unreal, 'EditorLevelLibrary', None), 'new_level', None)
+    if not callable(creator):
+        raise RuntimeError('Unreal level creation API unavailable; save an empty level manually and reconnect.')
+    folder = '/Game/CutSceneAI/AutoTransfer'
+    unreal.EditorAssetLibrary.make_directory(folder)
+    succeeded = creator(expected)
+    if succeeded is False or _loaded_level() != expected:
+        raise RuntimeError('Unreal did not load the new level; setup halted before asset imports.')
+    if not unreal.EditorAssetLibrary.does_asset_exist(expected):
+        raise RuntimeError('The new map has not been saved to disk; setup halted.')
+    unreal.log('[CutSceneAI Studio] Created new target map: ' + expected)
+
+
 def _execute(job):
     """Only run a preprepared, verifiable, new-sequence job."""
     if job.get('kind') != 'cutsceneai.studio.local_unreal_job' or job.get('schema_version') != '0.1.0':
         raise RuntimeError('Unexpected editor job schema.')
     if os.path.normcase(_loaded_project()) != os.path.normcase(str(Path(job['expected_project']).resolve())):
         raise RuntimeError('Wrong Unreal staging project is loaded.')
-    if _loaded_level() != job['expected_level']:
+    if not job.get('create_level') and _loaded_level() != job['expected_level']:
         raise RuntimeError('Wrong Unreal level is loaded.')
     candidate_dir = Path(job['candidate_dir']).resolve()
     if not candidate_dir.is_relative_to((WORKSPACE / 'candidates').resolve()):
@@ -79,6 +121,7 @@ def _execute(job):
         raise RuntimeError('Prepared evidence does not match submitted job.')
     if prepared['target']['sequence_asset_path'] != job['sequence_path']:
         raise RuntimeError('Sequence identity mismatch.')
+    _ensure_target_level(job)
     if job.get('automatic_setup'):
         # Source verification runs before ANY editor mutation. If an asset import
         # fails, the immutable receipt reports partial changes; do not retry.

@@ -13,6 +13,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\start_studio.ps1
 
 Open <http://127.0.0.1:8765>. The server listens on loopback only. It has no cloud backend.
 
+## Two-folder discovery (v0.7)
+
+Users can select the Unity **project root or `Assets/`** and the Unreal **project root or `Content/`** using native folder dialogs. Studio recognizes a parent folder holding several projects and asks the user which one to open; if several valid CSIR exports, `.uproject` files, or maps exist, it presents choices rather than guessing. The backend scans for actual schema-matched Unity CSIR JSON files within the project (even with different filenames or nested export paths). It never treats a native `.unity` / `.playable` file as a verified CSIR without an exporter; when no export exists, it explains the required Unity export step.
+
+When the Unreal project contains no saved `.umap` and there is no valid loaded map, Studio may **plan** `/Game/CutSceneAI/AutoTransfer/L_Studio_Fresh`. This is only an intent: the folder scan and connection do not write to Unreal. During an explicitly approved automatic generation run, the Unreal worker checks the immutable source/plan, current `.uproject`, map-name collision, and dirty state of the open map before creating the new map with the Unreal Level Editor Subsystem. If the editor cannot verify that the current map is saved, creation is blocked. The map and Level Sequence are never overwritten. The new-level integration has local mock/API tests; real Unreal Editor validation is still required.
+
 ## Studio workflow
 
 1. **Connect** the exported Unity CSIR JSON, mapping JSON, target Unreal `.uproject`, and target `/Game/...` level. To enable automatic staging, also provide the local Unity project directory, a cutscene-specific `Assets/...` subtree, and source-copy permission. A CineTwin capture is optional.
