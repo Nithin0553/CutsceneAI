@@ -5,7 +5,8 @@
   const $ = sel => document.querySelector(sel);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const state = { page:'overview', loading:true, busy:false, error:'', info:'', status:null,
-    candidate:null, job:null, report:null, source:null, detailsOpen:false, evidencePath:'' };
+    candidate:null, job:null, report:null, source:null, detailsOpen:false, evidencePath:'',
+    selectedFolders:{unity:'',unreal:''}, discovery:null, selectedCutscene:'', selectedLevel:'' };
   const steps = [['connect','Connect'],['select','Select'],['review','Review'],['transfer','Transfer'],['results','Results']];
   const mark = `<svg viewBox="0 0 36 36" fill="currentColor" aria-hidden="true"><path d="M18 2 3 30h11l4-7h-5l7-14zM23 18l10 12H19l-4-4h8l-4-5z"/></svg>`;
   const icons = {
@@ -52,8 +53,29 @@
     return `<section class="hero"><div class="hero-copy"><div class="eyebrow">CROSS-ENGINE CINEMATICS</div><h1>The same scene.<br>Another engine.</h1><p>Connect, reconstruct, and inspect editable cinematic sequences in one workspace.</p><div class="hero-actions">${btn(c?'Continue transfer '+icon('arrow'):'Connect local projects '+icon('arrow'),c?'continue':'connect','primary')}${btn('View workflow','review','secondary')}</div><div class="hero-foot">Independent source evidence · Guarded Unreal generation</div></div><div class="hero-image" role="img" aria-label="Decorative cinematic environment"><span>ILLUSTRATIVE ARTWORK</span></div></section>${stageRail()}<div class="section-head"><h2>Workspace</h2><span class="muted">Current connection</span></div><div class="stat-cards"><article class="panel stat-card">${icon('folder')}<small>UNITY SOURCE</small><h3>${esc(c?.scene_name||'Not connected')}</h3><p>${c?`${size(c.source_track_count)} source tracks · ${duration(c.source_duration_seconds)}`:'Connect a real exported CSIR file to start'}</p></article><article class="panel stat-card">${icon('layers')}<small>UNREAL TARGET</small><h3>${esc(c?c.target_project.split(/[\\/]/).pop():'Not connected')}</h3><p>${esc(c?.level_path||'Select a staging .uproject and level')}</p></article><article class="panel stat-card">${icon('shield')}<small>TRANSFER STATE</small><h3>${esc(state.job?.status || (state.candidate?'Prepared for Unreal':'Not started'))}</h3><p>${state.candidate?`${size(state.candidate.action_total)} planned actions · fidelity not verified`:'Prepare source evidence before generating'}</p></article></div><div class="split-panels"><article class="panel pad"><div class="section-head"><h2>How Studio works</h2><span class="small muted">Five clear steps</span></div><div class="workflow-list">${[['01','Connect an exported Unity cutscene and target Unreal project'],['02','Select the source cutscene and inspect extracted tracks'],['03','Review the immutable transfer plan and coverage gaps'],['04','Generate a new Unreal Level Sequence with the editor companion'],['05','Import observations and review the unverified results']].map(([n,t])=>`<div><span class="mono">${n}</span><span>${esc(t)}</span></div>`).join('')}</div></article><article class="panel pad"><div class="section-head"><h2>Scope of this build</h2></div><p class="body-copy">This local Studio connects to the existing CSIR planner and guarded Unreal generator. Unity folder scanning, universal asset import, automatic project setup, and complete playback fidelity are <strong>not implemented as one-click operations yet</strong>.</p><div class="slim-note">Already generated a sequence manually? You can attach its CineTwin target observation under Results without regenerating anything.</div></article></div>`;
   }
   const field=(name,label,value='',placeholder='',required=true)=>`<label class="field"><span>${label}${required?' <em>*</em>':''}</span><input name="${name}" value="${esc(value)}" placeholder="${esc(placeholder)}" ${required?'required':''} autocomplete="off" spellcheck="false"></label>`;
-  function connect(){const c=state.status?.connection||{};
-    return `<div class="page-heading"><div class="eyebrow">01 / CONNECT</div><h1>Connect your projects</h1><p>Point Studio at verified local files. No cloud upload or Unity project modification.</p></div>${stageRail()}<form id="connect-form" class="connect-layout"><section class="panel pad"><div class="form-heading">${icon('folder')} <h2>Unity source</h2>${statusLabel(c.csir?'Linked':'Required',c.csir?'good':'warning')}</div>${field('csir','Source CSIR JSON',c.csir,'D:\\...\\Benchmark002_Timeline.csir.json')}${field('unity_project','Unity project folder (for automatic transfer)',c.unity_project,'D:\\...\\MyUnityProject',false)}${field('source_scope','Cutscene asset folder under Assets/',c.source_scope||'','Assets/Benchmark002',false)}<label class="checkbox"><input type="checkbox" name="source_rights_confirmed" ${c.source_rights_confirmed?'checked':''}><span>I own or have permission to copy the Unity source assets into Unreal</span></label>${field('capture','Unity CineTwin behavior capture (optional)',c.capture,'D:\\...\\Benchmark002_Timeline.cinetwin.behavior.json',false)}<p class="hint">Without a Unity behavior capture, the transfer can be prepared, but direct cross-engine motion comparison will remain unavailable.</p><div class="form-heading target-heading">${icon('layers')} <h2>Unreal destination</h2>${statusLabel(c.target_project?'Linked':'Required',c.target_project?'good':'warning')}</div>${field('mapping','Curated target mapping JSON',c.mapping,'D:\\...\\stage5_mapping.json')}${field('target_project','Unreal project (.uproject)',c.target_project,'D:\\...\\CutSceneAI_Test.uproject')}${field('level_path','Loaded target level',c.level_path||'/Game/CutSceneAI/Tests/L_NewTarget_Test01','/Game/.../Level')}<label class="checkbox"><input type="checkbox" name="skeletal_root_world_lock" ${c.skeletal_root_world_lock?'checked':''}><span>Experimental skeletal root correction <small>(requires a CineTwin source capture)</small></span></label><div class="form-actions"><button class="button primary" type="submit" ${state.busy?'disabled':''}>${state.busy?'Checking files…':'Validate & connect '+icon('arrow')}</button></div></section><aside><div class="panel pad sidebar-panel"><h2>Local-only connection</h2><p>Studio validates the files that already exist on your computer. The browser cannot directly read arbitrary Unity/Unreal directories.</p><div class="rule"></div>${item('Source project','Read only')}${item('Existing target sequence','Never overwritten')}${item('New transfer sequence','Unique asset path')}${item('Unreal modification','Requires explicit action')}</div><div class="callout">${icon('alert')}<p>Use a backed-up Unreal test project. A prepared plan is read-only, but generating a sequence can alter editor state.</p></div></aside></form>`;
+  function connect(){
+    const c=state.status?.connection||{};
+    // The local Python service opens a native Windows folder picker. Browsers
+    // cannot reveal full local directory paths from webkitdirectory inputs.
+    const folders=state.selectedFolders;
+    const d=state.discovery||{};
+    const source=d.unity||{};
+    const target=d.unreal||{};
+    const cutscenes=source.cutscenes||[];
+    const levels=target.levels||[];
+    const pickedSource=state.selectedCutscene||cutscenes[0]?.path||'';
+    const pickedLevel=state.selectedLevel||target.active_level||(levels.length===1?levels[0]:'');
+    const folderRow=(kind,label,path,description)=>`<div class="project-picker"><div class="project-folder-info"><strong>${esc(label)}</strong><span>${esc(path?path.split(/[\\/]/).pop():'Not selected')}</span><small title="${esc(path)}">${esc(path||description)}</small></div>${btn(path?'Change folder':'Browse folder',kind==='unity'?'browse-unity':'browse-unreal','secondary',state.busy)}</div>`;
+    const selectHtml=(name,items,selected,labelField,valueField)=>`<label class="field"><span>${name==='csir'?'Detected Unity cutscene':'Destination level'}</span><select name="${name}" required>${items.map(x=>`<option value="${esc(typeof x==='string'?x:x[valueField])}" ${selected===(typeof x==='string'?x:x[valueField])?'selected':''}>${esc(typeof x==='string'?x:x[labelField])}</option>`).join('')}</select></label>`;
+    return `<div class="page-heading"><div class="eyebrow">01 / CONNECT</div><h1>Choose your projects</h1><p>Select two project folders. Studio will discover the exported timelines, Unreal project and level, and prepare the mapping automatically.</p></div>${stageRail()}<form id="project-folders-form" class="connect-layout"><section class="panel pad"><div class="form-heading">${icon('folder')} <h2>Project folders</h2>${statusLabel(d.ready?'DISCOVERED':'SELECT FOLDERS',d.ready?'good':'warning')}</div>
+    ${folderRow('unity','Unity project',folders.unity,'Folder containing Assets and ProjectSettings')}
+    ${folderRow('unreal','Unreal project',folders.unreal,'Folder containing a .uproject file')}
+    ${source.message?`<p class="hint">${esc(source.message)}</p>`:''}${target.message?`<p class="hint">${esc(target.message)}</p>`:''}
+    ${cutscenes.length?`<div class="rule"></div><h3>Detected cutscenes</h3>${selectHtml('csir',cutscenes,pickedSource,'name','path')}${cutscenes.length===1?'<p class="hint">One cutscene detected — already selected.</p>':''}`:''}
+    ${levels.length?`${selectHtml('level',levels,pickedLevel)}${levels.length===1?'<p class="hint">One target level detected — already selected.</p>':''}`:''}
+    <label class="checkbox"><input type="checkbox" name="source_rights_confirmed" ${c.source_rights_confirmed?'checked':''}><span>I have permission to copy the Unity project assets into the Unreal project</span></label>
+    <div class="form-actions"><button class="button primary" type="submit" ${!d.ready||state.busy?'disabled':''}>${state.busy?'Checking projects…':'Connect projects '+icon('arrow')}</button>${folders.unity&&folders.unreal?btn('Scan again','scan-folders','secondary',state.busy):''}</div>
+    </section><aside><div class="panel pad sidebar-panel"><h2>Detected automatically</h2>${item('Unity source',cutscenes.length?`${cutscenes.length} exported cutscene(s)`:'Not exported or not scanned')}${item('Unreal project',target.project?target.project.split(/[\\/]/).pop():'Not selected')}${item('Saved maps',size(levels.length))}${item('Asset scope',source.source_scope||'Waiting for Unity folder')}${item('Asset mapping',d.ready?'Auto-generated on connection':'Not generated')}${item('CineTwin capture','Auto-attached if an exact match exists')}<div class="rule"></div><p class="hint">Project discovery is read-only. The Generate action still requires Unreal Editor to be open, and it never overwrites an existing sequence.</p></div><div class="callout">${icon('shield')}<p>When multiple cutscenes or levels exist, select from the detected list. No JSON paths or manual mapping files are needed.</p></div></aside></form>`;
   }
   function select(){const c=state.status?.connection;
     if(!c)return missing('Select cutscene','Connect an existing Unity CSIR before selecting a cutscene.','connect');
@@ -96,6 +118,17 @@
   }
   async function refresh(quiet=false){try{let oldId=state.status?.active_job;const status=await api('status');state.status=status;
       state.candidate=status.candidate||null;
+      if(status.connection && !state.selectedFolders.unity && !state.selectedFolders.unreal){
+        state.selectedFolders.unity=status.connection.unity_project||'';
+        state.selectedFolders.unreal=String(status.connection.target_project||'').replace(/[\\/][^\\/]+$/,'');
+      }
+      if(status.connection && !state.discovery && state.selectedFolders.unity && state.selectedFolders.unreal){
+        try{
+          state.discovery=await api('discover',{unity_folder:state.selectedFolders.unity,unreal_folder:state.selectedFolders.unreal});
+          state.selectedCutscene=status.connection.csir||'';
+          state.selectedLevel=status.connection.level_path||'';
+        }catch{} // Project folders may have moved; allow Browse Folder again.
+      }
       if(status.observation)state.report=status.observation;
       if(status.active_job && (!state.job || status.active_job!==oldId || state.job.job_id!==status.active_job))state.job=await api('jobs/'+status.active_job);
       else if(status.active_job)state.job=await api('jobs/'+status.active_job);
@@ -110,6 +143,28 @@
     if(name==='clear'){state.error='';state.info='';render();return}
     if(name==='refresh'){await refresh();return}
     if(name==='copy-command'){try{await navigator.clipboard.writeText($('#worker-command').textContent);notice('Unreal Python Console command copied.')}catch{notice('Copy the command manually from the box.',true)}return}
+    if(name==='browse-unity'||name==='browse-unreal'||name==='scan-folders'){
+      state.busy=true;render();
+      try{
+        if(name!=='scan-folders'){
+          const kind=name==='browse-unity'?'unity':'unreal';
+          const picked=await api('pick-folder',{kind});
+          if(picked.cancelled)return;
+          state.selectedFolders[kind]=picked.path;
+          state.selectedCutscene='';state.selectedLevel='';
+        }
+        state.discovery=await api('discover',{unity_folder:state.selectedFolders.unity,unreal_folder:state.selectedFolders.unreal});
+        const src=state.discovery.unity?.cutscenes||[];
+        const maps=state.discovery.unreal?.levels||[];
+        state.selectedCutscene=src.length?src[0].path:'';
+        state.selectedLevel=state.discovery.unreal?.active_level||(maps.length===1?maps[0]:'');
+        if(!state.discovery.ready)state.info='Folders selected. Review any missing exports or maps below.';
+        else state.info='Both projects inspected. Confirm the cutscene and level, then connect.';
+        state.error='';
+      }catch(err){state.error=err.message;state.info='';}
+      finally{state.busy=false;render()}
+      return;
+    }
     if(name==='prepare'){
       state.busy=true;render();try{state.candidate=await api('prepare',{});state.job=null;state.jobDiagnostic=null;notice('Source-authenticated transfer plan prepared. Unreal assets remain unchanged.')}catch(err){notice('Plan blocked: '+err.message,true)}finally{state.busy=false;render()}return;
     }
@@ -129,7 +184,19 @@
     state.busy=true;state.error='';state.info='';
     const body=Object.fromEntries(new FormData(form).entries());
     try{
-      if(form.id==='connect-form'){
+      if(form.id==='project-folders-form'){
+        state.selectedCutscene=body.csir;
+        state.selectedLevel=body.level;
+        const result=await api('connect-projects',{
+          unity_folder:state.selectedFolders.unity,
+          unreal_folder:state.selectedFolders.unreal,
+          csir:body.csir,level:body.level,
+          source_rights_confirmed:!!form.querySelector('[name=source_rights_confirmed]').checked
+        });
+        state.status.connection=result;state.candidate=null;state.job=null;
+        state.jobDiagnostic=null;state.report=null;state.evidencePath='';
+        navigate('select');notice('Projects connected. Cutscene and mapping detected automatically.');
+      }else if(form.id==='connect-form'){
         body.skeletal_root_world_lock=!!form.querySelector('[name=skeletal_root_world_lock]').checked;
         body.source_rights_confirmed=!!form.querySelector('[name=source_rights_confirmed]').checked;
         const result=await api('connect',body);

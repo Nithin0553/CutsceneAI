@@ -60,3 +60,39 @@ python -m pytest -q tests/studio/test_studio_local_bridge.py tests/studio/test_s
 ```
 
 Actual v0.5 end-to-end import and Level Sequence generation in Unreal 5.8.3 still requires testing in the user's fresh staging project; local fake-Editor tests do not establish successful rendering, skeleton compatibility, or fidelity. A successful editor generation remains `GENERATED_UNVERIFIED`.
+
+## Two-folder project connection (v0.6)
+
+The **Projects** screen now provides native **Browse folder** controls. On a Windows
+workstation, the localhost companion opens a native folder-selection dialog;
+the browser itself does not have permission to reveal full local paths.
+
+1. Select the Unity project directory (containing `Assets/` and `ProjectSettings/`).
+2. Select the Unreal project directory (containing exactly one `.uproject`).
+3. Studio finds *previously exported* Unity CSIR files in `CutsceneAI/Exports`,
+   `CutSceneAI/Exports`, or `Exports`; inspects saved Unreal `.umap` levels; and
+   identifies the editor's active map when available. With multiple matches,
+   choose from a dropdown (no path entry).
+4. On **Connect projects**, Studio creates a non-overwriting mapping proposal
+   inside `~/.cutsceneai-studio/runs/discovered-mappings/`, matches a Unity
+   CineTwin capture only when the exact CSIR digest agrees, and binds the
+   selected source/target files into the existing validated Studio connection.
+5. **Prepare transfer** creates new immutable transfer artifacts. Automatic
+   asset scanning begins at the selected Unity project's `Assets/` root; the
+   importer accepts this scope and reports missing/ambiguous assets before
+   generating. Explicit permission to copy source assets remains required.
+
+**Important limits:** This is *project discovery and mapping setup*, not
+in-editor Unity Timeline extraction. A Unity CSIR must have been exported at
+least once with the CutSceneAI Unity extractor; when no export exists, the UI
+shows the precise Unity menu action, never invents a source cutscene. An
+Unreal map must already exist or be loaded/saved; the user may need to select
+one from the detected dropdown. Unreal Editor and the Studio companion must
+still be running to modify the destination. Source-derived mappings are
+proposals and cannot establish asset correctness or cinematic parity.
+Do not commit generated local mappings, cutscenes, or Unity/Unreal project
+content to the code repository.
+
+The native picker is supported on Windows only in this release. Existing
+legacy JSON-path `/api/connect` calls remain supported for diagnostic and
+integration-test compatibility; the normal GUI no longer exposes them.

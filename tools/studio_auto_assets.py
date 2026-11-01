@@ -54,7 +54,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     if not (root / 'Assets').is_dir():
         raise AutoAssetError('Select a Unity project folder containing Assets/.')
     scope = str(source_scope).replace('\\', '/').strip('/')
-    if not scope or not scope.startswith('Assets/') or '..' in scope.split('/'):
+    if not scope or not (scope == 'Assets' or scope.startswith('Assets/')) or '..' in scope.split('/'):
         raise AutoAssetError('Choose a source scope under Assets/, such as Assets/Benchmark002.')
     search_root = (root / scope).resolve()
     if not search_root.is_relative_to((root / 'Assets').resolve()) or not search_root.is_dir():
@@ -74,6 +74,15 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     for f in files:
         if not f.is_relative_to(search_root):
             raise AutoAssetError('Source symlink escapes chosen Unity scope: '+str(f))
+        if f.stat().st_size == 0:
+            raise AutoAssetError('Empty source file in selected asset scope: '+str(f))
+        if f.suffix.lower()=='.png' and f.open('rb').read(8)!=b'\x89PNG\r\n\x1a\n':
+            raise AutoAssetError('Invalid source PNG signature: '+str(f))
+        if f.suffix.lower()=='.wav':
+            with f.open('rb') as fh:
+                header=fh.read(12)
+            if len(header)<12 or header[:4]!=b'RIFF' or header[8:12]!=b'WAVE':
+                raise AutoAssetError('Invalid source WAV header: '+str(f))
     assets = {str(a.get('asset_id')): a for a in csir.get('assets', [])}
     entities = {str(e.get('name')): e for e in csir.get('entities', [])}
     paths = defaultdict(list)

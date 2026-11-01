@@ -55,7 +55,7 @@ def config_check(payload: dict[str, Any]) -> dict[str, Any]:
     if unity_project is not None:
         if not (unity_project / 'Assets').is_dir():
             raise ValueError('Unity project folder must contain Assets/.')
-        if not scope.startswith('Assets/') or '..' in scope.split('/') or not (unity_project / scope).is_dir():
+        if not (scope == 'Assets' or scope.startswith('Assets/')) or '..' in scope.split('/') or not (unity_project / scope).is_dir():
             raise ValueError('Choose a real Unity source scope under Assets/.')
     capture_text = str(payload.get('capture') or '').strip()
     capture = Path(capture_text).expanduser().resolve() if capture_text else None
@@ -465,6 +465,10 @@ def observation_summary(path_string: str, config: dict[str, Any]) -> dict[str, A
 
 
 def create_handler(webroot: Path, folder: Path = WORKSPACE):
+    tools_dir = str(ROOT / 'tools')
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import studio_project_discovery
     class StudioHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(webroot), **kwargs)
@@ -539,13 +543,30 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                     raise ValueError('Expected JSON request object.')
                 route = urlparse(self.path).path
                 with LOCK:
-                    if route == '/api/connect':
+                    if route == '/api/pick-folder':
+                        selected = studio_project_discovery.browse_project_folder(str(data.get('kind') or ''))
+                        result = {'path': selected, 'cancelled': not bool(selected)}
+                    elif route == '/api/discover':
+                        result = studio_project_discovery.discover(
+                            str(data.get('unity_folder') or ''),
+                            str(data.get('unreal_folder') or ''),
+                            worker=worker_connected(folder))
+                    elif route in {'/api/connect', '/api/connect-projects'}:
                         active_job_file = folder / 'active-job.json'
                         if active_job_file.is_file():
                             prior = job_status(load_json(active_job_file)['job_id'], folder)
                             if prior['status'] in {'QUEUED', 'RUNNING'}:
                                 raise ValueError('Cannot change connections while an Unreal job is queued or running.')
-                        result = config_check(data)
+                        if route == '/api/connect-projects':
+                            fields = studio_project_discovery.build_connection(
+                                str(data.get('unity_folder') or ''),
+                                str(data.get('unreal_folder') or ''),
+                                str(data.get('csir') or ''), str(data.get('level') or ''),
+                                workspace=folder, worker=worker_connected(folder),
+                                source_rights_confirmed=bool(data.get('source_rights_confirmed')))
+                        else:
+                            fields = data
+                        result = config_check(fields)
                         atomic_json(folder / 'connection.json', result)
                         for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json', 'destination-readiness.json'):
                             (folder / name).unlink(missing_ok=True)
