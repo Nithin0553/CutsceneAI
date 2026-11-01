@@ -60,12 +60,23 @@ def _loaded_project(api: Any) -> str:
     return str(convert(raw)) if callable(convert) else raw
 
 
-def _checks(sequence: Any) -> dict[str, Any]:
+def _checks(sequence: Any, api: Any) -> dict[str, Any]:
+    """Use UE version-neutral sequence extension fallbacks where available."""
     observed = {}
-    for name, method in (("binding_count", "get_bindings"), ("root_track_count", "get_tracks")):
+    extensions = getattr(api, "MovieSceneSequenceExtensions", None)
+    for name, method, fallback in (
+        ("binding_count", "get_bindings", "get_bindings"),
+        ("root_track_count", "get_tracks", "get_tracks"),
+    ):
         getter = getattr(sequence, method, None)
         try:
-            observed[name] = len(list(getter())) if callable(getter) else None
+            if callable(getter):
+                observed[name] = len(list(getter()))
+            else:
+                extension_getter = getattr(extensions, fallback, None) if extensions else None
+                observed[name] = (
+                    len(list(extension_getter(sequence))) if callable(extension_getter) else None
+                )
         except Exception:
             observed[name] = None
     return observed
@@ -163,7 +174,7 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
     sequence_rows = {
         "path": sequence_path, "actual_class": sequence_class,
         "saved_file_exists": sequence_disk,
-        **(_checks(sequence) if sequence is not None else
+        **(_checks(sequence, api) if sequence is not None else
            {"binding_count": None, "root_track_count": None}),
     }
     level_disk = _package_file(project, expected_level, ".umap").is_file()
