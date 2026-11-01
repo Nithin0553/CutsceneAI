@@ -70,7 +70,6 @@ def prepared(tmp_path, monkeypatch):
     assets.pop(sequence)
     fixture_folder = tmp_path / "Content" / "Testing"
     (fixture_folder / "LS_New.uasset").unlink()
-    plan = json.loads((candidate / "transfer-plan.json").read_text(encoding="utf-8"))
     calls = {"generate": 0, "save": 0, "verify": 0}
 
     def verify_prepared(path):
@@ -111,7 +110,7 @@ def prepared(tmp_path, monkeypatch):
 
 
 def test_generator_only_reuses_saved_imported_assets_once(tmp_path, monkeypatch):
-    root, jobfile, candidate, fake, assets, calls = prepared(tmp_path, monkeypatch)
+    root, jobfile, candidate, fake, _assets, calls = prepared(tmp_path, monkeypatch)
     result = RECOVERY.recover_latest(root, unreal_api=fake)
     assert result["status"] == "GENERATED_UNVERIFIED"
     assert result["assets_reimported"] is False
