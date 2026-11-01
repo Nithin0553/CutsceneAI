@@ -719,9 +719,13 @@ def _add_actor_visibility(
     channels = unreal_compat.get_section_channels(section)
     if len(channels) != 1:
         raise UnrealBuildError("Actor visibility requires exactly one Boolean channel.")
+    # MovieSceneVisibilityTrack's Boolean channel stores VISIBLE semantics,
+    # despite its bound bHidden actor property. Direct Python channel writes
+    # bypass ProcessSourceValueForKeying(), which normally inverts bHidden.
+    # Source: UE 5.8 UMovieSceneVisibilityTrack::ProcessSourceValueForKeying.
     for key in action["keys"]:
         channels[0].add_key(
-            unreal.FrameNumber(int(key["frame"])), bool(key["hidden"])
+            unreal.FrameNumber(int(key["frame"])), not bool(key["hidden"])
         )
     unreal.log_warning(
         "[CutSceneAI] Visual-only ActivationTrack generated; "

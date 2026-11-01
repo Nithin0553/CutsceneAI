@@ -142,6 +142,7 @@ def test_existing_ue_builder_contains_native_visibility_realizer():
     assert "unreal.MovieSceneVisibilityTrack" in code or '"MovieSceneVisibilityTrack"' in code
     assert 'elif kind == "actor_visibility"' in code
     assert "bHidden" in code
+    assert 'not bool(key["hidden"])' in code
     assert "VISUAL ONLY (partial)" in code
 
 
@@ -160,3 +161,10 @@ def test_preflight_declares_partial_only_when_visual_fallback_opted_in():
     assert all(row["state"] == "KNOWN_PARTIAL" for row in rows)
     assert all("visibility" in row["reason"] for row in rows)
     assert opted["strict_transfer_allowed"] is False
+
+
+def test_nonzero_playback_origin_is_not_silently_misrepresented():
+    source, mapping = sample()
+    source["timing"]["playback_start"] = rt(3)
+    with pytest.raises(visual_activation.VisualActivationError, match="zero playback start"):
+        visual_activation.build_action(source, mapping, source["tracks"][0])

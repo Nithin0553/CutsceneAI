@@ -38,11 +38,15 @@ def build_action(csir: dict[str, Any], mapping: dict[str, Any],
     rate = timing.get("display_rate") or timing.get("source_rate") or {}
     try:
         n, d = int(rate["numerator"]), int(rate["denominator"])
+        start_seconds = float(csir_plan.rational_seconds(timing["playback_start"]))
         duration = float(csir_plan.rational_seconds(timing["playback_end"]))
     except (TypeError, KeyError, ValueError, ZeroDivisionError) as exc:
         raise VisualActivationError("Unity source rate/playback bounds are unavailable.") from exc
-    if n <= 0 or d <= 0 or duration <= 0.0:
-        raise VisualActivationError("Invalid positive source timing contract.")
+    if n <= 0 or d <= 0 or duration <= 0.0 or abs(start_seconds) > 1e-9:
+        raise VisualActivationError(
+            "Activation approximation requires positive timing and a zero playback start; "
+            "a nonzero source timeline origin requires an explicit time-offset adapter."
+        )
     max_frame = csir_plan.seconds_to_frame(duration, n, d)
     intervals = []
     post_states = set()
