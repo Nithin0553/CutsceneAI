@@ -131,7 +131,7 @@ def test_no_generic_catalog_route_is_automatically_executable():
     assert dispatch.BUILDER_ACTIONS == {
         "camera_setup", "camera_cut", "camera_fov", "transform",
         "skeletal_animation", "light_intensity", "audio", "marker",
-        "skeletal_world_root_lock", "actor_visibility",
+        "skeletal_world_root_lock", "actor_visibility", "property_float",
     }
 
 
