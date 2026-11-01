@@ -68,3 +68,19 @@ The current real Unreal test proved 18/18 mapped assets, 10/10 actors and 2/2 di
 - Unity TypeCache: https://docs.unity3d.com/ScriptReference/TypeCache.GetTypesDerivedFrom.html
 - Unreal Editor Python: https://dev.epicgames.com/documentation/en-us/unreal-engine/scripting-the-unreal-editor-using-python
 - Unreal 5.8 Python class index: https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/?application_version=5.8
+
+## Native adapter candidate: Unity ActivationTrack visual-only mapping
+
+For a fresh source-to-Unreal candidate only, a mapping may opt in to the partial fallback:
+
+```json
+{"enable_actor_visibility_fallback": true}
+```
+
+An authored Unity Timeline ActivationTrack classified as event.state, bound to a mapped actor, can produce actor_visibility keys on an Unreal MovieSceneVisibilityTrack (bHidden). Clip timing, target binding and source post-playback metadata must pass source-side checks.
+
+**This is render-only approximation.** Unity GameObject activation can affect scripts, collision, physics and gameplay, while actor visibility only affects rendering. Unity postPlaybackState is not equivalent to an Unreal hidden flag. The source-side action therefore retains `semantic_losses` and `RENDER_ONLY_PARTIAL_UNVERIFIED`.
+
+CED preflight labels event.state `KNOWN_PARTIAL` only when the mapping has opted in, and `KNOWN_UNSUPPORTED` otherwise. Source planning tests and Unreal builder contract tests do not substitute for real UE 5.8 save/reopen and visibility playback evidence.
+
+Use a backed-up new staging target for tests. Do not edit or overwrite the existing verified Benchmark002 level.
