@@ -122,7 +122,21 @@ def build_actions(csir: dict[str, Any], mapping: dict[str, Any],
     if not specs:
         return []
     sections = track.get("sections")
-    if not isinstance(sections, list) or len(sections) != 1:
+    if not isinstance(sections, list):
+        raise ScalarPropertyError("Source Timeline track sections are malformed.")
+    requested = {(x["source_semantic"], x["source_component_type"]) for x in specs}
+    matching_sections = [
+        section for section in sections if isinstance(section, dict)
+        and any(
+            (str(curve.get("canonical_semantic") or ""),
+             str(curve.get("component_type") or "")) in requested
+            for curve in (section.get("payload") or {}).get("animation", {}).get("curves", [])
+            if isinstance(curve, dict)
+        )
+    ]
+    if not matching_sections:
+        return []
+    if len(sections) != 1 or len(matching_sections) != 1:
         raise ScalarPropertyError(
             "Explicit float property transfer requires one authored section; "
             "multiple/gapped sections need an evaluated source blend policy."
