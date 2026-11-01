@@ -224,6 +224,8 @@ def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> 
     """Call the existing, source-authenticated transfer backend; never overwrite."""
     config = load_json(folder / 'connection.json')
     config_check(config)  # Recheck input files, target existence and source identity.
+    if str(ROOT / 'tools') not in sys.path:
+        sys.path.insert(0, str(ROOT / 'tools'))
     import studio_ui_features
     overrides = studio_ui_features.validate_options(config, options or {})
     active_job = folder / 'active-job.json'
