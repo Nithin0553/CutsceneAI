@@ -53,3 +53,25 @@ The eight unmapped source-parent relationships seen in the original report
 are separately tracked under issue #68. Source intermediate helper, component,
 rig and director records need complete parent-chain classification before the
 system creates new proxies or attaches actors across them.
+
+
+## UE 5.8 mobility readback compatibility (2026-11-01)
+
+The editor successfully persisted two parent links, but a previous audit returned
+`MOBILITY_READBACK_UNAVAILABLE` for both attached children. The old adapter
+only called `actor.get_root_component()`; Unreal 5.8 documents
+`Actor.root_component` as a property. The read-only adapter now attempts
+`actor.get_editor_property("root_component")`, then `actor.root_component`,
+and finally the legacy method, and reads the root's actual mobility.
+
+The audit prints two separate counters: `parent links` (verified actor-to-actor
+attachment persistence) and `fully checked links` (verified parent, expected
+socket behavior, and movable root components on both ends). A missing mobility
+reading cannot erase a proven parent link; an explicitly STATIC attached root
+is an actual failure.
+
+**Use the existing reopened project and level**, pull the updated code,
+reload `studio_hierarchy_audit` and run `audit_latest()` again.
+This creates a new immutable read-only report; no conversion, stage, asset
+reimport or sequence regeneration is needed. The 8 unresolved source parents
+remain INCOMPLETE under issue #68 even if both direct links fully pass.
