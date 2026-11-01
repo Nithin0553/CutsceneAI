@@ -16,7 +16,6 @@ import studio_ui_features as feat
 from test_studio_local_bridge import bridge, call, fixture_files
 
 
-
 @pytest.fixture
 def local_service(tmp_path):
     web = tmp_path / "web"
