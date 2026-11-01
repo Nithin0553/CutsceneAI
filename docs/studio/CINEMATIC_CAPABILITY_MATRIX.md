@@ -77,3 +77,19 @@ not a substitute for adapting and testing more element types.
   files are hashed in chunks rather than fully buffered.
 - Sanitized target asset path collisions between different source assets are blockers,
   not silent drops. Engine import and playback parity still require their own checks.
+
+## Studio auto-setup follow-up: duplicated textures and native MP3 (Oct 31, 2026)
+
+- Imported FBX subfolders such as `.fbm` may contain byte-identical PNGs also present in `Textures/`.
+  When **kind, destination and full SHA-256 digest all match**, Studio imports only one
+  Texture2D and retains a manifest trail of the duplicate paths. A different image
+  claiming the same destination remains a hard collision; animation and character
+  assets are never merged just because their bytes match.
+- UE 5.8 directly imports MP3 and WAV as SoundWave assets through its native
+  import pipeline. The automatic setup no longer requires FFmpeg for these files.
+  The generated SoundWave still requires class/readback validation by Unreal.
+- The 0-actor fresh target map is an expected initial state for this staged workflow:
+  after approved, verified preparation the editor worker creates actors, imports
+  assets, saves the level and only then generates the sequence. Preview warnings
+  before staging must not be reported as completed conversion.
+- Unreal official audio reference: https://dev.epicgames.com/documentation/unreal-engine/importing-audio-files

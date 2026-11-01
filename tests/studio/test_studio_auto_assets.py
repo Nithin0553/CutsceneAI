@@ -192,3 +192,55 @@ def test_two_character_names_that_sanitize_to_same_target_are_blocked(tmp_path):
     assert any('Target asset collision' in b for b in result['blockers'])
     assert sum(x['target_asset_path'].endswith('/Characters/CSAI_Ch31_nonPBR')
                for x in result['imports']) == 1
+
+
+def test_identical_png_duplicates_are_deduplicated_without_blocking(tmp_path):
+    root, files = create(tmp_path)
+    originals = root / 'Assets' / 'Benchmark002' / 'Characters'
+    copied = originals / 'Ch26_nonPBR.fbm'
+    nested = originals / 'Textures'
+    copied.mkdir()
+    nested.mkdir()
+    raw = b'\\x89PNG\\r\\n\\x1a\\n' + b'one-pixel-fixture'
+    one = copied / 'Ch26_1001_Diffuse.png'
+    two = nested / 'Ch26_1001_Diffuse.png'
+    one.write_bytes(raw)
+    two.write_bytes(raw)
+    result = auto.inspect(*files, root, 'Assets/Benchmark002',
+                          '/Game/CutSceneAI/AutoTransfer/T_ABCD')
+    assert result['ready']
+    texture_imports = [x for x in result['imports'] if x['kind']=='Texture2D']
+    assert len(texture_imports)==1
+    assert len(result['deduplicated_textures'])==1
+    assert result['deduplicated_textures'][0]['source_sha256']==texture_imports[0]['source_sha256']
+    manifest=tmp_path/'manifest.json'
+    manifest.write_text(json.dumps(result))
+    assert auto.verify(manifest,*files)==result
+
+
+def test_duplicate_texture_drift_invalidates_prepared_manifest(tmp_path):
+    root, files=create(tmp_path)
+    chars=root/'Assets'/'Benchmark002'/'Characters'
+    first=chars/'Textures'/'Ch26_1001_Diffuse.png'
+    second=chars/'Ch26_nonPBR.fbm'/'Ch26_1001_Diffuse.png'
+    first.parent.mkdir();second.parent.mkdir()
+    valid=b'\\x89PNG\\r\\n\\x1a\\n'+b'common-texture'
+    first.write_bytes(valid);second.write_bytes(valid)
+    result=auto.inspect(*files,root,'Assets','/Game/CutSceneAI/AutoTransfer/T_ABCD')
+    assert result['ready']
+    manifest=tmp_path/'manifest.json';manifest.write_text(json.dumps(result))
+    second.write_bytes(valid+b'changed')
+    with pytest.raises(auto.AutoAssetError,match='changed'):
+        auto.verify(manifest,*files)
+
+
+def test_mp3_is_planned_directly_as_soundwave(tmp_path):
+    root, files=create(tmp_path, missing_audio=True)
+    sound=root/'Assets'/'Benchmark002'/'Audio'/'Cue.mp3'
+    sound.write_bytes(b'ID3'+bytes(20))
+    result=auto.inspect(*files,root,'Assets/Benchmark002',
+                        '/Game/CutSceneAI/AutoTransfer/T_ABCD')
+    assert result['ready']
+    assert any(x['kind']=='SoundWave' and x['source_file']==str(sound.resolve())
+               for x in result['imports'])
+    assert not any('FFmpeg' in warning for warning in result['warnings'])

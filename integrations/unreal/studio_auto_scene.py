@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
 import sys
 import traceback
 from pathlib import Path
@@ -114,26 +112,9 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
         for row in manifest['imports']:
             if api.EditorAssetLibrary.does_asset_exist(row['target_asset_path']):
                 raise AutomaticSetupError('Automatic setup refuses existing target asset: '+row['target_asset_path'])
-        # WAV must be available for SoundWave. MP3 conversion is optional but
-        # must be available before the first Unreal asset is modified.
-        ffmpeg=shutil.which('ffmpeg')
-        if any(x['kind']=='SoundWave' and Path(x['source_file']).suffix.lower()=='.mp3' for x in manifest['imports']) and not ffmpeg:
-            raise AutomaticSetupError('FFmpeg is required to convert source MP3 to WAV before Unreal import. No assets changed.')
-        staging=output.parent/'converted-audio'
-        converted=[]
-        for row in manifest['imports']:
-            if row['kind']!='SoundWave' or Path(row['source_file']).suffix.lower()!='.mp3':
-                continue
-            staging.mkdir(exist_ok=True)
-            target=staging/(Path(row['source_file']).stem+'_'+row['source_sha256'][:12]+'.wav')
-            if target.exists():
-                raise AutomaticSetupError('Audio conversion output already exists; use a fresh candidate.')
-            proc=subprocess.run([ffmpeg,'-nostdin','-v','error','-y','-i',row['source_file'],
-                                 '-acodec','pcm_s16le',str(target)],capture_output=True,text=True,timeout=100)
-            if proc.returncode or not target.is_file() or target.stat().st_size<44:
-                raise AutomaticSetupError('Source audio conversion failed: '+(proc.stderr or 'Invalid WAV')[:300])
-            converted.append((row['source_file'],str(target)))
-        converted=dict(converted)
+        # Unreal Engine 5.8 supports importing MP3 and WAV directly into
+        # SoundWave assets. Let the native importer validate the file and
+        # verify the resulting Unreal asset class after import.
         meshes={}
         props={}
         groups=[('SkeletalMesh',manifest['imports']),('StaticMesh',manifest['imports']),('AnimSequence',manifest['imports']),
@@ -142,7 +123,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
             for row in records:
                 if row['kind']!=kind:
                     continue
-                source=converted.get(row['source_file'],row['source_file'])
+                source=row['source_file']
                 skeleton=None
                 if kind=='AnimSequence':
                     mesh=meshes.get(row.get('character'))

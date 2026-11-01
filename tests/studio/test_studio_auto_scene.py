@@ -78,7 +78,7 @@ class FakeUnreal:
         for task in tasks:
             opt=task.props.get('options')
             cls=('AnimSequence' if opt and opt.props.get('import_animations') else ('SkeletalMesh' if opt.props.get('import_as_skeletal') else 'StaticMesh') if opt else
-                 'SoundWave' if task.props['filename'].endswith('.wav') else 'Texture2D')
+                 'SoundWave' if task.props['filename'].endswith(('.wav', '.mp3')) else 'Texture2D')
             path=task.props['destination_path']+'/'+task.props['destination_name']
             asset=Asset(cls,path)
             if cls=='SkeletalMesh':
@@ -148,3 +148,20 @@ def test_prop_mesh_staged_as_static_mesh_when_source_is_identified(tmp_path):
                       expected_project=str(project),expected_level='/Game/Tests/L_Test',unreal_api=unreal)
     assert receipt['status']=='SETUP_SAVED_UNVERIFIED'
     assert any(a['kind']=='StaticMesh' for a in receipt['assets_imported'])
+
+
+def test_mp3_source_imports_directly_without_ffmpeg(tmp_path, monkeypatch):
+    root, files=create(tmp_path, missing_audio=True)
+    (root/'Assets'/'Benchmark002'/'Audio'/'Cue.mp3').write_bytes(b'ID3'+bytes(20))
+    stage=studio_auto_assets.inspect(*files,root,'Assets/Benchmark002',
+                                     '/Game/CutSceneAI/AutoTransfer/T_ABC')
+    manifest=tmp_path/'auto-setup.json';manifest.write_text(json.dumps(stage))
+    project=tmp_path/'NewProject.uproject';project.write_text('{}')
+    fake=FakeUnreal(str(project))
+    receipt=scene.run(str(manifest),str(tmp_path/'receipt.json'),
+                      csir_path=str(files[0]),mapping_path=str(files[1]),
+                      plan_path=str(files[2]),expected_project=str(project),
+                      expected_level='/Game/Tests/L_Test',unreal_api=fake)
+    assert receipt['status']=='SETUP_SAVED_UNVERIFIED'
+    assert any(row['kind']=='SoundWave' for row in receipt['assets_imported'])
+    assert len(fake.actor_sys.actors)==5

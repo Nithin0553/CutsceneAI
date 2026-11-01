@@ -20,7 +20,12 @@ class AutoAssetError(ValueError):
 
 
 def digest(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    """Stream content hashes; large FBX files must not be buffered in RAM."""
+    state = hashlib.sha256()
+    with Path(path).open('rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            state.update(chunk)
+    return state.hexdigest()
 
 
 def _read(path):
@@ -84,14 +89,9 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     blockers, warnings, imports, actors = [], [], [], []
     asset_resolutions = []
     skipped_optional_textures = []
+    deduplicated_textures = []
     used_target = {}
     def add_import(source, dest, kind, *, character=None):
-        if dest in used_target:
-            previous = used_target[dest]
-            if previous != (str(source), kind, character):
-                blockers.append('Target asset collision at ' + dest + ': ' +
-                                previous[0] + ' versus ' + str(source))
-            return
         if not dest.startswith('/Game/') or '..' in dest.split('/'):
             blockers.append('Unsafe target path: '+dest)
             return
@@ -113,8 +113,25 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             else:
                 blockers.append('Required ' + kind + ' source is ' + reason + ': ' + str(source))
             return
-        used_target[dest] = (str(source), kind, character)
-        imports.append({'source_file':str(source),'source_sha256':digest(source),
+        sha256 = digest(source)
+        if dest in used_target:
+            previous = used_target[dest]
+            # Unity/FBX packages often contain a second copy of the *same*
+            # PNG. Deduplicate only identical texture bytes; never merge
+            # animations or actor-specific meshes on name/content alone.
+            if kind == 'Texture2D' and previous['kind'] == kind and previous['sha256'] == sha256:
+                deduplicated_textures.append({
+                    'source_file': str(source), 'source_sha256': sha256,
+                    'canonical_source_file': previous['source_file'],
+                    'target_asset_path': dest,
+                })
+                return
+            blockers.append('Target asset collision at ' + dest + ': ' +
+                            previous['source_file'] + ' versus ' + str(source))
+            return
+        used_target[dest] = {'source_file': str(source), 'sha256': sha256,
+                             'kind': kind, 'character': character}
+        imports.append({'source_file':str(source),'source_sha256':sha256,
                         'target_asset_path':dest,'kind':kind,'character':character})
     bindings = plan.get('bindings') or {}
     if not bindings:
@@ -210,8 +227,8 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
                 blockers.append('Audio '+name+' cannot resolve uniquely ('+evidence['strategy']+
                                 '); candidate WAV/MP3 files: '+str(len(evidence['candidates'])))
                 continue
-            if match.suffix.lower()=='.mp3':
-                warnings.append('Audio '+name+' requires FFmpeg MP3-to-WAV conversion in the Unreal editor environment.')
+            # Unreal Engine 5.8 imports MP3 directly to SoundWave; do not
+            # force a third-party FFmpeg executable in its Python environment.
             add_import(match,path,'SoundWave')
     # Record what the planner did NOT bind; source hierarchy/mesh components
     # are not necessarily independent actors and must never be fabricated.
@@ -247,6 +264,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             'source_csir_sha256':digest(csir_path),'mapping_sha256':digest(mapping_path),
             'transfer_plan_sha256':digest(plan_path),
             'actors':actors,'imports':imports,'asset_resolutions':asset_resolutions,
+            'deduplicated_textures':deduplicated_textures,
             'unmapped_source_entities':unmapped_entities,
             'source_entity_count':len(csir.get('entities', [])),
             'source_asset_count':len(csir.get('assets', [])),
