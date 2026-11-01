@@ -133,3 +133,26 @@ def test_no_generic_catalog_route_is_automatically_executable():
         "skeletal_animation", "light_intensity", "audio", "marker",
         "skeletal_world_root_lock",
     }
+
+
+def test_identical_ced_in_unrelated_track_not_false_positive_planned():
+    source = _source()
+    source["tracks"].append({
+        "track_id": "other", "name": "OTHER",
+        "ced_type": "camera.cut", "sections": [],
+    })
+    report = dispatch.audit(source, {"actions": [
+        {"kind": "camera_cut", "track_name": "CAM"},
+    ]})
+    by_name = {row["source_name"]: row for row in report["source_occurrences"]
+               if row["kind"] == "tracks"}
+    assert by_name["CAM"]["state"] == "NATIVE_ACTION_PLANNED_UNVERIFIED"
+    assert by_name["OTHER"]["state"] == "NATIVE_ACTION_HANDLER_MISSING"
+    assert by_name["OTHER"]["matching_plan_action_kinds"] == []
+    assert report["full_conversion_verified"] is False
+
+
+def test_unattributed_native_action_never_claims_source_implementation():
+    report = dispatch.audit(_source(), {"actions": [{"kind": "camera_cut"}]})
+    track = next(row for row in report["source_occurrences"] if row["kind"] == "tracks")
+    assert track["state"] == "NATIVE_ACTION_HANDLER_MISSING"
