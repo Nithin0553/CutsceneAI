@@ -152,3 +152,29 @@ def test_source_engine_version_mismatch_blocks_census():
         source_surface_gap.SourceSurfaceGapError, match="version differs"
     ):
         source_surface_gap.audit(csir, census)
+
+
+def test_cli_strict_rejects_missing_project_provenance_even_if_components_known(tmp_path):
+    csir, surface = _fixtures()
+    surface["loaded_scene_components"] = [
+        row for row in surface["loaded_scene_components"]
+        if row["component_type"] in {"UnityEngine.Transform", "UnityEngine.Camera"}
+    ]
+    csir_path = tmp_path / "src.json"
+    surface_path = tmp_path / "census.json"
+    output = tmp_path / "report.json"
+    csir_path.write_text(json.dumps(csir))
+    surface_path.write_text(json.dumps(surface))
+    result = subprocess.run([
+        sys.executable,
+        str(ROOT / "tools" / "studio_source_surface_gap.py"),
+        "--csir", str(csir_path),
+        "--source-surface", str(surface_path),
+        "--out", str(output),
+        "--strict",
+    ], capture_output=True, text=True, check=False)
+    assert result.returncode == 2
+    assert "provenance incomplete" in result.stderr
+    record = json.loads(output.read_text())
+    assert record["unresolved_component_count"] == 0
+    assert record["project_identity_proven"] is False
