@@ -24,6 +24,7 @@ import source_parent_resolution
 import ced_preflight
 import root_world_lock
 import feature_dispatch
+import visual_activation
 
 NATIVE_GAPS = {
     "event.trigger": "Preserves event timestamp/identity as a marked frame, NOT executable payload.",
@@ -322,7 +323,17 @@ def compose(
             reasons.append("Muted track or no source sections.")
         else:
             try:
-                native_actions = _native_track(csir, mapping, track)
+                if (track.get("ced_type") == "event.state"
+                    and mapping.get("enable_actor_visibility_fallback") is True):
+                    native_actions = [visual_activation.build_action(csir, mapping, track)]
+                    status = "BAKED_PARTIAL"
+                    reasons.append(
+                        "Visual-only ActivationTrack approximation: actor visibility keys "
+                        "do not recreate Unity GameObject enable/disable, collision, "
+                        "script callbacks or post-playback activation semantics."
+                    )
+                else:
+                    native_actions = _native_track(csir, mapping, track)
                 if (capture is not None and entity is not None
                     and entity.get("ced_type") == "entity.camera"
                     and track.get("ced_type") == "camera.transform"
@@ -365,7 +376,7 @@ def compose(
                             f"Only {len(native_actions)} of {source_sections} "
                             "source sections produced transfer actions; remainder not transferred."
                         )
-                else:
+                elif not native_actions:
                     reasons.append("No native target action for active source track.")
             except (ValueError, KeyError, TypeError, IndexError, ZeroDivisionError) as exc:
                 reasons.append(f"Native converter cannot represent track: {type(exc).__name__}: {exc}")

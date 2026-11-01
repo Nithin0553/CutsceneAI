@@ -730,6 +730,7 @@ def validate_runtime_capabilities(required_actions: set[str]) -> None:
         "skeletal_animation": "MovieSceneSkeletalAnimationTrack",
         "camera_fov": "MovieSceneFloatTrack",
         "light_intensity": "MovieSceneFloatTrack",
+        "actor_visibility": "MovieSceneVisibilityTrack",
         "camera_cut": "MovieSceneCameraCutTrack",
         "audio": "MovieSceneAudioTrack",
         "marker": "MovieSceneMarkedFrame",

@@ -698,6 +698,37 @@ def _add_light_intensity(sequence: unreal.LevelSequence, actor: unreal.Actor, ac
         unreal_compat.add_linear_channel_key(channels[0], int(key["frame"]), float(key["value"]))
 
 
+
+def _add_actor_visibility(
+    sequence: unreal.LevelSequence, binding: Any, action: dict[str, Any],
+) -> None:
+    """Visual-only Unity Activation fallback: timed actor HiddenInGame keys.
+
+    It does not emulate script/physics/gameplay enable-state or the Unity
+    Timeline postPlaybackState policy. The transfer coverage ledger reports
+    those semantic losses explicitly.
+    """
+    track_cls = getattr(unreal, "MovieSceneVisibilityTrack", None)
+    if track_cls is None:
+        raise UnrealBuildError("MovieSceneVisibilityTrack unavailable for activation fallback.")
+    track = binding.add_track(track_cls)
+    track.set_display_name("CutSceneAI Activation VISUAL ONLY (partial)")
+    track.set_property_name_and_path("bHidden", "bHidden")
+    section = track.add_section()
+    section.set_range(0, sequence.get_playback_end())
+    channels = unreal_compat.get_section_channels(section)
+    if len(channels) != 1:
+        raise UnrealBuildError("Actor visibility requires exactly one Boolean channel.")
+    for key in action["keys"]:
+        channels[0].add_key(
+            unreal.FrameNumber(int(key["frame"])), bool(key["hidden"])
+        )
+    unreal.log_warning(
+        "[CutSceneAI] Visual-only ActivationTrack generated; "
+        "Unity script/collision activation parity NOT VERIFIED."
+    )
+
+
 def _add_audio(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
     sound = _load_asset(action["unreal_asset_path"])
     track = unreal.MovieSceneSequenceExtensions.add_track(sequence, unreal.MovieSceneAudioTrack)
@@ -834,6 +865,8 @@ def _build_prepared_plan(
                 camera_cuts.append(action)
             elif kind == "light_intensity":
                 _add_light_intensity(sequence, bindings[action["entity_name"]]["actor"], action)
+            elif kind == "actor_visibility":
+                _add_actor_visibility(sequence, bindings[action["entity_name"]]["binding"], action)
             elif kind == "audio":
                 _add_audio(sequence, action)
             elif kind == "marker":

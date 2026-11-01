@@ -45,6 +45,7 @@ FAMILIES = {
 CURRENT_BUILDER_ACTIONS = frozenset({
     'camera_setup', 'camera_cut', 'camera_fov', 'transform', 'skeletal_animation',
     'light_intensity', 'audio', 'marker', 'skeletal_world_root_lock',
+    'actor_visibility',
 })
 
 # CED types may be extended without changing this registry.
