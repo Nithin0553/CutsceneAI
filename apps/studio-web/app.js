@@ -7,7 +7,7 @@
   const state = { page:'overview', loading:true, busy:false, error:'', info:'', status:null,
     candidate:null, job:null, report:null, source:null, detailsOpen:false, evidencePath:'',
     selectedFolders:{unity:'',unreal:''}, discovery:null, selectedCutscene:'', selectedLevel:'', selectedUnrealProject:'', sourceRightsConfirmed:false,
-    capabilities:null, sourceSurfaces:null, selectedCensus:'', strictSourceCensus:true,
+    capabilities:null, sourceSurfaces:null, censusIdentity:'', selectedCensus:'', strictSourceCensus:true,
     visibilityFallback:false, verification:null };
   const steps = [['connect','Connect'],['select','Select'],['review','Review'],['transfer','Transfer'],['results','Results']];
   const mark = `<svg viewBox="0 0 36 36" fill="currentColor" aria-hidden="true"><path d="M18 2 3 30h11l4-7h-5l7-14zM23 18l10 12H19l-4-4h8l-4-5z"/></svg>`;
@@ -213,9 +213,11 @@
       }
       if(status.observation)state.report=status.observation;
       if(!state.capabilities){try{state.capabilities=await api('capabilities')}catch{}}
-      if(status.connection){
+      const censusKey=status.connection?String(status.connection.csir||'')+'|'+String(status.connection.unity_project||''):'';
+      if(status.connection && (!state.sourceSurfaces || state.censusIdentity!==censusKey)){
         try{
           state.sourceSurfaces=await api('source-surfaces');
+          state.censusIdentity=censusKey;
           if(state.selectedCensus&&!state.sourceSurfaces.options?.some(x=>x.path===state.selectedCensus)){
             state.selectedCensus='';state.strictSourceCensus=true;
           }
@@ -339,14 +341,14 @@
           csir:body.csir,level:body.level,
           source_rights_confirmed:!!form.querySelector('[name=source_rights_confirmed]').checked
         });
-        state.status.connection=result;state.candidate=null;state.job=null;state.sourceSurfaces=null;state.selectedCensus='';state.verification=null;
+        state.status.connection=result;state.candidate=null;state.job=null;state.sourceSurfaces=null;state.censusIdentity='';state.selectedCensus='';state.verification=null;
         state.jobDiagnostic=null;state.report=null;state.evidencePath='';
         navigate('select');notice('Projects connected. Cutscene and mapping detected automatically.');
       }else if(form.id==='connect-form'){
         body.skeletal_root_world_lock=!!form.querySelector('[name=skeletal_root_world_lock]').checked;
         body.source_rights_confirmed=!!form.querySelector('[name=source_rights_confirmed]').checked;
         const result=await api('connect',body);
-        state.status.connection=result;state.candidate=null;state.job=null;state.sourceSurfaces=null;state.selectedCensus='';state.verification=null;state.jobDiagnostic=null;state.report=null;state.evidencePath='';navigate('select');notice('Project files verified. Select your exported cutscene.');
+        state.status.connection=result;state.candidate=null;state.job=null;state.sourceSurfaces=null;state.censusIdentity='';state.selectedCensus='';state.verification=null;state.jobDiagnostic=null;state.report=null;state.evidencePath='';navigate('select');notice('Project files verified. Select your exported cutscene.');
       }else if(form.id==='observation-form'){
         state.evidencePath=body.path;state.report=await api('observation',{path:body.path});notice('Real target observations verified and attached. Fidelity remains unverified.');
       }
