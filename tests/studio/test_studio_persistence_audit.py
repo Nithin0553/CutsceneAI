@@ -80,6 +80,7 @@ def fixture(tmp_path):
     })
     job = {
         "kind": "cutsceneai.studio.local_unreal_job",
+        "candidate_id": candidate.name,
         "candidate_dir": str(candidate), "sequence_path": seq,
         "expected_project": str(project), "expected_level": level,
         "setup_receipt_file": str(setup), "receipt_file": str(generation),
