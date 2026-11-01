@@ -622,6 +622,13 @@ def compose(
         raise TransferBackendError(
             "No representable target action. An empty sequence would be misleading."
         )
+    # A custom/plugin CED type may be *discovered* without having a native
+    # Unreal builder action. Reject unimplemented action kinds now, before
+    # preparing immutable artifacts or opening the target editor.
+    try:
+        feature_dispatch.verify_executable_actions(plan)
+    except feature_dispatch.FeatureDispatchError as exc:
+        raise TransferBackendError(str(exc)) from exc
 
     # If conversion could create some actions but a specific source section or
     # animated channel is unrecognized, do not call the whole track native.
