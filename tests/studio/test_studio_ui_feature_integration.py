@@ -69,6 +69,8 @@ def test_capability_panel_uses_live_ced_and_builder_actions():
     stats = feat.capabilities()
     assert stats["catalog_version"] == "0.2.0"
     assert stats["feature_families"] == 39
+    assert len(stats["families"]) == 39
+    assert all(row["state"] == "CATALOGUED_NOT_TRANSFER_VERIFIED" for row in stats["families"])
     assert stats["semantic_elements"] >= 700
     assert "property_float" in stats["builder_actions"]
     assert "actor_visibility" in stats["builder_actions"]
@@ -233,5 +235,6 @@ def test_source_ui_static_wiring_and_benchmark_guidance():
     for part in ("api('capabilities')", "api('source-surfaces')", "api('verification')",
                  "enable_actor_visibility_fallback", "strict-source-census",
                  "source_feature_surface_path", "copy-audit-command",
-                 "Benchmark002 regression", "2/2 direct"):
+                 "Benchmark002 regression", "2/2 direct",
+                 "Inspect all", "Declared scalar property mappings"):
         assert part in app
