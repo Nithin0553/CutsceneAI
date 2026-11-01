@@ -53,7 +53,7 @@ ROUTES = {
 BUILDER_ACTIONS = frozenset({
     "camera_setup", "camera_cut", "camera_fov", "transform",
     "skeletal_animation", "light_intensity", "audio", "marker",
-    "skeletal_world_root_lock", "actor_visibility",
+    "skeletal_world_root_lock", "actor_visibility", "property_float",
 })
 # Each association is a source-track/Sequencer building *candidate*, not
 # a guaranteed semantic equivalent (event -> marker is deliberately lossy).

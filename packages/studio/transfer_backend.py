@@ -26,6 +26,7 @@ import root_world_lock
 import feature_dispatch
 import visual_activation
 import source_surface_gap
+import scalar_property_adapter
 
 NATIVE_GAPS = {
     "event.trigger": "Preserves event timestamp/identity as a marked frame, NOT executable payload.",
@@ -335,6 +336,36 @@ def compose(
                     )
                 else:
                     native_actions = _native_track(csir, mapping, track)
+                scalar_actions = scalar_property_adapter.build_actions(
+                    csir, mapping, track
+                )
+                for extra in scalar_actions:
+                    if any(
+                        action.get("kind") == "light_intensity"
+                        and extra["target_property_name"] == "Intensity"
+                        and action.get("entity_name") == extra["entity_name"]
+                        for action in native_actions
+                    ):
+                        raise TransferBackendError(
+                            "Scalar mapping collides with native light intensity track: "
+                            + extra["entity_name"]
+                        )
+                    if any(
+                        action.get("kind") == "camera_fov"
+                        and extra["target_property_name"] in {"FieldOfView", "CurrentFocalLength"}
+                        and action.get("entity_name") == extra["entity_name"]
+                        for action in native_actions
+                    ):
+                        raise TransferBackendError(
+                            "Scalar mapping collides with native camera lens track: "
+                            + extra["entity_name"]
+                        )
+                native_actions.extend(scalar_actions)
+                if scalar_actions:
+                    reasons.append(
+                        "Explicit source-linear scalar property keys converted to editable "
+                        "target track candidates; native readback and behavioral parity unverified."
+                    )
                 if (capture is not None and entity is not None
                     and entity.get("ced_type") == "entity.camera"
                     and track.get("ced_type") == "camera.transform"

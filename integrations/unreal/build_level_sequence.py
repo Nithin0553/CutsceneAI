@@ -106,6 +106,12 @@ def _preflight(plan: dict[str, Any]) -> None:
         "audio": ("fade_in_seconds", "fade_out_seconds"),
     }
     for action in plan.get("actions", []):
+        if action.get("kind") == "property_float":
+            # All target components/float properties must be resolved before
+            # scene changes, including the implicit float section bindings.
+            _target_scalar_object(
+                _find_actor(str(action["actor_label"])), action
+            )
         for field in easing_fields.get(str(action.get("kind", "")), ()):
             try:
                 seconds = float(action.get(field, 0.0))
@@ -733,6 +739,78 @@ def _add_actor_visibility(
     )
 
 
+
+def _target_scalar_object(actor: unreal.Actor, action: dict[str, Any]) -> Any:
+    """Validate the explicit target actor/component and scalar property."""
+    klass = getattr(unreal, str(action["target_class"]), None)
+    if klass is None:
+        raise UnrealBuildError(
+            "Scalar target Unreal class missing: " + str(action["target_class"])
+        )
+    if action.get("target_scope") == "actor":
+        candidate = actor
+        try:
+            if not bool(candidate.is_a(klass)):
+                raise UnrealBuildError("Scalar target actor type is not mapped target class.")
+        except AttributeError as exc:
+            raise UnrealBuildError("Unreal actor class identity API unavailable.") from exc
+    elif action.get("target_scope") == "component":
+        candidates = actor.get_components_by_class(klass)
+        if len(candidates) != 1:
+            raise UnrealBuildError(
+                "Expected exactly one target property component, found "
+                + str(len(candidates))
+            )
+        candidate = candidates[0]
+    else:
+        raise UnrealBuildError("Invalid explicit scalar target scope.")
+    name = str(action["target_property_name"])
+    property_path = str(action["target_property_path"])
+    if property_path != name:
+        raise UnrealBuildError(
+            "Nested Unreal scalar property paths need a distinct validated reflection adapter."
+        )
+    getter = getattr(candidate, "get_editor_property", None)
+    if not callable(getter):
+        raise UnrealBuildError("Native scalar property readback is unavailable.")
+    try:
+        existing = getter(name)
+    except Exception as exc:
+        raise UnrealBuildError("Unreal scalar property not exposed: " + name) from exc
+    if isinstance(existing, bool) or not isinstance(existing, (int, float)):
+        raise UnrealBuildError("Unreal target property is not a numeric scalar: " + name)
+    if not math.isfinite(float(existing)):
+        raise UnrealBuildError("Unreal target property's initial value is not finite.")
+    return candidate
+
+
+def _add_property_float(
+    sequence: unreal.LevelSequence, actor: unreal.Actor, action: dict[str, Any],
+) -> None:
+    target = _target_scalar_object(actor, action)
+    binding = unreal.MovieSceneSequenceExtensions.add_possessable(sequence, target)
+    track = binding.add_track(unreal.MovieSceneFloatTrack)
+    track.set_display_name("CutSceneAI Scalar: " + str(action["source_semantic"]))
+    track.set_property_name_and_path(
+        str(action["target_property_name"]),
+        str(action["target_property_path"]),
+    )
+    section = track.add_section()
+    section.set_range(0, sequence.get_playback_end())
+    channels = unreal_compat.get_section_channels(section)
+    if len(channels) != 1:
+        raise UnrealBuildError("Scalar float property requires exactly one native channel.")
+    for key in action["keys"]:
+        unreal_compat.add_linear_channel_key(
+            channels[0], int(key["frame"]), float(key["value"])
+        )
+    unreal.log(
+        "[CutSceneAI] Source-linear property track constructed: "
+        + str(action["source_semantic"])
+        + " | native readback and playback parity not yet verified."
+    )
+
+
 def _add_audio(sequence: unreal.LevelSequence, action: dict[str, Any]) -> None:
     sound = _load_asset(action["unreal_asset_path"])
     track = unreal.MovieSceneSequenceExtensions.add_track(sequence, unreal.MovieSceneAudioTrack)
@@ -871,6 +949,10 @@ def _build_prepared_plan(
                 _add_light_intensity(sequence, bindings[action["entity_name"]]["actor"], action)
             elif kind == "actor_visibility":
                 _add_actor_visibility(sequence, bindings[action["entity_name"]]["binding"], action)
+            elif kind == "property_float":
+                _add_property_float(
+                    sequence, bindings[action["entity_name"]]["actor"], action
+                )
             elif kind == "audio":
                 _add_audio(sequence, action)
             elif kind == "marker":
