@@ -220,10 +220,12 @@ def review_flags(config: dict[str, Any], action_counts: dict[str, int]) -> list[
     return flags
 
 
-def prepare(folder: Path = WORKSPACE) -> dict[str, Any]:
+def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> dict[str, Any]:
     """Call the existing, source-authenticated transfer backend; never overwrite."""
     config = load_json(folder / 'connection.json')
     config_check(config)  # Recheck input files, target existence and source identity.
+    import studio_ui_features
+    overrides = studio_ui_features.validate_options(config, options or {})
     active_job = folder / 'active-job.json'
     if active_job.is_file():
         prior = job_status(load_json(active_job)['job_id'], folder)
@@ -239,11 +241,13 @@ def prepare(folder: Path = WORKSPACE) -> dict[str, Any]:
     old_sequence = config['base_sequence']
     new_sequence = old_sequence + '_STUDIO_' + candidate_id[-8:].upper()
     if config.get('capture'):
+        extra = {'transfer_options': overrides} if overrides else {}
         mapping_copy, session = prepare_candidate(
             Path(config['csir']), Path(config['mapping']), Path(config['capture']),
             new_sequence, candidate_dir,
             skeletal_root_world_lock=config['skeletal_root_world_lock'],
             hierarchy_transfer=bool(config.get('unity_project')),
+            **extra,
         )
     else:
         # The existing immutable backend supports source-only preparation.
@@ -257,6 +261,7 @@ def prepare(folder: Path = WORKSPACE) -> dict[str, Any]:
         original = load_json(Path(config['mapping']))
         original['sequence_asset_path'] = new_sequence
         original['overwrite_sequence'] = False
+        original.update(overrides)
         if config.get('unity_project'):
             # Activate the same source-aware attachment and parent-local
             # preflight for source-only Studio candidates.
@@ -271,6 +276,9 @@ def prepare(folder: Path = WORKSPACE) -> dict[str, Any]:
             target_project=config['target_project'],
         )
     plan = load_json(candidate_dir / 'transfer-plan.json')
+    coverage = load_json(candidate_dir / 'coverage-report.json') if (
+        candidate_dir / 'coverage-report.json').is_file() else {}
+    dispatch = coverage.get('feature_dispatch') or {}
     actions = plan.get('actions', [])
     action_counts = {}
     for action in actions:
@@ -309,6 +317,18 @@ def prepare(folder: Path = WORKSPACE) -> dict[str, Any]:
                                 'planned_imports': len(automatic.get('imports', [])),
                                 'planned_actors': len(automatic.get('actors', []))},
             'mapping_copy': str(mapping_copy), 'sequence_path': new_sequence,
+            'source_feature_surface_state': coverage.get('source_feature_surface_state', 'NOT_COLLECTED'),
+            'source_unresolved_components': (coverage.get('source_feature_surface') or {}).get('unresolved_component_count'),
+            'feature_dispatch_summary': {
+                'catalog_semantics': dispatch.get('catalog_semantic_count'),
+                'catalog_families': dispatch.get('catalog_family_count'),
+                'source_occurrences': dispatch.get('source_occurrence_count'),
+                'accounted_occurrences': dispatch.get('accounted_occurrence_count'),
+                'missing_adapters': dispatch.get('missing_adapter_count'),
+                'states': dispatch.get('states', {}),
+                'full_conversion_verified': False,
+            },
+            'prepared_options': overrides,
             'source_feature_family_counts': feature_inventory['family_counts'],
             'unimplemented_action_kinds': feature_inventory['unimplemented_action_kinds'],
             'ced_preflight': session.get('ced_preflight'),
@@ -527,6 +547,33 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
             if not self.permitted():
                 return self.reply(403, {'error': 'Local origin required.'})
             path = urlparse(self.path).path
+            if path == '/api/capabilities':
+                import studio_ui_features
+                return self.reply(200, studio_ui_features.capabilities())
+            if path == '/api/source-surfaces':
+                import studio_ui_features
+                config_file = folder / 'connection.json'
+                return self.reply(
+                    200,
+                    studio_ui_features.source_surfaces(load_json(config_file))
+                    if config_file.is_file() else {
+                        'available': False, 'options': [],
+                        'reason': 'Connect real projects first.',
+                    },
+                )
+            if path == '/api/verification':
+                import studio_ui_features
+                active_file = folder / 'active-job.json'
+                if not active_file.is_file():
+                    return self.reply(200, {
+                        'available': False, 'persistence': None,
+                        'hierarchy': None, 'fidelity_verified': False,
+                    })
+                active = load_json(active_file)
+                job_file = folder / 'jobs' / (str(active['job_id']) + '.json')
+                return self.reply(
+                    200, studio_ui_features.verification(folder, active, load_json(job_file))
+                )
             if path == '/api/status':
                 cfg = folder / 'connection.json'
                 return self.reply(200, {'service': 'CutSceneAI Studio Local Companion',
@@ -603,7 +650,7 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json', 'destination-readiness.json'):
                             (folder / name).unlink(missing_ok=True)
                     elif route == '/api/prepare':
-                        result = prepare(folder)
+                        result = prepare(folder, data)
                     elif route == '/api/execute':
                         result = queue_trial(str(data.get('candidate_id', '')), folder)
                     elif route == '/api/observation':

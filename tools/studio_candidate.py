@@ -8,6 +8,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 for part in ("packages/studio", "packages/learning", "packages/cinetwin", "integrations/unreal"):
@@ -27,6 +28,7 @@ def prepare_candidate(
     *,
     skeletal_root_world_lock: bool = False,
     hierarchy_transfer: bool = False,
+    transfer_options: dict[str, Any] | None = None,
 ) -> tuple[Path, dict]:
     """Write fresh mapping next to new output and source-verified prepared artifacts."""
     mapping_file = output_folder.with_suffix(".mapping.json")
@@ -46,6 +48,12 @@ def prepare_candidate(
     copy = dict(previous)
     copy["sequence_asset_path"] = sequence_path
     copy["overwrite_sequence"] = False
+    # UI flags are applied ONLY to this new immutable candidate mapping.
+    allowed = {'source_feature_surface_path', 'require_complete_source_features',
+               'enable_actor_visibility_fallback'}
+    if set(transfer_options or {}) - allowed:
+        raise ValueError('Unexpected candidate conversion option.')
+    copy.update(transfer_options or {})
     if skeletal_root_world_lock:
         copy["enable_cinetwin_skeletal_world_lock"] = True
     if hierarchy_transfer:
