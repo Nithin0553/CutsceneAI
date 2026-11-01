@@ -44,16 +44,16 @@ def _task(api, source, dest, kind, skeleton=None):
                      ('destination_name',dest.rsplit('/',1)[-1]),('replace_existing',False),
                      ('automated',True),('save',True),('async_',False)):
         task.set_editor_property(name,val)
-    if kind in ('SkeletalMesh','AnimSequence'):
+    if kind in ('SkeletalMesh','AnimSequence','StaticMesh'):
         opts=api.FbxImportUI()
         for key,val in (('automated_import_should_detect_type',False),
-                        ('mesh_type_to_import',api.FBXImportType.FBXIT_ANIMATION if kind=='AnimSequence' else api.FBXImportType.FBXIT_SKELETAL_MESH),
-                        ('import_as_skeletal',True),('import_mesh',kind=='SkeletalMesh'),
+                        ('mesh_type_to_import',api.FBXImportType.FBXIT_ANIMATION if kind=='AnimSequence' else api.FBXImportType.FBXIT_STATIC_MESH if kind=='StaticMesh' else api.FBXImportType.FBXIT_SKELETAL_MESH),
+                        ('import_as_skeletal',kind=='SkeletalMesh'),('import_mesh',kind in ('SkeletalMesh','StaticMesh')),
                         ('import_animations',kind=='AnimSequence'),('import_materials',False),('import_textures',False)):
             opts.set_editor_property(key,val)
         if kind=='AnimSequence':
             opts.set_editor_property('skeleton',skeleton)
-        else:
+        elif kind=='SkeletalMesh':
             opts.set_editor_property('create_physics_asset',False)
         task.set_editor_property('options',opts)
     return task
@@ -135,7 +135,8 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
             converted.append((row['source_file'],str(target)))
         converted=dict(converted)
         meshes={}
-        groups=[('SkeletalMesh',manifest['imports']),('AnimSequence',manifest['imports']),
+        props={}
+        groups=[('SkeletalMesh',manifest['imports']),('StaticMesh',manifest['imports']),('AnimSequence',manifest['imports']),
                 ('SoundWave',manifest['imports']),('Texture2D',manifest['imports'])]
         for kind,records in groups:
             for row in records:
@@ -158,6 +159,8 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                     raise AutomaticSetupError('Import did not create '+kind+' at '+row['target_asset_path'])
                 if kind=='SkeletalMesh':
                     meshes[row.get('character')]=result
+                if kind=='StaticMesh':
+                    props[row['target_asset_path']]=result
                 if kind=='AnimSequence' and str(result.get_editor_property('skeleton').get_path_name())!=str(skeleton.get_path_name()):
                     raise AutomaticSetupError('Animation imported onto wrong skeleton: '+row['target_asset_path'])
                 receipt['assets_imported'].append({'kind':kind,'path':row['target_asset_path']})
@@ -169,6 +172,11 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 obj=meshes.get(row['name'])
                 if obj is None:
                     raise AutomaticSetupError('Missing source character: '+row['name'])
+                actor=ed.spawn_actor_from_object(obj,zero,rotation)
+            elif kind=='entity.prop' and row.get('mesh_path'):
+                obj=props.get(row['mesh_path'])
+                if obj is None:
+                    raise AutomaticSetupError('Missing imported static prop mesh: '+row['name'])
                 actor=ed.spawn_actor_from_object(obj,zero,rotation)
             else:
                 cls={'entity.camera':api.CineCameraActor,

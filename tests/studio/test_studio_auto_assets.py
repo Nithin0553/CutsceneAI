@@ -19,7 +19,7 @@ def create(tmp, *, ambiguous=False, missing_audio=False):
     for name in ('Walking.fbx','Waving.fbx','Breathing Idle.fbx'):
         (anim/name).write_bytes(('clip-'+name).encode())
     if ambiguous: (models/'Ch31_nonPBR.FBX').write_bytes(b'conflict')
-    if not missing_audio: (sounds/'Cue.wav').write_bytes(b'RIFF'+bytes(40))
+    if not missing_audio: (sounds/'Cue.wav').write_bytes(b'RIFF'+bytes(4)+b'WAVE'+bytes(36))
     csir={'schema_version':'0.1.0','source':{'engine':'unity'},
           'assets':[{'asset_id':'walk','name':'A_Walk_RootMotion'},
                     {'asset_id':'wave','name':'B_Waving'},
@@ -126,3 +126,50 @@ def test_bad_required_audio_remains_a_blocker(tmp_path):
     assert result['ready'] is False
     assert any('Required SoundWave' in blocker and 'invalid WAV' in blocker
                for blocker in result['blockers'])
+
+
+def test_identical_duplicate_character_fbx_resolved_by_content(tmp_path):
+    root, files = create(tmp_path)
+    src = root/'Assets'/'Benchmark002'/'Characters'/'Ch31_nonPBR.fbx'
+    clone = root/'Assets'/'Benchmark002'/'Characters'/'Copy'/'Ch31_nonPBR.fbx'
+    clone.parent.mkdir()
+    clone.write_bytes(src.read_bytes())
+    result = auto.inspect(*files, root, 'Assets', '/Game/CutSceneAI/AutoTransfer/T_ABCD')
+    assert result['ready']
+    resolution = next(x for x in result['asset_resolutions'] if x['source']=='Ch31_nonPBR' and x['kind']=='character')
+    assert resolution['strategy'] == 'EXACT_FILENAME_CONTENT_IDENTICAL'
+    assert len(resolution['candidates']) == 2
+
+
+def test_unity_guid_disambiguates_different_character_fbx(tmp_path):
+    root, files = create(tmp_path, ambiguous=True)
+    meta = root/'Assets'/'Benchmark002'/'Characters'/'Ch31_nonPBR.fbx.meta'
+    meta.write_text('fileFormatVersion: 2\nguid: aabbccddeeff00112233445566778899\n')
+    csir=json.loads(files[0].read_text())
+    csir['entities'][0]['metadata']={'asset_guid':'aabbccddeeff00112233445566778899'}
+    files[0].write_text(json.dumps(csir))
+    result = auto.inspect(*files, root, 'Assets', '/Game/CutSceneAI/AutoTransfer/T_ABCD')
+    assert result['ready']
+    resolution = next(x for x in result['asset_resolutions'] if x['source']=='Ch31_nonPBR' and x['kind']=='character')
+    assert resolution['strategy'] == 'UNITY_META_GUID'
+    assert resolution['candidates'] == [str(meta.with_suffix('').resolve())]
+
+
+def test_source_project_path_disambiguates_different_character_fbx(tmp_path):
+    root, files = create(tmp_path, ambiguous=True)
+    csir=json.loads(files[0].read_text())
+    csir['entities'][0]['metadata']={'asset_path':'Assets/Benchmark002/Characters/Ch31_nonPBR.fbx'}
+    files[0].write_text(json.dumps(csir))
+    result = auto.inspect(*files, root, 'Assets', '/Game/CutSceneAI/AutoTransfer/T_ABCD')
+    assert result['ready']
+    assert next(x for x in result['asset_resolutions'] if x['source']=='Ch31_nonPBR')['strategy'] == 'UNITY_ASSET_PATH'
+
+
+def test_prop_fbx_imported_as_static_mesh_and_bound_to_actor(tmp_path):
+    root, files = create(tmp_path)
+    prop = root/'Assets'/'Benchmark002'/'Characters'/'PROP_MOVING.fbx'
+    prop.write_bytes(b'prop-fbx-data')
+    result = auto.inspect(*files, root, 'Assets', '/Game/CutSceneAI/AutoTransfer/T_ABCD')
+    assert result['ready']
+    assert any(a['kind']=='StaticMesh' and a['source_file']==str(prop.resolve()) for a in result['imports'])
+    assert next(a for a in result['actors'] if a['name']=='PROP_MOVING')['mesh_path'].startswith('/Game/')

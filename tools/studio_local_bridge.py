@@ -272,6 +272,11 @@ def prepare(folder: Path = WORKSPACE) -> dict[str, Any]:
         label = str(action.get('kind') or 'unknown')
         action_counts[label] = action_counts.get(label, 0) + 1
     flags = review_flags(config, action_counts)
+    # Inventory the source's complete CED types, including unknown vendor
+    # extensions. A generated sequence never implies these were converted.
+    import studio_feature_registry
+    feature_inventory = studio_feature_registry.audit(load_json(Path(config['csir'])), plan)
+    atomic_json(candidate_dir / 'feature-inventory.json', feature_inventory)
     automatic = {'available': False, 'ready': False, 'blockers': [], 'warnings': []}
     if config.get('unity_project'):
         import studio_auto_assets
@@ -299,6 +304,8 @@ def prepare(folder: Path = WORKSPACE) -> dict[str, Any]:
                                 'planned_imports': len(automatic.get('imports', [])),
                                 'planned_actors': len(automatic.get('actors', []))},
             'mapping_copy': str(mapping_copy), 'sequence_path': new_sequence,
+            'source_feature_family_counts': feature_inventory['family_counts'],
+            'unimplemented_action_kinds': feature_inventory['unimplemented_action_kinds'],
             'ced_preflight': session.get('ced_preflight'),
             'track_coverage': session.get('track_coverage'),
             'engine_generation_executed': False,

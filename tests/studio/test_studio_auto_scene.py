@@ -59,7 +59,7 @@ class FakeUnreal:
         self.AssetToolsHelpers=SimpleNamespace(get_asset_tools=lambda:self.asset_tools)
         self.AssetImportTask=Task
         self.FbxImportUI=Task
-        self.FBXImportType=SimpleNamespace(FBXIT_ANIMATION=1,FBXIT_SKELETAL_MESH=2)
+        self.FBXImportType=SimpleNamespace(FBXIT_ANIMATION=1,FBXIT_SKELETAL_MESH=2,FBXIT_STATIC_MESH=3)
         self.CineCameraActor=object()
         self.PointLight=object()
         self.Actor=object()
@@ -77,7 +77,7 @@ class FakeUnreal:
     def imports(self,tasks):
         for task in tasks:
             opt=task.props.get('options')
-            cls=('AnimSequence' if opt and opt.props.get('import_animations') else 'SkeletalMesh' if opt else
+            cls=('AnimSequence' if opt and opt.props.get('import_animations') else ('SkeletalMesh' if opt.props.get('import_as_skeletal') else 'StaticMesh') if opt else
                  'SoundWave' if task.props['filename'].endswith('.wav') else 'Texture2D')
             path=task.props['destination_path']+'/'+task.props['destination_name']
             asset=Asset(cls,path)
@@ -134,3 +134,17 @@ def test_collision_is_detected_before_any_mutation(tmp_path):
                   expected_level='/Game/Tests/L_Test',unreal_api=fake)
     assert json.loads(output.read_text())['status']=='BLOCKED'
     assert not fake.actor_sys.actors
+
+
+def test_prop_mesh_staged_as_static_mesh_when_source_is_identified(tmp_path):
+    root, files = create(tmp_path)
+    (root/'Assets'/'Benchmark002'/'Characters'/'PROP_MOVING.fbx').write_bytes(b'prop-mesh')
+    stage=studio_auto_assets.inspect(*files,root,'Assets','/Game/CutSceneAI/AutoTransfer/T_ABC')
+    manifest=tmp_path/'auto-setup.json';manifest.write_text(json.dumps(stage))
+    project=tmp_path/'NewProject.uproject';project.write_text('{}')
+    unreal=FakeUnreal(str(project))
+    receipt=scene.run(str(manifest),str(tmp_path/'auto-receipt.json'),
+                      csir_path=str(files[0]),mapping_path=str(files[1]),plan_path=str(files[2]),
+                      expected_project=str(project),expected_level='/Game/Tests/L_Test',unreal_api=unreal)
+    assert receipt['status']=='SETUP_SAVED_UNVERIFIED'
+    assert any(a['kind']=='StaticMesh' for a in receipt['assets_imported'])

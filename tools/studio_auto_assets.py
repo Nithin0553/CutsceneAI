@@ -12,6 +12,8 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+import studio_source_identity as source_identity
+
 
 class AutoAssetError(ValueError):
     pass
@@ -74,22 +76,20 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     for f in files:
         if not f.is_relative_to(search_root):
             raise AutoAssetError('Source symlink escapes chosen Unity scope: '+str(f))
-    # Validate actual imports, not unrelated PNGs anywhere under Unity Assets/.
+    # A whole Unity Assets/ folder often includes unrelated editor icons,
+    # tutorial placeholders and mismatched image extensions. Validate only
+    # files that are actually selected for import, never every file scanned.
     assets = {str(a.get('asset_id')): a for a in csir.get('assets', [])}
     entities = {str(e.get('name')): e for e in csir.get('entities', [])}
-    paths = defaultdict(list)
     blockers, warnings, imports, actors = [], [], [], []
+    asset_resolutions = []
     skipped_optional_textures = []
-    used_source = {}
     used_target = set()
     def add_import(source, dest, kind, *, character=None):
         if dest in used_target:
             return
         if not dest.startswith('/Game/') or '..' in dest.split('/'):
             blockers.append('Unsafe target path: '+dest)
-            return
-        if source in used_source and used_source[source] != dest:
-            blockers.append('One source file resolves to multiple target identities: '+str(source))
             return
         reason = None
         if source.stat().st_size == 0:
@@ -109,7 +109,6 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             else:
                 blockers.append('Required ' + kind + ' source is ' + reason + ': ' + str(source))
             return
-        used_source[source] = dest
         used_target.add(dest)
         imports.append({'source_file':str(source),'source_sha256':digest(source),
                         'target_asset_path':dest,'kind':kind,'character':character})
@@ -123,9 +122,15 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             continue
         kind = str(entity.get('ced_type') or '')
         if kind == 'entity.character':
-            found, matches = _match(files, name, {'.fbx'})
+            evidence = source_identity.resolve(files, name, {'.fbx'}, project_root=root,
+                                               records=(entity,))
+            found = evidence['selected']
+            asset_resolutions.append({'source': name, 'kind': 'character',
+                                      'strategy': evidence['strategy'],
+                                      'candidates': evidence['candidates']})
             if found is None:
-                blockers.append('Character '+name+' requires exactly one matching FBX model; found '+str(len(matches)))
+                blockers.append('Character '+name+' cannot resolve uniquely ('+evidence['strategy']+
+                                '); candidate FBX files: '+str(len(evidence['candidates'])))
                 continue
             dest = target_folder+'/Characters/CSAI_'+re.sub('[^A-Za-z0-9_]','_',name)
             add_import(found,dest,'SkeletalMesh',character=name)
@@ -134,7 +139,20 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             continue
         actors.append({'name':name, 'label':str(label), 'kind':kind})
         if kind == 'entity.prop':
-            warnings.append('Prop '+name+' will use a transform actor; mesh/material transfer is not verified.')
+            evidence = source_identity.resolve(files, name, {'.fbx'}, project_root=root,
+                                               records=(entity,))
+            asset_resolutions.append({'source': name, 'kind': 'prop_mesh',
+                                      'strategy': evidence['strategy'],
+                                      'candidates': evidence['candidates']})
+            if evidence['selected'] is not None:
+                dest = target_folder+'/Props/CSAI_'+re.sub('[^A-Za-z0-9_]','_',name)
+                add_import(evidence['selected'], dest, 'StaticMesh')
+                actors[-1]['mesh_path'] = dest
+            else:
+                # A transform-only prop preserves Timeline movement but does
+                # not constitute a visual mesh transfer. Keep loss explicit.
+                warnings.append('Prop '+name+' has no uniquely identified source mesh ('+
+                                evidence['strategy']+'); transform-only representation.')
     # Identify exact animation names from source section asset IDs, not arbitrary
     # target path basenames which may be from a different Unreal project.
     clip_sources = defaultdict(set)
@@ -163,15 +181,30 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             if (name,character) not in clip_sources:
                 blockers.append('Source animation '+name+' is not bound to character '+character+' in CSIR.')
                 continue
-            match, matches = _match(files,name,{'.fbx'})
+            references = [assets[asset_id] for asset_id in clip_sources[(name,character)]
+                          if asset_id in assets]
+            evidence = source_identity.resolve(files, name, {'.fbx'}, project_root=root,
+                                               records=references)
+            match = evidence['selected']
+            asset_resolutions.append({'source': name, 'kind': 'animation',
+                                      'strategy': evidence['strategy'],
+                                      'candidates': evidence['candidates']})
             if match is None:
-                blockers.append('Animation '+name+' must resolve to one FBX; found '+str(len(matches))+'. Export its original animation FBX into the selected Unity scope.')
+                blockers.append('Animation '+name+' cannot resolve uniquely ('+evidence['strategy']+
+                                '); candidate FBX files: '+str(len(evidence['candidates'])))
                 continue
             add_import(match,path,'AnimSequence',character=character)
         elif kind == 'audio':
-            match, matches = _match(files,name,{'.wav','.mp3'})
+            references = [a for a in assets.values() if str(a.get('name')) == name]
+            evidence = source_identity.resolve(files, name, {'.wav', '.mp3'}, project_root=root,
+                                               records=references)
+            match = evidence['selected']
+            asset_resolutions.append({'source': name, 'kind': 'audio',
+                                      'strategy': evidence['strategy'],
+                                      'candidates': evidence['candidates']})
             if match is None:
-                blockers.append('Audio '+name+' must resolve to one WAV/MP3; found '+str(len(matches)))
+                blockers.append('Audio '+name+' cannot resolve uniquely ('+evidence['strategy']+
+                                '); candidate WAV/MP3 files: '+str(len(evidence['candidates'])))
                 continue
             if match.suffix.lower()=='.mp3':
                 warnings.append('Audio '+name+' requires FFmpeg MP3-to-WAV conversion in the Unreal editor environment.')
@@ -188,7 +221,8 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     # corresponding UE materials are not inferred from a filename.
     for file in files:
         if file.suffix.lower()=='.png':
-            # Unrelated tutorial/editor icons may not actually be PNG data.
+            # The filename is only used after header validation. An invalid
+            # *optional* image never blocks models, clips or sequence creation.
             with file.open('rb') as stream:
                 valid_png = file.stat().st_size > 0 and stream.read(8) == b'\x89PNG\r\n\x1a\n'
             if not valid_png:
@@ -208,7 +242,8 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             'source_project':str(root),'source_scope':scope,'target_folder':target_folder,
             'source_csir_sha256':digest(csir_path),'mapping_sha256':digest(mapping_path),
             'transfer_plan_sha256':digest(plan_path),
-            'actors':actors,'imports':imports,'unmapped_source_entities':unmapped_entities,
+            'actors':actors,'imports':imports,'asset_resolutions':asset_resolutions,
+            'unmapped_source_entities':unmapped_entities,
             'source_entity_count':len(csir.get('entities', [])),
             'source_asset_count':len(csir.get('assets', [])),
             'blockers':sorted(set(blockers)),
