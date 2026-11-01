@@ -32,8 +32,16 @@ def main(argv: list[str] | None = None) -> int:
     print("[CutSceneAI] Native components needing extraction/adapter:",
           result["unresolved_component_count"])
     print("[CutSceneAI] Cutscene parity: NOT VERIFIED")
-    if args.strict and result["unresolved_component_count"]:
-        print("[CutSceneAI] Strict source extraction: BLOCKED", file=sys.stderr)
+    if args.strict and (
+        result["unresolved_component_count"]
+        or not result["project_identity_proven"]
+        or not result["source_scope_matched"]
+    ):
+        print(
+            "[CutSceneAI] Strict source extraction: BLOCKED"
+            " (component/scope or project provenance incomplete)",
+            file=sys.stderr,
+        )
         return 2
     return 0
 
