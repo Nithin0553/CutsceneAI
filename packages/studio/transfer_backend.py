@@ -661,6 +661,38 @@ def compose(
                 "fidelity_status": "ROOT_POSITION_ONLY_UNVERIFIED",
             })
 
+    # A source plugin can bind many kinds of tracks to one Unreal float.
+    # Two writers to the same property (or a built-in light/camera track)
+    # cannot be merged without an explicit temporal composition policy.
+    scalar_targets: set[tuple[str, str, str, str]] = set()
+    for action in plan["actions"]:
+        if action.get("kind") != "property_float":
+            continue
+        token = (
+            str(action["actor_label"]), str(action["target_scope"]),
+            str(action["target_class"]), str(action["target_property_path"]),
+        )
+        if token in scalar_targets:
+            raise TransferBackendError(
+                "Multiple source tracks drive one Unreal scalar property: " + str(token)
+            )
+        scalar_targets.add(token)
+        if any(
+            other.get("actor_label") == action["actor_label"]
+            and (
+                other.get("kind") == "light_intensity"
+                and action["target_property_name"] == "Intensity"
+                or other.get("kind") == "camera_fov"
+                and action["target_property_name"] in {
+                    "FieldOfView", "CurrentFocalLength"
+                }
+            )
+            for other in plan["actions"] if other is not action
+        ):
+            raise TransferBackendError(
+                "Custom property mapping overlaps an existing native track: "
+                + str(token)
+            )
     if not plan["actions"]:
         raise TransferBackendError(
             "No representable target action. An empty sequence would be misleading."
