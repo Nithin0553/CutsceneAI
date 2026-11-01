@@ -94,3 +94,41 @@ def test_two_level_source_hierarchy_is_kept_as_exact_ancestor_chain():
     row = analyze(scene, mapping, [])["rows"][0]
     assert [x["name"] for x in row["ancestor_chain"]] == ["CHARACTER_A", "SceneRoot"]
     assert row["strategy"] == "CHILD_WORLD_BEHAVIOR_UNVERIFIED"
+
+
+def test_benchmark002_eight_unmapped_links_reduce_to_three_source_group_nodes():
+    scene, mapping = _scene()
+    scene["entities"] = [
+        {"entity_id": "root", "name": "Benchmark002", "ced_type": "entity.prop",
+         "parent_entity_id": "", "metadata": {
+             "active_self": True, "hierarchy_path": "Benchmark002",
+             "world_transform": _world()}},
+        {"entity_id": "a", "name": "CHARACTER_A", "ced_type": "entity.prop",
+         "parent_entity_id": "root", "metadata": {
+             "active_self": True, "hierarchy_path": "Benchmark002/CHARACTER_A",
+             "world_transform": _world()}},
+        {"entity_id": "b", "name": "CHARACTER_B", "ced_type": "entity.prop",
+         "parent_entity_id": "root", "metadata": {
+             "active_self": True, "hierarchy_path": "Benchmark002/CHARACTER_B",
+             "world_transform": _world()}},
+    ]
+    mapped = [
+        ("Ch31_nonPBR", "a"), ("Ch26_nonPBR", "b"),
+        ("CAM_A_Wide", "root"), ("CAM_B_Move", "root"),
+        ("CAM_C_Close", "root"), ("CUTSCENE_DIRECTOR", "root"),
+        ("LIGHT_KEY", "root"), ("PROP_MOVING", "root"),
+    ]
+    for name, parent in mapped:
+        scene["entities"].append({
+            "entity_id": name, "name": name, "parent_entity_id": parent,
+            "ced_type": "entity.camera", "metadata": {"world_transform": _world()}})
+    mapping = {"entities": {name: {"actor_label": "CSAI_" + name}
+                            for name, _ in mapped}}
+    result = analyze(scene, mapping, [])
+    assert result["total"] == 8
+    assert {n["name"] for row in result["rows"]
+            for n in row["ancestor_chain"]} == {
+                "Benchmark002", "CHARACTER_A", "CHARACTER_B"}
+    assert all(not row["native_parent_actor_reconstructed"] for row in result["rows"])
+    assert all(row["strategy"] == "CHILD_WORLD_BEHAVIOR_UNVERIFIED"
+               for row in result["rows"])
