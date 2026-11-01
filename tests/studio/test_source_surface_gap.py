@@ -81,8 +81,9 @@ def test_unrelated_scene_and_asset_classes_do_not_falsely_block():
          "component_type": "Another.Plugin"},
     ]
     result = source_surface_gap.audit(csir, surface)
-    assert result["unresolved_component_count"] == 0
+    assert result["unresolved_component_count"] == 1
     assert result["component_counts"]["OTHER_LOADED_SCENE_COMPONENT"] == 1
+    assert result["component_counts"]["SOURCE_SCOPE_NOT_VERIFIED"] == 1
 
 
 def test_invalid_or_wrong_engine_census_is_rejected():
@@ -120,3 +121,34 @@ def test_cli_strict_blocks_custom_script_without_editing_source(tmp_path):
     again = subprocess.run(command, capture_output=True, text=True, check=False)
     assert again.returncode != 0
     assert "Refusing to overwrite" in again.stderr
+
+
+def test_project_fingerprint_mismatch_is_blocked_before_preparation():
+    csir, census = _fixtures()
+    csir["source"]["project_fingerprint"] = "unity-project-original"
+    census["project_fingerprint"] = "unity-project-different"
+    try:
+        source_surface_gap.audit(csir, census)
+    except source_surface_gap.SourceSurfaceGapError as exc:
+        assert "different source project" in str(exc)
+    else:
+        raise AssertionError("The source census was accepted for a wrong Unity project.")
+
+
+def test_matching_source_project_is_explicit_evidence_not_parity():
+    csir, census = _fixtures()
+    csir["source"]["project_fingerprint"] = "unity-project-abc"
+    census["project_fingerprint"] = "unity-project-abc"
+    result = source_surface_gap.audit(csir, census)
+    assert result["project_identity_proven"] is True
+    assert result["source_scope_matched"] is True
+    assert result["parity_verified"] is False
+
+
+def test_source_engine_version_mismatch_blocks_census():
+    csir, census = _fixtures()
+    csir["source"]["engine_version"] = "6000.0"
+    with __import__("pytest").raises(
+        source_surface_gap.SourceSurfaceGapError, match="version differs"
+    ):
+        source_surface_gap.audit(csir, census)
