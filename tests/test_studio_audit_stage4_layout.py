@@ -20,6 +20,16 @@ def write_json(path, data):
 
 
 def fake_case(tmp_path):
+    # These tests replay developer-local Stage 4 evidence, not repo fixtures.
+    # Never fabricate benchmark evidence just to make CI pass.
+    fixtures = (
+        ROOT/'stage4_layout_plan_20261031_163928.json',
+        ROOT/'stage4_layout_receipt_stage4_layout_plan_20261031_163928_retry01.json',
+        ROOT/'stage3_scene_plan_20261031_162326.json',
+    )
+    if not all(p.is_file() for p in fixtures):
+        pytest.skip("Stage 4 evidence fixtures are external and unavailable; "
+                    "run with the original local benchmark artifacts.")
     base_plan = json.loads((ROOT/'stage4_layout_plan_20261031_163928.json').read_text())
     base_receipt = json.loads((ROOT/'stage4_layout_receipt_stage4_layout_plan_20261031_163928_retry01.json').read_text())
     base_stage3 = json.loads((ROOT/'stage3_scene_plan_20261031_162326.json').read_text())
