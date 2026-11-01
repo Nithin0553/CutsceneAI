@@ -1,9 +1,10 @@
 """Studio UI/API feature routing, scoped source evidence and saved-native audit integration."""
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
+import threading
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -13,7 +14,24 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import studio_ui_features as feat
 
-from test_studio_local_bridge import bridge, call, fixture_files, service
+from test_studio_local_bridge import bridge, call, fixture_files
+
+
+
+@pytest.fixture
+def local_service(tmp_path):
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("Studio UI")
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), bridge.create_handler(web, tmp_path / "work")
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield "http://127.0.0.1:" + str(server.server_port), tmp_path
+    server.shutdown()
+    server.server_close()
+    thread.join()
 
 
 def _source_census(tmp_path):
@@ -199,8 +217,8 @@ def test_readonly_verification_reads_only_active_candidate_and_no_false_fidelity
     assert result["fidelity_verified"] is False
 
 
-def test_new_readonly_localhost_endpoints_have_actual_ced_and_no_job(service):
-    base, _tmp = service
+def test_new_readonly_localhost_endpoints_have_actual_ced_and_no_job(local_service):
+    base, _tmp = local_service
     code, capabilities = call(base + "/api/capabilities")
     assert code == 200 and capabilities["semantic_elements"] >= 700
     code, sources = call(base + "/api/source-surfaces")
