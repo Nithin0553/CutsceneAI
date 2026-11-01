@@ -217,12 +217,35 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
     all_actors = len(actor_rows) == len(manifest["actors"]) and all(r["class_matches"] for r in actor_rows)
     sequence_ok = sequence_class == "LevelSequence" and sequence_disk
     enumerable = sequence_rows["binding_count"] is not None and sequence_rows["root_track_count"] is not None
-    if not level_disk or not sequence_ok or not all_assets or not all_actors:
+    native_status = (
+        "FAIL" if not (level_disk and sequence_ok and all_assets and all_actors)
+        else "INCOMPLETE" if not enumerable
+        else "PASS"
+    )
+    # Native persistence and historical source provenance are separate claims:
+    # a missing 2026 receipt field cannot erase a real structural readback,
+    # nor may it silently become a complete provenance PASS.
+    if native_status == "FAIL":
         status = "STRUCTURAL_READBACK_FAIL"
-    elif not enumerable or provenance_missing:
+    elif native_status == "INCOMPLETE" or provenance_missing:
         status = "STRUCTURAL_READBACK_INCOMPLETE"
     else:
         status = "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
+    actors_verified = sum(bool(row["class_matches"]) for row in actor_rows)
+    native_issues = [
+        "ASSET_CLASS_OR_DISK_MISMATCH: " + row["path"]
+        for row in rows if not row["pass"]
+    ]
+    native_issues.extend(
+        "ACTOR_LABEL_OR_CLASS_MISMATCH: " + row["label"]
+        for row in actor_rows if not row["class_matches"]
+    )
+    if not level_disk:
+        native_issues.append("SAVED_LEVEL_PACKAGE_MISSING")
+    if not sequence_ok:
+        native_issues.append("SAVED_SEQUENCE_PACKAGE_OR_CLASS_MISMATCH")
+    if not enumerable:
+        native_issues.append("SEQUENCE_BINDING_OR_TRACK_READBACK_UNAVAILABLE")
     report = {
         "kind": "cutsceneai.studio.persistence_audit", "schema_version": "0.1.0",
         "status": status, "fidelity_verified": False, "restart_verified": False,
@@ -235,6 +258,10 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         "assets": rows, "actors": actor_rows,
         "asset_count": len(rows), "assets_class_and_disk_verified": len(found),
         "actor_count": len(actor_rows),
+        "actors_unique_and_class_verified": actors_verified,
+        "native_structure_status": native_status,
+        "native_structure_issues": native_issues,
+        "sequence_persisted": sequence_ok, "sequence_enumeration_complete": enumerable,
         "source_manifest_sha256": _sha(candidate_dir / "automatic-setup.json"),
         "transfer_plan_sha256": _sha(candidate_dir / "transfer-plan.json"),
         "setup_receipt_sha256": _sha(setup_file),
@@ -250,6 +277,87 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         json.dump(report, stream, indent=2, ensure_ascii=False)
         stream.write("\n")
     return report
+
+
+def summarize_report(report_path: str | Path) -> dict[str, Any]:
+    """Read an existing audit JSON; never touch the Unreal editor or rewrite it."""
+    record = _json(Path(report_path))
+    if record.get("kind") != "cutsceneai.studio.persistence_audit":
+        raise PersistenceAuditError("Expected a Studio persistence audit report.")
+    assets = list(record.get("assets") or [])
+    actors = list(record.get("actors") or [])
+    asset_pass = sum(bool(x.get("pass")) for x in assets)
+    actor_pass = sum(bool(x.get("class_matches")) for x in actors)
+    level_saved = bool(record.get("level_file_exists"))
+    sequence = record.get("sequence") or {}
+    sequence_saved = bool(record.get("sequence_persisted", (
+        sequence.get("actual_class") == "LevelSequence"
+        and sequence.get("saved_file_exists")
+    )))
+    enum_complete = bool(record.get("sequence_enumeration_complete", (
+        sequence.get("binding_count") is not None
+        and sequence.get("root_track_count") is not None
+    )))
+    problems = list(record.get("native_structure_issues") or [])
+    if not problems:
+        problems.extend(
+            "ASSET_CLASS_OR_DISK_MISMATCH: " + str(x.get("path", "unknown"))
+            for x in assets if not x.get("pass")
+        )
+        problems.extend(
+            "ACTOR_LABEL_OR_CLASS_MISMATCH: " + str(x.get("label", "unknown"))
+            for x in actors if not x.get("class_matches")
+        )
+        if not level_saved:
+            problems.append("SAVED_LEVEL_PACKAGE_MISSING")
+        if not sequence_saved:
+            problems.append("SAVED_SEQUENCE_PACKAGE_OR_CLASS_MISMATCH")
+        if not enum_complete:
+            problems.append("SEQUENCE_BINDING_OR_TRACK_READBACK_UNAVAILABLE")
+    native = "FAIL" if (asset_pass != len(assets) or actor_pass != len(actors)
+                        or not level_saved or not sequence_saved) else (
+        "INCOMPLETE" if not enum_complete else "PASS"
+    )
+    return {
+        "status": record.get("status"),
+        "native_structure_status": native,
+        "provenance_status": record.get("provenance_status", "UNKNOWN"),
+        "missing_provenance_fields": record.get("provenance_missing_fields") or [],
+        "assets_verified": asset_pass, "assets_planned": len(assets),
+        "actors_verified": actor_pass, "actors_planned": len(actors),
+        "level_saved": level_saved, "sequence_saved": sequence_saved,
+        "sequence_binding_count": sequence.get("binding_count"),
+        "sequence_root_track_count": sequence.get("root_track_count"),
+        "native_structure_issues": problems,
+        "fidelity_verified": False,
+    }
+
+
+def summarize_latest(workspace: str | Path | None = None) -> dict[str, Any]:
+    """Print real pass/fail counts from the last audit, with no new Unreal reads."""
+    root = Path(workspace).resolve() if workspace is not None else (
+        Path.home() / ".cutsceneai-studio" / "runs"
+    )
+    job_id = str(_json(root / "active-job.json")["job_id"])
+    if len(job_id) != 32 or any(ch not in "0123456789abcdef" for ch in job_id):
+        raise PersistenceAuditError("Invalid Studio job id.")
+    job = _json(root / "jobs" / (job_id + ".json"))
+    candidate = (root / "candidates" / str(job["candidate_id"])).resolve()
+    if not candidate.is_relative_to((root / "candidates").resolve()):
+        raise PersistenceAuditError("Audit path outside candidate workspace.")
+    report_path = candidate / ("post-reopen-audit-" + job_id + ".json")
+    summary = summarize_report(report_path)
+    print("[CutSceneAI Studio] Native structure: " + summary["native_structure_status"])
+    print("[CutSceneAI Studio] Assets verified: {}/{} | Actors verified: {}/{}".format(
+        summary["assets_verified"], summary["assets_planned"],
+        summary["actors_verified"], summary["actors_planned"]))
+    print("[CutSceneAI Studio] Level saved: {} | Sequence saved: {} | Bindings: {} | Root tracks: {}".format(
+        summary["level_saved"], summary["sequence_saved"],
+        summary["sequence_binding_count"], summary["sequence_root_track_count"]))
+    print("[CutSceneAI Studio] Provenance: " + str(summary["provenance_status"]))
+    for issue in summary["native_structure_issues"]:
+        print("[CutSceneAI Studio] Native readback issue: " + issue)
+    return summary
 
 
 def audit_latest(workspace: str | Path | None = None, *, unreal_api: Any = None) -> dict[str, Any]:
@@ -270,4 +378,8 @@ def audit_latest(workspace: str | Path | None = None, *, unreal_api: Any = None)
               ", ".join(report["provenance_missing_fields"]))
         print("[CutSceneAI Studio] Native readback was collected, but evidence completeness remains INCOMPLETE.")
     print("[CutSceneAI Studio] Audit JSON: " + str(out))
+    summary = summarize_report(out)
+    print("[CutSceneAI Studio] Native readback: {} | assets verified {}/{} | actors verified {}/{}".format(
+        summary["native_structure_status"], summary["assets_verified"],
+        summary["assets_planned"], summary["actors_verified"], summary["actors_planned"]))
     return report

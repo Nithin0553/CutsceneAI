@@ -46,3 +46,29 @@ missing identity to verified evidence or changes the original receipts.
 If a mismatch persists, the error reports the exact field that differs. Do
 not edit the receipts to make them match or rerun the transfer over an existing
 Level Sequence.
+
+
+## Inspect native pass/fail counts from a previously generated audit
+
+The original `asset_count` and `actor_count` fields count records **examined**;
+they do not demonstrate that the corresponding packages and actors passed.
+
+From Unreal's Python Console after updating the repository:
+
+```python
+import sys, importlib
+sys.path.insert(0, r"B:/Research/CutSceneAI/CutsceneAI/integrations/unreal")
+import studio_persistence_audit as audit
+importlib.reload(audit)
+summary = audit.summarize_latest()
+```
+
+This reads the **existing** `post-reopen-audit-*.json`, including audits created
+by the previous script, and prints verified-versus-planned counts for assets
+and actors, on-disk sequence/level status, bindings/tracks counts, and actual
+failures. It makes **no Unreal API calls** and creates **no files**.
+
+`native_structure_status` distinguishes structural checks from the
+`provenance_status` of historical receipts. For example, real structure may
+be PASS while historical identity fields keep overall status INCOMPLETE.
+Neither status claims source-to-target animation/visual/audio fidelity.

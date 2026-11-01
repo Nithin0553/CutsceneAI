@@ -241,3 +241,72 @@ def test_complete_receipt_still_reports_complete_provenance(tmp_path):
     assert result["provenance_status"] == "COMPLETE"
     assert result["provenance_missing_fields"] == []
     assert result["status"] == "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
+
+
+def test_native_readback_is_independently_passed_on_legacy_receipts(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    setup = candidate / "setup.json"
+    data = json.loads(setup.read_text(encoding="utf-8"))
+    data.pop("target_sequence")
+    data.pop("target_namespace")
+    _write(setup, data)
+    report_file = candidate / "audit.json"
+    report = AUDIT.audit(jobfile, report_file, unreal_api=fake)
+    assert report["status"] == "STRUCTURAL_READBACK_INCOMPLETE"
+    assert report["native_structure_status"] == "PASS"
+    assert report["assets_class_and_disk_verified"] == 2
+    assert report["actors_unique_and_class_verified"] == 2
+    assert report["provenance_status"] == "INCOMPLETE_LEGACY_RECEIPT"
+    summary = AUDIT.summarize_report(report_file)
+    assert summary["native_structure_status"] == "PASS"
+    assert summary["assets_verified"] == 2
+    assert summary["actors_verified"] == 2
+    assert summary["provenance_status"] == "INCOMPLETE_LEGACY_RECEIPT"
+
+
+def test_native_readback_failures_not_hidden_by_missing_legacy_fields(tmp_path):
+    _root, jobfile, candidate, fake, _assets, actors = fixture(tmp_path)
+    setup = candidate / "setup.json"
+    data = json.loads(setup.read_text(encoding="utf-8"))
+    data.pop("target_sequence")
+    _write(setup, data)
+    actors.append(Actor("CSAI_CAM", "CineCameraActor"))
+    report_path = candidate / "audit.json"
+    report = AUDIT.audit(jobfile, report_path, unreal_api=fake)
+    assert report["status"] == "STRUCTURAL_READBACK_FAIL"
+    assert report["native_structure_status"] == "FAIL"
+    assert report["actors_unique_and_class_verified"] == 1
+    summary = AUDIT.summarize_report(report_path)
+    assert summary["actors_verified"] == 1
+    assert any("CSAI_CAM" in msg for msg in summary["native_structure_issues"])
+
+
+def test_summarize_existing_report_is_read_only(tmp_path, capsys):
+    root, _jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    output = candidate / "audit.json"
+    AUDIT.audit_latest(root, unreal_api=fake)
+    existing = list(candidate.glob("post-reopen-audit-*.json"))[0]
+    data_before = existing.read_bytes()
+    summary = AUDIT.summarize_latest(root)
+    assert summary["native_structure_status"] == "PASS"
+    assert summary["assets_planned"] == 2
+    assert existing.read_bytes() == data_before
+    assert summary["fidelity_verified"] is False
+    assert "Assets verified: 2/2" in capsys.readouterr().out
+    assert not output.exists()
+
+
+def test_legacy_audit_json_from_previous_version_can_be_summarized(tmp_path):
+    _root, _jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    report_path = candidate / "audit.json"
+    AUDIT.audit(_jobfile, report_path, unreal_api=fake)
+    data = json.loads(report_path.read_text(encoding="utf-8"))
+    for field in ("native_structure_status", "native_structure_issues",
+                  "actors_unique_and_class_verified", "sequence_persisted",
+                  "sequence_enumeration_complete"):
+        data.pop(field, None)
+    _write(report_path, data)
+    summary = AUDIT.summarize_report(report_path)
+    assert summary["native_structure_status"] == "PASS"
+    assert summary["actors_verified"] == 2
+    assert summary["assets_verified"] == 2
