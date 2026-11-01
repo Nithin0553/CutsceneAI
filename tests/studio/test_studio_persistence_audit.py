@@ -183,3 +183,61 @@ def test_unreal_sequence_extensions_can_supply_readback_counts(tmp_path):
     assert result["status"] == "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
     assert result["sequence"]["binding_count"] == 2
     assert result["sequence"]["root_track_count"] == 1
+
+
+@pytest.mark.parametrize("missing", [
+    ["target_sequence"],
+    ["target_namespace"],
+    ["target_sequence", "target_namespace"],
+])
+def test_historical_receipt_fields_do_not_block_readonly_inventory(tmp_path, missing):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    setup = candidate / "setup.json"
+    data = json.loads(setup.read_text(encoding="utf-8"))
+    for name in missing:
+        data.pop(name)
+    _write(setup, data)
+    result = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert result["status"] == "STRUCTURAL_READBACK_INCOMPLETE"
+    assert result["provenance_status"] == "INCOMPLETE_LEGACY_RECEIPT"
+    assert result["provenance_missing_fields"] == [
+        "setup_receipt." + name for name in missing
+    ]
+    assert result["assets_class_and_disk_verified"] == 2
+    assert result["sequence"]["binding_count"] == 1
+
+
+@pytest.mark.parametrize("field, wrong", [
+    ("target_sequence", "/Game/Other/LS_Different"),
+    ("target_namespace", "/Game/Other/Unexpected"),
+    ("status", "PARTIAL_SETUP_MUST_INSPECT"),
+    ("kind", "foreign.setup_receipt"),
+])
+def test_explicit_setup_identity_mismatch_never_passes_or_writes(tmp_path, field, wrong):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    setup = candidate / "setup.json"
+    data = json.loads(setup.read_text(encoding="utf-8"))
+    data[field] = wrong
+    _write(setup, data)
+    with pytest.raises(AUDIT.PersistenceAuditError, match="Evidence identity mismatch: setup_receipt." + field):
+        AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert not (candidate / "audit.json").exists()
+
+
+def test_transfer_plan_identity_mismatch_fails_with_field_name(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    _write(candidate / "transfer-plan.json", {
+        "sequence_asset_path": "/Game/Other/LS_Different",
+    })
+    with pytest.raises(AUDIT.PersistenceAuditError,
+                       match="Evidence identity mismatch: transfer_plan.sequence_asset_path"):
+        AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert not (candidate / "audit.json").exists()
+
+
+def test_complete_receipt_still_reports_complete_provenance(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    result = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert result["provenance_status"] == "COMPLETE"
+    assert result["provenance_missing_fields"] == []
+    assert result["status"] == "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"

@@ -27,3 +27,22 @@ Replace the example local path with your own repository location. The command us
 The script also refuses a different target Unreal project or level, a missing/failed setup/generation receipt, or an output-file overwrite. Do not upload raw assets, private file paths or proprietary source data with issue comments: a redacted result/status and relevant counts are sufficient for triage.
 
 **Not validated:** actual actor restarts, source/target behavior or trajectory parity, material accuracy, complete skeletal pose, audio waveform, cinematographic framing, event execution or hierarchy correctness. Use CineTwin and independent source/target observations for those research claims. #54 #55 #62 #72 remain open until authentic engine evidence satisfies their acceptance criteria.
+
+
+## Audit compatibility with older successful setup receipts
+
+The first implementation required the saved setup receipt to contain both
+`target_sequence` and `target_namespace`. Earlier Studio runs may predate
+these metadata fields even when the native import was completed.
+
+The updated read-only auditor compares all **present** identities; a
+contradictory field or non-success status blocks the audit with a precise
+field name. When an optional historic identity field is **missing**, it still
+checks the live Unreal assets, actor classes and saved packages, but records
+`provenance_status: INCOMPLETE_LEGACY_RECEIPT` and
+`status: STRUCTURAL_READBACK_INCOMPLETE`. It never silently promotes a
+missing identity to verified evidence or changes the original receipts.
+
+If a mismatch persists, the error reports the exact field that differs. Do
+not edit the receipts to make them match or rerun the transfer over an existing
+Level Sequence.

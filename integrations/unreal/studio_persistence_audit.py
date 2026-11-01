@@ -82,6 +82,47 @@ def _checks(sequence: Any, api: Any) -> dict[str, Any]:
     return observed
 
 
+def _verify_identity(job: dict[str, Any], setup: dict[str, Any],
+                     manifest: dict[str, Any], plan: dict[str, Any]) -> list[str]:
+    """Distinguish missing legacy receipt metadata from actual identity conflicts.
+
+    A historical receipt may omit two fields added after a real editor run.
+    Such absence reduces provenance completeness, never upgrades it to PASS.
+    Any *supplied* contradictory field still blocks the audit outright.
+    """
+    required = (
+        ("automatic_setup.kind", manifest.get("kind"),
+         "cutsceneai.studio.automatic_setup_plan"),
+        ("setup_receipt.kind", setup.get("kind"),
+         "cutsceneai.studio.automatic_setup_receipt"),
+        ("setup_receipt.status", setup.get("status"),
+         "SETUP_SAVED_UNVERIFIED"),
+        ("transfer_plan.sequence_asset_path", plan.get("sequence_asset_path"),
+         job.get("sequence_path")),
+    )
+    for field, actual, expected in required:
+        if not actual or actual != expected:
+            raise PersistenceAuditError(
+                "Evidence identity mismatch: " + field +
+                ". The saved candidate evidence differs; audit halted without changing Unreal."
+            )
+    missing = []
+    for field, actual, expected in (
+        ("setup_receipt.target_sequence", setup.get("target_sequence"),
+         job.get("sequence_path")),
+        ("setup_receipt.target_namespace", setup.get("target_namespace"),
+         manifest.get("target_folder")),
+    ):
+        if actual is None or actual == "":
+            missing.append(field)
+        elif actual != expected:
+            raise PersistenceAuditError(
+                "Evidence identity mismatch: " + field +
+                ". The saved candidate evidence differs; audit halted without changing Unreal."
+            )
+    return missing
+
+
 def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = None) -> dict[str, Any]:
     """Observe only the loaded editor and on-disk receipts; write a new report."""
     api = unreal_api
@@ -111,13 +152,7 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
             or runtime.get("stage") != "complete"):
         raise PersistenceAuditError("Generation receipt does not prove completed engine generation.")
     plan = _json(candidate_dir / "transfer-plan.json")
-    if (manifest.get("kind") != "cutsceneai.studio.automatic_setup_plan"
-            or setup.get("kind") != "cutsceneai.studio.automatic_setup_receipt"
-            or setup.get("status") != "SETUP_SAVED_UNVERIFIED"
-            or setup.get("target_sequence") != job.get("sequence_path")
-            or plan.get("sequence_asset_path") != job.get("sequence_path")
-            or setup.get("target_namespace") != manifest.get("target_folder")):
-        raise PersistenceAuditError("Setup or sequence evidence does not match this candidate.")
+    provenance_missing = _verify_identity(job, setup, manifest, plan)
     expected_project, expected_level = str(job["expected_project"]), str(job["expected_level"])
     observed_project, observed_level = _loaded_project(api), _loaded_level(api)
     if _project_key(observed_project) != _project_key(expected_project):
@@ -184,7 +219,7 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
     enumerable = sequence_rows["binding_count"] is not None and sequence_rows["root_track_count"] is not None
     if not level_disk or not sequence_ok or not all_assets or not all_actors:
         status = "STRUCTURAL_READBACK_FAIL"
-    elif not enumerable:
+    elif not enumerable or provenance_missing:
         status = "STRUCTURAL_READBACK_INCOMPLETE"
     else:
         status = "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
@@ -192,6 +227,8 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         "kind": "cutsceneai.studio.persistence_audit", "schema_version": "0.1.0",
         "status": status, "fidelity_verified": False, "restart_verified": False,
         "engine_generated": True, "no_editor_mutation": True,
+        "provenance_status": "INCOMPLETE_LEGACY_RECEIPT" if provenance_missing else "COMPLETE",
+        "provenance_missing_fields": provenance_missing,
         "expected_project": expected_project, "observed_project": observed_project,
         "expected_level": expected_level, "observed_level": observed_level,
         "level_file_exists": level_disk, "sequence": sequence_rows,
@@ -204,6 +241,7 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         "generation_receipt_sha256": _sha(runtime_file),
         "limitations": [
             "Editor snapshot cannot independently prove process restart.",
+            "A missing historical receipt identity field is incomplete evidence, not a verified match.",
             "Structural readback is not source-to-target pose, camera, audio or rendered-frame parity.",
             "Actor parent labels are observations only, not verified against Unity hierarchy.",
         ],
@@ -227,5 +265,9 @@ def audit_latest(workspace: str | Path | None = None, *, unreal_api: Any = None)
         "post-reopen-audit-" + job_id + ".json")
     report = audit(target, out, unreal_api=unreal_api)
     print("[CutSceneAI Studio] " + report["status"] + " (fidelity and restart not proven)")
+    if report["provenance_missing_fields"]:
+        print("[CutSceneAI Studio] Legacy receipt lacks identity fields: " +
+              ", ".join(report["provenance_missing_fields"]))
+        print("[CutSceneAI Studio] Native readback was collected, but evidence completeness remains INCOMPLETE.")
     print("[CutSceneAI Studio] Audit JSON: " + str(out))
     return report
