@@ -192,7 +192,10 @@ def audit(job_path: str | Path, output_path: str | Path, *, unreal_api: Any = No
             row["parent_mobility"] = _mobility(parents[0])
             if not callable(getter):
                 incomplete.append("ATTACHMENT_API_UNAVAILABLE: " + child)
-            elif actual is not parents[0]:
+            elif (row["observed_parent_label"] != parent_label
+                  or (callable(getattr(actual, "get_path_name", None))
+                      and callable(getattr(parents[0], "get_path_name", None))
+                      and str(actual.get_path_name()) != str(parents[0].get_path_name()))):
                 row["status"] = "FAIL"
                 problems.append("PARENT_MISMATCH: " + child + " -> " + str(row["observed_parent_label"]))
             elif row["socket"] is None:
