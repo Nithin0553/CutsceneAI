@@ -268,6 +268,7 @@ def audit(job_path: str | Path, output_path: str | Path, *, unreal_api: Any = No
     source_groups = sorted({node["name"] for record in parent_resolution["rows"]
                             for node in record["ancestor_chain"]})
     for record in parent_resolution["rows"]:
+        incomplete.append("SOURCE_PARENT_NOT_MAPPED_AS_ACTOR: " + record["source_name"])
         incomplete.append("SOURCE_PARENT_REPRESENTATION_UNVERIFIED: " +
                           record["source_name"] + " (" + record["strategy"] + ")")
 
