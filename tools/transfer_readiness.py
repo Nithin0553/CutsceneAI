@@ -12,7 +12,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "cinetwin"))
 
-from transfer_readiness import audit_files
+from readiness_loader import load_source_readiness
+
+# The tools entrypoint may be imported itself as `transfer_readiness` by
+# Unreal's sys.path. Importing that name from inside this script is circular.
+audit_files = load_source_readiness().audit_files
 
 
 def main(argv: list[str] | None = None) -> int:

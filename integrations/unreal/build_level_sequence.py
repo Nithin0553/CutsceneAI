@@ -37,10 +37,16 @@ if str(CINETWIN_DIR) not in sys.path:
 import cinetwin_hierarchy_runtime
 import cinetwin_root_world_lock
 import hierarchy_realization
-import transfer_readiness
+import readiness_loader
 import csir_plan
 import scene_prep
 import unreal_compat
+
+# Resolve the semantic CineTwin audit by canonical file path. The tools/
+# command-line wrapper has the SAME basename and can be on sys.path first
+# after Studio imports. Loading by bare "import transfer_readiness" can
+# initialize the wrapper recursively and prevent Sequence generation.
+transfer_readiness = readiness_loader.load_source_readiness()
 
 importlib.reload(csir_plan)
 importlib.reload(scene_prep)

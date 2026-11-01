@@ -122,6 +122,10 @@ def _execute(job):
         raise RuntimeError('Prepared evidence does not match submitted job.')
     if prepared['target']['sequence_asset_path'] != job['sequence_path']:
         raise RuntimeError('Sequence identity mismatch.')
+    # Import the engine generator BEFORE creating a level, importing any FBX,
+    # or spawning any actor. A missing/circular module must not leave behind
+    # a saved but unusable automatic setup.
+    import build_level_sequence
     _ensure_target_level(job)
     if job.get('automatic_setup'):
         # Source verification runs before ANY editor mutation. If an asset import
@@ -154,7 +158,6 @@ def _execute(job):
         job['error'] = 'Destination setup not ready: ' + str(latest.get('next_action', 'Inspect target scene.'))
         job['generation_status'] = 'NOT_STARTED'
         return job
-    import build_level_sequence
     result = build_level_sequence.build_prepared_files(
         job['csir'], job['mapping'], str(candidate_dir / 'transfer-plan.json'),
         str(candidate_dir / 'coverage-report.json'),
