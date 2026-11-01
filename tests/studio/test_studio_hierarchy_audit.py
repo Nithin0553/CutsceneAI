@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
-
 from test_studio_persistence_audit import _write, fixture
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,7 +42,7 @@ class Actor:
 
 
 def prepared(tmp_path):
-    root, jobfile, candidate, fake, _assets, actors = fixture(tmp_path)
+    _root, jobfile, candidate, fake, _assets, actors = fixture(tmp_path)
     csir_path = tmp_path / "source.csir.json"
     mapping_path = tmp_path / "source.mapping.json"
     source = {
