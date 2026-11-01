@@ -128,6 +128,15 @@
       <div class="rule"></div><h3>Unity feature census</h3><p class="hint">In Unity: Tools → CutsceneAI → Discover Installed Feature Surface. Then refresh.</p>
       <label class="field"><span>Source-project census</span><select name="source-census"><option value="">No census — legacy extraction only</option>${options.map(o=>`<option value="${esc(o.path)}" ${state.selectedCensus===o.path?'selected':''}>${esc(o.name)} · ${esc(o.state)} · ${size(o.unresolved_components)} gaps</option>`).join('')}</select></label>
       ${scan.reason?`<p class="hint">${esc(scan.reason)}</p>`:''}${selected?`<p class="hint">Source identity: ${selected.project_identity_proven?'confirmed':'unproven'} · scoped components: ${size(selected.scoped_components)} · unresolved: ${size(selected.unresolved_components)}</p>`:''}
+      ${selected?.unresolved_components>0?`
+        <details open><summary>${size(selected.unresolved_components)} cutscene components still need coverage · inspect exact source objects</summary>
+        <div class="slim-note" role="status">
+          ${(selected.unresolved_findings||[]).map(row=>`<p><strong>${esc(String(row.native_type||'Unknown component').split('.').pop())}</strong><br><span class="muted">${esc(row.object_path||'Unknown source object')}</span><br><span class="hint">${esc(row.state||'Source extraction/adapter required')}</span></p>`).join('')}
+          ${selected.findings_truncated?'<p class="hint">Additional source findings omitted from this preview; inspect the source gap report.</p>':''}
+          <p class="hint">These components were discovered in Unity but do not yet have complete source-to-Unreal extraction, native target readback and behavior checks.</p>
+        </div></details>
+        ${state.strictSourceCensus?'<p class="hint">Strict mode will block this transfer. For a separately labelled best-effort Benchmark002 test, uncheck strict source census below. The missing features remain in the report.</p>':'<p class="hint">Best-effort mode selected. These components remain unresolved; prepare does not certify their conversion.</p>'}
+      `:''}
       <label class="checkbox"><input type="checkbox" name="strict-source-census" ${state.strictSourceCensus?'checked':''} ${!state.selectedCensus?'disabled':''}><span>Require matching complete source census (recommended)</span></label>
       <label class="checkbox"><input type="checkbox" name="visibility-fallback" ${state.visibilityFallback?'checked':''}><span>Opt in to visual-only ActivationTrack approximation; scripts and physics are not equivalent</span></label>
       <div class="form-actions">${btn('Refresh Unity census','refresh-census','secondary',state.busy)}${btn('Copy Unreal feature scan command','copy-unreal-scan','secondary')}</div>
