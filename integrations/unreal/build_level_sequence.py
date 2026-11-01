@@ -749,11 +749,11 @@ def _target_scalar_object(actor: unreal.Actor, action: dict[str, Any]) -> Any:
         )
     if action.get("target_scope") == "actor":
         candidate = actor
-        try:
-            if not bool(candidate.is_a(klass)):
-                raise UnrealBuildError("Scalar target actor type is not mapped target class.")
-        except AttributeError as exc:
-            raise UnrealBuildError("Unreal actor class identity API unavailable.") from exc
+        # The official Epic Python integration preserves native class
+        # inheritance in Python; isinstance() is the documented operation.
+        # Avoid depending on a third-party UnrealEnginePython is_a() method.
+        if not isinstance(candidate, klass):
+            raise UnrealBuildError("Scalar target actor type is not mapped target class.")
     elif action.get("target_scope") == "component":
         candidates = actor.get_components_by_class(klass)
         if len(candidates) != 1:
