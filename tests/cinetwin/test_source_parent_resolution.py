@@ -132,3 +132,25 @@ def test_benchmark002_eight_unmapped_links_reduce_to_three_source_group_nodes():
     assert all(not row["native_parent_actor_reconstructed"] for row in result["rows"])
     assert all(row["strategy"] == "CHILD_WORLD_BEHAVIOR_UNVERIFIED"
                for row in result["rows"])
+
+
+def test_real_csir_baked_world_curve_is_recognized_only_for_static_group():
+    scene, mapping = _scene()
+    baked = [{"kind": "transform", "entity_name": "CAM",
+              "baked_source_curves": True,
+              "keys": [{"frame": 0}, {"frame": 12}]}]
+    row = analyze(scene, mapping, baked)["rows"][0]
+    assert row["strategy"] == "CSIR_PARENT_COMPOSED_WORLD_CURVE_PLANNED_UNVERIFIED"
+    assert row["native_parent_actor_reconstructed"] is False
+    scene["tracks"].append({
+        "binding_entity_id": "group", "sections": [{}], "muted": False,
+    })
+    assert analyze(scene, mapping, baked)["rows"][0]["strategy"] == "PARENT_BEHAVIOR_UNVERIFIED"
+
+
+def test_relabelled_unproven_world_curve_is_not_accepted():
+    scene, mapping = _scene()
+    fake = [{"kind": "transform", "entity_name": "CAM",
+             "baked_source_curves": False,
+             "keys": [{"frame": 0}]}]
+    assert analyze(scene, mapping, fake)["rows"][0]["strategy"] == "CHILD_WORLD_BEHAVIOR_UNVERIFIED"
