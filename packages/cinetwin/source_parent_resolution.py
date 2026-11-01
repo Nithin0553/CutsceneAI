@@ -92,9 +92,6 @@ def analyze(csir: dict[str, Any], mapping: dict[str, Any],
             and bool(transforms[0].get("keys"))
             and not transforms[0].get("source_behavior_strategy")
         )
-        initial_world_pose = (
-            not transforms and _valid_world(actor.get("metadata", {}).get("world_transform"))
-        )
         if not chain or not all(part["static_container_candidate"] for part in chain):
             strategy = "PARENT_BEHAVIOR_UNVERIFIED"
         elif world_motion:
@@ -103,8 +100,6 @@ def analyze(csir: dict[str, Any], mapping: dict[str, Any],
             strategy = "CSIR_PARENT_COMPOSED_WORLD_CURVE_PLANNED_UNVERIFIED"
         elif static_pose:
             strategy = "STATIC_WORLD_POSE_REPRESENTED_UNVERIFIED"
-        elif initial_world_pose:
-            strategy = "WORLD_SCENE_PLACEMENT_PLANNED_UNVERIFIED"
         else:
             strategy = "CHILD_WORLD_BEHAVIOR_UNVERIFIED"
         rows.append({
