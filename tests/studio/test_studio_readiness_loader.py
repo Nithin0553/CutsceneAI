@@ -76,7 +76,7 @@ def test_tools_cli_help_does_not_import_itself_recursively():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "read-only CutSceneAI" in result.stdout.lower() or "source coverage" in result.stdout.lower()
+    assert "read-only cutsceneai transfer readiness" in result.stdout.lower()
 
 
 def test_worker_preloads_generator_before_any_native_staging():
