@@ -76,12 +76,36 @@ def source_surfaces(config: dict[str, Any]) -> dict[str, Any]:
             ready = bool(report["project_identity_proven"]
                          and report["source_scope_matched"]
                          and report["unresolved_component_count"] == 0)
+            unresolved_states = {
+                "NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED",
+                "MISSING_SOURCE_SCRIPT",
+                "DUPLICATE_SOURCE_COMPONENT_IDENTITY",
+            }
+            findings = [
+                {
+                    "native_type": row["native_component"],
+                    "object_path": row["hierarchy_path"],
+                    "scene_path": row["scene_path"],
+                    "state": row["state"],
+                }
+                for row in report["component_findings"]
+                if row["state"] in unresolved_states
+            ]
+            if not report["source_scope_matched"]:
+                findings.append({
+                    "native_type": "SOURCE_SCOPE_NOT_VERIFIED",
+                    "object_path": "(no matching source scene objects)",
+                    "scene_path": "",
+                    "state": "SOURCE_SCOPE_NOT_VERIFIED",
+                })
             obj.update({
                 "state": "MATCHED_COMPLETE" if ready else
                          "REVIEW_REQUIRED" if report["project_identity_proven"]
                          else "SOURCE_IDENTITY_NOT_PROVEN",
                 "strict_ready": ready,
                 "unresolved_components": report["unresolved_component_count"],
+                "unresolved_findings": findings[:100],
+                "findings_truncated": len(findings) > 100,
                 "scoped_components": report["scoped_component_occurrences"],
                 "project_identity_proven": report["project_identity_proven"],
                 "source_scope_matched": report["source_scope_matched"],
@@ -120,8 +144,13 @@ def validate_options(config: dict[str, Any], request: dict[str, Any]) -> dict[st
         strict = request.get("require_complete_source_features", True)
         if strict and not selected["strict_ready"]:
             raise ValueError(
-                "Strict source census has unresolved components, unmatched scene scope "
-                "or unproven project identity. No engine assets were touched."
+                "Strict source census blocked: "
+                + str(selected.get("unresolved_components", 0))
+                + " unresolved component/scope findings. "
+                  "Expand source-component details on Review. For a labelled "
+                  "best-effort Benchmark002 regression, uncheck strict source "
+                  "completeness; full source coverage will remain unverified. "
+                  "No engine assets were touched."
             )
         overrides["source_feature_surface_path"] = selected["path"]
         overrides["require_complete_source_features"] = strict
