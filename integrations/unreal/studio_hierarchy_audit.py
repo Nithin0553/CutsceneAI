@@ -57,18 +57,47 @@ def _level(api: Any) -> str:
     return str(world.get_path_name()).split(".")[0]
 
 
+def _root_component(actor: Any) -> Any | None:
+    """UE 5.8 exposes Actor.root_component as an editor property, not necessarily a method."""
+    getter = getattr(actor, "get_editor_property", None)
+    if callable(getter):
+        try:
+            result = getter("root_component")
+            if result is not None:
+                return result
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+    try:
+        result = getattr(actor, "root_component", None)
+        if result is not None:
+            return result
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+    method = getattr(actor, "get_root_component", None)
+    if callable(method):
+        try:
+            return method()
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+    return None
+
+
 def _mobility(actor: Any) -> str | None:
-    root = getattr(actor, "get_root_component", None)
-    component = root() if callable(root) else None
+    component = _root_component(actor)
     if component is None:
         return None
     getter = getattr(component, "get_editor_property", None)
-    if not callable(getter):
-        return None
-    try:
-        value = getter("mobility")
-    except Exception:
-        return None
+    value = None
+    if callable(getter):
+        try:
+            value = getter("mobility")
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+    if value is None:
+        try:
+            value = getattr(component, "mobility", None)
+        except (AttributeError, RuntimeError, TypeError):
+            return None
     if value is None:
         return None
     name = str(getattr(value, "name", value)).upper()
@@ -78,15 +107,14 @@ def _mobility(actor: Any) -> str | None:
         return "STATIONARY"
     if "STATIC" in name:
         return "STATIC"
-    return name
+    return None
 
 
 def _socket(actor: Any) -> str | None:
     """Distinguish an unexposed API from a proven empty attachment socket."""
     getter = getattr(actor, "get_attach_parent_socket_name", None)
     if not callable(getter):
-        root = getattr(actor, "get_root_component", None)
-        component = root() if callable(root) else None
+        component = _root_component(actor)
         getter = getattr(component, "get_attach_socket_name", None)
     if not callable(getter):
         return None
@@ -178,7 +206,7 @@ def audit(job_path: str | Path, output_path: str | Path, *, unreal_api: Any = No
                "source_parent_name": edge["source_parent_name"],
                "expected_parent_label": parent_label, "observed_parent_label": None,
                "socket": None, "mobility": None, "parent_mobility": None,
-               "status": "INCOMPLETE"}
+               "parent_link_status": "INCOMPLETE", "status": "INCOMPLETE"}
         if len(matches) != 1 or len(parents) != 1:
             row["status"] = "FAIL"
             problems.append("MISSING_OR_DUPLICATE_MAPPED_ACTOR: " + child + " -> " + parent_label)
@@ -197,16 +225,22 @@ def audit(job_path: str | Path, output_path: str | Path, *, unreal_api: Any = No
                       and callable(getattr(parents[0], "get_path_name", None))
                       and str(actual.get_path_name()) != str(parents[0].get_path_name()))):
                 row["status"] = "FAIL"
+                row["parent_link_status"] = "FAIL"
                 problems.append("PARENT_MISMATCH: " + child + " -> " + str(row["observed_parent_label"]))
-            elif row["socket"] is None:
-                incomplete.append("SOCKET_READBACK_UNAVAILABLE: " + child)
-            elif row["socket"]:
-                row["status"] = "FAIL"
-                problems.append("UNEXPECTED_SOCKET_ATTACHMENT: " + child + " @ " + row["socket"])
-            elif row["mobility"] is None or row["parent_mobility"] is None:
-                incomplete.append("MOBILITY_READBACK_UNAVAILABLE: " + child)
             else:
-                row["status"] = "PASS"
+                row["parent_link_status"] = "PASS"
+                if row["socket"] is None:
+                    incomplete.append("SOCKET_READBACK_UNAVAILABLE: " + child)
+                elif row["socket"]:
+                    row["status"] = "FAIL"
+                    problems.append("UNEXPECTED_SOCKET_ATTACHMENT: " + child + " @ " + row["socket"])
+                elif row["mobility"] is None or row["parent_mobility"] is None:
+                    incomplete.append("MOBILITY_READBACK_UNAVAILABLE: " + child)
+                elif row["mobility"] != "MOVABLE" or row["parent_mobility"] != "MOVABLE":
+                    row["status"] = "FAIL"
+                    problems.append("NON_MOVABLE_ATTACHED_ACTOR: " + child)
+                else:
+                    row["status"] = "PASS"
         rows.append(row)
 
     roots = []
@@ -244,6 +278,7 @@ def audit(job_path: str | Path, output_path: str | Path, *, unreal_api: Any = No
         "direct_attachments": rows, "source_roots": roots,
         "unresolved_source_parents": source["unresolved_source_parents"],
         "direct_edges_expected": len(rows),
+        "direct_parent_links_verified": sum(row["parent_link_status"] == "PASS" for row in rows),
         "direct_edges_verified": sum(row["status"] == "PASS" for row in rows),
         "root_actors_verified": sum(row["status"] == "PASS" for row in roots),
         "errors": problems, "incomplete": incomplete,
@@ -276,8 +311,9 @@ def audit_latest(workspace: str | Path | None = None, *, unreal_api: Any = None)
         raise HierarchyAuditError("Candidate path outside Studio workspace.")
     path = candidate / ("hierarchy-audit-" + job_id + "-" + uuid.uuid4().hex[:8] + ".json")
     result = audit(job_file, path, unreal_api=unreal_api)
-    print("[CutSceneAI Studio] HIERARCHY: {} | direct attachments {}/{} | roots {}/{} | unresolved source parents {}".format(
-        result["status"], result["direct_edges_verified"], result["direct_edges_expected"],
+    print("[CutSceneAI Studio] HIERARCHY: {} | parent links {}/{} | fully checked links {}/{} | roots {}/{} | unresolved source parents {}".format(
+        result["status"], result["direct_parent_links_verified"], result["direct_edges_expected"],
+        result["direct_edges_verified"], result["direct_edges_expected"],
         result["root_actors_verified"], len(result["source_roots"]),
         len(result["unresolved_source_parents"])))
     for item in result["errors"] + result["incomplete"]:
