@@ -20,6 +20,7 @@ import csir_plan
 import sampling_plan
 import scene_prep
 import hierarchy_local
+import source_parent_resolution
 import ced_preflight
 import root_world_lock
 
@@ -681,6 +682,9 @@ def compose(
         "source_relationship_count": len(relationships),
         "relationship_fidelity_verified": False,
         "hierarchy_reconstruction": hierarchy_results,
+        "source_parent_resolution": source_parent_resolution.analyze(
+            csir, mapping, plan["actions"]
+        ),
         "unverified_domains": [
             "skeletal_joint_correspondence", "executable_event_payloads",
             "custom_shader_and_script_behavior", "physics_equivalence",
