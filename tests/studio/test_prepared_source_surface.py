@@ -128,9 +128,10 @@ def test_changed_census_stale_plan_cannot_be_promoted_to_verification(tmp_path):
     })
     surface.write_text(json.dumps(catalog))
     recomputed = transfer_backend.compose_files(src, target)
-    with pytest.raises(transfer_backend.TransferBackendError, match="provenance mismatch"):
+    with pytest.raises(transfer_backend.TransferBackendError, match="differs materially"):
         transfer_backend.verify_prepared_artifacts(
-            plan, report, initial, *recomputed
+            *[json.loads(json.dumps(item)) for item in (plan, report, initial)],
+            *recomputed,
         )
 
 
