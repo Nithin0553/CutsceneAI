@@ -49,6 +49,14 @@ def config_check(payload: dict[str, Any]) -> dict[str, Any]:
     csir, mapping, target = (
         Path(payload[key]).expanduser().resolve() for key in keys[:3]
     )
+    source_project_text = str(payload.get('unity_project') or '').strip()
+    unity_project = Path(source_project_text).expanduser().resolve() if source_project_text else None
+    scope = str(payload.get('source_scope') or '').replace('\\', '/').strip('/')
+    if unity_project is not None:
+        if not (unity_project / 'Assets').is_dir():
+            raise ValueError('Unity project folder must contain Assets/.')
+        if not scope.startswith('Assets/') or '..' in scope.split('/') or not (unity_project / scope).is_dir():
+            raise ValueError('Choose a real Unity source scope under Assets/.')
     capture_text = str(payload.get('capture') or '').strip()
     capture = Path(capture_text).expanduser().resolve() if capture_text else None
     for title, path in [('Unity CSIR', csir), ('Target mapping', mapping),
@@ -98,6 +106,8 @@ def config_check(payload: dict[str, Any]) -> dict[str, Any]:
         category = str(track.get('ced_type') or 'unknown')
         track_types[category] = track_types.get(category, 0) + 1
     return {'csir': str(csir), 'capture': str(capture) if capture else '', 'mapping': str(mapping),
+            'unity_project': str(unity_project) if unity_project else '', 'source_scope': scope,
+            'source_rights_confirmed': bool(payload.get('source_rights_confirmed', False)),
             'target_project': str(target), 'level_path': level,
             'skeletal_root_world_lock': bool(payload.get('skeletal_root_world_lock', False)),
             'cutscene_id': str(source_data['cutscene_id']),
@@ -138,7 +148,9 @@ def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
     if not worker.get('connected'):
         return {'status': 'WAITING_FOR_UNREAL', 'ready': False,
                 'next_action': 'Open the selected Unreal level and start the editor companion.'}
-    if worker.get('worker_version') == 'studio-editor-v0.1':
+    if (worker.get('worker_version') == 'studio-editor-v0.1' or
+        (load_json(folder / 'connection.json').get('unity_project')
+         and worker.get('worker_version') != 'studio-editor-v0.3')):
         return {'status': 'UPGRADE_COMPANION', 'ready': False,
                 'next_action': 'Restart Unreal Editor and start the updated v0.4 Studio companion.'}
     candidate = load_json(candidate_file)
@@ -243,9 +255,32 @@ def prepare(folder: Path = WORKSPACE) -> dict[str, Any]:
         label = str(action.get('kind') or 'unknown')
         action_counts[label] = action_counts.get(label, 0) + 1
     flags = review_flags(config, action_counts)
+    automatic = {'available': False, 'ready': False, 'blockers': [], 'warnings': []}
+    if config.get('unity_project'):
+        import studio_auto_assets
+        namespace = '/Game/CutSceneAI/AutoTransfer/T_' + candidate_id[-8:].upper()
+        try:
+            immutable_setup = studio_auto_assets.inspect(
+                config['csir'], str(mapping_copy), str(candidate_dir / 'transfer-plan.json'),
+                config['unity_project'], config['source_scope'], namespace)
+            atomic_json(candidate_dir / 'automatic-setup.json', immutable_setup)
+            automatic = {**immutable_setup, 'available': True,
+                         'blockers': list(immutable_setup['blockers'])}
+            if not config.get('source_rights_confirmed'):
+                automatic['ready'] = False
+                automatic['blockers'].append('Confirm permission to import source Unity assets.')
+        except (ValueError, OSError) as error:
+            automatic = {'available': True, 'ready': False,
+                         'blockers': [str(error)], 'warnings': []}
     info = {'candidate_id': candidate_id, 'candidate_dir': str(candidate_dir),
             'review_flags': flags, 'source_mapping_path': config['mapping'],
             'source_base_sequence': config['base_sequence'],
+            'automatic_setup': {'available': automatic.get('available', False),
+                                'ready': automatic.get('ready', False),
+                                'blockers': automatic.get('blockers', []),
+                                'warnings': automatic.get('warnings', []),
+                                'planned_imports': len(automatic.get('imports', [])),
+                                'planned_actors': len(automatic.get('actors', []))},
             'mapping_copy': str(mapping_copy), 'sequence_path': new_sequence,
             'ced_preflight': session.get('ced_preflight'),
             'track_coverage': session.get('track_coverage'),
@@ -287,7 +322,25 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         or heartbeat.get('level') != config['level_path']):
         raise ValueError('Unreal worker is connected to a different project or level.')
     readiness = destination_readiness(folder)
-    if not readiness.get('ready'):
+    candidate_record = folder / 'active-candidate.json'
+    auto = load_json(candidate_record).get('automatic_setup') if candidate_record.is_file() else {}
+    auto = auto or {}
+    automatic_requested = bool(auto.get('available')) and not readiness.get('ready')
+    if automatic_requested:
+        if heartbeat.get('worker_version') != 'studio-editor-v0.3':
+            raise ValueError('Restart Unreal with the v0.5 automatic-import editor companion.')
+        if not auto.get('ready'):
+            raise ValueError('Automatic asset preparation blocked: ' + '; '.join(auto.get('blockers', [])))
+        import studio_auto_assets
+        stage = candidate_dir / 'automatic-setup.json'
+        manifest = studio_auto_assets.verify(stage, config['csir'], session['target']['mapping_path'], candidate_dir / 'transfer-plan.json')
+        if not manifest['ready'] or not config.get('source_rights_confirmed'):
+            raise ValueError('Automatic asset preparation is not approved and verified.')
+        if readiness.get('status') in {'WRONG_TARGET', 'TARGET_EXISTS', 'UPGRADE_COMPANION', 'WAITING_FOR_UNREAL', 'CHECKING'}:
+            raise ValueError('Unreal target not safe for automatic setup: ' + str(readiness.get('next_action')))
+        if readiness.get('wrong_actor_types') or readiness.get('wrong_asset_types') or readiness.get('duplicate_actors'):
+            raise ValueError('Conflicting existing Unreal content; automatic setup refuses to overwrite.')
+    if not automatic_requested and not readiness.get('ready'):
         issue = str(readiness.get('next_action') or 'Destination setup is incomplete.')
         missing = len(readiness.get('missing_actors') or [])
         assets = len(readiness.get('missing_assets') or [])
@@ -302,6 +355,8 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
            'csir': config['csir'], 'capture': config['capture'],
            'mapping': session['target']['mapping_path'],
            'candidate_dir': str(candidate_dir),
+           'automatic_setup': automatic_requested,
+           'automatic_setup_manifest': str(candidate_dir / 'automatic-setup.json') if automatic_requested else '',
            'sequence_path': session['target']['sequence_asset_path'],
            'expected_project': config['target_project'],
            'expected_level': config['level_path'],
@@ -322,7 +377,7 @@ def job_status(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     job = load_json(job_path)
     return {key: job.get(key) for key in (
         'job_id', 'status', 'generation_status', 'sequence_path', 'diagnostic_file',
-        'receipt_file', 'error', 'fidelity_verified', 'generated_sequence')}
+        'receipt_file', 'error', 'fidelity_verified', 'generated_sequence', 'setup_receipt_file', 'setup_status')}
 
 
 def diagnostic_summary(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:

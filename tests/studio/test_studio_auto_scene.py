@@ -1,0 +1,136 @@
+"""Exercise the automatic importer without requiring a running Unreal Editor."""
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(ROOT/'integrations'/'unreal'))
+sys.path.insert(0,str(ROOT/'tools'))
+import studio_auto_scene as scene
+from test_studio_auto_assets import create
+import studio_auto_assets
+
+
+class Asset:
+    def __init__(self,klass,path):
+        self.klass,self.path=klass,path
+        self.skeleton=None
+    def get_class(self): return SimpleNamespace(get_name=lambda:self.klass)
+    def get_editor_property(self,name):
+        if name=='skeleton': return self.skeleton
+        raise ValueError(name)
+    def get_path_name(self): return self.path
+
+
+class Task:
+    def __init__(self): self.props={}
+    def set_editor_property(self,name,value): self.props[name]=value
+
+
+class Actor:
+    def __init__(self,label=''):
+        self.label=label
+    def get_actor_label(self): return self.label
+    def set_actor_label(self,label,mark_dirty=False): self.label=label
+
+
+class Actors:
+    def __init__(self): self.actors=[]
+    def get_all_level_actors(self): return self.actors
+    def spawn_actor_from_object(self,obj,loc,rot):
+        x=Actor();self.actors.append(x);return x
+    def spawn_actor_from_class(self,cls,loc,rot):
+        x=Actor();self.actors.append(x);return x
+
+
+class FakeUnreal:
+    def __init__(self,project):
+        self.project=project
+        self.assets={}
+        self.actor_sys=Actors()
+        self.asset_tools=SimpleNamespace(import_asset_tasks=self.imports)
+        self.Paths=SimpleNamespace(get_project_file_path=lambda:self.project)
+        self.UnrealEditorSubsystem=object()
+        self.EditorActorSubsystem=object()
+        self.EditorAssetLibrary=SimpleNamespace(does_asset_exist=lambda p:p in self.assets)
+        self.AssetToolsHelpers=SimpleNamespace(get_asset_tools=lambda:self.asset_tools)
+        self.AssetImportTask=Task
+        self.FbxImportUI=Task
+        self.FBXImportType=SimpleNamespace(FBXIT_ANIMATION=1,FBXIT_SKELETAL_MESH=2)
+        self.CineCameraActor=object()
+        self.PointLight=object()
+        self.Actor=object()
+        self.Vector=lambda *args:args
+        self.Rotator=lambda *args:args
+        self.LevelEditorSubsystem=object()
+        self.levelsaver=SimpleNamespace(save_current_level=lambda:True)
+        self.world=SimpleNamespace(get_path_name=lambda:'/Game/Tests/L_Test.L_Test')
+    def get_editor_subsystem(self,kind):
+        if kind is self.UnrealEditorSubsystem: return SimpleNamespace(get_editor_world=lambda:self.world)
+        if kind is self.EditorActorSubsystem: return self.actor_sys
+        if kind is self.LevelEditorSubsystem: return self.levelsaver
+        raise AssertionError('Unknown subsystem')
+    def load_asset(self,path): return self.assets.get(path)
+    def imports(self,tasks):
+        for task in tasks:
+            opt=task.props.get('options')
+            cls=('AnimSequence' if opt and opt.props.get('import_animations') else 'SkeletalMesh' if opt else
+                 'SoundWave' if task.props['filename'].endswith('.wav') else 'Texture2D')
+            path=task.props['destination_path']+'/'+task.props['destination_name']
+            asset=Asset(cls,path)
+            if cls=='SkeletalMesh':
+                skeleton=Asset('Skeleton',path+'_Skeleton')
+                asset.skeleton=skeleton
+            if cls=='AnimSequence': asset.skeleton=opt.props['skeleton']
+            self.assets[path]=asset
+
+
+def test_auto_setup_imports_and_spawns_without_prior_unreal_actors(tmp_path):
+    root,files=create(tmp_path)
+    stage=studio_auto_assets.inspect(*files,root,'Assets/Benchmark002','/Game/CutSceneAI/AutoTransfer/T_ABC')
+    manifest=tmp_path/'auto-setup.json';manifest.write_text(json.dumps(stage))
+    project=tmp_path/'NewProject.uproject';project.write_text('{}')
+    unreal=FakeUnreal(str(project))
+    receipt=scene.run(str(manifest),str(tmp_path/'auto-receipt.json'),
+                      csir_path=str(files[0]),mapping_path=str(files[1]),plan_path=str(files[2]),
+                      expected_project=str(project),expected_level='/Game/Tests/L_Test',unreal_api=unreal)
+    assert receipt['status']=='SETUP_SAVED_UNVERIFIED'
+    assert receipt['level_saved']
+    assert len(receipt['actors_created'])==5
+    assert len(receipt['assets_imported'])==6
+    assert len(unreal.actor_sys.actors)==5
+    assert receipt['fidelity_verified'] is False
+
+
+def test_wrong_project_never_starts_import(tmp_path):
+    root,files=create(tmp_path)
+    stage=studio_auto_assets.inspect(*files,root,'Assets/Benchmark002','/Game/CutSceneAI/AutoTransfer/T_ABC')
+    manifest=tmp_path/'auto-setup.json';manifest.write_text(json.dumps(stage))
+    project=tmp_path/'NewProject.uproject';project.write_text('{}')
+    fake=FakeUnreal(str(project))
+    output=tmp_path/'auto-receipt.json'
+    with pytest.raises(scene.AutomaticSetupError,match='Wrong Unreal project'):
+        scene.run(str(manifest),str(output),csir_path=str(files[0]),mapping_path=str(files[1]),
+                  plan_path=str(files[2]),expected_project=str(tmp_path/'Other.uproject'),
+                  expected_level='/Game/Tests/L_Test',unreal_api=fake)
+    assert json.loads(output.read_text())['status']=='BLOCKED'
+    assert not fake.actor_sys.actors and not fake.assets
+
+
+def test_collision_is_detected_before_any_mutation(tmp_path):
+    root,files=create(tmp_path)
+    stage=studio_auto_assets.inspect(*files,root,'Assets/Benchmark002','/Game/CutSceneAI/AutoTransfer/T_ABC')
+    manifest=tmp_path/'auto-setup.json';manifest.write_text(json.dumps(stage))
+    project=tmp_path/'NewProject.uproject';project.write_text('{}')
+    fake=FakeUnreal(str(project))
+    collision=stage['imports'][0]['target_asset_path'];fake.assets[collision]=Asset('SkeletalMesh',collision)
+    output=tmp_path/'auto-receipt.json'
+    with pytest.raises(scene.AutomaticSetupError,match='refuses existing target asset'):
+        scene.run(str(manifest),str(output),csir_path=str(files[0]),mapping_path=str(files[1]),
+                  plan_path=str(files[2]),expected_project=str(project),
+                  expected_level='/Game/Tests/L_Test',unreal_api=fake)
+    assert json.loads(output.read_text())['status']=='BLOCKED'
+    assert not fake.actor_sys.actors

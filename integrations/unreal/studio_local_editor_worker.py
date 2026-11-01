@@ -79,13 +79,35 @@ def _execute(job):
         raise RuntimeError('Prepared evidence does not match submitted job.')
     if prepared['target']['sequence_asset_path'] != job['sequence_path']:
         raise RuntimeError('Sequence identity mismatch.')
+    if job.get('automatic_setup'):
+        # Source verification runs before ANY editor mutation. If an asset import
+        # fails, the immutable receipt reports partial changes; do not retry.
+        import studio_auto_scene
+        setup_receipt = candidate_dir / ('automatic-setup-receipt-' + job['job_id'] + '.json')
+        job['setup_status'] = 'IMPORTING_AND_CREATING_SCENE'
+        _save(WORKSPACE / 'jobs' / (job['job_id'] + '.json'), job)
+        try:
+            staged = studio_auto_scene.run(
+                job['automatic_setup_manifest'], str(setup_receipt),
+                csir_path=job['csir'], mapping_path=job['mapping'],
+                plan_path=str(candidate_dir / 'transfer-plan.json'),
+                expected_project=job['expected_project'],
+                expected_level=job['expected_level'])
+        finally:
+            if setup_receipt.is_file():
+                job['setup_receipt_file'] = str(setup_receipt)
+                job['setup_status'] = _load(setup_receipt).get('status')
+                _save(WORKSPACE / 'jobs' / (job['job_id'] + '.json'), job)
+        if staged['status'] != 'SETUP_SAVED_UNVERIFIED':
+            raise RuntimeError('Automatic setup not saved; sequence generation blocked.')
     # Last-second check: an actor may have been removed after the UI approved
     # this job. Report a setup state, not a failed engine generation.
     _update_destination_readiness()
     latest = _load(WORKSPACE / 'destination-readiness.json')
     if latest.get('candidate_id') != job['candidate_id'] or not latest.get('ready'):
-        job['status'] = 'BLOCKED_SETUP'
-        job['error'] = 'Destination setup changed: ' + str(latest.get('next_action', 'Inspect target scene.'))
+        job['status'] = ('SETUP_SAVED_BUT_NOT_READY' if job.get('setup_status') == 'SETUP_SAVED_UNVERIFIED'
+                         else 'BLOCKED_SETUP')
+        job['error'] = 'Destination setup not ready: ' + str(latest.get('next_action', 'Inspect target scene.'))
         job['generation_status'] = 'NOT_STARTED'
         return job
     import build_level_sequence
@@ -98,6 +120,17 @@ def _execute(job):
     )
     job['generation_status'] = 'GENERATED_UNVERIFIED'
     job['generated_sequence'] = result.get_path_name()
+    if job.get('automatic_setup'):
+        # The builder may change camera poses, root alignment and attachments
+        # after the initial staging save. Persist those scene changes too.
+        try:
+            import studio_auto_scene
+            studio_auto_scene._save_level(unreal, job['expected_level'])
+        except Exception as save_error:
+            job['status'] = 'GENERATED_LEVEL_NOT_SAVED_REVIEW_REQUIRED'
+            job['error'] = 'Sequence exists, but the updated level could not be saved: ' + str(save_error)
+            job['fidelity_verified'] = False
+            return job
     job['receipt_file'] = str(receipt)
     _save(WORKSPACE / 'jobs' / (job['job_id'] + '.json'), job)
     # Diagnostic is read-only and independent of the builder's plan; it does
@@ -197,7 +230,7 @@ def _tick(_delta):
         WORKSPACE.mkdir(parents=True, exist_ok=True)
         _save(WORKSPACE / 'unreal-worker.json', {
             'heartbeat': _now(), 'project': _loaded_project(),
-            'level': _loaded_level(), 'worker': 'studio-editor-v0.2'
+            'level': _loaded_level(), 'worker': 'studio-editor-v0.3'
         })
         try:
             _update_destination_readiness()
@@ -217,7 +250,9 @@ def _tick(_delta):
                 _save(path, job)
                 job = _execute(job)
             except Exception as exc:
-                job['status'] = 'BLOCKED_OR_FAILED'
+                job['status'] = ('PARTIAL_SETUP_MUST_INSPECT'
+                                 if job.get('setup_status') == 'PARTIAL_SETUP_MUST_INSPECT'
+                                 else 'BLOCKED_OR_FAILED')
                 job['error'] = str(exc)
                 job['traceback'] = traceback.format_exc()
                 job['fidelity_verified'] = False

@@ -15,9 +15,9 @@ Open <http://127.0.0.1:8765>. The server listens on loopback only. It has no clo
 
 ## Studio workflow
 
-1. **Connect** the exported Unity CSIR JSON, mapping JSON, target Unreal `.uproject`, and target `/Game/...` level. A matching Unity CineTwin source behavior capture is optional for preparation.
+1. **Connect** the exported Unity CSIR JSON, mapping JSON, target Unreal `.uproject`, and target `/Game/...` level. To enable automatic staging, also provide the local Unity project directory, a cutscene-specific `Assets/...` subtree, and source-copy permission. A CineTwin capture is optional.
 2. **Select** the cutscene exported in the CSIR. The current UI supports **one exported CSIR at a time**, not whole-project discovery.
-3. **Review**: prepare a new immutable, source-verified candidate and inspect the actual planned actions, CED flags, track coverage and mapping provenance. Review warnings when the mapping's sequence namespace differs from the selected level, or when audio assets have not been verified.
+3. **Review**: prepare a new immutable, source-verified candidate and (when Unity files are configured) a manifest identifying matched models, clips, audio, textures, and target actor labels. Inspect planned actions, CED flags, track coverage, and provenance. Review warnings when the mapping's sequence namespace differs from the selected level, or when audio assets have not been verified.
 4. **Transfer**: back up the target project, open the intended level in Unreal Editor, and start the on-screen editor companion from the Unreal Python Console. **Destination readiness** checks the real level for uniquely named mapped actors with suitable component types, required AnimSequence/SoundWave assets and a free output sequence path. Generation is disabled until it passes. A fresh project/level heartbeat and explicit approval are also required. Existing sequences are not overwritten.
 5. **Results**: inspect runtime receipts, errors and optionally attach an existing Unreal CineTwin target observation JSON without rerunning the generator.
 
@@ -38,25 +38,25 @@ Fresh-target experimental scripts (kept separately from the generic UI/API):
 | 4: layout + attachment | `tools/studio_stage4_layout.py` | `integrations/unreal/studio_stage4_apply.py` |
 | 4: saved audit | — | `integrations/unreal/studio_audit_stage4_layout.py` |
 
-The Stage 4 layout planner includes a precision-tolerant floating-point verification fix. Its hashes, identities, mappings and hierarchy still require exact matches. The editor scripts require an interactive, correctly loaded target Unreal project and cannot be run by ordinary Python.
+The standalone Stage 4 layout planner includes a precision-tolerant floating-point verification fix. Its hashes, identities, mappings and hierarchy still require exact matches. The editor scripts require an interactive, correctly loaded target Unreal project and cannot be run by ordinary Python. The v0.5 automatic setup path is separate and currently implements source-backed, unverified imports and actor staging, not the same persistence audit and hierarchy guarantees as those experimental scripts.
 
 Use `config/benchmark002_animation_assignments.example.json` only as a sample assignment file, not a universal transfer rule. Keep generated reports/receipts, `.uproject`, imported assets, Unity project content and source scene data **outside** this source-code repository.
 
 ## Safety and current limitations
 
 - Source scene and Benchmark001 freeze remain unchanged; the Studio UI does not save or import assets during planning.
-- Server binds to `127.0.0.1`, checks request origin and anti-CSRF token for write operations, and refuses sequence overwrites.
+- Server binds to `127.0.0.1`, checks request origin and anti-CSRF token for writes, validates exact file hashes and provenance, verifies the selected project/level, requires source-copy permission and refuses sequence/asset overwrite. An importer that partially mutates Unreal produces `PARTIAL_SETUP_MUST_INSPECT` and must not be replayed blindly.
 - Source capture validation and saved sequence verification are independent of successful editor generation. No visual or semantic equivalence is assumed.
-- Not yet one-click from this interface: Unity project folder discovery and extraction, generic material/prop/audio import, end-to-end project creation, verified asset mappings, all-domain CineTwin parity, and rendered source/target image comparison.
+- Not yet one-click: Unity Editor timeline extraction (CSIR must already exist), automatic materials/shaders/texture assignment, prop mesh fidelity, FBX rig compatibility and retargeting, dynamic plugins, full signal semantics, creating a new `.uproject`, complete CineTwin parity, and frame comparison. The matched FBX clip name is a source-identity hypothesis, not proof of a compatible animation. A source asset that is only a Unity `.anim` file or is ambiguous must be exported or mapped explicitly; Studio does not fabricate it.
 - `REVIEW_REQUIRED` CED status and `NATIVE_UNVERIFIED` coverage are warnings, not transfer success guarantees.
 - A destination preflight prevents the common first-run failure (`Expected exactly one level actor ... found 0`). It is an early guard, **not** a universal automatic-scene setup capability or a promise that Unreal generation cannot fail for other reasons.
 
 ## Tests
 
-Local integration and Stage 1–4 planner/editor-mock tests can run without Unreal installed:
+Local API, automatic import, and Stage 1–4 planner/editor-mock tests can run without Unreal installed:
 
 ```powershell
 python -m pytest -q tests/studio/test_studio_local_bridge.py tests/studio/test_studio_destination_preflight.py tests/studio/test_studio_destination_worker.py tests/studio/test_studio_fresh_target_assets.py tests/studio/test_studio_import_fresh_target.py tests/studio/test_studio_fresh_animations.py tests/test_studio_stage3_scene.py tests/test_studio_stage4_layout.py tests/test_studio_stage4_precision.py tests/test_studio_audit_stage4_layout.py
 ```
 
-Actual integration with a running Unreal 5.8 Editor and Unity capture requires separate on-machine validation; the mock tests do not prove that a source cutscene is faithfully reconstructed.
+Actual v0.5 end-to-end import and Level Sequence generation in Unreal 5.8.3 still requires testing in the user's fresh staging project; local fake-Editor tests do not establish successful rendering, skeleton compatibility, or fidelity. A successful editor generation remains `GENERATED_UNVERIFIED`.
