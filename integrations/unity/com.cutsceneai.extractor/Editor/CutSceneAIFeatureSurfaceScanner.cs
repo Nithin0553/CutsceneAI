@@ -51,6 +51,7 @@ namespace CutsceneAI.UnityExtractor
             public string schema_version = "0.2.0";
             public string engine = "unity";
             public string engine_version;
+            public string project_fingerprint;
             public string captured_utc;
             public string verification = "SOURCE_DISCOVERY_ONLY_NOT_TRANSFER_VERIFIED";
             public List<RegisteredType> registered_types = new List<RegisteredType>();
@@ -94,6 +95,7 @@ namespace CutsceneAI.UnityExtractor
             var data = new Census
             {
                 engine_version = Application.unityVersion,
+                project_fingerprint = ExtractorUtilities.ProjectFingerprint(),
                 captured_utc = DateTime.UtcNow.ToString("o"),
             };
             foreach (var type in TypeCache.GetTypesDerivedFrom<Component>())
