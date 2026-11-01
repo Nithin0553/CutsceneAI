@@ -82,12 +82,29 @@ def analyze(csir: dict[str, Any], mapping: dict[str, Any],
             and transforms[0].get("source_behavior_strategy") in {
                 "captured_untracked_world_motion", "verified_cinetwin_camera_world_pose"}
             and bool(transforms[0].get("keys")))
+        # The deterministic CSIR adapter itself composes source Transform
+        # ancestry into world-space keys. Retain the exact native/baked curve
+        # distinction rather than misclassifying it as a missing hierarchy.
+        csir_world_curve = (
+            len(transforms) == 1
+            and transforms[0].get("baked_source_curves") is True
+            and not transforms[0].get("transform_space")
+            and bool(transforms[0].get("keys"))
+            and not transforms[0].get("source_behavior_strategy")
+        )
+        initial_world_pose = (
+            not transforms and _valid_world(actor.get("metadata", {}).get("world_transform"))
+        )
         if not chain or not all(part["static_container_candidate"] for part in chain):
             strategy = "PARENT_BEHAVIOR_UNVERIFIED"
         elif world_motion:
             strategy = "CAPTURED_WORLD_MOTION_PLANNED_UNVERIFIED"
+        elif csir_world_curve:
+            strategy = "CSIR_PARENT_COMPOSED_WORLD_CURVE_PLANNED_UNVERIFIED"
         elif static_pose:
             strategy = "STATIC_WORLD_POSE_REPRESENTED_UNVERIFIED"
+        elif initial_world_pose:
+            strategy = "WORLD_SCENE_PLACEMENT_PLANNED_UNVERIFIED"
         else:
             strategy = "CHILD_WORLD_BEHAVIOR_UNVERIFIED"
         rows.append({
