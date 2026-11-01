@@ -16,7 +16,7 @@ from typing import Any, Mapping
 
 CONTRACTS = Path(__file__).resolve().parents[1] / "contracts" / "dictionary"
 CED_PATH = CONTRACTS / "cutscene-elements-v0.2.json"
-CAPABILITIES_PATH = CONTRACTS / "unity-unreal-preflight-v0.1.json"
+CAPABILITIES_PATH = CONTRACTS / "unity-unreal-preflight-v0.2.json"
 
 DISCOVERY_STATES = frozenset({
     "UNKNOWN_CED", "UNKNOWN_NATIVE", "NEEDS_EVIDENCE",
@@ -210,6 +210,14 @@ def audit(
                     "Engine strategy is only a candidate, pending real-engine readback."
                     if state == SUPPORTED else
                     "Known canonical concept, but no verified target capability is registered."
+                )
+            if (ced_id == "event.state" and kind in {"track", "section"}
+                    and mapping.get("enable_actor_visibility_fallback") is True):
+                state = "KNOWN_PARTIAL"
+                detail = (
+                    "Opt-in visual-only Unreal actor visibility keys; does not recreate "
+                    "Unity activation callbacks, collision, scripts or post-playback state. "
+                    "Native saved readback and independent visual comparison required."
                 )
         else:
             state = SUPPORTED
