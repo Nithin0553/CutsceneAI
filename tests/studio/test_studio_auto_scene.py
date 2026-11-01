@@ -170,7 +170,7 @@ def test_mp3_source_imports_directly_without_ffmpeg(tmp_path):
 def test_duplicate_planned_label_blocks_before_any_import(tmp_path):
     root, files=create(tmp_path)
     plan=json.loads(files[2].read_text())
-    plan['bindings']['CAM_A_Wide']=plan['bindings']['CAM_B_Move']
+    plan['bindings']['CAM_A_Wide']=plan['bindings']['Ch26_nonPBR']
     files[2].write_text(json.dumps(plan))
     stage=studio_auto_assets.inspect(*files,root,'Assets/Benchmark002',
                                      '/Game/CutSceneAI/AutoTransfer/T_SAFE')
