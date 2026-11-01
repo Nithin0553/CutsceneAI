@@ -9,9 +9,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'integrations'/'unreal'))
 sys.path.insert(0,str(ROOT/'tools'))
+import studio_auto_assets
 import studio_auto_scene as scene
 from test_studio_auto_assets import create
-import studio_auto_assets
 
 
 class Asset:

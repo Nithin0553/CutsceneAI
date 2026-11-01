@@ -1,4 +1,3 @@
-import copy
 import hashlib
 import importlib.util
 import json
@@ -96,7 +95,7 @@ def fake_unreal(plan, stage3):
 
 def test_structural_readback_passes(tmp_path):
     plan_path,receipt_path,plan,stage3=fake_case(tmp_path)
-    engine,actors=fake_unreal(plan,stage3)
+    engine,_=fake_unreal(plan,stage3)
     result=audit.run(str(plan_path),str(receipt_path),unreal_api=engine)
     assert result['status']=='STAGE4_SAVED_LAYOUT_READBACK'
     assert result['readback_count']==8
@@ -134,7 +133,7 @@ def test_rotation_wrap_and_small_precision_noise(tmp_path):
 
 def test_wrong_project_hard_fails(tmp_path):
     pp,rp,p,s=fake_case(tmp_path)
-    engine,actors=fake_unreal(p,s)
+    engine,_=fake_unreal(p,s)
     engine.Paths.get_project_file_path=lambda:'D:/Other/Other.uproject'
     with pytest.raises(audit.Stage4AuditError,match='Wrong Unreal project'):
         audit.run(str(pp),str(rp),unreal_api=engine)
@@ -143,7 +142,7 @@ def test_wrong_project_hard_fails(tmp_path):
 def test_modified_source_evidence_hard_fails(tmp_path):
     pp,rp,p,s=fake_case(tmp_path)
     Path(p['source_csir_path']).write_text('changed')
-    engine,actors=fake_unreal(p,s)
+    engine,_=fake_unreal(p,s)
     with pytest.raises(audit.Stage4AuditError,match='evidence changed'):
         audit.run(str(pp),str(rp),unreal_api=engine)
 
@@ -151,7 +150,7 @@ def test_modified_source_evidence_hard_fails(tmp_path):
 def test_missing_saved_level_is_detected(tmp_path):
     pp,rp,p,s=fake_case(tmp_path)
     (tmp_path/'Content'/'CutSceneAI'/'Tests'/'L_NewTarget_Test01.umap').unlink()
-    engine,actors=fake_unreal(p,s)
+    engine,_=fake_unreal(p,s)
     result=audit.run(str(pp),str(rp),unreal_api=engine)
     assert result['status']=='STAGE4_LAYOUT_READBACK_INCOMPLETE'
     assert result['readback_count']==8

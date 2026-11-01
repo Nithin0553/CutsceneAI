@@ -48,7 +48,7 @@ def test_composes_import_candidates_dedupes_texture_and_defers_animation(tmp_pat
     assert not obj["engine_import_executed"]
     candidates = [x for x in obj["files"] if x["target_asset_path"]]
     assert len(candidates) == 2
-    assert len(set(x["target_asset_path"] for x in candidates)) == 2
+    assert len({x["target_asset_path"] for x in candidates}) == 2
 
 
 def test_manifest_is_byte_stable_and_source_tamper_fails(tmp_path):

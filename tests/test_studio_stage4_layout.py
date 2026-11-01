@@ -1,5 +1,4 @@
 import copy
-import hashlib
 import json
 import sys
 import types
@@ -10,8 +9,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(ROOT / 'integrations' / 'unreal'))
-import studio_stage4_layout as stage4
 import studio_stage4_apply as apply
+import studio_stage4_layout as stage4
 
 
 def write(path, obj):
@@ -153,8 +152,8 @@ def fake_api(project,level,actors):
         Vector=FakeVector
         Paths=types.SimpleNamespace(get_project_file_path=lambda : project,convert_relative_path_to_full=lambda s:s)
         @staticmethod
-        def get_editor_subsystem(cls):
-            if cls is API.UnrealEditorSubsystem: return types.SimpleNamespace(get_editor_world=lambda :FakeWorld(level))
+        def get_editor_subsystem(subsystem):
+            if subsystem is API.UnrealEditorSubsystem: return types.SimpleNamespace(get_editor_world=lambda :FakeWorld(level))
             return types.SimpleNamespace(get_all_level_actors=lambda :actors)
     return API
 

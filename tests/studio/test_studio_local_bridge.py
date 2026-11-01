@@ -159,7 +159,7 @@ def test_prepare_calls_existing_candidate_backend_without_changing_original(tmp_
 
 def test_queue_requires_alive_editor_and_immutable_handoff(tmp_path, monkeypatch):
     import sys
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
     from types import SimpleNamespace
 
     config = fixture_files(tmp_path)
@@ -180,7 +180,7 @@ def test_queue_requires_alive_editor_and_immutable_handoff(tmp_path, monkeypatch
         bridge.queue_trial(candidate_id, work)
 
     bridge.atomic_json(work / 'unreal-worker.json', {
-        'heartbeat': datetime.now(timezone.utc).isoformat(), 'project': config['target_project'], 'level': config['level_path']
+        'heartbeat': datetime.now(UTC).isoformat(), 'project': config['target_project'], 'level': config['level_path']
     })
     # Valid editor heartbeat is insufficient when its scene is missing actors.
     with pytest.raises(ValueError, match='Destination not ready'):
@@ -192,7 +192,7 @@ def test_queue_requires_alive_editor_and_immutable_handoff(tmp_path, monkeypatch
     (folder / 'transfer-plan.json').write_text('{}')
     bridge.atomic_json(work / 'destination-readiness.json', {
         'kind': 'cutsceneai.studio.destination_readiness',
-        'checked_at': datetime.now(timezone.utc).isoformat(),
+        'checked_at': datetime.now(UTC).isoformat(),
         'candidate_id': candidate_id, 'sequence_path': '/Game/Trials/LS_New',
         'plan_sha256': hashlib.sha256((folder / 'transfer-plan.json').read_bytes()).hexdigest(),
         'expected_project': config['target_project'], 'observed_project': config['target_project'],
@@ -231,7 +231,7 @@ def test_source_capture_optional_during_connection(service):
 
 def test_worker_must_match_project_and_level(tmp_path, monkeypatch):
     import sys
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
     from types import SimpleNamespace
     config = fixture_files(tmp_path)
     work = tmp_path / 'runs'
@@ -246,7 +246,7 @@ def test_worker_must_match_project_and_level(tmp_path, monkeypatch):
                           'sequence_asset_path': '/Game/Trials/LS_New'}}
     monkeypatch.setitem(sys.modules, 'prepared_transfer', SimpleNamespace(verify=lambda _: session))
     bridge.atomic_json(work / 'unreal-worker.json', {
-        'heartbeat': datetime.now(timezone.utc).isoformat(),
+        'heartbeat': datetime.now(UTC).isoformat(),
         'project': config['target_project'], 'level': '/Game/Wrong'})
     with pytest.raises(ValueError, match='different project or level'):
         bridge.queue_trial(candidate_id, work)
@@ -332,8 +332,8 @@ def test_review_flags_expose_cross_namespace_and_unverified_audio():
 
 
 def test_readiness_refuses_stale_or_different_candidate(tmp_path):
-    from datetime import datetime, timezone, timedelta
     import hashlib
+    from datetime import UTC, datetime, timedelta
     cfg = fixture_files(tmp_path)
     work = tmp_path / 'runs'
     work.mkdir(parents=True)
@@ -344,24 +344,24 @@ def test_readiness_refuses_stale_or_different_candidate(tmp_path):
     plan = folder / 'transfer-plan.json'
     plan.write_text('{"actions":[]}', encoding='utf-8')
     bridge.atomic_json(work / 'active-candidate.json', {'candidate_id':cid, 'sequence_path':'/Game/New'})
-    bridge.atomic_json(work / 'unreal-worker.json', {'heartbeat':datetime.now(timezone.utc).isoformat(),
+    bridge.atomic_json(work / 'unreal-worker.json', {'heartbeat':datetime.now(UTC).isoformat(),
                                                   'project':cfg['target_project'],'level':cfg['level_path']})
     report = {'kind':'cutsceneai.studio.destination_readiness',
               'candidate_id':cid, 'sequence_path':'/Game/New',
               'plan_sha256':hashlib.sha256(plan.read_bytes()).hexdigest(),
               'expected_project':cfg['target_project'], 'observed_project':cfg['target_project'],
               'expected_level':cfg['level_path'], 'observed_level':cfg['level_path'],
-              'checked_at':datetime.now(timezone.utc).isoformat(), 'ready':True,'status':'READY'}
+              'checked_at':datetime.now(UTC).isoformat(), 'ready':True,'status':'READY'}
     bridge.atomic_json(work / 'destination-readiness.json', report)
     assert bridge.destination_readiness(work)['ready'] is True
     report['candidate_id'] = 'different'
     bridge.atomic_json(work / 'destination-readiness.json', report)
     assert bridge.destination_readiness(work)['status'] == 'INSPECTION_UNAVAILABLE'
     report['candidate_id'] = cid
-    report['checked_at'] = (datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat()
+    report['checked_at'] = (datetime.now(UTC)-timedelta(minutes=1)).isoformat()
     bridge.atomic_json(work / 'destination-readiness.json', report)
     assert bridge.destination_readiness(work)['status'] == 'INSPECTION_UNAVAILABLE'
-    report['checked_at'] = datetime.now(timezone.utc).isoformat()
+    report['checked_at'] = datetime.now(UTC).isoformat()
     bridge.atomic_json(work / 'destination-readiness.json', report)
     plan.write_text('{"actions":["tampered"]}', encoding='utf-8')
     assert bridge.destination_readiness(work)['status'] == 'INSPECTION_UNAVAILABLE'
@@ -379,7 +379,7 @@ def test_status_exposes_readiness_before_generate(service):
 
 def test_live_editor_without_report_is_not_endless_checking(tmp_path):
     """Connected and heartbeating worker cannot leave UI in checking forever."""
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
     cfg = fixture_files(tmp_path)
     work = tmp_path / 'runs'
     bridge.atomic_json(work / 'connection.json', bridge.config_check(cfg))
@@ -391,7 +391,7 @@ def test_live_editor_without_report_is_not_endless_checking(tmp_path):
         'candidate_id': cid, 'sequence_path': '/Game/Tests/LS_New',
     })
     bridge.atomic_json(work / 'unreal-worker.json', {
-        'heartbeat': datetime.now(timezone.utc).isoformat(),
+        'heartbeat': datetime.now(UTC).isoformat(),
         'project': cfg['target_project'], 'level': cfg['level_path'],
         'worker': 'studio-editor-v0.4',
     })
@@ -402,7 +402,7 @@ def test_live_editor_without_report_is_not_endless_checking(tmp_path):
 
 
 def test_connected_old_companion_explains_restart(tmp_path):
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
     cfg = fixture_files(tmp_path)
     work = tmp_path / 'runs'
     connected = bridge.config_check(cfg)
@@ -412,7 +412,7 @@ def test_connected_old_companion_explains_restart(tmp_path):
         'candidate_id': '20261101T012000Z_aaaabbbb', 'sequence_path': '/Game/New',
     })
     bridge.atomic_json(work / 'unreal-worker.json', {
-        'heartbeat': datetime.now(timezone.utc).isoformat(),
+        'heartbeat': datetime.now(UTC).isoformat(),
         'project': cfg['target_project'], 'level': cfg['level_path'],
         'worker': 'studio-editor-v0.3',
     })

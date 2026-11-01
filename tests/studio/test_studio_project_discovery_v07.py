@@ -42,7 +42,7 @@ def test_multiple_projects_are_options_and_not_guessed(tmp_path):
     (root/'One').mkdir();(root/'Two').mkdir()
     for folder in (root/'One',root/'Two'):
         (folder/'Assets').mkdir();(folder/'ProjectSettings').mkdir()
-    u,p=build(tmp_path)
+    _,p=build(tmp_path)
     results=discovery.discover(str(root),str(p))
     assert len(results['unity_projects'])==2
     assert 'Select one' in results['errors']['unity']
@@ -72,7 +72,7 @@ def test_no_export_explains_required_export_without_fake_success(tmp_path):
 
 
 def test_invalid_folder_keeps_valid_side_visible(tmp_path):
-    u,p=build(tmp_path)
+    _,p=build(tmp_path)
     d=discovery.discover(str(tmp_path/'NoSuchDir'),str(p))
     assert 'unity' in d['errors']
     assert d['unreal']['project']

@@ -1,5 +1,6 @@
 """Cross-runtime floating-point precision regression for CutSceneAI Stage 4."""
 from __future__ import annotations
+
 import copy
 import sys
 from pathlib import Path

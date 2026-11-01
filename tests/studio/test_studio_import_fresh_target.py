@@ -9,8 +9,8 @@ import pytest
 
 STAGE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(STAGE_ROOT / "tools"))
-from test_studio_fresh_target_assets import fixture
 import studio_fresh_target_assets as source_plan
+from test_studio_fresh_target_assets import fixture
 
 spec = importlib.util.spec_from_file_location(
     "studio_import_fresh_target", STAGE_ROOT / "integrations" / "unreal" / "studio_import_fresh_target.py"

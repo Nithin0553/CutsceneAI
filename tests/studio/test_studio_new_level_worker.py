@@ -50,7 +50,7 @@ def test_existing_target_map_is_not_overwritten(monkeypatch):
 
 
 def test_arbitrary_create_map_path_is_rejected(monkeypatch):
-    mod,state,expected=_worker(monkeypatch)
+    mod,state,_=_worker(monkeypatch)
     with pytest.raises(RuntimeError,match='noncanonical'):
         mod._ensure_target_level({'create_level':True,'expected_level':'/Game/Other/L_Map'})
     assert not state['created']

@@ -2,6 +2,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,9 +40,9 @@ def fixtures(root):
         'status':'PERSISTED_AND_SAMPLED_MOTION_OBSERVED','unreal_project':project,
         'all_structural_trials_ready':True,'rows':[{'structural_trial_ready': True} for _ in range(3)], 'source_receipt':str(b), 'source_receipt_sha256':s.sha(b)})
     out = root/'trial.json'; mapping = root/'trial_mapping.json'
-    return dict(csir_path=str(csir),stage1_receipt_path=str(a),stage2_receipt_path=str(b),
-                stage2_audit_path=str(audit),expected_project_path=project,target_level=level,
-                output_path=str(out),mapping_output_path=str(mapping))
+    return {'csir_path':str(csir),'stage1_receipt_path':str(a),'stage2_receipt_path':str(b),
+            'stage2_audit_path':str(audit),'expected_project_path':project,'target_level':level,
+            'output_path':str(out),'mapping_output_path':str(mapping)}
 
 
 def test_planning_is_read_only_selects_only_top_level_actors(tmp_path):

@@ -1,9 +1,10 @@
 """HTTP regression: normal users select folders, not JSON paths."""
 from __future__ import annotations
+
 import importlib.util
 import json
-import threading
 import sys
+import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -66,7 +67,7 @@ def test_discover_connect_local_project_folders(tmp_path, monkeypatch):
 
 
 def test_connect_rejects_nonexported_source(tmp_path):
-    u,t,csir=_roots(tmp_path)
+    u,t,_=_roots(tmp_path)
     with __import__('pytest').raises(d.DiscoveryError,match='not a verified export'):
         d.build_connection(str(u),str(t),str(tmp_path/'other.csir.json'),'/Game/Cinematics/LSample',workspace=tmp_path)
 
