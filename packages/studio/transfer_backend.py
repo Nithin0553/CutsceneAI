@@ -25,6 +25,7 @@ import ced_preflight
 import root_world_lock
 import feature_dispatch
 import visual_activation
+import source_surface_gap
 
 NATIVE_GAPS = {
     "event.trigger": "Preserves event timestamp/identity as a marked frame, NOT executable payload.",
@@ -732,6 +733,41 @@ def compose_files(
         verification = None
     plan, report = compose(csir, mapping, capture=capture)
     report["source_capture_verification"] = verification
+    # A Unity-installed feature census is optional for legacy trials but
+    # mandatory when explicitly supplied. Verify source project+engine version
+    # and the scene-component coverage before returning a prepared plan.
+    surface_relative = mapping.get("source_feature_surface_path")
+    surface_file = None
+    source_surface = None
+    if surface_relative:
+        surface_file = Path(str(surface_relative))
+        if not surface_file.is_absolute():
+            surface_file = (mapping_file.parent / surface_file).resolve()
+        try:
+            source_surface = source_surface_gap.audit_files(csir_file, surface_file)
+        except (OSError, ValueError, KeyError) as exc:
+            raise TransferBackendError(
+                "Unable to prove source feature census against Unity CSIR: " + str(exc)
+            ) from exc
+        if (mapping.get("require_complete_source_features", True)
+            and (source_surface["unresolved_component_count"]
+                 or not source_surface["project_identity_proven"])):
+            raise TransferBackendError(
+                "Unity source feature census is incomplete: "
+                + str(source_surface["unresolved_component_count"])
+                + " components/scope findings and project identity verified="
+                + str(source_surface["project_identity_proven"])
+                + ". Add a matching Unity source census or documented adapter "
+                  "before a strict transfer."
+            )
+    report["source_feature_surface"] = source_surface
+    report["source_feature_surface_state"] = (
+        "SOURCE_CENSUS_VERIFIED_NO_UNRESOLVED_COMPONENTS"
+        if source_surface and not source_surface["unresolved_component_count"]
+        and source_surface["project_identity_proven"] else
+        "SOURCE_CENSUS_PARTIAL_EXPLICIT_REVIEW_REQUIRED"
+        if source_surface else "NOT_COLLECTED"
+    )
     evidence = {
         "csir_sha256": _sha(csir_file),
         "mapping_sha256": _sha(mapping_file),
@@ -741,4 +777,7 @@ def compose_files(
     if capture_path is not None:
         evidence["source_capture_sha256"] = _sha(Path(capture_path))
         evidence["source_capture_path"] = str(Path(capture_path).resolve())
+    if surface_file is not None:
+        evidence["source_feature_surface_sha256"] = _sha(surface_file)
+        evidence["source_feature_surface_path"] = str(surface_file.resolve())
     return plan, report, evidence
