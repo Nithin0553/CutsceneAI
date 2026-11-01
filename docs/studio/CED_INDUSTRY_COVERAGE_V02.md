@@ -84,3 +84,42 @@ An authored Unity Timeline ActivationTrack classified as event.state, bound to a
 CED preflight labels event.state `KNOWN_PARTIAL` only when the mapping has opted in, and `KNOWN_UNSUPPORTED` otherwise. Source planning tests and Unreal builder contract tests do not substitute for real UE 5.8 save/reopen and visibility playback evidence.
 
 Use a backed-up new staging target for tests. Do not edit or overwrite the existing verified Benchmark002 level.
+
+## Data-driven native scalar property animation
+
+The mapping can explicitly bind a Unity source curve semantic and native component class to an Unreal numeric actor/component property. One working example of the required mapping contract is:
+
+```json
+{
+  "scalar_property_mappings": [
+    {
+      "source_semantic": "custom.light_temperature",
+      "source_component_type": "MyGame.CustomLight",
+      "source_entity_name": "MOVING_PROP",
+      "target_scope": "component",
+      "target_class": "PointLightComponent",
+      "target_property_name": "Temperature",
+      "target_property_path": "Temperature",
+      "value_scale": 1.0,
+      "value_offset": 0.0
+    }
+  ]
+}
+```
+
+The source-adapter validates component identity, curve slope/tangents, absence of weighted keys, Timeline clip offset/time scaling, native frame-aligned timestamps, finite units, unique target writers, and exact actor mapping. It does not guess an Unreal property from the Unity name. Unreal's builder checks the destination class, component count, and numeric editor property **before modifying the scene**, then creates an editable MovieSceneFloatTrack with source-aligned linear keys.
+
+Nonlinear/stepped keys, subframe timings, multiple source clips, nested target paths, and unsupported unit conversions remain explicit implementation work rather than silently retimed tracks. Native save/reopen and playback comparisons are still required before fidelity acceptance.
+
+## Make the Unity source census part of automatic preparation
+
+After exporting a matching Unity feature surface, add the following to the **copied new candidate mapping** (use an absolute Windows path when the Unity project is elsewhere):
+
+```json
+{
+  "source_feature_surface_path": "B:/Research/Unity/Project/CutSceneAI/Exports/feature-surface-unity-EXAMPLE.json",
+  "require_complete_source_features": true
+}
+```
+
+The preparer checks Unity source project fingerprint, editor version, component/scene scope, missing MonoBehaviours and unimplemented native components. If strict, it blocks unsafe source coverage **before native generation**. Both report and original feature-census file hash are included in immutable preparation evidence and independently rechecked by the Unreal builder. A missing old census leaves the source feature-surface state NOT_COLLECTED, not full coverage verified. For an explicit best-effort diagnostic report, set require_complete_source_features to false; missing components stay reported and must not be called converted.
