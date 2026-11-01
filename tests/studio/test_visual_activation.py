@@ -143,3 +143,20 @@ def test_existing_ue_builder_contains_native_visibility_realizer():
     assert 'elif kind == "actor_visibility"' in code
     assert "bHidden" in code
     assert "VISUAL ONLY (partial)" in code
+
+
+def test_preflight_declares_partial_only_when_visual_fallback_opted_in():
+    import ced_preflight
+
+    source, mapping = sample()
+    without = ced_preflight.audit(source, mapping)
+    track = next(row for row in without["findings"] if row["kind"] == "track")
+    assert track["state"] == "KNOWN_UNSUPPORTED"
+    mapping["enable_actor_visibility_fallback"] = True
+    opted = ced_preflight.audit(source, mapping)
+    rows = [row for row in opted["findings"]
+            if row["kind"] in {"track", "section"} and row["ced"] == "event.state"]
+    assert len(rows) == 3
+    assert all(row["state"] == "KNOWN_PARTIAL" for row in rows)
+    assert all("visibility" in row["reason"] for row in rows)
+    assert opted["strict_transfer_allowed"] is False
