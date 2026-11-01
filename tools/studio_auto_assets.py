@@ -251,6 +251,11 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
                 continue
             dest=target_folder+'/Textures/CSAI_'+re.sub('[^A-Za-z0-9_]','_',file.stem)+'_'+digest(file)[:8]
             add_import(file,dest,'Texture2D')
+    planned_labels = [str(row['label']) for row in actors]
+    duplicated_labels = sorted({label for label in planned_labels
+                                if planned_labels.count(label) > 1})
+    for label in duplicated_labels:
+        blockers.append('Duplicate planned Unreal actor label: ' + label)
     if skipped_optional_textures:
         warnings.append(
             'Skipped ' + str(len(skipped_optional_textures)) +

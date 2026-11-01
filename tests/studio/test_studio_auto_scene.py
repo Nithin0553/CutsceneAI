@@ -165,3 +165,99 @@ def test_mp3_source_imports_directly_without_ffmpeg(tmp_path):
     assert receipt['status']=='SETUP_SAVED_UNVERIFIED'
     assert any(row['kind']=='SoundWave' for row in receipt['assets_imported'])
     assert len(fake.actor_sys.actors)==5
+
+
+def test_duplicate_planned_label_blocks_before_any_import(tmp_path):
+    root, files=create(tmp_path)
+    plan=json.loads(files[2].read_text())
+    plan['bindings']['CAM_A_Wide']=plan['bindings']['CAM_B_Move']
+    files[2].write_text(json.dumps(plan))
+    stage=studio_auto_assets.inspect(*files,root,'Assets/Benchmark002',
+                                     '/Game/CutSceneAI/AutoTransfer/T_SAFE')
+    assert not stage['ready']
+    assert any('Duplicate planned Unreal actor label' in x for x in stage['blockers'])
+    manifest=tmp_path/'setup.json';manifest.write_text(json.dumps(stage))
+    project=tmp_path/'NewProject.uproject';project.write_text('{}')
+    fake=FakeUnreal(str(project))
+    receipt=tmp_path/'receipt.json'
+    with pytest.raises(scene.AutomaticSetupError,match='cannot be automatically staged'):
+        scene.run(str(manifest),str(receipt),csir_path=str(files[0]),
+                  mapping_path=str(files[1]),plan_path=str(files[2]),
+                  expected_project=str(project),expected_level='/Game/Tests/L_Test',
+                  unreal_api=fake)
+    assert not fake.assets and not fake.actor_sys.actors
+    assert json.loads(receipt.read_text())['status']=='BLOCKED'
+
+
+def test_existing_target_namespace_is_blocked_before_mutation(tmp_path):
+    root,files=create(tmp_path)
+    stage=studio_auto_assets.inspect(*files,root,'Assets/Benchmark002',
+                                     '/Game/CutSceneAI/AutoTransfer/T_SAFE')
+    manifest=tmp_path/'setup.json';manifest.write_text(json.dumps(stage))
+    project=tmp_path/'NewProject.uproject';project.write_text('{}')
+    fake=FakeUnreal(str(project))
+    fake.EditorAssetLibrary.does_directory_exist=lambda path:path==stage['target_folder']
+    receipt=tmp_path/'receipt.json'
+    with pytest.raises(scene.AutomaticSetupError,match='namespace already exists'):
+        scene.run(str(manifest),str(receipt),csir_path=str(files[0]),
+                  mapping_path=str(files[1]),plan_path=str(files[2]),
+                  expected_project=str(project),expected_level='/Game/Tests/L_Test',
+                  unreal_api=fake)
+    result=json.loads(receipt.read_text())
+    assert result['status']=='BLOCKED' and not result['changes_possible']
+    assert not fake.assets and not fake.actor_sys.actors
+
+
+def test_partial_import_failure_keeps_precise_no_retry_receipt(tmp_path):
+    root,files=create(tmp_path)
+    stage=studio_auto_assets.inspect(*files,root,'Assets/Benchmark002',
+                                     '/Game/CutSceneAI/AutoTransfer/T_SAFE')
+    manifest=tmp_path/'setup.json';manifest.write_text(json.dumps(stage))
+    project=tmp_path/'NewProject.uproject';project.write_text('{}')
+    fake=FakeUnreal(str(project))
+    native_import=fake.imports
+    calls=[0]
+
+    def fail_on_second(tasks):
+        calls[0]+=1
+        if calls[0]==2:
+            raise RuntimeError('Native import failed halfway')
+        return native_import(tasks)
+
+    fake.asset_tools=SimpleNamespace(import_asset_tasks=fail_on_second)
+    receipt_path=tmp_path/'partial.json'
+    with pytest.raises(RuntimeError,match='failed halfway'):
+        scene.run(str(manifest),str(receipt_path),csir_path=str(files[0]),
+                  mapping_path=str(files[1]),plan_path=str(files[2]),
+                  expected_project=str(project),expected_level='/Game/Tests/L_Test',
+                  unreal_api=fake)
+    receipt=json.loads(receipt_path.read_text())
+    assert receipt['status']=='PARTIAL_SETUP_MUST_INSPECT'
+    assert receipt['changes_possible']
+    assert len(receipt['assets_imported'])==1
+    assert receipt['asset_operations'][0]['status']=='NATIVE_CLASS_CHECKED'
+    assert receipt['asset_operations'][1]['status']=='IMPORT_STARTED'
+    assert len([x for x in receipt['asset_operations'] if x['status']=='NOT_STARTED'])==4
+    assert all(x['status']=='NOT_STARTED' for x in receipt['actor_operations'])
+    assert receipt['failed_step']['phase']=='asset_import'
+    assert 'Do not rerun' in receipt['recovery']
+    assert not fake.actor_sys.actors
+
+
+def test_success_receipt_has_no_unreported_operations(tmp_path):
+    root,files=create(tmp_path)
+    stage=studio_auto_assets.inspect(*files,root,'Assets/Benchmark002',
+                                     '/Game/CutSceneAI/AutoTransfer/T_SAFE')
+    manifest=tmp_path/'setup.json';manifest.write_text(json.dumps(stage))
+    project=tmp_path/'NewProject.uproject';project.write_text('{}')
+    fake=FakeUnreal(str(project))
+    receipt=scene.run(str(manifest),str(tmp_path/'receipt.json'),
+                      csir_path=str(files[0]),mapping_path=str(files[1]),plan_path=str(files[2]),
+                      expected_project=str(project),expected_level='/Game/Tests/L_Test',
+                      unreal_api=fake)
+    assert receipt['status']=='SETUP_SAVED_UNVERIFIED'
+    assert receipt['failed_step'] is None
+    assert all(x['status']=='NATIVE_CLASS_CHECKED' for x in receipt['asset_operations'])
+    assert all(x['status']=='ACTOR_LABEL_CHECKED' for x in receipt['actor_operations'])
+    assert len(receipt['assets_imported'])==len(receipt['asset_operations'])
+    assert len(receipt['actors_created'])==len(receipt['actor_operations'])

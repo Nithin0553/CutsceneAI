@@ -78,6 +78,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
         raise AutomaticSetupError('Setup receipt already exists or its folder is missing.')
     receipt={'kind':'cutsceneai.studio.automatic_setup_receipt','schema_version':'0.1.0',
              'status':'BLOCKED','actors_created':[],'assets_imported':[],
+             'asset_operations':[],'actor_operations':[],'failed_step':None,
              'level_saved':False,'changes_possible':False,'fidelity_verified':False,
              'unsupported':['Unity materials are not automatically reconstructed',
                             'Unity particle/VFX/constraints/scripts and signal payloads are not reconstructed',
@@ -94,6 +95,26 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 raise AutomaticSetupError('Unreal Python import capability unavailable: '+required)
         data=json.loads(Path(plan_path).read_text(encoding='utf-8-sig'))
         sequence=data['sequence_asset_path']
+        receipt['target_namespace']=manifest['target_folder']
+        receipt['target_sequence']=sequence
+        receipt['asset_operations']=[
+            {'kind':row['kind'], 'path':row['target_asset_path'],
+             'source_sha256':row['source_sha256'], 'status':'NOT_STARTED'}
+            for row in manifest['imports']]
+        receipt['actor_operations']=[
+            {'name':row['name'], 'label':row['label'], 'status':'NOT_STARTED'}
+            for row in manifest['actors']]
+        planned_labels=[str(row['label']) for row in manifest['actors']]
+        if len(planned_labels)!=len(set(planned_labels)):
+            raise AutomaticSetupError('Automatic setup has duplicate planned actor labels; no changes made.')
+        planned_paths=[str(row['target_asset_path']) for row in manifest['imports']]
+        if len(planned_paths)!=len(set(planned_paths)):
+            raise AutomaticSetupError('Automatic setup has duplicate target import paths; no changes made.')
+        # Even unplanned assets in a reused staging namespace are dangerous.
+        # Refuse before mutation when this Unreal API supports directory lookup.
+        directory_exists=getattr(api.EditorAssetLibrary,'does_directory_exist',None)
+        if callable(directory_exists) and directory_exists(manifest['target_folder']):
+            raise AutomaticSetupError('Automatic setup target namespace already exists; choose a fresh candidate: '+manifest['target_folder'])
         if api.EditorAssetLibrary.does_asset_exist(sequence):
             raise AutomaticSetupError('Level Sequence path already occupied: '+sequence)
         ed=api.get_editor_subsystem(api.EditorActorSubsystem)
@@ -115,6 +136,8 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
         # Unreal Engine 5.8 supports importing MP3 and WAV directly into
         # SoundWave assets. Let the native importer validate the file and
         # verify the resulting Unreal asset class after import.
+        asset_ops={row['path']:row for row in receipt['asset_operations']}
+        actor_ops={row['name']:row for row in receipt['actor_operations']}
         meshes={}
         props={}
         groups=[('SkeletalMesh',manifest['imports']),('StaticMesh',manifest['imports']),('AnimSequence',manifest['imports']),
@@ -133,6 +156,10 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                     if skeleton is None:
                         raise AutomaticSetupError('Imported mesh has no skeleton: '+row.get('character',''))
                 task=_task(api,source,row['target_asset_path'],kind,skeleton)
+                operation=asset_ops[row['target_asset_path']]
+                operation['status']='IMPORT_STARTED'
+                receipt['failed_step']={'phase':'asset_import','kind':kind,
+                                        'path':row['target_asset_path']}
                 mutation=True
                 api.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
                 result=api.load_asset(row['target_asset_path'])
@@ -144,35 +171,53 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                     props[row['target_asset_path']]=result
                 if kind=='AnimSequence' and str(result.get_editor_property('skeleton').get_path_name())!=str(skeleton.get_path_name()):
                     raise AutomaticSetupError('Animation imported onto wrong skeleton: '+row['target_asset_path'])
+                operation['status']='NATIVE_CLASS_CHECKED'
                 receipt['assets_imported'].append({'kind':kind,'path':row['target_asset_path']})
+                receipt['failed_step']=None
         zero=api.Vector(0.0,0.0,0.0)
         rotation=api.Rotator(0.0,0.0,0.0)
         for row in manifest['actors']:
+            operation=actor_ops[row['name']]
             kind=row['kind']
             if kind=='entity.character':
                 obj=meshes.get(row['name'])
                 if obj is None:
                     raise AutomaticSetupError('Missing source character: '+row['name'])
+                operation['status']='SPAWN_STARTED'
+                receipt['failed_step']={'phase':'actor_spawn','name':row['name'],
+                                        'label':row['label']}
+                mutation=True
                 actor=ed.spawn_actor_from_object(obj,zero,rotation)
             elif kind=='entity.prop' and row.get('mesh_path'):
                 obj=props.get(row['mesh_path'])
                 if obj is None:
                     raise AutomaticSetupError('Missing imported static prop mesh: '+row['name'])
+                operation['status']='SPAWN_STARTED'
+                receipt['failed_step']={'phase':'actor_spawn','name':row['name'],
+                                        'label':row['label']}
+                mutation=True
                 actor=ed.spawn_actor_from_object(obj,zero,rotation)
             else:
                 cls={'entity.camera':api.CineCameraActor,
                      'entity.light':api.PointLight,
                      'entity.prop':api.Actor}[kind]
+                operation['status']='SPAWN_STARTED'
+                receipt['failed_step']={'phase':'actor_spawn','name':row['name'],
+                                        'label':row['label']}
+                mutation=True
                 actor=ed.spawn_actor_from_class(cls,zero,rotation)
-            mutation=True
             if actor is None:
                 raise AutomaticSetupError('Could not create '+row['name'])
             actor.set_actor_label(row['label'],mark_dirty=True)
             if actor.get_actor_label()!=row['label']:
                 raise AutomaticSetupError('Unreal renamed actor unexpectedly: '+row['name'])
+            operation['status']='ACTOR_LABEL_CHECKED'
             receipt['actors_created'].append({'name':row['name'],'label':row['label'],'kind':kind})
+            receipt['failed_step']=None
+        receipt['failed_step']={'phase':'level_save','level':expected_level}
         _save_level(api,expected_level)
         receipt['level_saved']=True
+        receipt['failed_step']=None
         receipt['status']='SETUP_SAVED_UNVERIFIED'
         receipt['changes_possible']=True
         receipt['source_assets_modified']=False
@@ -180,6 +225,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
     except Exception as exc:
         receipt['status']='PARTIAL_SETUP_MUST_INSPECT' if mutation else 'BLOCKED'
         receipt['changes_possible']=bool(mutation)
+        receipt['recovery']='Do not rerun this candidate. Inspect recorded Unreal assets and actors, save/copy the staging project for diagnosis, then prepare a NEW unique candidate.' if mutation else 'No editor mutation was attempted; fix the preflight issue before preparing another candidate.'
         receipt['error']={'type':type(exc).__name__,'message':str(exc),'traceback':traceback.format_exc()}
         raise
     finally:
