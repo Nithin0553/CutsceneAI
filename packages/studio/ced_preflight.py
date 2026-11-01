@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 CONTRACTS = Path(__file__).resolve().parents[1] / "contracts" / "dictionary"
-CED_PATH = CONTRACTS / "cutscene-elements-v0.1.json"
+CED_PATH = CONTRACTS / "cutscene-elements-v0.2.json"
 CAPABILITIES_PATH = CONTRACTS / "unity-unreal-preflight-v0.1.json"
 
 DISCOVERY_STATES = frozenset({

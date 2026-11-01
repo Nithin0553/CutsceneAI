@@ -23,6 +23,7 @@ import hierarchy_local
 import source_parent_resolution
 import ced_preflight
 import root_world_lock
+import feature_dispatch
 
 NATIVE_GAPS = {
     "event.trigger": "Preserves event timestamp/identity as a marked frame, NOT executable payload.",
@@ -681,6 +682,7 @@ def compose(
         "source_assets": asset_coverage,
         "source_relationship_count": len(relationships),
         "relationship_fidelity_verified": False,
+        "feature_dispatch": feature_dispatch.audit(csir, plan),
         "hierarchy_reconstruction": hierarchy_results,
         "source_parent_resolution": source_parent_resolution.analyze(
             csir, mapping, plan["actions"]

@@ -53,6 +53,28 @@ FAMILY_FOR_PREFIX = {
 }
 
 
+
+# The newest CED covers specialized native groups beyond the historical
+# cinematic categories above. Extend the read-only inventory automatically,
+# preserving the original compatibility keys for old downstream consumers.
+_CED_V2_PATH = Path(__file__).resolve().parents[1] / 'packages' / 'contracts' / 'dictionary' / 'cutscene-elements-v0.2.json'
+if _CED_V2_PATH.is_file():
+    _ced_v2 = json.loads(_CED_V2_PATH.read_text(encoding='utf-8'))
+    for _family in _ced_v2.get('feature_families', []):
+        FAMILIES.setdefault(
+            _family['id'],
+            (', '.join(_family['ced_domains']), 'needs_verified_engine_adapter'),
+        )
+    for _domain in _ced_v2.get('categories', {}):
+        if not any(_domain == prefix.rstrip('.') or _domain.startswith(prefix)
+                   for prefix in FAMILY_FOR_PREFIX):
+            _preferred = next(
+                (f['id'] for f in _ced_v2['feature_families']
+                 if _domain in f['ced_domains']), 'custom',
+            )
+            FAMILY_FOR_PREFIX[_domain + '.'] = _preferred
+
+
 def family_for(ced: str) -> str:
     matching = [(prefix, family) for prefix, family in FAMILY_FOR_PREFIX.items()
                 if ced == prefix or ced.startswith(prefix)]

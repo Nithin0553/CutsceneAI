@@ -56,7 +56,7 @@ def test_known_track_and_canonical_axis_are_supported_but_not_verified():
     assert (s, m) == saved
     assert out["status"] == "READY_FOR_ENGINE_PREFLIGHT"
     assert out["strict_transfer_allowed"] is True
-    assert out["ced_version"] == "0.1.0"
+    assert out["ced_version"] == "0.2.0"
     assert len(out["ced_sha256"]) == 64
     assert out["active_alert_count"] == 0
     curves = [x for x in out["findings"] if x["kind"] == "curve"]
