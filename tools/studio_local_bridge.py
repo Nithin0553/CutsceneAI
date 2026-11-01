@@ -243,6 +243,7 @@ def prepare(folder: Path = WORKSPACE) -> dict[str, Any]:
             Path(config['csir']), Path(config['mapping']), Path(config['capture']),
             new_sequence, candidate_dir,
             skeletal_root_world_lock=config['skeletal_root_world_lock'],
+            hierarchy_transfer=bool(config.get('unity_project')),
         )
     else:
         # The existing immutable backend supports source-only preparation.
@@ -256,6 +257,10 @@ def prepare(folder: Path = WORKSPACE) -> dict[str, Any]:
         original = load_json(Path(config['mapping']))
         original['sequence_asset_path'] = new_sequence
         original['overwrite_sequence'] = False
+        if config.get('unity_project'):
+            # Activate the same source-aware attachment and parent-local
+            # preflight for source-only Studio candidates.
+            original['enable_cinetwin_hierarchy'] = True
         if config['skeletal_root_world_lock']:
             raise ValueError('Experimental skeletal root world lock requires source CineTwin evidence.')
         mapping_copy.parent.mkdir(parents=True, exist_ok=True)

@@ -26,6 +26,7 @@ def prepare_candidate(
     output_folder: Path,
     *,
     skeletal_root_world_lock: bool = False,
+    hierarchy_transfer: bool = False,
 ) -> tuple[Path, dict]:
     """Write fresh mapping next to new output and source-verified prepared artifacts."""
     mapping_file = output_folder.with_suffix(".mapping.json")
@@ -47,6 +48,11 @@ def prepare_candidate(
     copy["overwrite_sequence"] = False
     if skeletal_root_world_lock:
         copy["enable_cinetwin_skeletal_world_lock"] = True
+    if hierarchy_transfer:
+        # The existing backend converts direct child motion to parent-local
+        # only when source evidence proves it safe. It rejects unsupported
+        # dynamic children before creating a single Unreal asset.
+        copy["enable_cinetwin_hierarchy"] = True
     mapping_file.parent.mkdir(parents=True, exist_ok=True)
     try:
         with mapping_file.open("x", encoding="utf-8") as handle:

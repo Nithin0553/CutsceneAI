@@ -136,12 +136,14 @@ def test_prepare_calls_existing_candidate_backend_without_changing_original(tmp_
     bridge.atomic_json(work / 'connection.json', bridge.config_check(config))
     original_mapping = Path(config['mapping']).read_bytes()
 
-    def fake_prepare(csir, mapping, capture, sequence, out, *, skeletal_root_world_lock):
+    def fake_prepare(csir, mapping, capture, sequence, out, *, skeletal_root_world_lock,
+                     hierarchy_transfer):
         assert Path(csir) == Path(config['csir'])
         assert Path(mapping) == Path(config['mapping'])
         assert Path(capture) == Path(config['capture'])
         assert sequence.startswith('/Game/Trials/LS_BenchmarkV8_STUDIO_')
         assert skeletal_root_world_lock is False
+        assert hierarchy_transfer is False
         out.mkdir(parents=True)
         (out / 'transfer-plan.json').write_text(json.dumps({'actions':[{'kind':'camera_cut'},{'kind':'transform'}]}))
         copy = out.with_suffix('.mapping.json')
@@ -419,3 +421,37 @@ def test_connected_old_companion_explains_restart(tmp_path):
     report = bridge.destination_readiness(work)
     assert report['status'] == 'UPGRADE_COMPANION'
     assert 'restart unreal' in report['next_action'].lower()
+
+
+def test_automatic_studio_preparation_requests_safe_hierarchy_reconstruction(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    config = fixture_files(tmp_path)
+    unity = tmp_path / "Unity"
+    (unity / "Assets").mkdir(parents=True)
+    config["unity_project"] = str(unity)
+    config["source_scope"] = "Assets"
+    work = tmp_path / "runs"
+    bridge.atomic_json(work / "connection.json", bridge.config_check(config))
+    original = Path(config["mapping"]).read_bytes()
+
+    def fake_prepare(csir, mapping, capture, sequence, out, *,
+                     skeletal_root_world_lock, hierarchy_transfer):
+        assert hierarchy_transfer is True
+        assert skeletal_root_world_lock is False
+        out.mkdir(parents=True)
+        (out / "transfer-plan.json").write_text(json.dumps({
+            "sequence_asset_path": sequence, "actions": [], "bindings": {}
+        }))
+        copied = out.with_suffix(".mapping.json")
+        copied.write_text(json.dumps({"sequence_asset_path": sequence,
+                                      "enable_cinetwin_hierarchy": True}))
+        return copied, {"ced_preflight": "REVIEW_REQUIRED",
+                        "track_coverage": {"NATIVE_UNVERIFIED": 1}}
+
+    monkeypatch.setitem(sys.modules, "studio_candidate",
+                        SimpleNamespace(prepare_candidate=fake_prepare))
+    result = bridge.prepare(work)
+    assert result["engine_generation_executed"] is False
+    assert Path(config["mapping"]).read_bytes() == original
