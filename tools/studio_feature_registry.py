@@ -7,8 +7,14 @@ prepared transfer plan. Unknown CED types remain visible and unverified.
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter
 from pathlib import Path
+
+_STUDIO_PKG = Path(__file__).resolve().parents[1] / 'packages' / 'studio'
+if str(_STUDIO_PKG) not in sys.path:
+    sys.path.insert(0, str(_STUDIO_PKG))
+import feature_dispatch
 
 # Keys are feature families, values are examples of engine-independent semantics
 # and the most credible *potential* conversion route. New plugin types are
@@ -84,47 +90,60 @@ def family_for(ced: str) -> str:
 
 
 def audit(csir: dict, plan: dict | None = None) -> dict:
-    """Inventory CED features and show which real UE actions are planned.
+    """Inventory every extracted asset, object, track, section and relationship.
 
-    A plan can be structurally prepared yet fail during engine import.
-    'PLANNED_UNVERIFIED' deliberately does not claim success or parity.
+    This reuses the canonical v0.2 dispatch ledger rather than counting only
+    authored tracks; native construction and fidelity remain independently
+    unverified. Unknown plugin/native types are retained in source_inventory.
     """
+    dispatch = feature_dispatch.audit(csir, plan)
     rows = []
-    for collection in ('entities', 'tracks'):
-        for item in csir.get(collection, []):
-            if not isinstance(item, dict):
-                continue
-            ced = str(item.get('ced_type') or 'unknown')
-            family = family_for(ced)
-            rows.append({'collection': collection, 'name': str(item.get('name') or ''),
-                         'ced_type': ced, 'family': family,
-                         'source_id': str(item.get('entity_id') or item.get('track_id') or '')})
-            if collection == 'tracks':
-                for section in item.get('sections', []):
-                    if isinstance(section, dict) and section.get('ced_type'):
-                        section_ced = str(section['ced_type'])
-                        rows.append({'collection':'sections', 'name':str(item.get('name') or ''),
-                                     'ced_type':section_ced,'family':family_for(section_ced),
-                                     'source_id':str(section.get('section_id') or '')})
-    actions = Counter(str(a.get('kind') or 'unknown') for a in (plan or {}).get('actions', [])
-                      if isinstance(a, dict))
-    unknown_actions = sorted(x for x in actions if x not in CURRENT_BUILDER_ACTIONS)
+    for item in dispatch['source_occurrences']:
+        semantic = item['ced'] or 'unknown'
+        rows.append({
+            'collection': item['kind'],
+            'name': item['source_name'],
+            'ced_type': semantic,
+            'family': family_for(semantic),
+            'source_id': item['source_id'],
+            'source_location': item['source_location'],
+            'native_type': item['source_native_type'],
+            'dispatch_state': item['state'],
+            'target_readback_verified': False,
+        })
+    actions = Counter(
+        str(a.get('kind') or 'unknown')
+        for a in (plan or {}).get('actions', [])
+        if isinstance(a, dict)
+    )
     family_counts = dict(sorted(Counter(row['family'] for row in rows).items()))
     return {
-        'kind':'cutsceneai.studio.cinematic_feature_inventory',
-        'schema_version':'0.1.0', 'source_engine': csir.get('source', {}).get('engine'),
-        'source_cutscene_id':csir.get('cutscene_id'),
-        'families': {key:{'examples':examples,'proposed_strategy':strategy,
-                          'implementation_verified':False}
-                     for key,(examples,strategy) in FAMILIES.items()},
-        'source_inventory':rows, 'family_counts':family_counts,
-        'planned_engine_actions':dict(sorted(actions.items())),
-        'unimplemented_action_kinds':unknown_actions,
-        'action_support':'PLANNED_UNVERIFIED' if plan is not None else 'NOT_EVALUATED',
-        'complete_cutscene_fidelity_verified':False,
-        'limitations':['The inventory describes known categories; vendor and custom types remain open-ended.',
-                       'Planned actions do not prove saved Sequencer readback, rendered pixels or behavior parity.',
-                       'Feature coverage requires independent per-type verification; do not infer it from a working sequence.'],
+        'kind': 'cutsceneai.studio.cinematic_feature_inventory',
+        'schema_version': '0.2.0',
+        'source_engine': csir.get('source', {}).get('engine'),
+        'source_cutscene_id': csir.get('cutscene_id'),
+        'families': {
+            key: {
+                'examples': examples,
+                'proposed_strategy': strategy,
+                'implementation_verified': False,
+            }
+            for key, (examples, strategy) in FAMILIES.items()
+        },
+        'source_inventory': rows,
+        'family_counts': family_counts,
+        'catalog_semantics': dispatch['catalog_semantic_count'],
+        'catalog_families': dispatch['catalog_family_count'],
+        'accounted_occurrence_count': dispatch['accounted_occurrence_count'],
+        'planned_engine_actions': dict(sorted(actions.items())),
+        'unimplemented_action_kinds': dispatch['unknown_action_kinds'],
+        'action_support': 'PLANNED_UNVERIFIED' if plan is not None else 'NOT_EVALUATED',
+        'complete_cutscene_fidelity_verified': False,
+        'limitations': [
+            'Installed plugins and unextracted source components require the engine feature census.',
+            'Planned actions do not prove saved Sequencer readback or behavior parity.',
+            'Unknown native types remain in source inventory and need explicit extension adapters.',
+        ],
     }
 
 
