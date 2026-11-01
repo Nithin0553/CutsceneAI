@@ -235,7 +235,7 @@ class HandlerRegistry:
         if not requires or any(item not in VALID_STAGE for item in requires):
             raise FeatureDispatchError("Handler must declare valid evidence gates.")
         if "NATIVE_READBACK" not in requires or "BEHAVIOR" not in requires:
-            raise FeatureDispatchError("Cannot declare an adapter without native and behavior proof.")
+            raise FeatureDispatchError("Cannot declare an adapter without native-readback and behavior evidence proof.")
         self.handlers[semantic] = {
             "name": name, "version": version, "requires": list(requires),
             "handler": handler,
