@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 import ntpath
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -95,8 +94,15 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
             or not setup_file.is_file() or not runtime_file.is_file()):
         raise PersistenceAuditError("Native setup or generation receipt is missing or outside candidate.")
     setup, manifest = _json(setup_file), _json(candidate_dir / "automatic-setup.json")
+    runtime = _json(runtime_file)
+    if (runtime.get("kind") != "cutsceneai.unreal.best_effort_receipt"
+            or runtime.get("status") != "GENERATED_UNVERIFIED"
+            or runtime.get("stage") != "complete"):
+        raise PersistenceAuditError("Generation receipt does not prove completed engine generation.")
     plan = _json(candidate_dir / "transfer-plan.json")
-    if (setup.get("status") != "SETUP_SAVED_UNVERIFIED"
+    if (manifest.get("kind") != "cutsceneai.studio.automatic_setup_plan"
+            or setup.get("kind") != "cutsceneai.studio.automatic_setup_receipt"
+            or setup.get("status") != "SETUP_SAVED_UNVERIFIED"
             or setup.get("target_sequence") != job.get("sequence_path")
             or plan.get("sequence_asset_path") != job.get("sequence_path")
             or setup.get("target_namespace") != manifest.get("target_folder")):
@@ -148,6 +154,8 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
                            "expected_kind": kind, "actual_class": actual,
                            "class_matches": class_ok, "observed_parent_label": parent})
     sequence_path = str(job["sequence_path"])
+    if str(runtime.get("generated_sequence") or "").split(".")[0] != sequence_path:
+        raise PersistenceAuditError("Generation receipt points to another sequence.")
     exists = bool(api.EditorAssetLibrary.does_asset_exist(sequence_path))
     sequence = api.load_asset(sequence_path) if exists else None
     sequence_class = _asset_class(sequence)
