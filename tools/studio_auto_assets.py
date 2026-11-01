@@ -74,19 +74,12 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     for f in files:
         if not f.is_relative_to(search_root):
             raise AutoAssetError('Source symlink escapes chosen Unity scope: '+str(f))
-        if f.stat().st_size == 0:
-            raise AutoAssetError('Empty source file in selected asset scope: '+str(f))
-        if f.suffix.lower()=='.png' and f.open('rb').read(8)!=b'\x89PNG\r\n\x1a\n':
-            raise AutoAssetError('Invalid source PNG signature: '+str(f))
-        if f.suffix.lower()=='.wav':
-            with f.open('rb') as fh:
-                header=fh.read(12)
-            if len(header)<12 or header[:4]!=b'RIFF' or header[8:12]!=b'WAVE':
-                raise AutoAssetError('Invalid source WAV header: '+str(f))
+    # Validate actual imports, not unrelated PNGs anywhere under Unity Assets/.
     assets = {str(a.get('asset_id')): a for a in csir.get('assets', [])}
     entities = {str(e.get('name')): e for e in csir.get('entities', [])}
     paths = defaultdict(list)
     blockers, warnings, imports, actors = [], [], [], []
+    skipped_optional_textures = []
     used_source = {}
     used_target = set()
     def add_import(source, dest, kind, *, character=None):
@@ -97,6 +90,24 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             return
         if source in used_source and used_source[source] != dest:
             blockers.append('One source file resolves to multiple target identities: '+str(source))
+            return
+        reason = None
+        if source.stat().st_size == 0:
+            reason = 'empty file'
+        elif source.suffix.lower() == '.png':
+            with source.open('rb') as stream:
+                if stream.read(8) != b'\x89PNG\r\n\x1a\n':
+                    reason = 'invalid PNG signature'
+        elif source.suffix.lower() == '.wav':
+            with source.open('rb') as stream:
+                header = stream.read(12)
+            if len(header) < 12 or header[:4] != b'RIFF' or header[8:12] != b'WAVE':
+                reason = 'invalid WAV header'
+        if reason is not None:
+            if kind == 'Texture2D':
+                skipped_optional_textures.append(str(source) + ' (' + reason + ')')
+            else:
+                blockers.append('Required ' + kind + ' source is ' + reason + ': ' + str(source))
             return
         used_source[source] = dest
         used_target.add(dest)
@@ -177,8 +188,20 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     # corresponding UE materials are not inferred from a filename.
     for file in files:
         if file.suffix.lower()=='.png':
+            # Unrelated tutorial/editor icons may not actually be PNG data.
+            with file.open('rb') as stream:
+                valid_png = file.stat().st_size > 0 and stream.read(8) == b'\x89PNG\r\n\x1a\n'
+            if not valid_png:
+                skipped_optional_textures.append(str(file) + ' (invalid or empty PNG)')
+                continue
             dest=target_folder+'/Textures/CSAI_'+re.sub('[^A-Za-z0-9_]','_',file.stem)+'_'+digest(file)[:8]
             add_import(file,dest,'Texture2D')
+    if skipped_optional_textures:
+        warnings.append(
+            'Skipped ' + str(len(skipped_optional_textures)) +
+            ' invalid optional PNG texture(s); other supported cutscene assets can still transfer. '
+            'Examples: ' + '; '.join(skipped_optional_textures[:3])
+        )
     if any(item['kind'] in ('SkeletalMesh','AnimSequence') for item in imports):
         warnings.append('FBX source files are matched by unambiguous names; compatible target skeletons, materials and animation motion remain unverified.')
     return {'kind':'cutsceneai.studio.automatic_setup_plan','schema_version':'0.1.0',

@@ -356,15 +356,15 @@ def test_readiness_refuses_stale_or_different_candidate(tmp_path):
     assert bridge.destination_readiness(work)['ready'] is True
     report['candidate_id'] = 'different'
     bridge.atomic_json(work / 'destination-readiness.json', report)
-    assert bridge.destination_readiness(work)['status'] == 'CHECKING'
+    assert bridge.destination_readiness(work)['status'] == 'INSPECTION_UNAVAILABLE'
     report['candidate_id'] = cid
     report['checked_at'] = (datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat()
     bridge.atomic_json(work / 'destination-readiness.json', report)
-    assert bridge.destination_readiness(work)['status'] == 'CHECKING'
+    assert bridge.destination_readiness(work)['status'] == 'INSPECTION_UNAVAILABLE'
     report['checked_at'] = datetime.now(timezone.utc).isoformat()
     bridge.atomic_json(work / 'destination-readiness.json', report)
     plan.write_text('{"actions":["tampered"]}', encoding='utf-8')
-    assert bridge.destination_readiness(work)['status'] == 'CHECKING'
+    assert bridge.destination_readiness(work)['status'] == 'INSPECTION_UNAVAILABLE'
 
 
 def test_status_exposes_readiness_before_generate(service):
@@ -375,3 +375,47 @@ def test_status_exposes_readiness_before_generate(service):
     status, data=call(base+'/api/status')
     assert status==200 and data['destination_readiness']['ready'] is False
     assert data['destination_readiness']['status']=='WAITING_FOR_PLAN'
+
+
+def test_live_editor_without_report_is_not_endless_checking(tmp_path):
+    """Connected and heartbeating worker cannot leave UI in checking forever."""
+    from datetime import datetime, timezone
+    cfg = fixture_files(tmp_path)
+    work = tmp_path / 'runs'
+    bridge.atomic_json(work / 'connection.json', bridge.config_check(cfg))
+    cid = '20261101T012000Z_aaaabbbb'
+    path = work / 'candidates' / cid / 'transfer-plan.json'
+    path.parent.mkdir(parents=True)
+    path.write_text('{"actions":[]}', encoding='utf-8')
+    bridge.atomic_json(work / 'active-candidate.json', {
+        'candidate_id': cid, 'sequence_path': '/Game/Tests/LS_New',
+    })
+    bridge.atomic_json(work / 'unreal-worker.json', {
+        'heartbeat': datetime.now(timezone.utc).isoformat(),
+        'project': cfg['target_project'], 'level': cfg['level_path'],
+        'worker': 'studio-editor-v0.4',
+    })
+    report = bridge.destination_readiness(work)
+    assert report['status'] == 'INSPECTION_UNAVAILABLE'
+    assert report['ready'] is False
+    assert 'Python log' in report['next_action']
+
+
+def test_connected_old_companion_explains_restart(tmp_path):
+    from datetime import datetime, timezone
+    cfg = fixture_files(tmp_path)
+    work = tmp_path / 'runs'
+    connected = bridge.config_check(cfg)
+    connected['unity_project'] = str(tmp_path)
+    bridge.atomic_json(work / 'connection.json', connected)
+    bridge.atomic_json(work / 'active-candidate.json', {
+        'candidate_id': '20261101T012000Z_aaaabbbb', 'sequence_path': '/Game/New',
+    })
+    bridge.atomic_json(work / 'unreal-worker.json', {
+        'heartbeat': datetime.now(timezone.utc).isoformat(),
+        'project': cfg['target_project'], 'level': cfg['level_path'],
+        'worker': 'studio-editor-v0.3',
+    })
+    report = bridge.destination_readiness(work)
+    assert report['status'] == 'UPGRADE_COMPANION'
+    assert 'restart unreal' in report['next_action'].lower()

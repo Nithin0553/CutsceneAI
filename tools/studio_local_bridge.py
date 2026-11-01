@@ -158,9 +158,9 @@ def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
                 'next_action': 'Open the selected Unreal level and start the editor companion.'}
     if (worker.get('worker_version') == 'studio-editor-v0.1' or
         (load_json(folder / 'connection.json').get('unity_project')
-         and worker.get('worker_version') != 'studio-editor-v0.3')):
+         and worker.get('worker_version') != 'studio-editor-v0.4')):
         return {'status': 'UPGRADE_COMPANION', 'ready': False,
-                'next_action': 'Restart Unreal Editor and start the updated v0.4 Studio companion.'}
+                'next_action': 'Unreal is running an older Studio companion. Save your work, restart Unreal Editor, and run the Python companion command shown below.'}
     candidate = load_json(candidate_file)
     connected = load_json(folder / 'connection.json')
     if connected.get('auto_create_level') and worker.get('level') != connected['level_path']:
@@ -174,30 +174,33 @@ def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
         return {'status': 'CHECKING', 'ready': False, 'next_action': 'Prepare a valid candidate.'}
     plan_file = folder / 'candidates' / candidate_id / 'transfer-plan.json'
     report_file = folder / 'destination-readiness.json'
-    pending = {'status': 'CHECKING', 'ready': False,
-               'next_action': 'Checking actors and imported assets in the loaded Unreal level.'}
-    if not plan_file.is_file() or not report_file.is_file():
-        return pending
+    def unavailable(reason: str) -> dict[str, Any]:
+        return {'status': 'INSPECTION_UNAVAILABLE', 'ready': False,
+                'next_action': reason}
+    if not plan_file.is_file():
+        return unavailable('Prepared transfer plan is missing. Return to Review and prepare a new plan.')
+    if not report_file.is_file():
+        return unavailable('The Unreal companion is connected, but has not produced a scene inspection. Check its Python log and restart the companion if needed.')
     try:
         report = load_json(report_file)
         stamp = datetime.fromisoformat(str(report['checked_at']).replace('Z', '+00:00'))
         age = (datetime.now(timezone.utc) - stamp).total_seconds()
         if not 0 <= age < 8 or report.get('kind') != 'cutsceneai.studio.destination_readiness':
-            return pending
+            return unavailable('The scene inspection has expired or is invalid. Check the Unreal Python log and restart the editor companion.')
         if report.get('candidate_id') != candidate_id or report.get('sequence_path') != candidate.get('sequence_path'):
-            return pending
+            return unavailable('Inspection belongs to a different transfer candidate. Restart the Unreal companion to inspect this plan.')
         if report.get('plan_sha256') != hashlib.sha256(plan_file.read_bytes()).hexdigest():
-            return pending
+            return unavailable('The transfer plan changed after inspection. Return to Review and prepare a fresh plan.')
         if (os.path.normcase(str(report.get('expected_project', ''))) != os.path.normcase(connected['target_project'])
             or report.get('expected_level') != connected['level_path']):
-            return pending
+            return unavailable('Inspection belongs to another project or level. Inspect the currently connected Unreal project.')
         if (os.path.normcase(str(report.get('observed_project', ''))) != os.path.normcase(connected['target_project'])
             or report.get('observed_level') != connected['level_path']):
             return {'status': 'WRONG_TARGET', 'ready': False,
                     'next_action': 'Open the connected Unreal project and selected level.'}
         return report
     except (KeyError, ValueError, OSError, TypeError):
-        return pending
+        return unavailable('Unreal inspection report could not be read. Check the Unreal Python log and reconnect the editor companion.')
 
 
 def review_flags(config: dict[str, Any], action_counts: dict[str, int]) -> list[str]:
@@ -341,7 +344,7 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     auto = auto or {}
     automatic_requested = bool(auto.get('available')) and not readiness.get('ready')
     if automatic_requested:
-        if heartbeat.get('worker_version') != 'studio-editor-v0.3':
+        if heartbeat.get('worker_version') != 'studio-editor-v0.4':
             raise ValueError('Restart Unreal with the v0.5 automatic-import editor companion.')
         if not auto.get('ready'):
             raise ValueError('Automatic asset preparation blocked: ' + '; '.join(auto.get('blockers', [])))
@@ -350,7 +353,7 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         manifest = studio_auto_assets.verify(stage, config['csir'], session['target']['mapping_path'], candidate_dir / 'transfer-plan.json')
         if not manifest['ready'] or not config.get('source_rights_confirmed'):
             raise ValueError('Automatic asset preparation is not approved and verified.')
-        if readiness.get('status') in {'WRONG_TARGET', 'TARGET_EXISTS', 'UPGRADE_COMPANION', 'WAITING_FOR_UNREAL', 'CHECKING'}:
+        if readiness.get('status') in {'WRONG_TARGET', 'TARGET_EXISTS', 'UPGRADE_COMPANION', 'WAITING_FOR_UNREAL', 'CHECKING', 'INSPECTION_UNAVAILABLE', 'INSPECTION_FAILED'}:
             raise ValueError('Unreal target not safe for automatic setup: ' + str(readiness.get('next_action')))
         if readiness.get('wrong_actor_types') or readiness.get('wrong_asset_types') or readiness.get('duplicate_actors'):
             raise ValueError('Conflicting existing Unreal content; automatic setup refuses to overwrite.')

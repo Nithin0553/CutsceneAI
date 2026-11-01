@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import hashlib
 import os
 import sys
 import time
@@ -264,6 +265,37 @@ def _update_destination_readiness():
     _save(report_file, output)
 
 
+def _report_inspection_failure(error):
+    """Keep the UI informed when a live editor probe fails unexpectedly.
+
+    This is a diagnostic, never evidence of readiness to modify Unreal.
+    """
+    active = WORKSPACE / 'active-candidate.json'
+    connected = WORKSPACE / 'connection.json'
+    if not active.is_file() or not connected.is_file():
+        return
+    info, config = _load(active), _load(connected)
+    candidate_id = str(info['candidate_id'])
+    root = (WORKSPACE / 'candidates').resolve()
+    plan_file = (root / candidate_id / 'transfer-plan.json').resolve()
+    if not plan_file.is_relative_to(root) or not plan_file.is_file():
+        return
+    _save(WORKSPACE / 'destination-readiness.json', {
+        'kind': 'cutsceneai.studio.destination_readiness',
+        'status': 'INSPECTION_FAILED', 'ready': False,
+        'scene_modified': False,
+        'next_action': 'Unreal scene inspection failed: ' + str(error) +
+                       '. Review the Unreal Python log, then restart the Studio companion.',
+        'candidate_id': candidate_id,
+        'sequence_path': info['sequence_path'],
+        'plan_sha256': hashlib.sha256(plan_file.read_bytes()).hexdigest(),
+        'expected_project': str(config['target_project']),
+        'expected_level': str(config['level_path']),
+        'observed_project': _loaded_project(), 'observed_level': _loaded_level(),
+        'checked_at': _now(),
+    })
+
+
 def _tick(_delta):
     global LAST_TICK, BUSY
     if BUSY or time.monotonic() - LAST_TICK < 1.0:
@@ -273,12 +305,15 @@ def _tick(_delta):
         WORKSPACE.mkdir(parents=True, exist_ok=True)
         _save(WORKSPACE / 'unreal-worker.json', {
             'heartbeat': _now(), 'project': _loaded_project(),
-            'level': _loaded_level(), 'worker': 'studio-editor-v0.3'
+            'level': _loaded_level(), 'worker': 'studio-editor-v0.4'
         })
         try:
             _update_destination_readiness()
         except Exception as readiness_error:
-            (WORKSPACE / 'destination-readiness.json').unlink(missing_ok=True)
+            try:
+                _report_inspection_failure(readiness_error)
+            except Exception as report_error:
+                unreal.log_error('[CutSceneAI Studio] Unable to record readiness failure: ' + str(report_error))
             unreal.log_warning('[CutSceneAI Studio] Destination inspection unavailable: ' + str(readiness_error))
         jobs_folder = WORKSPACE / 'jobs'
         if not jobs_folder.is_dir():

@@ -97,3 +97,32 @@ def test_duplicate_target_asset_paths_does_not_guess(tmp_path):
     result=auto.inspect(*files,root,'Assets/Benchmark002','/Game/CutSceneAI/AutoTransfer/T_ABCD')
     assert not result['ready']
     assert any('unique Unity asset' in x for x in result['blockers'])
+
+
+def test_broad_unity_scope_skips_unrelated_invalid_tutorial_png(tmp_path):
+    """Reproduces user report: Assets/TutorialInfo/Icons/URP.png isn't PNG."""
+    root, files = create(tmp_path)
+    tutorial = root / 'Assets' / 'TutorialInfo' / 'Icons'
+    tutorial.mkdir(parents=True)
+    (tutorial / 'URP.png').write_bytes(b'not-a-png-tutorial-placeholder')
+    valid = root / 'Assets' / 'Benchmark002' / 'Characters' / 'Albedo.png'
+    valid.write_bytes(b'\x89PNG\r\n\x1a\n' + b'valid-texture-placeholder')
+    result = auto.inspect(*files, root, 'Assets', '/Game/CutSceneAI/AutoTransfer/T_ABCD')
+    assert result['ready'] is True
+    assert not result['blockers']
+    assert any('URP.png' in warning and 'Skipped' in warning for warning in result['warnings'])
+    assert any(row['kind'] == 'Texture2D' and row['source_file'] == str(valid.resolve())
+               for row in result['imports'])
+    assert not any('URP.png' in row['source_file'] for row in result['imports'])
+    report = tmp_path / 'auto.json'
+    report.write_text(json.dumps(result))
+    assert auto.verify(report, *files) == result
+
+
+def test_bad_required_audio_remains_a_blocker(tmp_path):
+    root, files = create(tmp_path)
+    (root / 'Assets' / 'Benchmark002' / 'Audio' / 'Cue.wav').write_bytes(b'broken sound')
+    result = auto.inspect(*files, root, 'Assets', '/Game/CutSceneAI/AutoTransfer/T_ABCD')
+    assert result['ready'] is False
+    assert any('Required SoundWave' in blocker and 'invalid WAV' in blocker
+               for blocker in result['blockers'])

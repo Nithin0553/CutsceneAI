@@ -1,4 +1,4 @@
-# CutSceneAI Studio — local connected UI (v0.4)
+# CutSceneAI Studio — local connected UI (v0.8)
 
 This directory documents the local browser UI and the source-driven fresh Unreal target experiments. The application is a development interface over the existing CutSceneAI source-CSIR planner and Unreal Editor adapters; it is **not** a fully automated project-to-project converter.
 
@@ -102,3 +102,9 @@ content to the code repository.
 The native picker is supported on Windows only in this release. Existing
 legacy JSON-path `/api/connect` calls remain supported for diagnostic and
 integration-test compatibility; the normal GUI no longer exposes them.
+
+## Texture and readiness diagnostics (v0.8)
+
+A broad Unity `Assets/` scope can contain unrelated tutorial/editor PNG files whose actual bytes are not PNG images. An invalid **optional** texture is now skipped with an explicit warning, instead of blocking source-bound model, animation, audio and actor setup. A required asset file that is empty or an invalid WAV continues to block import. No fabricated textures or materials are created.
+
+The Transfer screen no longer shows an indefinite `Checking...` when the editor probe is missing, stale or failing: it reports `INSPECTION_UNAVAILABLE`, `INSPECTION_FAILED` or `UPGRADE_COMPANION` and explains the next action. The Unreal worker emits a diagnostic readiness report on inspection errors; generation remains disabled until verified. The new companion version is `studio-editor-v0.4`; **restart Unreal Editor after pulling changes** to unload the previous Python module before running the companion command.
