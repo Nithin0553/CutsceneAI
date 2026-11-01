@@ -21,6 +21,7 @@ if str(CINETWIN) not in sys.path:
     sys.path.insert(0, str(CINETWIN))
 
 from hierarchy_plan import HierarchyPlanError, plan_actor_hierarchy
+from source_parent_resolution import analyze as analyze_source_parents
 
 
 class HierarchyAuditError(RuntimeError):
@@ -263,8 +264,12 @@ def audit(job_path: str | Path, output_path: str | Path, *, unreal_api: Any = No
             if attached is not None:
                 problems.append("UNEXPECTED_ROOT_PARENT: " + label)
 
-    for unresolved in source["unresolved_source_parents"]:
-        incomplete.append("SOURCE_PARENT_NOT_MAPPED_AS_ACTOR: " + unresolved["entity_name"])
+    parent_resolution = analyze_source_parents(csir, mapping, plan.get("actions", []))
+    source_groups = sorted({node["name"] for record in parent_resolution["rows"]
+                            for node in record["ancestor_chain"]})
+    for record in parent_resolution["rows"]:
+        incomplete.append("SOURCE_PARENT_REPRESENTATION_UNVERIFIED: " +
+                          record["source_name"] + " (" + record["strategy"] + ")")
 
     status = ("FAIL" if problems else "INCOMPLETE" if incomplete else "PASS")
     report = {
@@ -277,6 +282,8 @@ def audit(job_path: str | Path, output_path: str | Path, *, unreal_api: Any = No
         "unreal_project": _project(api), "unreal_level": _level(api),
         "direct_attachments": rows, "source_roots": roots,
         "unresolved_source_parents": source["unresolved_source_parents"],
+        "source_parent_resolution": parent_resolution,
+        "source_group_ancestors": source_groups,
         "direct_edges_expected": len(rows),
         "direct_parent_links_verified": sum(row["parent_link_status"] == "PASS" for row in rows),
         "direct_edges_verified": sum(row["status"] == "PASS" for row in rows),
@@ -318,5 +325,8 @@ def audit_latest(workspace: str | Path | None = None, *, unreal_api: Any = None)
         len(result["unresolved_source_parents"])))
     for item in result["errors"] + result["incomplete"]:
         print("[CutSceneAI Studio] Hierarchy detail: " + item)
+    if result["source_group_ancestors"]:
+        print("[CutSceneAI Studio] Actual unmapped Unity parent groups: " +
+              ", ".join(result["source_group_ancestors"]))
     print("[CutSceneAI Studio] Hierarchy report: " + str(path))
     return result
