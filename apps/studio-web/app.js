@@ -193,6 +193,23 @@
         }catch{} // Project folders may have moved; allow Browse Folder again.
       }
       if(status.observation)state.report=status.observation;
+      if(!state.capabilities){try{state.capabilities=await api('capabilities')}catch{}}
+      if(status.connection){
+        try{
+          state.sourceSurfaces=await api('source-surfaces');
+          if(state.selectedCensus&&!state.sourceSurfaces.options?.some(x=>x.path===state.selectedCensus)){
+            state.selectedCensus='';state.strictSourceCensus=true;
+          }
+          if(!state.selectedCensus){
+            const ready=(state.sourceSurfaces.options||[]).filter(x=>x.strict_ready);
+            if(ready.length===1)state.selectedCensus=ready[0].path;
+          }
+        }catch{}
+      }
+      if(status.active_job){
+        try{state.verification=await api('verification')}
+        catch{state.verification=null}
+      } else state.verification=null;
       if(status.active_job && (!state.job || status.active_job!==oldId || state.job.job_id!==status.active_job))state.job=await api('jobs/'+status.active_job);
       else if(status.active_job)state.job=await api('jobs/'+status.active_job);
       if(state.job?.diagnostic_file&&!state.jobDiagnostic){try{state.jobDiagnostic=await api('diagnostic/'+state.job.job_id)}catch{}}
@@ -215,7 +232,17 @@
     if(name==='continue'){navigate(state.job?'results':state.candidate?'transfer':c?'select':'connect');return}
     if(name==='clear'){state.error='';state.info='';render();return}
     if(name==='refresh'){await refresh();return}
-    if(name==='copy-command'){try{await navigator.clipboard.writeText($('#worker-command').textContent);notice('Unreal Python Console command copied.')}catch{notice('Copy the command manually from the box.',true)}return}
+    if(['copy-command','copy-unreal-scan','copy-audit-command'].includes(name)){
+      const field=name==='copy-command'?'worker-command':name==='copy-unreal-scan'?'unreal-scan-command':'audit-command';
+      try{await navigator.clipboard.writeText($('#'+field).textContent);notice('Unreal Python command copied.')}
+      catch{notice('Copy the command manually from the box.',true)}return;
+    }
+    if(name==='refresh-census'){
+      state.busy=true;render();
+      try{state.sourceSurfaces=await api('source-surfaces');state.info='Unity source census rescanned. Select the exact matching export.';state.error=''}
+      catch(err){state.error=err.message;state.info=''}
+      finally{state.busy=false;render()}return;
+    }
     if(name==='browse-unity'||name==='browse-unreal'||name==='scan-folders'){
       state.busy=true;render();
       try{
@@ -238,7 +265,13 @@
       return;
     }
     if(name==='prepare'){
-      state.busy=true;render();try{state.candidate=await api('prepare',{});state.job=null;state.jobDiagnostic=null;notice('Source-authenticated transfer plan prepared. Unreal assets remain unchanged.')}catch(err){notice('Plan blocked: '+err.message,true)}finally{state.busy=false;render()}return;
+      state.busy=true;render();try{
+        const preferences={enable_actor_visibility_fallback:state.visibilityFallback};
+        if(state.selectedCensus){preferences.source_feature_surface_path=state.selectedCensus;preferences.require_complete_source_features=state.strictSourceCensus}
+        state.candidate=await api('prepare',preferences);
+        state.job=null;state.jobDiagnostic=null;state.verification=null;
+        notice('CED-aware source-authenticated plan prepared. Unreal assets remain unchanged.');
+      }catch(err){notice('Plan blocked: '+err.message,true)}finally{state.busy=false;render()}return;
     }
     if(name==='execute'){
       if(!state.candidate){notice('Prepare a verified transfer first.',true);return}
@@ -258,6 +291,9 @@
   document.addEventListener('change', async event=>{
     const name=event.target?.name;
     if(name==='source_rights_confirmed'){state.sourceRightsConfirmed=event.target.checked;return}
+    if(name==='source-census'){state.selectedCensus=event.target.value;render();return}
+    if(name==='strict-source-census'){state.strictSourceCensus=event.target.checked;return}
+    if(name==='visibility-fallback'){state.visibilityFallback=event.target.checked;return}
     if(name==='csir'){state.selectedCutscene=event.target.value;render();return}
     if(name==='level'){state.selectedLevel=event.target.value;render();return}
     if(!['unity-project','unreal-project-root','unreal-project-file'].includes(name)||!event.target.value)return;
@@ -284,14 +320,14 @@
           csir:body.csir,level:body.level,
           source_rights_confirmed:!!form.querySelector('[name=source_rights_confirmed]').checked
         });
-        state.status.connection=result;state.candidate=null;state.job=null;
+        state.status.connection=result;state.candidate=null;state.job=null;state.sourceSurfaces=null;state.selectedCensus='';state.verification=null;
         state.jobDiagnostic=null;state.report=null;state.evidencePath='';
         navigate('select');notice('Projects connected. Cutscene and mapping detected automatically.');
       }else if(form.id==='connect-form'){
         body.skeletal_root_world_lock=!!form.querySelector('[name=skeletal_root_world_lock]').checked;
         body.source_rights_confirmed=!!form.querySelector('[name=source_rights_confirmed]').checked;
         const result=await api('connect',body);
-        state.status.connection=result;state.candidate=null;state.job=null;state.jobDiagnostic=null;state.report=null;state.evidencePath='';navigate('select');notice('Project files verified. Select your exported cutscene.');
+        state.status.connection=result;state.candidate=null;state.job=null;state.sourceSurfaces=null;state.selectedCensus='';state.verification=null;state.jobDiagnostic=null;state.report=null;state.evidencePath='';navigate('select');notice('Project files verified. Select your exported cutscene.');
       }else if(form.id==='observation-form'){
         state.evidencePath=body.path;state.report=await api('observation',{path:body.path});notice('Real target observations verified and attached. Fidelity remains unverified.');
       }
