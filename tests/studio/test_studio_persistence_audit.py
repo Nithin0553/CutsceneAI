@@ -285,7 +285,7 @@ def test_summarize_existing_report_is_read_only(tmp_path, capsys):
     root, _jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
     output = candidate / "audit.json"
     AUDIT.audit_latest(root, unreal_api=fake)
-    existing = list(candidate.glob("post-reopen-audit-*.json"))[0]
+    existing = next(candidate.glob("post-reopen-audit-*.json"))
     data_before = existing.read_bytes()
     summary = AUDIT.summarize_latest(root)
     assert summary["native_structure_status"] == "PASS"
