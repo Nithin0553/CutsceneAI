@@ -43,6 +43,16 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
         raise SourceSurfaceGapError("Cannot compare a non-Unity feature surface.")
     if source_surface.get("schema_version") != "0.2.0":
         raise SourceSurfaceGapError("Unsupported source feature census version.")
+    source_id = str((csir.get("source") or {}).get("project_fingerprint") or "")
+    surface_id = str(source_surface.get("project_fingerprint") or "")
+    if source_id and surface_id and source_id != surface_id:
+        raise SourceSurfaceGapError(
+            "Unity feature census is from a different source project fingerprint."
+        )
+    source_version = str((csir.get("source") or {}).get("engine_version") or "")
+    surface_version = str(source_surface.get("engine_version") or "")
+    if source_version and surface_version and source_version != surface_version:
+        raise SourceSurfaceGapError("Unity feature census engine version differs from CSIR.")
     scene_objects = {}
     scoped_scenes = set()
     for entity in csir.get("entities", []):
@@ -119,12 +129,22 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
                          "MISSING_SOURCE_SCRIPT",
                          "DUPLICATE_SOURCE_COMPONENT_IDENTITY",
                      })
+    # No matching objects means the census cannot prove it inspected the
+    # requested cutscene. Treat as incomplete evidence in strict mode.
+    scope_matched = bool(scene_objects and cases)
+    if not scope_matched:
+        unresolved += 1
+        totals["SOURCE_SCOPE_NOT_VERIFIED"] += 1
     return {
         "kind": "cutsceneai.studio.source_feature_gap",
         "schema_version": "0.2.0",
         "cutscene_id": str(csir.get("cutscene_id") or ""),
         "source_engine_version": str(source_surface.get("engine_version") or ""),
+        "source_project_fingerprint": source_id,
+        "surface_project_fingerprint": surface_id,
+        "project_identity_proven": bool(source_id and surface_id and source_id == surface_id),
         "loaded_scene_scope": sorted(scoped_scenes),
+        "source_scope_matched": scope_matched,
         "indexed_cutscene_entities": len(scene_objects),
         "scoped_component_occurrences": len(cases),
         "component_findings": cases,
