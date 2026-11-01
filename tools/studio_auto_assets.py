@@ -84,9 +84,13 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     blockers, warnings, imports, actors = [], [], [], []
     asset_resolutions = []
     skipped_optional_textures = []
-    used_target = set()
+    used_target = {}
     def add_import(source, dest, kind, *, character=None):
         if dest in used_target:
+            previous = used_target[dest]
+            if previous != (str(source), kind, character):
+                blockers.append('Target asset collision at ' + dest + ': ' +
+                                previous[0] + ' versus ' + str(source))
             return
         if not dest.startswith('/Game/') or '..' in dest.split('/'):
             blockers.append('Unsafe target path: '+dest)
@@ -109,7 +113,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             else:
                 blockers.append('Required ' + kind + ' source is ' + reason + ': ' + str(source))
             return
-        used_target.add(dest)
+        used_target[dest] = (str(source), kind, character)
         imports.append({'source_file':str(source),'source_sha256':digest(source),
                         'target_asset_path':dest,'kind':kind,'character':character})
     bindings = plan.get('bindings') or {}
@@ -237,7 +241,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             'Examples: ' + '; '.join(skipped_optional_textures[:3])
         )
     if any(item['kind'] in ('SkeletalMesh','AnimSequence') for item in imports):
-        warnings.append('FBX source files are matched by unambiguous names; compatible target skeletons, materials and animation motion remain unverified.')
+        warnings.append('Resolved FBX source identities; target skeletons, materials and animation motion remain unverified until Unreal readback.')
     return {'kind':'cutsceneai.studio.automatic_setup_plan','schema_version':'0.1.0',
             'source_project':str(root),'source_scope':scope,'target_folder':target_folder,
             'source_csir_sha256':digest(csir_path),'mapping_sha256':digest(mapping_path),

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 GUID = re.compile(r"^[0-9a-fA-F]{32}$")
-UNITY_ID = re.compile(r"^unity-asset:([0-9a-fA-F]{32}):")
+UNITY_ID = re.compile(r"^unity-asset:([0-9a-fA-F]{32}):[-+]?\d+$")
 
 
 def _tokens(text: str) -> str:
@@ -95,6 +95,15 @@ def resolve(files: Iterable[Path], logical_name: str, suffixes: set[str], *,
         if not by_path:
             by_path = [p for p in candidates if p.relative_to(root).as_posix().casefold() in explicit_paths]
         by_guid = [p for p in candidates if _unity_guid(p) in explicit_guids]
+        # A path cannot override a contradictory Unity .meta GUID. The same
+        # exported identity must point to the same asset in both sources.
+        if by_path and explicit_guids:
+            wrong_guid = [p for p in by_path
+                          if (on_disk := _unity_guid(p)) is not None
+                          and on_disk not in explicit_guids]
+            if wrong_guid:
+                return {'selected': None, 'strategy': 'IDENTITY_CONFLICT',
+                        'candidates': [str(p) for p in sorted(set(by_path + by_guid))]}
         if by_path and by_guid and set(by_path).isdisjoint(by_guid):
             return {'selected': None, 'strategy': 'IDENTITY_CONFLICT',
                     'candidates': [str(p) for p in sorted(set(by_path + by_guid))]}
@@ -112,6 +121,15 @@ def resolve(files: Iterable[Path], logical_name: str, suffixes: set[str], *,
     return _finalize(matches, 'NORMALIZED_FILENAME')
 
 
+def _sha256_file(path: Path) -> bytes:
+    # Stream large FBX files instead of loading multiple gigabytes into RAM.
+    state = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            state.update(block)
+    return state.digest()
+
+
 def _finalize(matches: list[Path], strategy: str) -> dict:
     if not matches:
         return {'selected': None, 'strategy': 'NOT_FOUND', 'candidates': []}
@@ -119,7 +137,7 @@ def _finalize(matches: list[Path], strategy: str) -> dict:
         return {'selected': matches[0], 'strategy': strategy, 'candidates': [str(matches[0])]}
     # Two copied FBX files with the same bytes can be safely treated as the
     # same source asset. Different bytes mean different content, not a tie.
-    hashes = {hashlib.sha256(p.read_bytes()).hexdigest() for p in matches}
+    hashes = {_sha256_file(p) for p in matches}
     if len(hashes) == 1:
         return {'selected': matches[0], 'strategy': strategy + '_CONTENT_IDENTICAL',
                 'candidates': [str(p) for p in matches]}

@@ -173,3 +173,22 @@ def test_prop_fbx_imported_as_static_mesh_and_bound_to_actor(tmp_path):
     assert result['ready']
     assert any(a['kind']=='StaticMesh' and a['source_file']==str(prop.resolve()) for a in result['imports'])
     assert next(a for a in result['actors'] if a['name']=='PROP_MOVING')['mesh_path'].startswith('/Game/')
+
+
+def test_two_character_names_that_sanitize_to_same_target_are_blocked(tmp_path):
+    root, files = create(tmp_path)
+    different = root/'Assets'/'Benchmark002'/'Characters'/'Ch31-nonPBR.fbx'
+    different.write_bytes(b'different-skeletal-mesh')
+    csir = json.loads(files[0].read_text())
+    csir['entities'].append({'entity_id':'collision','name':'Ch31-nonPBR',
+                             'ced_type':'entity.character'})
+    files[0].write_text(json.dumps(csir))
+    plan = json.loads(files[2].read_text())
+    plan['bindings']['Ch31-nonPBR'] = 'CSAI_Ch31_collision'
+    files[2].write_text(json.dumps(plan))
+    result = auto.inspect(*files, root, 'Assets/Benchmark002',
+                          '/Game/CutSceneAI/AutoTransfer/T_ABCD')
+    assert not result['ready']
+    assert any('Target asset collision' in b for b in result['blockers'])
+    assert sum(x['target_asset_path'].endswith('/Characters/CSAI_Ch31_nonPBR')
+               for x in result['imports']) == 1

@@ -67,3 +67,13 @@ not a substitute for adapting and testing more element types.
 - Unreal Interchange import: https://dev.epicgames.com/documentation/en-us/unreal-engine/importing-assets-using-interchange-in-unreal-engine
 - USD in Unreal: https://dev.epicgames.com/documentation/en-us/unreal-engine/universal-scene-description-in-unreal-engine
 - Khronos glTF 2.0: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html
+
+## Asset identity reliability fixes (Studio UI v0.3 incremental)
+
+- Unity `unity-asset:<GUID>:<local-file-ID>` references are parsed as source evidence.
+- A recorded asset path is rejected when its existing Unity `.meta` GUID contradicts
+  that source evidence; two different files are never silently substituted.
+- Exact byte-identical duplicates can resolve deterministically. Large candidate
+  files are hashed in chunks rather than fully buffered.
+- Sanitized target asset path collisions between different source assets are blockers,
+  not silent drops. Engine import and playback parity still require their own checks.
