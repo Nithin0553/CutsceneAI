@@ -83,7 +83,31 @@ def test_unrelated_scene_and_asset_classes_do_not_falsely_block():
     result = source_surface_gap.audit(csir, surface)
     assert result["unresolved_component_count"] == 1
     assert result["component_counts"]["OTHER_LOADED_SCENE_COMPONENT"] == 1
-    assert result["component_counts"]["SOURCE_SCOPE_NOT_VERIFIED"] == 1
+    assert result["source_scope_matched"] is False
+    assert result["component_counts"]["SOURCE_OBJECT_TRANSFORM_NOT_VERIFIED"] == 1
+    assert result["missing_cutscene_objects"][0]["hierarchy_path"] == "S/Camera"
+
+
+def test_partial_census_cannot_claim_all_cutscene_objects_were_scanned():
+    csir, census = _fixtures()
+    csir["entities"].append({
+        "entity_id": "scene.sibling", "name": "Sibling",
+        "metadata": {"scene_path": "Assets/Scenes/S.unity",
+                     "hierarchy_path": "S/Sibling"},
+    })
+    census["loaded_scene_components"] = [
+        row for row in census["loaded_scene_components"]
+        if row["component_type"] != "MyGame.CustomFX"
+    ]
+    report = source_surface_gap.audit(csir, census)
+    assert report["verified_cutscene_objects"] == 1
+    assert report["source_scope_matched"] is False
+    assert report["unresolved_component_count"] == 1
+    assert report["missing_cutscene_objects"] == [{
+        "scene_path": "Assets/Scenes/S.unity", "hierarchy_path": "S/Sibling",
+        "source_entity_id": "scene.sibling",
+        "state": "SOURCE_OBJECT_TRANSFORM_NOT_VERIFIED",
+    }]
 
 
 def test_invalid_or_wrong_engine_census_is_rejected():

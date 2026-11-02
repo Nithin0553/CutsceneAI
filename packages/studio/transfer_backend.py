@@ -815,7 +815,8 @@ def compose_files(
             ) from exc
         if (mapping.get("require_complete_source_features", True)
             and (source_surface["unresolved_component_count"]
-                 or not source_surface["project_identity_proven"])):
+                 or not source_surface["project_identity_proven"]
+                 or not source_surface["source_scope_matched"])):
             raise TransferBackendError(
                 "Unity source feature census is incomplete: "
                 + str(source_surface["unresolved_component_count"])
@@ -859,7 +860,8 @@ def compose_files(
     report["source_feature_surface_state"] = (
         "SOURCE_CENSUS_VERIFIED_NO_UNRESOLVED_COMPONENTS"
         if source_surface and not source_surface["unresolved_component_count"]
-        and source_surface["project_identity_proven"] else
+        and source_surface["project_identity_proven"]
+        and source_surface["source_scope_matched"] else
         "SOURCE_CENSUS_PARTIAL_EXPLICIT_REVIEW_REQUIRED"
         if source_surface else "NOT_COLLECTED"
     )

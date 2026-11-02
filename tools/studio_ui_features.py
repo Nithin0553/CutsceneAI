@@ -94,10 +94,16 @@ def source_surfaces(config: dict[str, Any]) -> dict[str, Any]:
                 for row in report["component_findings"]
                 if row["state"] in unresolved_states
             ]
-            if not report["source_scope_matched"]:
+            findings.extend({
+                "native_type": "UnityEngine.Transform",
+                "object_path": row["hierarchy_path"],
+                "scene_path": row["scene_path"],
+                "state": row["state"],
+            } for row in report["missing_cutscene_objects"])
+            if not report["source_scope_matched"] and not report["missing_cutscene_objects"]:
                 findings.append({
                     "native_type": "SOURCE_SCOPE_NOT_VERIFIED",
-                    "object_path": "(no matching source scene objects)",
+                    "object_path": "(no source scene objects identified)",
                     "scene_path": "",
                     "state": "SOURCE_SCOPE_NOT_VERIFIED",
                 })
