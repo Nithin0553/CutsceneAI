@@ -261,3 +261,66 @@ def test_success_receipt_has_no_unreported_operations(tmp_path):
     assert all(x['status']=='ACTOR_LABEL_CHECKED' for x in receipt['actor_operations'])
     assert len(receipt['assets_imported'])==len(receipt['asset_operations'])
     assert len(receipt['actors_created'])==len(receipt['actor_operations'])
+
+
+def test_optin_fbx_material_import_only_changes_fresh_mesh_imports(tmp_path):
+    root, files = create(tmp_path)
+    mapping_path = Path(files[1])
+    original = mapping_path.read_text(encoding="utf-8")
+    src = json.loads(original)
+    src["enable_fbx_embedded_material_import"] = True
+    mapping_path.write_text(json.dumps(src), encoding="utf-8")
+    stage = studio_auto_assets.inspect(
+        *files, root, "Assets/Benchmark002", "/Game/CutSceneAI/AutoTransfer/T_VISUAL"
+    )
+    assert stage["fbx_embedded_material_import_requested"] is True
+    assert any("Opt-in FBX material import" in warning for warning in stage["warnings"])
+    manifest = tmp_path / "visual-setup.json"
+    manifest.write_text(json.dumps(stage))
+    project = tmp_path / "VisualProject.uproject"
+    project.write_text("{}")
+    fake = FakeUnreal(str(project))
+    imported = []
+    original_import = fake.imports
+
+    def record(tasks):
+        imported.extend(tasks)
+        return original_import(tasks)
+
+    fake.asset_tools.import_asset_tasks = record
+    receipt = scene.run(
+        str(manifest), str(tmp_path / "visual-receipt.json"),
+        csir_path=str(files[0]), mapping_path=str(files[1]),
+        plan_path=str(files[2]), expected_project=str(project),
+        expected_level="/Game/Tests/L_Test", unreal_api=fake,
+    )
+    assert receipt["fbx_embedded_material_import_requested"] is True
+    assert receipt["status"] == "SETUP_SAVED_UNVERIFIED"
+    options = [t.props.get("options") for t in imported if t.props.get("options")]
+    assert options
+    for option in options:
+        mesh = option.props["import_mesh"]
+        assert option.props["import_materials"] is bool(mesh)
+        assert option.props["import_textures"] is bool(mesh)
+    assert receipt["fidelity_verified"] is False
+
+
+def test_default_fbx_material_import_remains_off_for_existing_workflows():
+    fake = FakeUnreal("C:/Unreal/Mock.uproject")
+    for kind in ("SkeletalMesh", "StaticMesh", "AnimSequence"):
+        task = scene._task(fake, "C:/Original.fbx", "/Game/Candidate/Mesh", kind)
+        options = task.props["options"]
+        assert options.props["import_materials"] is False
+        assert options.props["import_textures"] is False
+
+
+def test_material_optin_is_only_accepted_as_explicit_boolean():
+    import studio_ui_features
+
+    assert studio_ui_features.validate_options(
+        {}, {"enable_fbx_embedded_material_import": True}
+    ) == {"enable_fbx_embedded_material_import": True}
+    with pytest.raises(ValueError, match="must be Boolean"):
+        studio_ui_features.validate_options(
+            {}, {"enable_fbx_embedded_material_import": "yes"}
+        )
