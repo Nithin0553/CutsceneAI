@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Playables;
@@ -33,6 +34,45 @@ namespace CutsceneAI.UnityExtractor
             public string component_assembly;
             public string component_global_id;
             public bool missing_script;
+            public ComponentFeature feature;
+        }
+
+        [Serializable]
+        private sealed class ComponentFeature
+        {
+            public string extraction = "UNSUPPORTED_COMPONENT_CLASS";
+            public bool has_render_post_processing;
+            public bool render_post_processing;
+            public bool has_render_shadows;
+            public bool render_shadows;
+            public bool has_use_pipeline_settings;
+            public bool use_pipeline_settings;
+            public bool has_light_cookie;
+            public bool has_geometry;
+            public string shape;
+            public bool enabled;
+            public bool is_trigger;
+            public Vec3 world_center_m;
+            public Vec4 world_rotation_xyzw;
+            public Vec3 world_size_m;
+            public float world_radius_m;
+            public string collider_scale_policy;
+            public int signal_reaction_count;
+            public List<string> signal_reactions = new List<string>();
+        }
+
+        [Serializable]
+        private sealed class Vec3
+        {
+            public float x, y, z;
+            public Vec3(Vector3 v) { x = v.x; y = v.y; z = v.z; }
+        }
+
+        [Serializable]
+        private sealed class Vec4
+        {
+            public float x, y, z, w;
+            public Vec4(Quaternion q) { x = q.x; y = q.y; z = q.z; w = q.w; }
         }
 
         [Serializable]
@@ -89,6 +129,117 @@ namespace CutsceneAI.UnityExtractor
             });
         }
 
+
+        private static bool TryBoolProperty(Component component, string name, out bool value)
+        {
+            value = false;
+            try
+            {
+                var property = component.GetType().GetProperty(name,
+                    BindingFlags.Public | BindingFlags.Instance);
+                if (property != null && property.PropertyType == typeof(bool))
+                {
+                    value = (bool)property.GetValue(component, null);
+                    return true;
+                }
+            }
+            catch (Exception) { /* Unsupported vendor reflection remains unverified. */ }
+            return false;
+        }
+
+        private static ComponentFeature CaptureComponent(Component component)
+        {
+            var feature = new ComponentFeature();
+            if (component == null)
+            {
+                feature.extraction = "MISSING_SCRIPT";
+                return feature;
+            }
+            // These types need no optional URP compile-time dependency.
+            string name = component.GetType().FullName ?? "";
+            if (name == "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData")
+            {
+                feature.extraction = "URP_CAMERA_PROPERTIES_PARTIAL";
+                bool flag;
+                feature.has_render_post_processing =
+                    TryBoolProperty(component, "renderPostProcessing", out flag);
+                if (feature.has_render_post_processing) feature.render_post_processing = flag;
+                feature.has_render_shadows =
+                    TryBoolProperty(component, "renderShadows", out flag);
+                if (feature.has_render_shadows) feature.render_shadows = flag;
+                return feature;
+            }
+            if (name == "UnityEngine.Rendering.Universal.UniversalAdditionalLightData")
+            {
+                feature.extraction = "URP_LIGHT_PROPERTIES_PARTIAL";
+                bool flag;
+                feature.has_use_pipeline_settings =
+                    TryBoolProperty(component, "usePipelineSettings", out flag);
+                if (feature.has_use_pipeline_settings) feature.use_pipeline_settings = flag;
+                return feature;
+            }
+            if (component is BoxCollider box)
+            {
+                Vector3 scale = box.transform.lossyScale;
+                Vector3 size = Vector3.Scale(box.size, new Vector3(
+                    Mathf.Abs(scale.x), Mathf.Abs(scale.y), Mathf.Abs(scale.z)));
+                feature.extraction = "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE";
+                feature.shape = "box";
+                feature.has_geometry = true;
+                feature.enabled = box.enabled;
+                feature.is_trigger = box.isTrigger;
+                feature.world_center_m = new Vec3(box.transform.TransformPoint(box.center));
+                feature.world_rotation_xyzw = new Vec4(box.transform.rotation);
+                feature.world_size_m = new Vec3(size);
+                feature.collider_scale_policy = "LOSSY_SCALE_NO_SHEAR_PROOF";
+                return feature;
+            }
+            if (component is SphereCollider sphere)
+            {
+                Vector3 scale = sphere.transform.lossyScale;
+                feature.extraction = "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE";
+                feature.shape = "sphere";
+                feature.has_geometry = true;
+                feature.enabled = sphere.enabled;
+                feature.is_trigger = sphere.isTrigger;
+                feature.world_center_m = new Vec3(
+                    sphere.transform.TransformPoint(sphere.center));
+                feature.world_rotation_xyzw = new Vec4(sphere.transform.rotation);
+                feature.world_radius_m = sphere.radius * Mathf.Max(
+                    Mathf.Abs(scale.x), Mathf.Abs(scale.y), Mathf.Abs(scale.z));
+                feature.collider_scale_policy = "UNITY_SPHERE_MAX_AXIS_LOSSY_SCALE";
+                return feature;
+            }
+            if (component is UnityEngine.Timeline.SignalReceiver receiver)
+            {
+                feature.extraction = "SIGNAL_REACTIONS_INSPECTED_NO_TARGET_EVENT_BINDING";
+                try
+                {
+                    foreach (var signal in receiver.GetRegisteredSignals())
+                    {
+                        var reaction = receiver.GetReaction(signal);
+                        if (reaction == null) continue;
+                        for (int k = 0; k < reaction.GetPersistentEventCount(); k++)
+                        {
+                            var target = reaction.GetPersistentTarget(k);
+                            var method = reaction.GetPersistentMethodName(k);
+                            feature.signal_reactions.Add((target == null ? "MISSING_TARGET" :
+                                GlobalObjectId.GetGlobalObjectIdSlow(target).ToString()) +
+                                ":" + method);
+                            feature.signal_reaction_count++;
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    feature.extraction = "SIGNAL_REACTION_REFLECTION_INCOMPLETE";
+                }
+                return feature;
+            }
+            feature.extraction = "NOT_YET_EXTRACTED";
+            return feature;
+        }
+
         [MenuItem("Tools/CutsceneAI/Discover Installed Feature Surface", priority = 91)]
         private static void Discover()
         {
@@ -137,6 +288,7 @@ namespace CutsceneAI.UnityExtractor
                                 component_global_id = absent ? "" :
                                     GlobalObjectId.GetGlobalObjectIdSlow(component).ToString(),
                                 missing_script = absent,
+                                feature = CaptureComponent(component),
                             });
                         }
                     }
