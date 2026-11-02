@@ -74,24 +74,40 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
     def record(name: str, status: str, explanation: str, **numbers: Any) -> None:
         checks[name] = {"status": status, "explanation": explanation, **numbers}
 
-    # Verified source provenance is a prerequisite to all downstream claims.
+    # Compare current bytes against the PREPARED immutable source/session,
+    # not merely the fact that files currently exist at the same path.
     csir_path = Path(str(job.get("csir") or "")).resolve()
     plan_path = candidate / "transfer-plan.json"
-    if not csir_path.is_file() or not plan_path.is_file():
+    session_path = candidate / "session.json"
+    if not csir_path.is_file() or not plan_path.is_file() or not session_path.is_file():
         record("source_and_plan", "INCOMPLETE",
-               "Unity CSIR source and immutable transfer plan must both exist.")
+               "Unity CSIR, immutable session and transfer plan must all exist.")
     else:
         plan = _read(plan_path)
+        session = _read(session_path)
+        source_digest = _sha(csir_path)
+        plan_digest = _sha(plan_path)
+        matching = (
+            session.get("kind") == "cutsceneai.studio.prepared_transfer"
+            and session.get("source", {}).get("csir_path") == str(csir_path)
+            and session.get("source", {}).get("sha256") == source_digest
+            and session.get("target", {}).get("sequence_asset_path") == job.get("sequence_path")
+            and session.get("artifact_sha256", {}).get("transfer-plan.json") == plan_digest
+            and plan.get("sequence_asset_path") == job.get("sequence_path")
+        )
         record(
-            "source_and_plan",
-            "PASS" if plan.get("sequence_asset_path") == job.get("sequence_path")
-            else "FAIL",
-            "Existing Unity source and plan observed; their sequence identity must match.",
-            csir_sha256=_sha(csir_path),
-            plan_sha256=_sha(plan_path),
+            "source_and_plan", "PASS" if matching else "FAIL",
+            "Source and native target must match the original prepared hashes and sequence.",
+            csir_sha256=source_digest, plan_sha256=plan_digest,
         )
 
-    generation = job.get("generation_status") == "GENERATED_UNVERIFIED"
+    generation = (
+        job.get("generation_status") == "GENERATED_UNVERIFIED"
+        and job.get("status") in {
+            "GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED",
+            "GENERATED_DIAGNOSTIC_INCOMPLETE",
+        }
+    )
     record(
         "native_generation", "PASS" if generation else
         "INCOMPLETE" if job.get("status") in {"QUEUED", "RUNNING"} else "FAIL",
