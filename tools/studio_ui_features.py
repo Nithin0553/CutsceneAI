@@ -174,13 +174,16 @@ def verification(workspace: Path, active_job: dict[str, Any],
         raise ValueError("Verification report is outside Studio candidate workspace.")
     out: dict[str, Any] = {
         "job_id": job_id, "available": True,
-        "persistence": None, "hierarchy": None, "fidelity_verified": False,
+        "persistence": None, "hierarchy": None, "visual": None,
+        "fidelity_verified": False,
     }
     for name, pattern, wanted in (
         ("persistence", "post-reopen-audit-" + job_id + ".json",
          "cutsceneai.studio.persistence_audit"),
         ("hierarchy", "hierarchy-audit-" + job_id + "-*.json",
          "cutsceneai.studio.hierarchy_persistence_audit"),
+        ("visual", "visual-audit-" + job_id + "-*.json",
+         "cutsceneai.studio.visual_readback_audit"),
     ):
         files = sorted(
             (p for p in candidate.glob(pattern) if p.is_file()
@@ -205,13 +208,23 @@ def verification(workspace: Path, active_job: dict[str, Any],
                 "actors": data.get("actors_unique_and_class_verified"),
                 "actors_expected": data.get("actor_count"),
             })
-        else:
+        elif name == "hierarchy":
             report.update({
                 "parent_links": data.get("direct_parent_links_verified"),
                 "fully_checked": data.get("direct_edges_verified"),
                 "parent_links_expected": data.get("direct_edges_expected"),
                 "unresolved_source_parents": len(data.get("unresolved_source_parents", [])),
                 "source_groups": data.get("source_group_ancestors", []),
+            })
+        else:
+            report.update({
+                "material_slots": data.get("material_slots"),
+                "default_material_slots": data.get("material_slots_engine_default"),
+                "empty_material_slots": data.get("material_slots_empty"),
+                "nondefault_material_slots": data.get("material_slots_nondefault"),
+                "environment": data.get("environment_actor_counts") or {},
+                "visual_issues": data.get("visual_issues") or [],
+                "render_fidelity_verified": False,
             })
         out[name] = report
     return out
