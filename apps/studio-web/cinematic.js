@@ -9,7 +9,8 @@
   const state = {screen:'home', phase:'IDLE', busy:false, info:'', error:'', status:null,
     discovery:null, folders:{unity:'',unreal:''}, unrealProject:'', csir:'', level:'',
     sourceRights:false, allowPartial:false, candidate:null, job:null, verification:null,
-    diagnosis:null, feedback:null, running:false, detailsOpen:false, menuOpen:false};
+    diagnosis:null, feedback:null, running:false, detailsOpen:false, menuOpen:false,
+    censusSelection:null, censusIssue:false};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
   const connection = () => state.status?.connection;
   const worker = () => state.status?.unreal_worker || {};
@@ -171,6 +172,17 @@
         '<pre id="worker-command">'+esc(command)+'</pre>'+button('Copy Unreal companion command','copy-worker',false,'secondary')+
         '<p class="subnote">'+esc(d.next_action||'Waiting for the editor')+'</p></div>':'')+
       (phase==='BLOCKED'?'<p class="warning" role="alert">'+esc(state.error||j.error||d.next_action||'Read the diagnostic report')+'</p>':'')+
+      (phase==='BLOCKED'&&state.censusIssue&&state.censusSelection?
+        '<section class="census-blocker"><h3>'+esc(state.censusSelection.unresolved_components)+
+        ' source features need review</h3><p>This is a source-coverage issue, not a failed Unreal import. The following features cannot yet be guaranteed to transfer:</p>'+
+        '<div class="census-findings">'+(state.censusSelection.unresolved_findings||[])
+          .map(f=>'<div class="census-finding"><strong>'+esc(f.native_type||'Unknown component')+
+          '</strong><span>'+esc(f.object_path||f.scene_path||'Source object unknown')+
+          '</span><small>'+esc(f.state||'UNRESOLVED')+'</small></div>').join('')+'</div>'+
+        (state.censusSelection.findings_truncated?'<p class="subnote">Additional source findings are available in the advanced report.</p>':'')+
+        '<p class="subnote">Recommended: improve the source extraction/adapters before transfer. To run a separate research-only best-effort candidate, explicitly accept that the missing source behavior will NOT be fidelity-verified.</p>'+
+        button('Run labelled best-effort trial','best-effort',state.busy,false?'':'secondary')+
+        '</section>':'')+
       '<div class="transfer-progress"><div class="indeterminate '+(activelyWorking?'working':'')+
       '" role="progressbar" aria-label="Transfer state" aria-valuetext="'+esc(label)+'"><i></i></div>'+
       '<span>'+esc(['RUNNING','QUEUED'].includes(j.status)?j.status:phase)+'</span></div>'+
@@ -198,21 +210,62 @@
   function about(){return '<main class="about-view"><h1>CutSceneAI Studio</h1>'+
     '<p>This local system analyzes Unity cutscenes, plans native Unreal reconstruction, and measures known source-to-target differences. CineTwin and CED provide evidence and conversion strategies; unsupported effects are explicitly reported.</p>'+
     '<p>For full CED coverage, editing options, native audits and reports, use the <a href="?advanced=1">Advanced research workspace</a>.</p></main>';}
-  // A full innerHTML replacement tears down focus, restarts CSS animations,
-  // and makes the screen flash at every 2-second editor heartbeat. Retain
-  // the current DOM until the *visible* application state actually changes.
+  // Reconcile the browser DOM, rather than replacing every node after each
+  // two-second poll. This keeps ongoing CSS animations, focus, open details,
+  // and the compositor layers alive while a status label changes.
   let lastMarkup = null;
+  function reconcile(parent, freshParent){
+    const original=Array.from(parent.childNodes);
+    const incoming=Array.from(freshParent.childNodes);
+    for(let i=0;i<incoming.length;i++){
+      const next=incoming[i], old=original[i];
+      if(!old){parent.appendChild(next.cloneNode(true));continue;}
+      if(old.nodeType!==next.nodeType || old.nodeName!==next.nodeName){
+        parent.replaceChild(next.cloneNode(true),old);continue;
+      }
+      if(old.nodeType===3 || old.nodeType===8){
+        if(old.nodeValue!==next.nodeValue)old.nodeValue=next.nodeValue;
+        continue;
+      }
+      if(old.nodeType!==1)continue;
+      for(const attr of Array.from(old.attributes)){
+        if(!next.hasAttribute(attr.name))old.removeAttribute(attr.name);
+      }
+      for(const attr of Array.from(next.attributes)){
+        if(old.getAttribute(attr.name)!==attr.value)old.setAttribute(attr.name,attr.value);
+      }
+      if(old.tagName==='DETAILS' && old.hasAttribute('class') &&
+        old.classList.contains('research')){
+        // The browser's native details open state is authoritative.
+        // The existing toggle listener remembers the user's preference.
+        if(state.detailsOpen)old.setAttribute('open','');
+        else old.removeAttribute('open');
+      }
+      if(old.tagName==='SELECT' && old===document.activeElement){
+        // Preserve an actively open native dropdown until change/blur.
+        continue;
+      }
+      if(old.tagName==='INPUT' && old===document.activeElement)continue;
+      reconcile(old,next);
+    }
+    for(let i=original.length-1;i>=incoming.length;i--)parent.removeChild(original[i]);
+  }
   function render(){
     const contents=state.screen==='home'?home():state.screen==='projects'?projectForm():
       state.screen==='transfer'?transfer():state.screen==='results'?results():about();
     const markup=header()+'<div class="page '+state.screen+'">'+contents+'</div>'+toast();
-    if (markup===lastMarkup) return;
-    // Focused selects/inputs, open reports and native folder dialogs must not
-    // be destroyed by routine background polling. Queue their refresh until
-    // the user finishes the interaction; explicit event handlers still render.
+    if(markup===lastMarkup)return;
     const app=$('#app');
     lastMarkup=markup;
-    app.innerHTML=markup;
+    if(typeof document.createElement==='function' &&
+       typeof app.childNodes!=='undefined'){
+      const fragment=document.createElement('template');
+      fragment.innerHTML=markup;
+      reconcile(app,fragment.content);
+    }else{
+      // Minimal DOM harness used by dependency-free Node regression tests.
+      app.innerHTML=markup;
+    }
   }
   async function api(route,data){
     const resp=await fetch('/api/'+route,{method:data===undefined?'GET':'POST',cache:'no-store',
@@ -239,7 +292,7 @@
       unreal_folder:state.folders.unreal,unreal_project:state.unrealProject,
       csir:state.csir,level:state.level,source_rights_confirmed:state.sourceRights});
     state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.running=false;
-    state.phase='CONNECTED';state.info='Projects connected successfully!';state.error='';
+    state.phase='CONNECTED';state.info='Projects connected successfully!';state.error='';state.censusIssue=false;state.censusSelection=null;
   }
   async function refresh(){
     const s=await api('status');state.status=s;
@@ -260,11 +313,27 @@
     state.phase='PREPARING';render();
     const opts={enable_fbx_embedded_material_import:true,enable_actor_visibility_fallback:false};
     const surfaces=await api('source-surfaces');
-    const matches=(surfaces.options||[]).filter(x=>x.project_identity_proven);
-    if(matches.length){
-      opts.source_feature_surface_path=matches[0].path;
+    const options=(surfaces.options||[]);
+    // Only source identity AND scene scope verified reports can relax strict
+    // adapter completeness. Do not interpret an unrelated Unity census as
+    // permission to transfer an arbitrary project.
+    const matches=options.filter(x=>x.project_identity_proven &&
+      x.source_scope_matched && x.state!=='INVALID');
+    state.censusSelection=matches[0]||null;
+    if(state.censusSelection){
+      opts.source_feature_surface_path=state.censusSelection.path;
       opts.require_complete_source_features=!state.allowPartial;
+    }else if(options.length){
+      throw Error('Unity feature census does not match the current source project and cutscene scope. Re-run the Unity source census before transferring.');
     }
+    if(!state.allowPartial && state.censusSelection &&
+       !state.censusSelection.strict_ready){
+      state.censusIssue=true;
+      throw Error('Strict source census blocked: ' +
+        state.censusSelection.unresolved_components +
+        ' source component/scope findings. Review the exact findings below before choosing how to continue. No Unreal assets were modified.');
+    }
+    state.censusIssue=false;
     state.candidate=await api('prepare',opts);
     // An existing, independently ready Unreal level may not require imports.
     // Never treat an import blocker as permission to bypass editor readiness.
@@ -342,6 +411,24 @@
       render();return;
     }
     if(name==='account'){state.info='Account management is not implemented in this local Studio build.';render();return;}
+    if(name==='best-effort'){
+      if(!state.censusIssue || !state.censusSelection ||
+         !state.censusSelection.project_identity_proven ||
+         !state.censusSelection.source_scope_matched ||
+         state.job || !connection() || !state.sourceRights)return;
+      state.allowPartial=true;
+      state.censusIssue=false;
+      state.error='';state.busy=true;state.running=true;state.screen='transfer';
+      render();
+      try{
+        await prepare();
+        await refresh();
+        state.phase='WAITING_FOR_EDITOR';
+        await advance();
+      }catch(e){state.error=e.message;state.phase='BLOCKED';state.running=false;}
+      finally{state.busy=false;render();}
+      return;
+    }
     if(name==='view-report'){state.detailsOpen=true;render();$('.research')?.scrollIntoView({behavior:'smooth'});return;}
     if(name==='copy-worker'){
       try{await navigator.clipboard.writeText($('#worker-command').textContent);
