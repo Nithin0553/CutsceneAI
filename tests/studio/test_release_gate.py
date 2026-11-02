@@ -148,7 +148,7 @@ def test_unexpected_kind_is_not_silently_audit_pass(tmp_path):
 
 
 def test_source_file_mutation_after_plan_blocks_release(tmp_path):
-    workspace, candidate, job = fixture(tmp_path)
+    workspace, _candidate, job = fixture(tmp_path)
     put(Path(job["csir"]), {"kind": "cutsceneai.csir", "tampered": True})
     result = gate.assess(workspace, job["job_id"])
     assert result["checks"]["source_and_plan"]["status"] == "FAIL"
@@ -156,7 +156,7 @@ def test_source_file_mutation_after_plan_blocks_release(tmp_path):
 
 
 def test_generated_sequence_with_failed_save_does_not_pass_native_generation(tmp_path):
-    workspace, candidate, job = fixture(tmp_path)
+    workspace, _candidate, job = fixture(tmp_path)
     job["status"] = "GENERATED_LEVEL_NOT_SAVED_REVIEW_REQUIRED"
     put(workspace / "jobs" / (job["job_id"] + ".json"), job)
     result = gate.assess(workspace, job["job_id"])
