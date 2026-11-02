@@ -97,11 +97,29 @@ def service_one(api: Any, workspace: Path, *, project: str, level: str,
         receipt_path = candidate / ("agent-receipt-" + request_id + ".json")
         if receipt_path.exists():
             continue
+        claim_path = candidate / ("agent-claim-" + request_id + ".json")
         request = None
         try:
             request = _load(path)
             if request.get("request_id") != request_id:
                 raise ValueError("Agent request file identity mismatch.")
+            if claim_path.exists():
+                # Unreal may have crashed after modifying actors but before
+                # persisting the receipt. Replaying would double-apply a
+                # potentially non-idempotent repair. Require manual inspection.
+                raise ValueError(
+                    "Interrupted prior repair: no automatic replay; inspect staged editor assets."
+                )
+            # Durable write-ahead claim occurs BEFORE any Unreal mutation.
+            # Existing claims are never replaced even on recovery.
+            with claim_path.open("x", encoding="utf-8") as handle:
+                json.dump({
+                    "kind": "cutsceneai.studio.agent_repair_claim",
+                    "request_id": request_id,
+                    "job_id": job_id,
+                    "candidate_id": job["candidate_id"],
+                }, handle, sort_keys=True)
+                handle.write("\n")
             result = execute(api, workspace, job, request, project=project, level=level)
         except Exception as exc:
             result = {
