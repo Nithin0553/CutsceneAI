@@ -20,8 +20,11 @@ def evaluate(
     visual: dict[str, Any] | None,
     *,
     max_motion_error_cm: float = 2.0,
+    repair_iterations: int = 0,
 ) -> dict[str, Any]:
     """Propose only existing CED-driven strategy domains, never guess fixes."""
+    if isinstance(repair_iterations, bool) or not isinstance(repair_iterations, int) or not 0 <= repair_iterations <= 2:
+        raise EvidenceError('Repair iteration count must be between 0 and 2.')
     if not math.isfinite(max_motion_error_cm) or max_motion_error_cm <= 0:
         raise EvidenceError("A finite positive motion tolerance is required.")
     issues: list[dict[str, Any]] = []
@@ -98,8 +101,8 @@ def evaluate(
         "cinetwin_measured": measured,
         "issue_count": len(issues),
         "issues": issues,
-        "automatic_repair_executed": False,
-        "repair_iterations_executed": 0,
+        "automatic_repair_executed": repair_iterations > 0,
+        "repair_iterations_executed": repair_iterations,
         "fidelity_verified": False,
         "unverified_domains": ["rendered_frame_parity", "camera_framing", "all_skeletal_joints",
                                "audio_waveform_and_timing", "signal_side_effects",
