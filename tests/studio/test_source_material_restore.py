@@ -24,6 +24,13 @@ def test_source_guid_material_is_planned_and_tamper_detected(tmp_path):
         "Material:\n  m_SavedProperties:\n    m_TexEnvs:\n"
         "    - _BaseMap:\n        m_Texture: {fileID: 2800000, guid: abcdef0123456789abcdef0123456789, type: 3}\n"
     )
+    source = json.loads(docs[0].read_text())
+    source['entities'][0]['metadata'] = {'source_material_assets': [{
+        'asset_path': material.relative_to(project).as_posix(),
+        'albedo_texture_asset_path': texture.relative_to(project).as_posix(),
+        'albedo_texture_guid': 'abcdef0123456789abcdef0123456789',
+    }]}
+    docs[0].write_text(json.dumps(source))
     plan = studio_auto_assets.inspect(
         *docs, project, "Assets/Benchmark002", "/Game/CutSceneAI/AutoTransfer/T_GUID"
     )
@@ -50,11 +57,46 @@ def test_ambiguous_material_name_never_gets_guessed(tmp_path):
         (target / "Body.mat").write_text(
             "    - _MainTex:\n        m_Texture: {fileID: 2800000, guid: abcdef0123456789abcdef0123456789, type: 3}\n"
         )
+    source = json.loads(docs[0].read_text())
+    source['entities'][0]['metadata'] = {'source_material_assets': [
+        {'asset_path': (root / folder / 'Body.mat').relative_to(project).as_posix()}
+        for folder in ('Characters', 'Animations')]}
+    docs[0].write_text(json.dumps(source))
     result = studio_auto_assets.inspect(
         *docs, project, "Assets/Benchmark002", "/Game/CutSceneAI/AutoTransfer/T_GUID"
     )
     assert result["source_albedo_material_candidates"] == []
     assert any("Ambiguous Unity material name" in x for x in result["warnings"])
+
+
+def test_exact_renderer_material_and_texture_outside_scan_scope(tmp_path):
+    project, docs = create(tmp_path)
+    shared = project / 'Assets' / 'SharedMaterials'
+    shared.mkdir()
+    texture = shared / 'Body.png'
+    texture.write_bytes(b'\x89PNG\r\n\x1a\nfixture')
+    texture_guid = 'abcdef0123456789abcdef0123456789'
+    texture.with_name(texture.name + '.meta').write_text('guid: '+texture_guid+'\n')
+    material = shared / 'Body.mat'
+    material.write_text('    - _BaseMap:\n        m_Texture: {fileID: 2800000, guid: '+
+                        texture_guid+', type: 3}\n')
+    material_guid = '1234567890abcdef1234567890abcdef'
+    material.with_name(material.name + '.meta').write_text('guid: '+material_guid+'\n')
+    csir = json.loads(docs[0].read_text())
+    csir['entities'][0]['metadata'] = {'source_material_assets': [{
+        'asset_path': material.relative_to(project).as_posix(), 'guid': material_guid,
+        'albedo_texture_asset_path': texture.relative_to(project).as_posix(),
+        'albedo_texture_guid': texture_guid,
+    }]}
+    docs[0].write_text(json.dumps(csir))
+    plan = studio_auto_assets.inspect(
+        *docs, project, 'Assets/Benchmark002', '/Game/CutSceneAI/AutoTransfer/T_GUID'
+    )
+    assert plan['ready']
+    assert len(plan['source_albedo_material_candidates']) == 1
+    assert plan['source_albedo_material_candidates'][0]['source_texture'] == str(texture)
+    assert any(row['source_file'] == str(texture) and row['kind'] == 'Texture2D'
+               for row in plan['imports'])
 
 
 class FakeMaterial:

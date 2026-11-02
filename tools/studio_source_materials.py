@@ -16,40 +16,31 @@ _TEXTURE = re.compile(
 )
 
 
-def candidates(scope, imports, target_folder, digest):
+def candidates(source_materials, imports, target_folder, digest):
     """Return (candidates, diagnostic strings); no engine or source writes.
 
-    Only assets already present in the immutable import plan are eligible.
-    A missing or ambiguous GUID/name deliberately leaves the slot unmatched.
+    Only renderer-identified Unity .mat files and textures already in the
+    immutable import plan are eligible. Unrelated project materials cannot
+    acquire a cutscene character's Unreal slot by coincidental name.
     """
-    scope = Path(scope).resolve()
     texture_imports = {
         Path(row["source_file"]).resolve(): row
         for row in imports if row["kind"] == "Texture2D"
     }
     by_guid = {}
-    for file in sorted(scope.rglob("*")):
-        if not file.is_file() or not file.name.lower().endswith(".png.meta"):
+    for png, row in sorted(texture_imports.items()):
+        meta = png.with_name(png.name + ".meta")
+        if not meta.is_file():
             continue
-        real = file.resolve()
-        if not real.is_relative_to(scope):
-            continue
-        png = Path(str(real)[:-5])
-        row = texture_imports.get(png)
-        if row is None:
-            continue
-        match = _GUID.search(real.read_text(encoding="utf-8-sig", errors="replace"))
+        match = _GUID.search(meta.read_text(encoding="utf-8-sig", errors="replace"))
         if match:
             by_guid.setdefault(match.group(1).lower(), []).append(row)
 
     names = {}
-    for file in sorted(scope.rglob("*")):
-        if not file.is_file() or file.suffix.lower() != ".mat":
-            continue
-        real = file.resolve()
-        if not real.is_relative_to(scope):
-            continue
-        names.setdefault(real.stem, []).append(real)
+    for file in sorted(source_materials):
+        path = Path(file).resolve()
+        if path.is_file() and path.suffix.lower() == ".mat":
+            names.setdefault(path.stem, []).append(path)
 
     planned, diagnostics = [], []
     for name, files in sorted(names.items()):

@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Iterable, Mapping
 
 GUID = re.compile(r"^[0-9a-fA-F]{32}$")
 UNITY_ID = re.compile(r"^unity-asset:([0-9a-fA-F]{32}):[-+]?\d+$")
@@ -67,7 +67,7 @@ def _unity_guid(file: Path) -> str | None:
     # A .meta file is small in Unity; don't parse arbitrarily large untrusted files.
     with meta.open('rb') as handle:
         header = handle.read(131072)
-    match = re.search(rb'(?:^|\n)guid:\s*([0-9a-fA-F]{32})\s*(?:\n|$)', header)
+    match = re.search(rb'(?:^|\n)guid:[ \t]*([0-9a-fA-F]{32})[ \t]*(?:\r?\n|$)', header)
     return match.group(1).decode('ascii').lower() if match else None
 
 
@@ -98,6 +98,9 @@ def resolve(files: Iterable[Path], logical_name: str, suffixes: set[str], *,
         # A path cannot override a contradictory Unity .meta GUID. The same
         # exported identity must point to the same asset in both sources.
         if by_path and explicit_guids:
+            if any(_unity_guid(p) is None for p in by_path):
+                return {'selected': None, 'strategy': 'UNITY_META_GUID_NOT_VERIFIABLE',
+                        'candidates': [str(p) for p in sorted(set(by_path + by_guid))]}
             wrong_guid = [p for p in by_path
                           if (on_disk := _unity_guid(p)) is not None
                           and on_disk not in explicit_guids]
