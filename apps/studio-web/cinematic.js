@@ -9,7 +9,7 @@
   const state = {screen:'home', phase:'IDLE', busy:false, info:'', error:'', status:null,
     discovery:null, folders:{unity:'',unreal:''}, unrealProject:'', csir:'', level:'',
     sourceRights:false, allowPartial:false, aiAgentsEnabled:false, agentStatus:null, candidate:null, job:null, verification:null,
-    diagnosis:null, feedback:null, running:false, detailsOpen:false, menuOpen:false,
+    diagnosis:null, feedback:null, releaseReadiness:null, running:false, detailsOpen:false, menuOpen:false,
     censusSelection:null, censusIssue:false};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
   const connection = () => state.status?.connection;
@@ -146,6 +146,12 @@
       (state.feedback?'<div class="fact">CineTwin/visual feedback <b>'+esc(state.feedback.status)+'</b></div>'+
         (state.feedback.issues||[]).map(row=>'<p class="warning">'+esc(row.category)+': '+
         esc(row.code||row.source||row.detail||row.status)+'</p>').join(''):'')+
+      (state.releaseReadiness?.available?'<div class="fact">Independent release gate <b>'+
+        esc(state.releaseReadiness.status)+'</b></div>'+
+        (state.releaseReadiness.failed||[]).map(k=>'<p class="warning">Failed: '+esc(k)+
+        ' — '+esc(state.releaseReadiness.checks?.[k]?.explanation||'')+'</p>').join('')+
+        (state.releaseReadiness.incomplete||[]).map(k=>'<p class="subnote">Incomplete: '+esc(k)+
+        ' — '+esc(state.releaseReadiness.checks?.[k]?.explanation||'')+'</p>').join(''):'')+
       (v?'<div class="fact">Native structure <b>'+esc(v.persistence?.native_structure||'Not verified')+'</b></div>'+
         '<div class="fact">Visual inspection <b>'+esc(v.visual?.status||'Not verified')+'</b></div>':'')+
       '<p class="subnote">Rendering, complete skeletal pose, signals, shaders and audio timing require independent source comparison. No perfect-transfer claim is made from generation alone.</p>'+
@@ -204,6 +210,7 @@
   }
   function results(){
     const j=state.job||{},v=state.verification||{},ok=generated(),candidate=state.candidate||{};
+    const gate=state.releaseReadiness||{status:'INCOMPLETE',release_ready:false,incomplete:[]};
     const imports=Number.isInteger(j.assets_imported_count)?j.assets_imported_count:'Not independently verified';
     const bindings=Number.isInteger(j.bindings_created_count)?j.bindings_created_count:'Not independently verified';
     return progress()+'<main class="results-view"><div class="results-card '+(ok?'ok':'')+'">'+
@@ -216,6 +223,9 @@
       '<p>Persistence after reopen: '+esc(v.persistence?.status||'Not verified')+'</p>'+
       '<p>CineTwin behavioral parity: '+(state.diagnosis?'Measured — not full fidelity':'Not verified')+'</p>'+
       '<p>Visual fidelity: '+esc(v.visual?.status||'Not verified')+'</p>'+
+      '<p><strong>Release readiness: '+esc(gate.release_ready?'VERIFIED':gate.status)+
+      '</strong> · '+esc((gate.failed||[]).length)+' failed, '+
+      esc((gate.incomplete||[]).length)+' incomplete checks</p>'+
       (state.agentStatus?.enabled?'<p>AI agents: '+esc(state.agentStatus.status)+
       ' · repair rounds '+esc(state.agentStatus.iterations??0)+'</p>':'')+'</div>'+
       research()+'<div class="center-actions">'+button('New Transfer','projects',false,'secondary')+'</div></main>';
@@ -304,7 +314,7 @@
     const info=await api('connect-projects',{unity_folder:state.folders.unity,
       unreal_folder:state.folders.unreal,unreal_project:state.unrealProject,
       csir:state.csir,level:state.level,source_rights_confirmed:state.sourceRights});
-    state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.agentStatus=null;state.running=false;
+    state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.releaseReadiness=null;state.agentStatus=null;state.running=false;
     state.phase='CONNECTED';state.info='Projects connected successfully!';state.error='';state.censusIssue=false;state.censusSelection=null;
   }
   async function refresh(){
@@ -324,6 +334,10 @@
       }
       if(!state.feedback) {
         try{const feedback=await api('closed-loop');if(feedback.available)state.feedback=feedback;}catch{}
+      }
+      try{state.releaseReadiness=await api('release-readiness');}catch(e){
+        state.releaseReadiness={status:'INCOMPLETE',release_ready:false,
+          incomplete:['Release evidence unavailable: '+String(e.message||e)]};
       }
     }
   }
