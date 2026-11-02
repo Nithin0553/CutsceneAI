@@ -16,6 +16,7 @@ ROOT=Path(__file__).resolve().parents[2]
 if str(ROOT/'tools') not in sys.path:
     sys.path.insert(0,str(ROOT/'tools'))
 import studio_auto_assets as assets_plan
+import studio_material_restore
 
 
 class AutomaticSetupError(RuntimeError):
@@ -82,6 +83,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
              'status':'BLOCKED','actors_created':[],'assets_imported':[],
              'asset_operations':[],'actor_operations':[],'failed_step':None,
              'level_saved':False,'changes_possible':False,'fidelity_verified':False,
+              'material_restoration':[],
              'unsupported':['Unity .mat materials/shader graphs are not reconstructed; FBX embedded materials are optional and partial',
                             'Unity particle/VFX/constraints/scripts and signal payloads are not reconstructed',
                             'Imported animation bone correspondence and audio playback are not verified']}
@@ -224,6 +226,22 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
             operation['status']='ACTOR_LABEL_CHECKED'
             receipt['actors_created'].append({'name':row['name'],'label':row['label'],'kind':kind})
             receipt['failed_step']=None
+        if manifest.get('source_albedo_material_candidates'):
+            # This is a *partial* albedo-only recovery and never implies a
+            # source-equivalent shader. Only fresh imported actors are used.
+            for row in manifest['actors']:
+                if row['kind'] not in ('entity.character', 'entity.prop'):
+                    continue
+                created = next((a for a in ed.get_all_level_actors()
+                                if str(a.get_actor_label()) == row['label']), None)
+                if created is None:
+                    raise AutomaticSetupError('Newly spawned actor missing before material assignment: ' + row['name'])
+                receipt['failed_step']={'phase':'material_restoration','name':row['name']}
+                receipt['material_restoration'].extend(
+                    dict(item, actor=row['name']) for item in studio_material_restore.restore(
+                        api, created, manifest['source_albedo_material_candidates'])
+                )
+                receipt['failed_step']=None
         receipt['failed_step']={'phase':'level_save','level':expected_level}
         _save_level(api,expected_level)
         receipt['level_saved']=True
