@@ -156,7 +156,8 @@ async function testOneClick() {
     'enabled UI should show actual agent status');
   x.finish();
   await x.poll();
-  assert.match(x.app.innerHTML,/Sequence Generated Successfully/);
+  assert.match(x.app.innerHTML,/Editable Sequence Generated/);
+  assert.doesNotMatch(x.app.innerHTML,/Verified Release Transfer/);
   assert.match(x.app.innerHTML,/18/);
   assert.match(x.app.innerHTML,/12/);
   assert.match(x.app.innerHTML,/not certified/);
