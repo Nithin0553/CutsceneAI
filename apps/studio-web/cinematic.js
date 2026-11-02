@@ -300,10 +300,10 @@
     if(state.busy||!state.status)return;
     try{
       await refresh();
-      if(state.running&&!state.job&&state.candidate)await advance();
+      if(state.running&&state.phase!=='BLOCKED'&&!state.job&&state.candidate)await advance();
       if(state.running&&terminal(state.job)&&state.screen==='transfer')state.screen='results';
       render();
-    }catch(e){state.error=e.message;state.phase='BLOCKED';render();}
+    }catch(e){state.error=e.message;state.phase='BLOCKED';state.running=false;render();}
   }
   async function action(name){
     if(name==='clear'){state.info='';state.error='';render();return;}
@@ -336,7 +336,7 @@
       if(state.busy)return;
       state.busy=true;render();
       try{if(name==='connect')await connectProjects();else await start();}
-      catch(e){state.error=e.message;state.phase='BLOCKED';}
+      catch(e){state.error=e.message;state.phase='BLOCKED';state.running=false;}
       finally{state.busy=false;render();}return;
     }
   }
