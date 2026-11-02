@@ -53,6 +53,9 @@
       (state.menuOpen?'<div class="menu-pop"><a href="?advanced=1">Advanced research tools</a><button data-action="results">Results</button></div>':'');
   }
   function toast(){
+    // Blocked errors are already presented with their full diagnostics in
+    // the main content. Avoid a duplicate transient toast covering the UI.
+    if(state.screen==='transfer'&&state.phase==='BLOCKED')return '';
     if(!state.error&&!state.info)return '';
     return '<div class="toast '+(state.error?'bad':'')+'" role="'+(state.error?'alert':'status')+'"><b>'+
       (state.error?ico('alert'):ico('check'))+'</b><span>'+esc(state.error||state.info)+
@@ -181,7 +184,7 @@
           '</span><small>'+esc(f.state||'UNRESOLVED')+'</small></div>').join('')+'</div>'+
         (state.censusSelection.findings_truncated?'<p class="subnote">Additional source findings are available in the advanced report.</p>':'')+
         '<p class="subnote">Recommended: improve the source extraction/adapters before transfer. To run a separate research-only best-effort candidate, explicitly accept that the missing source behavior will NOT be fidelity-verified.</p>'+
-        button('Run labelled best-effort trial','best-effort',state.busy,false?'':'secondary')+
+        button('Run labelled best-effort trial','best-effort',state.busy,'secondary')+
         '</section>':'')+
       '<div class="transfer-progress"><div class="indeterminate '+(activelyWorking?'working':'')+
       '" role="progressbar" aria-label="Transfer state" aria-valuetext="'+esc(label)+'"><i></i></div>'+
