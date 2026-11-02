@@ -33,6 +33,7 @@ def _identity_map(csir: Mapping[str, Any], mapping: Mapping[str, Any]) -> dict[t
                 index[key] = {"ambiguous": True}
             else:
                 index[key] = {"name": name, "entity_id": str(entity.get("entity_id")),
+                              "entity_ced": str(entity.get("ced_type") or ""),
                               "actor_label": str(target["actor_label"])}
     return index
 
@@ -96,6 +97,10 @@ def adapt(
             decisions.append(desc)
             continue
         if native_type == SOURCE_CAMERA:
+            if target.get("entity_ced") != "entity.camera":
+                desc["status"] = "SOURCE_CAMERA_MAPPED_TO_NONCAMERA_ACTOR"
+                decisions.append(desc)
+                continue
             post = _native_bool(feature, "render_post_processing")
             if post is not None:
                 token = (target["actor_label"], "post_process_blend_weight")
@@ -133,6 +138,10 @@ def adapt(
                 "antialiasing", "requires_depth_texture", "requires_color_texture",
             ])
         elif native_type == SOURCE_LIGHT:
+            if target.get("entity_ced") != "entity.light":
+                desc["status"] = "SOURCE_LIGHT_MAPPED_TO_NONLIGHT_ACTOR"
+                decisions.append(desc)
+                continue
             shadows = _native_bool(feature, "cast_shadows")
             if shadows is not None:
                 token = (target["actor_label"], "cast_shadows")
