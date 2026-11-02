@@ -61,6 +61,19 @@ namespace CutsceneAI.UnityExtractor
             public string collider_scale_policy;
             public int signal_reaction_count;
             public List<string> signal_reactions = new List<string>();
+            public List<NativeValue> native_properties = new List<NativeValue>();
+            public bool native_properties_truncated;
+        }
+
+        [Serializable]
+        private sealed class NativeValue
+        {
+            public string path;
+            public string native_type;
+            public bool bool_value;
+            public float float_value;
+            public int int_value;
+            public string string_value;
         }
 
         [Serializable]
@@ -149,6 +162,66 @@ namespace CutsceneAI.UnityExtractor
             return false;
         }
 
+
+        // This traverses serializable authoring state without changing it.
+        // These fields are *evidence* for explicit target adapters, never
+        // arbitrary instructions to run inside Unreal.
+        private static void CollectSerializableProperties(Component component,
+            ComponentFeature feature)
+        {
+            try
+            {
+                var obj = new SerializedObject(component);
+                var property = obj.GetIterator();
+                int count = 0;
+                bool enterChildren = true;
+                while (property.NextVisible(enterChildren))
+                {
+                    enterChildren = true;
+                    if (property.propertyPath == "m_Script") continue;
+                    if (count >= 256)
+                    {
+                        feature.native_properties_truncated = true;
+                        break;
+                    }
+                    var value = new NativeValue { path = property.propertyPath };
+                    switch (property.propertyType)
+                    {
+                        case SerializedPropertyType.Boolean:
+                            value.native_type = "bool";
+                            value.bool_value = property.boolValue;
+                            break;
+                        case SerializedPropertyType.Integer:
+                            value.native_type = "int";
+                            value.int_value = property.intValue;
+                            break;
+                        case SerializedPropertyType.Float:
+                            value.native_type = "float";
+                            value.float_value = property.floatValue;
+                            if (float.IsNaN(value.float_value) ||
+                                float.IsInfinity(value.float_value))
+                                continue;
+                            break;
+                        case SerializedPropertyType.String:
+                            value.native_type = "string";
+                            value.string_value = property.stringValue;
+                            break;
+                        default:
+                            continue;
+                    }
+                    feature.native_properties.Add(value);
+                    count++;
+                }
+            }
+            catch (Exception)
+            {
+                // Broken custom inspectors/proprietary components may not
+                // expose safe serialized state. Preserve their class and ID
+                // and keep extraction coverage incomplete.
+                feature.native_properties_truncated = true;
+            }
+        }
+
         private static ComponentFeature CaptureComponent(Component component)
         {
             var feature = new ComponentFeature();
@@ -159,6 +232,7 @@ namespace CutsceneAI.UnityExtractor
             }
             // These types need no optional URP compile-time dependency.
             string name = component.GetType().FullName ?? "";
+            CollectSerializableProperties(component, feature);
             if (name == "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData")
             {
                 feature.extraction = "URP_CAMERA_PROPERTIES_PARTIAL";
