@@ -1,9 +1,14 @@
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="dark"><meta name="theme-color" content="#0a0d12">
+<meta name="color-scheme" content="dark"><meta name="theme-color" content="#080A09">
 <meta name="description" content="CutSceneAI Studio — a locally connected Unity to Unreal cinematic transfer workspace.">
 <title>CutSceneAI Studio</title>
-<link rel="stylesheet" href="styles.css">
-<script src="app.js" defer></script>
+<script>
+  // The full research console remains available without a feature deletion.
+  // Main application uses the approved connected one-click interface.
+  const advanced = new URLSearchParams(location.search).get('advanced') === '1';
+  document.write('<link rel="stylesheet" href="' + (advanced ? 'styles.css' : 'cinematic.css') + '">');
+  document.write('<script defer src="' + (advanced ? 'app.js' : 'cinematic.js') + '"><\\/script>');
+</script>
 </head><body><div id="app"><p class="boot">Opening CutSceneAI Studio…</p></div><noscript>JavaScript is required to connect to the local Studio companion.</noscript></body></html>
