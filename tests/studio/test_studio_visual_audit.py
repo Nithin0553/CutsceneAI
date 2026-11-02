@@ -56,7 +56,11 @@ class Actor(Native):
         return self.label
 
     def get_components_by_class(self, klass):
-        return [c for c in self.renderers if c.klass == klass]
+        return [
+            c for c in self.renderers if c.klass == klass
+            or (klass == "StaticMeshComponent"
+                and c.klass == "CameraProxyMeshComponent")
+        ]
 
 
 class Sequence(Native):
