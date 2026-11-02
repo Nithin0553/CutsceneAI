@@ -246,8 +246,8 @@
       opts.require_complete_source_features=!state.allowPartial;
     }
     state.candidate=await api('prepare',opts);
-    if(state.candidate.automatic_setup?.blockers?.length)
-      throw Error('Cannot stage source assets: '+state.candidate.automatic_setup.blockers.join('; '));
+    // An existing, independently ready Unreal level may not require imports.
+    // Never treat an import blocker as permission to bypass editor readiness.
     state.phase='READY_TO_QUEUE';
     await api('approve-one-click',{candidate_id:state.candidate.candidate_id});
   }
@@ -255,6 +255,9 @@
     if(!state.running||state.busy||state.job||!state.candidate)return;
     if(!validEditor()){state.phase='WAITING_FOR_EDITOR';render();return;}
     const d=readiness();
+    if(!d.ready && state.candidate.automatic_setup?.blockers?.length){
+      throw Error('Unresolved source assets: '+state.candidate.automatic_setup.blockers.join('; '));
+    }
     if(!canExecute()){
       if(['WRONG_TARGET','TARGET_EXISTS','UPGRADE_COMPANION','INSPECTION_FAILED'].includes(d.status))
         throw Error(d.next_action||d.status);
