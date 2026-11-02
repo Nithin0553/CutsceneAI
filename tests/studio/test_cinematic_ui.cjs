@@ -5,10 +5,12 @@ const vm = require('node:vm');
 
 const src = fs.readFileSync('apps/studio-web/cinematic.js', 'utf8');
 
-function boot({editorReady = true} = {}) {
+function boot({editorReady = true, censusUnresolved = false} = {}) {
   const listeners = {}, calls = [];
+  let html = '', writes = 0;
   const app = {
-    innerHTML: '',
+    get innerHTML() {return html;},
+    set innerHTML(value) {html=value;writes++;},
     addEventListener(name, fn) { listeners[name] = fn; },
   };
   let poll;
@@ -50,7 +52,17 @@ function boot({editorReady = true} = {}) {
           csir,scene_name:'Benchmark002',source_rights_confirmed:true};
         result = connected;
       } else if (url === '/api/source-surfaces') {
-        result = {options:[]};
+        result = {options:censusUnresolved?[{
+          name:'feature-surface-unity-Benchmark001.json',
+          path:unity+'/CutSceneAI/Exports/feature-surface-unity-Benchmark001.json',
+          project_identity_proven:true, source_scope_matched:true,
+          strict_ready:false, state:'REVIEW_REQUIRED',
+          unresolved_components:7,
+          unresolved_findings:[{
+            native_type:'UnityEngine.Playables.DirectorWrapMode',
+            object_path:'Benchmark001/Director',state:'NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED'
+          }]
+        }]:[]};
       } else if (url === '/api/prepare') {
         candidate = {candidate_id:'candidate001',action_total:29,
           automatic_setup:{available:true,ready:true,blockers:[],planned_imports:18,planned_actors:10}};
@@ -94,7 +106,7 @@ function boot({editorReady = true} = {}) {
     await pause();
   }
   return {app,calls,click,change,poll:async()=>{poll();await pause();await pause();},
-    pause,finish:()=>{done=true;}};
+    writes:()=>writes, pause,finish:()=>{done=true;}};
 }
 
 async function testOneClick() {
@@ -122,6 +134,9 @@ async function testOneClick() {
   assert.match(x.app.innerHTML,/12/);
   assert.match(x.app.innerHTML,/not certified/);
   assert.ok(!x.app.innerHTML.includes('72%'));
+  const writes=x.writes();
+  await x.poll();
+  assert.equal(x.writes(),writes,'unchanged heartbeat must not reset the DOM');
 }
 
 async function testOfflineDoesNotExecute() {
@@ -139,8 +154,29 @@ async function testOfflineDoesNotExecute() {
   assert.match(x.app.innerHTML,/WAITING_FOR_EDITOR/);
 }
 
+async function testStrictCensusBlockAndExplicitRecovery() {
+  const x=boot({editorReady:true,censusUnresolved:true});
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('source-rights',null,true);
+  await x.click('connect');
+  await x.click('start');
+  assert.equal(x.calls.filter(v=>v==='/api/execute').length,0,
+    'strict incomplete source census cannot queue engine execution');
+  assert.match(x.app.innerHTML,/7 source features need review/);
+  assert.match(x.app.innerHTML,/Benchmark001\/Director/);
+  assert.match(x.app.innerHTML,/Run labelled best-effort trial/);
+  await x.click('best-effort');
+  await x.poll();
+  assert.equal(x.calls.filter(v=>v==='/api/execute').length,1,
+    'only explicit best-effort opt-in may submit a separate candidate');
+}
+
 (async()=>{
   await testOneClick();
   await testOfflineDoesNotExecute();
-  console.log('Cinematic UI backend contract: 2 integration paths passed.');
+  await testStrictCensusBlockAndExplicitRecovery();
+  console.log('Cinematic UI backend contract: 3 integration paths passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
