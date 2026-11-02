@@ -314,7 +314,7 @@ def _tick(_delta):
         WORKSPACE.mkdir(parents=True, exist_ok=True)
         _save(WORKSPACE / 'unreal-worker.json', {
             'heartbeat': _now(), 'project': _loaded_project(),
-            'level': _loaded_level(), 'worker': 'studio-editor-v0.4'
+            'level': _loaded_level(), 'worker': 'studio-editor-v0.5'
         })
         try:
             _update_destination_readiness()

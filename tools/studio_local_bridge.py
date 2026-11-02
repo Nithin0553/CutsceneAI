@@ -160,7 +160,7 @@ def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
                 'next_action': 'Open the selected Unreal level and start the editor companion.'}
     if (worker.get('worker_version') == 'studio-editor-v0.1' or
         (load_json(folder / 'connection.json').get('unity_project')
-         and worker.get('worker_version') != 'studio-editor-v0.4')):
+         and worker.get('worker_version') != 'studio-editor-v0.5')):
         return {'status': 'UPGRADE_COMPANION', 'ready': False,
                 'next_action': 'Unreal is running an older Studio companion. Save your work, restart Unreal Editor, and run the Python companion command shown below.'}
     candidate = load_json(candidate_file)
@@ -387,7 +387,7 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     auto = auto or {}
     automatic_requested = bool(auto.get('available')) and not readiness.get('ready')
     if automatic_requested:
-        if heartbeat.get('worker_version') != 'studio-editor-v0.4':
+        if heartbeat.get('worker_version') != 'studio-editor-v0.5':
             raise ValueError('Restart Unreal with the v0.5 automatic-import editor companion.')
         if not auto.get('ready'):
             raise ValueError('Automatic asset preparation blocked: ' + '; '.join(auto.get('blockers', [])))

@@ -34,8 +34,7 @@ assert len(loaded) == len(studio_planner_sync.MODULES)
 assert transfer_backend.compose_files is not old_compose
 assert transfer_backend.compose_files.__module__ == 'transfer_backend'
 assert prepared_transfer.verify.__module__ == 'prepared_transfer'
-assert transfer_backend.compose_files(None, None) if False else True
-print('PLANNER_RELOADED')
+ print('PLANNER_RELOADED')
 """
     result = subprocess.run(
         [sys.executable, "-c", script], cwd=ROOT,
@@ -53,7 +52,7 @@ def test_verification_runs_sync_before_mutating_unreal_or_using_cached_modules()
     assert worker.index("studio_planner_sync.synchronize()") < worker.index(
         "prepared_transfer.verify(candidate_dir)")
     assert worker.index("prepared_transfer.verify(candidate_dir)") < worker.index(
-        "_ensure_target_level(job)")
+        "\n    _ensure_target_level(job)")
     assert builder.index("studio_planner_sync.synchronize()") < builder.index(
         "transfer_backend.compose_files(")
     assert "transfer_backend.verify_prepared_artifacts(" in builder

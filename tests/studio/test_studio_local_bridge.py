@@ -395,7 +395,7 @@ def test_live_editor_without_report_is_not_endless_checking(tmp_path):
     bridge.atomic_json(work / 'unreal-worker.json', {
         'heartbeat': datetime.now(UTC).isoformat(),
         'project': cfg['target_project'], 'level': cfg['level_path'],
-        'worker': 'studio-editor-v0.4',
+        'worker': 'studio-editor-v0.5',
     })
     report = bridge.destination_readiness(work)
     assert report['status'] == 'INSPECTION_UNAVAILABLE'
