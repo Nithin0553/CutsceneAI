@@ -332,6 +332,13 @@ def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> 
                 'states': dispatch.get('states', {}),
                 'full_conversion_verified': False,
             },
+            'adaptive_component_summary': {
+                'scanned_source_components': (coverage.get('adaptive_components') or {}).get('source_component_candidates', 0),
+                'new_native_actions': (coverage.get('adaptive_components') or {}).get('action_count', 0),
+                'status_counts': (coverage.get('adaptive_components') or {}).get('status_counts', {}),
+                'decisions': (coverage.get('adaptive_components') or {}).get('decisions', []),
+                'fidelity_verified': False,
+            },
             'prepared_options': overrides,
             'source_feature_family_counts': feature_inventory['family_counts'],
             'unimplemented_action_kinds': feature_inventory['unimplemented_action_kinds'],

@@ -141,7 +141,15 @@
       <label class="checkbox"><input type="checkbox" name="visibility-fallback" ${state.visibilityFallback?'checked':''}><span>Opt in to visual-only ActivationTrack approximation; scripts and physics are not equivalent</span></label>
       <div class="form-actions">${btn('Refresh Unity census','refresh-census','secondary',state.busy)}${btn('Copy Unreal feature scan command','copy-unreal-scan','secondary')}</div>
       <pre id="unreal-scan-command" class="command" hidden>${esc(scanCmd)}</pre>
-      ${state.candidate?`<div class="rule"></div><h3>Candidate feature accounting</h3>${item('Source feature occurrences',size(report.source_occurrences))}${item('Accounted occurrences',size(report.accounted_occurrences))}${item('Missing adapter occurrences',size(report.missing_adapters))}${item('Unity census',state.candidate.source_feature_surface_state||'NOT_COLLECTED')}${item('Unresolved source components',size(state.candidate.source_unresolved_components))}<p class="hint">Prepare a new candidate if you change these options. A catalogued feature is not verified conversion.</p>`:''}
+      ${state.candidate?`<div class="rule"></div><h3>Candidate feature accounting</h3>${item('Source feature occurrences',size(report.source_occurrences))}${item('Accounted occurrences',size(report.accounted_occurrences))}${item('Missing adapter occurrences',size(report.missing_adapters))}${item('Unity census',state.candidate.source_feature_surface_state||'NOT_COLLECTED')}${item('Unresolved source components',size(state.candidate.source_unresolved_components))}
+      ${item('New adaptive Unreal actions',size(state.candidate.adaptive_component_summary?.new_native_actions))}
+      ${state.candidate.adaptive_component_summary?.decisions?.length?`
+      <details><summary>Inspect component-by-component conversion decisions</summary>
+        ${state.candidate.adaptive_component_summary.decisions.map(row=>`<p class="hint"><strong>${esc(row.source_native_type?.split('.').pop()||'Unknown component')}</strong> · ${esc(row.source_object_path||'Unknown source')}<br>
+        ${esc(row.status||'UNVERIFIED')}${row.actions?.length?' · Native actions: '+esc(row.actions.join(', ')):''}
+        ${row.unconverted_properties?.length?' · Remaining: '+esc(row.unconverted_properties.join(', ')):''}</p>`).join('')}
+      </details>`:''}
+      <p class="hint">Prepare a new candidate if you change these options. A catalogued feature is not verified conversion.</p>`:''}
       ${isB002?'<div class="rule"></div><h3>Benchmark002 regression</h3><p class="hint">Use the real Unity Benchmark002 cutscene and a new empty backed-up Unreal staging level. Preserve old sequences. After generation: Save All, restart Unreal, then check persistence, 18/18 imported assets, 10/10 mapped actors, and 2/2 direct attachments. Eight source grouping relationships remain a separate coverage task.</p>':''}
       </section>`;
   }
