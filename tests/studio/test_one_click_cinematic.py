@@ -112,3 +112,19 @@ def test_cinematic_ui_calls_live_backend_and_uses_indeterminate_progress():
     assert "cinematic.js" in page and "app.js" in page
     assert "#39d900" in css.lower()
     assert "prefers-reduced-motion" in css
+
+
+def test_bounded_repair_refuses_unstaged_target():
+    sys.path.insert(0, str(ROOT / "integrations" / "unreal"))
+    import studio_visual_repair
+    outcome = studio_visual_repair.attempt({"automatic_setup": False}, {}, object())
+    assert outcome == {"status": "NOT_APPLICABLE", "changed": 0, "slots": []}
+
+
+def test_closed_loop_reports_actual_repair_rounds_without_claiming_fidelity():
+    report = review.evaluate(None, None, repair_iterations=1)
+    assert report["repair_iterations_executed"] == 1
+    assert report["automatic_repair_executed"] is True
+    assert report["fidelity_verified"] is False
+    with pytest.raises(review.EvidenceError):
+        review.evaluate(None, None, repair_iterations=3)
