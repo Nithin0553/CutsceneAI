@@ -31,6 +31,7 @@ class AgentState(TypedDict, total=False):
     pending_request: str
     baseline_fallback: int
     last_fallback: int
+    eligible_repair: bool
     issue_count: int
     issues: list[dict[str, Any]]
     chosen_strategy: str
