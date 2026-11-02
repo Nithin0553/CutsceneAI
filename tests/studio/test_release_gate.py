@@ -26,6 +26,14 @@ def fixture(tmp_path):
     put(csir, {"kind": "cutsceneai.csir", "source": {"engine": "unity"}})
     put(candidate / "transfer-plan.json",
         {"sequence_asset_path": "/Game/CutSceneAI/LS_Stage"})
+    put(candidate / "session.json", {
+        "kind": "cutsceneai.studio.prepared_transfer",
+        "source": {"csir_path": str(csir), "sha256": gate._sha(csir)},
+        "target": {"sequence_asset_path": "/Game/CutSceneAI/LS_Stage"},
+        "artifact_sha256": {
+            "transfer-plan.json": gate._sha(candidate / "transfer-plan.json"),
+        },
+    })
     job = {
         "kind": "cutsceneai.studio.local_unreal_job",
         "job_id": job_id,
@@ -136,3 +144,21 @@ def test_unexpected_kind_is_not_silently_audit_pass(tmp_path):
     })
     with pytest.raises(gate.ReleaseEvidenceError, match="Unexpected"):
         gate.assess(workspace, job["job_id"])
+
+
+
+def test_source_file_mutation_after_plan_blocks_release(tmp_path):
+    workspace, candidate, job = fixture(tmp_path)
+    put(Path(job["csir"]), {"kind": "cutsceneai.csir", "tampered": True})
+    result = gate.assess(workspace, job["job_id"])
+    assert result["checks"]["source_and_plan"]["status"] == "FAIL"
+    assert result["release_ready"] is False
+
+
+def test_generated_sequence_with_failed_save_does_not_pass_native_generation(tmp_path):
+    workspace, candidate, job = fixture(tmp_path)
+    job["status"] = "GENERATED_LEVEL_NOT_SAVED_REVIEW_REQUIRED"
+    put(workspace / "jobs" / (job["job_id"] + ".json"), job)
+    result = gate.assess(workspace, job["job_id"])
+    assert result["checks"]["native_generation"]["status"] == "FAIL"
+    assert result["status"] == "BLOCKED"
