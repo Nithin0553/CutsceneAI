@@ -475,7 +475,8 @@ def job_status(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         'receipt_file', 'error', 'fidelity_verified', 'generated_sequence', 'setup_receipt_file', 'setup_status',
         'assets_imported_count', 'actors_created_count', 'bindings_created_count',
         'visual_audit_status', 'visual_audit_error', 'closed_loop_status',
-        'closed_loop_report_file', 'closed_loop_error')}
+        'closed_loop_report_file', 'closed_loop_error', 'repair_iterations',
+        'repair_changes', 'repair_status', 'repair_error')}
 
 
 def diagnostic_summary(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
