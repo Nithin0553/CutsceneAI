@@ -345,3 +345,12 @@ def test_editor_request_queue_is_once_only_with_persistent_receipt(tmp_path, mon
     assert result["job_id"] == job["job_id"]
     assert result["fallback_after"] == 0
     assert calls == ["native"]
+
+
+
+def test_agent_reads_real_ced_contract_not_invented_vocabulary():
+    policy = graph._ced_policy()
+    assert policy["ced_version"] == "0.2.0"
+    assert "camera.fov" in policy["categories"]["camera"]
+    assert "animation.root_motion" in policy["categories"]["animation"]
+    assert "material" in policy["categories"]
