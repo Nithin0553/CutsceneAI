@@ -131,7 +131,7 @@ def test_agent_can_report_only_with_no_unsafe_repair(tmp_path):
 
 
 def test_graph_no_issues_finishes_without_model_or_perfection(tmp_path):
-    workspace, candidate, job, _ = staged(tmp_path, issues=False)
+    workspace, _candidate, job, _ = staged(tmp_path, issues=False)
     result = graph.run_once(workspace, job, lambda _: pytest.fail("Model must not run"))
     assert result["status"] == "NO_DETECTED_GAPS_FIDELITY_UNVERIFIED"
     assert not result["fidelity_verified"]
@@ -164,7 +164,7 @@ def test_coordinator_never_runs_without_candidate_consent(tmp_path):
 
 
 def test_unreal_executor_denies_unapproved_llm_action_before_mutation(tmp_path):
-    workspace, candidate, job, _ = staged(tmp_path, enabled=False)
+    workspace, _candidate, job, _ = staged(tmp_path, enabled=False)
     req = {"kind": "cutsceneai.studio.agent_repair_request", "schema_version": "1",
            "job_id": job["job_id"], "candidate_id": job["candidate_id"],
            "strategy": "arbitrary_python", "sequence_path": job["sequence_path"],
