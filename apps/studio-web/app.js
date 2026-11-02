@@ -206,11 +206,22 @@
       ${hierarchy?.source_groups?.length?item('Unmapped source groups',hierarchy.source_groups.join(', ')):''}
       <div class="rule"></div><h3>Visual completeness</h3>
       ${item('Visual audit',visual?.status||'Not recorded')}
-      ${visual?item('Material slots',size(visual.material_slots)):''}
+      ${visual?item('Scene-art material slots (camera gizmos excluded)',
+                       size(visual.material_slots)):''}
+      ${visual?.character_material_slots!=null?item(
+         'Character material slots',size(visual.character_material_slots)):''}
+      ${visual?.character_default_slots!=null?item(
+         'Character fallback slots',size(visual.character_default_slots)):''}
+      ${visual?.camera_editor_proxy_slots_excluded!=null?item(
+         'Camera editor-proxy slots excluded',
+         size(visual.camera_editor_proxy_slots_excluded)):''}
       ${visual?item('Default engine materials',size(visual.default_material_slots)):''}
       ${visual?item('Empty material slots',size(visual.empty_material_slots)):''}
       ${visual?item('Other materials (appearance unverified)',size(visual.nondefault_material_slots)):''}
       ${visual?item('SkyLight / SkyAtmosphere',`${size(visual.environment?.SkyLight)} / ${size(visual.environment?.SkyAtmosphere)}`):''}
+      ${visual?.character_renderers?.length?`<details><summary>Character material identities</summary>
+      ${visual.character_renderers.map(row=>`<p class="hint"><strong>${esc(row.actor||'Character')}</strong> · ${(row.materials||[]).map(m=>esc(m.status)+' ('+esc(m.asset||'missing')+')').join(' · ')}</p>`).join('')}
+      </details>`:''}
       ${visual?.visual_issues?.length?`<div class="slim-note"><strong>Unresolved visual diagnostics</strong>${visual.visual_issues.map(x=>`<p class="hint">${esc(x)}</p>`).join('')}</div>`:''}
       <div class="rule"></div><pre id="audit-command" class="command">${esc(script)}</pre>
       <div class="form-actions">${btn('Copy native audit command','copy-audit-command','secondary')}${btn('Refresh evidence','refresh','secondary')}</div>

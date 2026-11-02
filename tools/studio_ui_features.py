@@ -228,6 +228,19 @@ def verification(workspace: Path, active_job: dict[str, Any],
                 "nondefault_material_slots": data.get("material_slots_nondefault"),
                 "environment": data.get("environment_actor_counts") or {},
                 "visual_issues": data.get("visual_issues") or [],
+                "character_material_slots": data.get("character_material_slots"),
+                "character_default_slots": data.get("character_material_slots_engine_default"),
+                "character_empty_slots": data.get("character_material_slots_empty"),
+                "character_nondefault_slots": data.get("character_material_slots_nondefault"),
+                "camera_editor_proxy_slots_excluded": data.get(
+                    "editor_camera_proxy_material_slots_excluded"
+                ),
+                "character_renderers": [
+                    {"actor": row.get("actor_label"),
+                     "materials": row.get("materials", [])}
+                    for row in data.get("renderer_details", [])
+                    if row.get("component_class") == "SkeletalMeshComponent"
+                ],
                 "render_fidelity_verified": False,
             })
         out[name] = report
