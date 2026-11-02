@@ -8,7 +8,7 @@
   const norm = v => String(v || '').replaceAll('\\','/').toLowerCase();
   const state = {screen:'home', phase:'IDLE', busy:false, info:'', error:'', status:null,
     discovery:null, folders:{unity:'',unreal:''}, unrealProject:'', csir:'', level:'',
-    sourceRights:false, allowPartial:false, aiAgentsEnabled:false, candidate:null, job:null, verification:null,
+    sourceRights:false, allowPartial:false, aiAgentsEnabled:false, agentStatus:null, candidate:null, job:null, verification:null,
     diagnosis:null, feedback:null, running:false, detailsOpen:false, menuOpen:false,
     censusSelection:null, censusIssue:false};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
@@ -122,7 +122,7 @@
       '<div class="ai-agents-option"><label><input type="checkbox" name="ai-agents" '+
       (state.aiAgentsEnabled?'checked':'')+
       ' /> Enable AI agents</label>'+
-      '<p class="subnote">Optional AI-assisted recovery (coming next). This checkbox does not activate LangGraph or change transfers yet.</p></div></div>':'')+
+      '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local agent dependencies and an API key; usage may incur model charges.</p></div></div>':'')+
       (Object.values(d.errors||{})).map(v=>'<p class="warning">'+esc(v)+'</p>').join('')+
       '<div class="center-actions">'+(chosenU?action:'')+'</div></form>'+
       (connected?'<p class="subnote">Connected successfully. Start Transfer automatically prepares, imports, generates, and inspects the result.</p>':'')+
@@ -139,6 +139,10 @@
       (c.automatic_setup?.warnings||[]).map(x=>'<p class="subnote">'+esc(x)+'</p>').join('')+
       (c.review_flags||[]).map(x=>'<p class="subnote">'+esc(x)+'</p>').join(''):'<p>Plan not prepared.</p>')+
       (state.job?'<div class="fact">Job status <b>'+esc(state.job.status)+'</b></div>':'')+
+      (state.agentStatus?.enabled?'<div class="fact">LangGraph AI agents <b>'+esc(state.agentStatus.status||'WAITING')+'</b></div>'+
+        '<div class="fact">Agent repair rounds <b>'+esc(state.agentStatus.iterations??0)+'</b></div>'+
+        (state.agentStatus.failure?'<p class="warning">'+esc(state.agentStatus.failure)+'</p>':'')+
+        (state.agentStatus.reasoning?'<p class="subnote">'+esc(state.agentStatus.reasoning)+'</p>':''):'')+
       (state.feedback?'<div class="fact">CineTwin/visual feedback <b>'+esc(state.feedback.status)+'</b></div>'+
         (state.feedback.issues||[]).map(row=>'<p class="warning">'+esc(row.category)+': '+
         esc(row.code||row.source||row.detail||row.status)+'</p>').join(''):'')+
@@ -211,7 +215,9 @@
       '<div class="verification"><p>Native structure: '+esc(v.persistence?.native_structure||'Not verified')+'</p>'+
       '<p>Persistence after reopen: '+esc(v.persistence?.status||'Not verified')+'</p>'+
       '<p>CineTwin behavioral parity: '+(state.diagnosis?'Measured — not full fidelity':'Not verified')+'</p>'+
-      '<p>Visual fidelity: '+esc(v.visual?.status||'Not verified')+'</p></div>'+
+      '<p>Visual fidelity: '+esc(v.visual?.status||'Not verified')+'</p>'+
+      (state.agentStatus?.enabled?'<p>AI agents: '+esc(state.agentStatus.status)+
+      ' · repair rounds '+esc(state.agentStatus.iterations??0)+'</p>':'')+'</div>'+
       research()+'<div class="center-actions">'+button('New Transfer','projects',false,'secondary')+'</div></main>';
   }
   function about(){return '<main class="about-view"><h1>CutSceneAI Studio</h1>'+
@@ -298,13 +304,18 @@
     const info=await api('connect-projects',{unity_folder:state.folders.unity,
       unreal_folder:state.folders.unreal,unreal_project:state.unrealProject,
       csir:state.csir,level:state.level,source_rights_confirmed:state.sourceRights});
-    state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.running=false;
+    state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.agentStatus=null;state.running=false;
     state.phase='CONNECTED';state.info='Projects connected successfully!';state.error='';state.censusIssue=false;state.censusSelection=null;
   }
   async function refresh(){
     const s=await api('status');state.status=s;
     if(!state.running)state.candidate=s.candidate||null;
     if(s.active_job)state.job=await api('jobs/'+s.active_job);
+    if(state.aiAgentsEnabled||state.job?.ai_agents_enabled){
+      try{state.agentStatus=await api('agents');}catch(e){
+        state.agentStatus={enabled:true,status:'AGENT_STATUS_UNAVAILABLE',failure:String(e.message||e)};
+      }
+    }
     if(terminal(state.job)){
       state.phase=generated()?'COMPLETE':'BLOCKED';
       try{state.verification=await api('verification');}catch{}
@@ -345,7 +356,8 @@
     // An existing, independently ready Unreal level may not require imports.
     // Never treat an import blocker as permission to bypass editor readiness.
     state.phase='READY_TO_QUEUE';
-    await api('approve-one-click',{candidate_id:state.candidate.candidate_id});
+    await api('approve-one-click',{candidate_id:state.candidate.candidate_id,
+      enable_ai_agents:state.aiAgentsEnabled});
   }
   async function advance(){
     if(!state.running||state.busy||state.job||!state.candidate)return;
@@ -384,6 +396,8 @@
         state.csir=connection().csir;state.level=connection().level_path;
         state.unrealProject=connection().target_project;
         state.sourceRights=Boolean(connection().source_rights_confirmed);
+        state.aiAgentsEnabled=state.job?Boolean(state.job.ai_agents_enabled):
+          Boolean(state.status.one_click_approval?.enable_ai_agents);
         state.screen=state.job?(terminal(state.job)?'results':'transfer'):'projects';
         const approval=state.status.one_click_approval;
         state.running=Boolean(state.job||(approval?.candidate_id&&
