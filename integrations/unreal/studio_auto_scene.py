@@ -227,6 +227,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
             receipt['actors_created'].append({'name':row['name'],'label':row['label'],'kind':kind})
             receipt['failed_step']=None
         if manifest.get('source_albedo_material_candidates'):
+            material_cache = {}
             # This is a *partial* albedo-only recovery and never implies a
             # source-equivalent shader. Only fresh imported actors are used.
             for row in manifest['actors']:
@@ -239,7 +240,8 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 receipt['failed_step']={'phase':'material_restoration','name':row['name']}
                 receipt['material_restoration'].extend(
                     dict(item, actor=row['name']) for item in studio_material_restore.restore(
-                        api, created, manifest['source_albedo_material_candidates'])
+                        api, created, manifest['source_albedo_material_candidates'],
+                        existing_assets=material_cache)
                 )
                 receipt['failed_step']=None
         receipt['failed_step']={'phase':'level_save','level':expected_level}
