@@ -283,6 +283,30 @@ def _native_track(
     return [a for a in plan["actions"] if a.get("kind") != "camera_setup"]
 
 
+def _activation_adapter(
+    csir: dict[str, Any], mapping: dict[str, Any], track: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if mapping.get("enable_actor_visibility_fallback") is not True:
+        return []
+    action = visual_activation.build_action(csir, mapping, track)
+    action["covered_source_section_ids"] = [
+        str(section.get("section_id")) for section in track["sections"]
+        if section.get("section_id")
+    ]
+    return [action]
+
+
+def _installed_ced_handlers() -> feature_dispatch.HandlerRegistry:
+    """Code-installed adapters used identically by preparation and Unreal re-planning."""
+    registry = feature_dispatch.HandlerRegistry()
+    registry.register(
+        "event.state", _activation_adapter,
+        name="unity_activation_visual_fallback", version="1.0.0",
+        source_kinds=("tracks",), builder_actions=("actor_visibility",),
+    )
+    return registry
+
+
 def compose(
     csir: dict[str, Any],
     mapping: dict[str, Any],
@@ -301,6 +325,7 @@ def compose(
     # CED analysis MUST precede source-to-target action generation. Membership
     # in CED does not prove the Unreal adapter can execute that semantic.
     discovery = ced_preflight.audit(csir, mapping)
+    handlers = _installed_ced_handlers()
     entities = {str(e["entity_id"]): e for e in csir.get("entities", [])}
     # A malformed frame-zero/nonmatching capture must not be used for baking.
     if capture is not None and capture.get("cutscene_id") != csir.get("cutscene_id"):
@@ -328,7 +353,10 @@ def compose(
             try:
                 if (track.get("ced_type") == "event.state"
                     and mapping.get("enable_actor_visibility_fallback") is True):
-                    native_actions = [visual_activation.build_action(csir, mapping, track)]
+                    native_actions = handlers.plan_for(
+                        csir, mapping, track, kind="tracks",
+                        location=f"tracks[{index}]",
+                    )
                     status = "BAKED_PARTIAL"
                     reasons.append(
                         "Visual-only ActivationTrack approximation: actor visibility keys "
@@ -411,6 +439,10 @@ def compose(
                         )
                 elif not native_actions:
                     reasons.append("No native target action for active source track.")
+            except feature_dispatch.FeatureDispatchError as exc:
+                raise TransferBackendError(
+                    "Installed CED adapter rejected source track: " + str(exc)
+                ) from exc
             except (ValueError, KeyError, TypeError, IndexError, ZeroDivisionError) as exc:
                 reasons.append(f"Native converter cannot represent track: {type(exc).__name__}: {exc}")
         if status == "SKIPPED" and capture is not None and entity is not None:
@@ -662,12 +694,17 @@ def compose(
                 "fidelity_status": "ROOT_POSITION_ONLY_UNVERIFIED",
             })
 
+    # Non-track adapters are just as source-bound as Timeline adapters. The
+    # installed registry is shared by preparation and the Unreal re-planner;
+    # arbitrary source metadata cannot select or import executable code.
+    plan["actions"].extend(handlers.plan_other_occurrences(csir, mapping))
+
     # A source plugin can bind many kinds of tracks to one Unreal float.
     # Two writers to the same property (or a built-in light/camera track)
     # cannot be merged without an explicit temporal composition policy.
     scalar_targets: set[tuple[str, str, str, str]] = set()
     for action in plan["actions"]:
-        if action.get("kind") != "property_float":
+        if action.get("kind") not in {"property_float", "property_bool"}:
             continue
         token = (
             str(action["actor_label"]), str(action["target_scope"]),
@@ -765,7 +802,7 @@ def compose(
         "source_assets": asset_coverage,
         "source_relationship_count": len(relationships),
         "relationship_fidelity_verified": False,
-        "feature_dispatch": feature_dispatch.audit(csir, plan),
+        "feature_dispatch": feature_dispatch.audit(csir, plan, handlers=handlers),
         "hierarchy_reconstruction": hierarchy_results,
         "source_parent_resolution": source_parent_resolution.analyze(
             csir, mapping, plan["actions"]
@@ -853,7 +890,9 @@ def compose_files(
         report["actions"] = dict(Counter(a["kind"] for a in plan["actions"]))
         # Recompute the feature ledger against the actual source-augmented plan.
         # Census-only components are stored separately with their native IDs.
-        report["feature_dispatch"] = feature_dispatch.audit(csir, plan)
+        report["feature_dispatch"] = feature_dispatch.audit(
+            csir, plan, handlers=_installed_ced_handlers()
+        )
     report["adaptive_components"] = adaptive
     report["source_feature_surface"] = source_surface
     report["source_feature_surface_state"] = (

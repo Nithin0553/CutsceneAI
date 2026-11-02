@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections import Counter
+from collections.abc import Callable, Mapping
+from copy import deepcopy
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 
 CATALOG_PATH = (Path(__file__).resolve().parents[1] / "contracts"
                 / "dictionary" / "cutscene-elements-v0.2.json")
@@ -89,8 +92,16 @@ FEATURE_STATES = frozenset({
     "NOT_ENCOUNTERED", "SOURCE_RECORDED_ADAPTER_MISSING",
     "NATIVE_ACTION_PLANNED_UNVERIFIED", "LOSSY_ACTION_PLANNED_UNVERIFIED",
     "NATIVE_ACTION_HANDLER_MISSING", "CUSTOM_HANDLER_REGISTERED_UNVERIFIED",
+    "REGISTERED_ADAPTER_NOT_EXECUTED",
 })
 VALID_STAGE = frozenset({"SOURCE", "PLAN", "NATIVE_READBACK", "BEHAVIOR"})
+SOURCE_KINDS = frozenset({"assets", "entities", "tracks", "sections", "curves",
+                          "relationships"})
+_NATIVE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SOURCE_LOCATION = re.compile(
+    r"^(assets|entities|tracks|relationships)\[(\d+)\]"
+    r"(?:\.sections\[(\d+)\](?:\.payload\.animation\.curves\[(\d+)\])?)?$"
+)
 
 
 class FeatureDispatchError(ValueError):
@@ -175,6 +186,48 @@ def verify_executable_actions(plan: Mapping[str, Any]) -> None:
             )
 
 
+def _validate_scalar_adapter_action(
+    action: Mapping[str, Any], mapping: Mapping[str, Any], semantic: str,
+) -> None:
+    """Validate a plugin's existing Unreal scalar builder contract before handoff."""
+    if action.get("source_semantic") != semantic:
+        raise FeatureDispatchError("Scalar CED adapter must preserve its source semantic.")
+    if action.get("target_scope") not in {"actor", "component"}:
+        raise FeatureDispatchError("Scalar CED adapter requires actor/component target scope.")
+    if any(not isinstance(action.get(key), str) or
+           not _NATIVE_IDENTIFIER.fullmatch(action[key])
+           for key in ("target_class", "target_property_name")):
+        raise FeatureDispatchError("Scalar CED adapter requires native target identifiers.")
+    if action.get("target_property_path") != action["target_property_name"]:
+        raise FeatureDispatchError("Nested Unreal scalar properties need a distinct adapter.")
+    entity = mapping.get("entities", {}).get(action.get("entity_name"))
+    if (not isinstance(entity, dict) or not entity.get("actor_label")
+        or entity["actor_label"] != action.get("actor_label")):
+        raise FeatureDispatchError("Scalar CED adapter target actor is not source mapped.")
+    keys = action.get("keys")
+    if not isinstance(keys, list) or not keys:
+        raise FeatureDispatchError("Scalar CED adapter needs source-derived native keys.")
+    previous = -1
+    for key in keys:
+        if not isinstance(key, dict) or type(key.get("frame")) is not int:
+            raise FeatureDispatchError("Scalar CED adapter frame is not an integer.")
+        frame = key["frame"]
+        if frame <= previous:
+            raise FeatureDispatchError("Scalar CED adapter frames must increase from zero.")
+        previous = frame
+        value = key.get("value")
+        if action["kind"] == "property_bool":
+            if type(value) is not bool:
+                raise FeatureDispatchError("Scalar Boolean CED adapter needs Boolean values.")
+        else:
+            try:
+                finite = type(value) in {int, float} and math.isfinite(value)
+            except OverflowError:
+                finite = False
+            if not finite:
+                raise FeatureDispatchError("Scalar float CED adapter needs finite numeric values.")
+
+
 def _source_rows(csir: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Inventory assets, entities, tracks, sections, channels, relationships.
 
@@ -200,6 +253,7 @@ def _source_rows(csir: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "source_native_type": str(native.get("native_type") or
                                           native.get("asset_type") or ""),
                 "kind": collection,
+                "_source_payload": obj,
             }
             rows.append(row)
             if collection != "tracks":
@@ -216,6 +270,7 @@ def _source_rows(csir: Mapping[str, Any]) -> list[dict[str, Any]]:
                     "source_native_type": str(
                         (section.get("native_payload") or {}).get("native_asset_type") or ""),
                     "kind": "sections",
+                    "_source_payload": section,
                 })
                 for curve_index, curve in enumerate(
                     (section.get("payload") or {}).get("animation", {}).get("curves", [])
@@ -229,8 +284,30 @@ def _source_rows(csir: Mapping[str, Any]) -> list[dict[str, Any]]:
                         "ced": str(curve.get("canonical_semantic") or ""),
                         "source_native_type": str(curve.get("property_name") or ""),
                         "kind": "curves",
+                        "_source_payload": curve,
                     })
     return rows
+
+
+def _source_at_location(csir: Mapping[str, Any], kind: str, location: str) -> Any:
+    match = _SOURCE_LOCATION.fullmatch(location)
+    if match is None:
+        raise FeatureDispatchError("Invalid source occurrence location for CED adapter.")
+    collection, index, section_index, curve_index = match.groups()
+    expected_kind = "curves" if curve_index is not None else (
+        "sections" if section_index is not None else collection
+    )
+    if kind != expected_kind or (section_index is not None and collection != "tracks"):
+        raise FeatureDispatchError("CED adapter source kind does not match source location.")
+    try:
+        source = csir[collection][int(index)]
+        if section_index is not None:
+            source = source["sections"][int(section_index)]
+        if curve_index is not None:
+            source = source["payload"]["animation"]["curves"][int(curve_index)]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise FeatureDispatchError("CED adapter source occurrence is absent from CSIR.") from exc
+    return source
 
 
 class HandlerRegistry:
@@ -247,7 +324,9 @@ class HandlerRegistry:
 
     def register(self, semantic: str, handler: Callable[..., Any], *,
                  name: str, version: str,
-                 requires: tuple[str, ...] = ("SOURCE", "PLAN", "NATIVE_READBACK", "BEHAVIOR")
+                 requires: tuple[str, ...] = ("SOURCE", "PLAN", "NATIVE_READBACK", "BEHAVIOR"),
+                 source_kinds: tuple[str, ...] = (),
+                 builder_actions: tuple[str, ...] = (),
                  ) -> None:
         # Plugins may introduce new namespaced CED semantics without requiring
         # a source-project dictionary rewrite. Registration is explicit,
@@ -262,10 +341,127 @@ class HandlerRegistry:
             raise FeatureDispatchError("Handler must declare valid evidence gates.")
         if "NATIVE_READBACK" not in requires or "BEHAVIOR" not in requires:
             raise FeatureDispatchError("Cannot declare an adapter without native-readback and behavior evidence proof.")
+        if bool(source_kinds) != bool(builder_actions):
+            raise FeatureDispatchError("Executable adapters require source kinds and builder actions.")
+        if set(source_kinds) - SOURCE_KINDS or set(builder_actions) - BUILDER_ACTIONS:
+            raise FeatureDispatchError("Adapter source kind or native builder action is not implemented.")
+        if source_kinds and set(requires) != VALID_STAGE:
+            raise FeatureDispatchError("Executable CED adapters require all four evidence gates.")
         self.handlers[semantic] = {
             "name": name, "version": version, "requires": list(requires),
-            "handler": handler,
+            "handler": handler, "source_kinds": tuple(source_kinds),
+            "builder_actions": tuple(builder_actions),
         }
+
+    def plan_for(
+        self, csir: Mapping[str, Any], mapping: Mapping[str, Any],
+        source: Mapping[str, Any], *, kind: str, location: str,
+    ) -> list[dict[str, Any]]:
+        """Run one code-registered adapter and bind its actions to exact source evidence.
+
+        Registration alone cannot mark a source converted. Only an explicit
+        builder action emitted here reaches the normal Unreal preflight and
+        immutable-plan checks. Source JSON never selects executable Python.
+        """
+        semantic = str((source.get("canonical_semantic") if kind == "curves"
+                        else source.get("ced_type")) or "")
+        spec = self.handlers.get(semantic)
+        if spec is None or kind not in spec["source_kinds"]:
+            return []
+        if not location or kind not in SOURCE_KINDS:
+            raise FeatureDispatchError("Adapter requires an exact source occurrence location.")
+        if _source_at_location(csir, kind, location) != source:
+            raise FeatureDispatchError("CED adapter source occurrence differs from CSIR.")
+        identifier = {
+            "assets": "asset_id", "entities": "entity_id", "tracks": "track_id",
+            "sections": "section_id", "curves": "curve_id",
+            "relationships": "relationship_id",
+        }[kind]
+        source_id = str(source.get(identifier) or "")
+        # The implementation is trusted code installed with the planner. A
+        # copy prevents a buggy adapter from changing the caller's source.
+        try:
+            proposed = spec["handler"](deepcopy(csir), deepcopy(mapping), deepcopy(source))
+        except FeatureDispatchError:
+            raise
+        except Exception as exc:
+            raise FeatureDispatchError(
+                "CED adapter failed for " + semantic + " at " + location + ": " + str(exc)
+            ) from exc
+        if not isinstance(proposed, list):
+            raise FeatureDispatchError("CED adapter must return a list of native actions.")
+        actions = []
+        for action in proposed:
+            if not isinstance(action, dict) or action.get("kind") not in spec["builder_actions"]:
+                raise FeatureDispatchError("CED adapter emitted an undeclared native action.")
+            if not isinstance(action.get("source_behavior_strategy"), str) or not action[
+                "source_behavior_strategy"
+            ].strip():
+                raise FeatureDispatchError("CED adapter must describe its source behavior strategy.")
+            if action["kind"] in {"property_float", "property_bool"}:
+                _validate_scalar_adapter_action(action, mapping, semantic)
+            fidelity = action.get("fidelity_status", "NATIVE_READBACK_AND_BEHAVIOR_UNVERIFIED")
+            if not isinstance(fidelity, str) or not fidelity.endswith("_UNVERIFIED"):
+                raise FeatureDispatchError("CED adapter cannot claim fidelity before engine evidence.")
+            if (action.get("source_location", location) != location
+                or action.get("source_id", source_id) != source_id
+                or action.get("source_ced", semantic) != semantic
+                or action.get("target_readback_verified") is True
+                or action.get("behavior_fidelity_verified") is True):
+                raise FeatureDispatchError("CED adapter attempted to override source identity or verification.")
+            covered_ids = action.get("covered_source_section_ids", [])
+            if not isinstance(covered_ids, list) or any(
+                not isinstance(item, str) or not item for item in covered_ids
+            ):
+                raise FeatureDispatchError("CED adapter section coverage must use source IDs.")
+            covered_locations = []
+            if covered_ids:
+                if kind != "tracks" or len(set(covered_ids)) != len(covered_ids):
+                    raise FeatureDispatchError("Ambiguous source section coverage declaration.")
+                sections = source.get("sections") or []
+                if not isinstance(sections, list):
+                    raise FeatureDispatchError("Source track sections are malformed.")
+                indexed = [(str(section.get("section_id") or ""), index)
+                           for index, section in enumerate(sections)
+                           if isinstance(section, dict) and section.get("ced_type") == semantic]
+                if len({item for item, _ in indexed}) != len(indexed):
+                    raise FeatureDispatchError("Duplicate source section ID cannot prove coverage.")
+                by_id = dict(indexed)
+                if set(covered_ids) - set(by_id):
+                    raise FeatureDispatchError("CED adapter claimed an unknown source section.")
+                covered_locations = [f"{location}.sections[{by_id[item]}]"
+                                     for item in covered_ids]
+            row = deepcopy(action)
+            row.update({"source_location": location, "source_id": source_id,
+                        "source_ced": semantic, "adapter_name": spec["name"],
+                        "adapter_version": spec["version"],
+                        "covered_source_locations": covered_locations,
+                        "required_evidence_gates": list(spec["requires"]),
+                        "fidelity_status": action.get(
+                            "fidelity_status", "NATIVE_READBACK_AND_BEHAVIOR_UNVERIFIED"),
+                        "target_readback_verified": False,
+                        "behavior_fidelity_verified": False})
+            try:
+                json.dumps(row, allow_nan=False)
+            except (TypeError, ValueError) as exc:
+                raise FeatureDispatchError("CED adapter emitted non-JSON or nonfinite action.") from exc
+            actions.append(row)
+        return actions
+
+    def plan_other_occurrences(
+        self, csir: Mapping[str, Any], mapping: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Compile registered entity, asset, section, curve and relationship adapters."""
+        actions = []
+        for item in _source_rows(csir):
+            if item["kind"] == "tracks":
+                continue  # Track adapters run in the per-track outcome ledger.
+            actions.extend(self.plan_for(
+                csir, mapping, item["_source_payload"],
+                kind=item["kind"], location=item["source_location"],
+            ))
+        verify_executable_actions({"actions": actions})
+        return actions
 
 
 def audit(csir: Mapping[str, Any], plan: Mapping[str, Any] | None = None, *,
@@ -286,25 +482,47 @@ def audit(csir: Mapping[str, Any], plan: Mapping[str, Any] | None = None, *,
     # track/entity. A camera cut in a completely different track cannot
     # make every same-CED source feature appear planned.
     attributed_actions: dict[str, set[str]] = {}
+    executed_adapters: set[tuple[str, str, str]] = set()
+    name_counts = Counter(
+        (row["kind"], row["source_name"]) for row in _source_rows(csir)
+        if row["kind"] in {"tracks", "entities"} and row["source_name"]
+    )
     for action in actions:
         if not isinstance(action, dict):
             continue
         kind = str(action.get("kind") or "")
-        for key in ("entity_name", "track_name"):
+        exact = str(action.get("source_location") or "")
+        if exact:
+            for location in (exact, *(action.get("covered_source_locations") or [])):
+                attributed_actions.setdefault(location, set()).add(kind)
+                if action.get("adapter_name") and action.get("adapter_version"):
+                    executed_adapters.add((location, str(action["adapter_name"]),
+                                           str(action["adapter_version"])))
+            continue
+        for source_kind, key in (("entities", "entity_name"), ("tracks", "track_name")):
             name = str(action.get(key) or "")
-            if name:
-                attributed_actions.setdefault(name, set()).add(kind)
+            if name and name_counts[(source_kind, name)] == 1:
+                attributed_actions.setdefault(source_kind + ":" + name, set()).add(kind)
     observed = _source_rows(csir)
     rows = []
     for item in observed:
         semantic = item["ced"]
         candidate = recipe(semantic, features=features)
         scope = item.get("source_name", "")
-        applicable = attributed_actions.get(scope, set()) if scope else set()
-        executable = sorted(set(candidate.get("potential_builder_actions", ())) & applicable)
+        applicable = attributed_actions.get(item["source_location"], set())
+        if item["kind"] in {"entities", "tracks"} and scope:
+            applicable |= attributed_actions.get(item["kind"] + ":" + scope, set())
         handler = handlers.handlers.get(semantic) if handlers is not None else None
-        if handler:
+        allowed_actions = set(candidate.get("potential_builder_actions", ()))
+        if handler and item["kind"] in handler["source_kinds"]:
+            allowed_actions.update(handler["builder_actions"])
+        executable = sorted(allowed_actions & applicable)
+        if handler and executable and (
+            item["source_location"], handler["name"], handler["version"]
+        ) in executed_adapters:
             state = "CUSTOM_HANDLER_REGISTERED_UNVERIFIED"
+        elif handler:
+            state = "REGISTERED_ADAPTER_NOT_EXECUTED"
         elif not candidate["registered"] or not candidate.get("potential_builder_actions"):
             state = "SOURCE_RECORDED_ADAPTER_MISSING"
         elif executable:
@@ -313,10 +531,10 @@ def audit(csir: Mapping[str, Any], plan: Mapping[str, Any] | None = None, *,
         else:
             state = "NATIVE_ACTION_HANDLER_MISSING"
         rows.append({
-            **item,
+            **{key: value for key, value in item.items() if key != "_source_payload"},
             "state": state,
             "candidate_route": candidate["candidate_route"],
-            "potential_builder_actions": candidate.get("potential_builder_actions", []),
+            "potential_builder_actions": sorted(allowed_actions),
             "matching_plan_action_kinds": executable,
             "custom_handler": {"name": handler["name"], "version": handler["version"]}
                               if handler else None,
@@ -336,7 +554,8 @@ def audit(csir: Mapping[str, Any], plan: Mapping[str, Any] | None = None, *,
         "source_occurrences": rows,
         "states": dict(sorted(states.items())),
         "missing_adapter_count": sum(1 for row in rows if row["state"] in {
-            "SOURCE_RECORDED_ADAPTER_MISSING", "NATIVE_ACTION_HANDLER_MISSING"}),
+            "SOURCE_RECORDED_ADAPTER_MISSING", "NATIVE_ACTION_HANDLER_MISSING",
+            "REGISTERED_ADAPTER_NOT_EXECUTED"}),
         "unknown_action_kinds": unsupported_actions,
         "full_conversion_verified": False,
         "gates": list(features["evidence_gates"]),

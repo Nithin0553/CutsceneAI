@@ -85,6 +85,12 @@ def test_optin_activation_creates_one_visual_only_native_track():
     assert report["tracks"][0]["outcome"] == "BAKED_PARTIAL"
     assert report["feature_dispatch"]["full_conversion_verified"] is False
     assert report["feature_dispatch"]["unknown_action_kinds"] == []
+    sections = [row for row in report["feature_dispatch"]["source_occurrences"]
+                if row["kind"] == "sections"]
+    assert len(sections) == 2
+    assert all(row["state"] == "CUSTOM_HANDLER_REGISTERED_UNVERIFIED"
+               and row["matching_plan_action_kinds"] == ["actor_visibility"]
+               and row["behavior_fidelity_verified"] is False for row in sections)
     assert source == before_source
     assert {k: v for k, v in mapping.items()
             if k != "enable_actor_visibility_fallback"} == before_mapping
