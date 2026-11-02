@@ -265,3 +265,83 @@ def test_llm_proposal_cannot_bypass_source_material_gate(tmp_path):
     })
     assert result["status"] == "REJECTED_UNSUPPORTED_STRATEGY"
     assert list(candidate.glob("agent-request-*.json")) == []
+
+
+
+def test_unreal_adapter_executes_source_backed_material_and_native_reaudit(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    workspace, candidate, job, _ = staged(tmp_path, enabled=True)
+    receipt = candidate / "automatic-setup-receipt.json"
+    write(receipt, {"actors_created": [{"name": "A"}]})
+    job["setup_receipt_file"] = str(receipt)
+    calls = []
+    observed = iter((2, 0))
+    monkeypatch.setitem(sys.modules, "studio_visual_audit", SimpleNamespace(
+        audit_latest=lambda workspace, api: {
+            "character_material_slots_engine_default": next(observed),
+            "status": "VISUAL_COMPLETENESS_REVIEW_REQUIRED",
+        }
+    ))
+    monkeypatch.setitem(sys.modules, "studio_visual_repair", SimpleNamespace(
+        attempt=lambda j, setup, api: (
+            calls.append(("repair", j["job_id"], setup["actors_created"][0]["name"]))
+            or {"changed": 2}
+        )
+    ))
+    monkeypatch.setitem(sys.modules, "studio_auto_scene", SimpleNamespace(
+        _save_level=lambda api, level: calls.append(("save", level))
+    ))
+    api = SimpleNamespace(EditorAssetLibrary=SimpleNamespace(
+        does_asset_exist=lambda target: target == job["sequence_path"],
+    ))
+    request = {
+        "kind": "cutsceneai.studio.agent_repair_request",
+        "schema_version": "1", "request_id": "c" * 32,
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "strategy": "restore_source_albedo",
+        "sequence_path": job["sequence_path"],
+        "expected_project": job["expected_project"],
+        "expected_level": job["expected_level"],
+        "baseline_fallback": 2,
+    }
+    result = executor.execute(api, workspace, job, request,
+                              project=job["expected_project"],
+                              level=job["expected_level"])
+    assert result["status"] == "REPAIR_SAVED_AND_REAUDITED"
+    assert result["changes"] == 2
+    assert result["fallback_after"] == 0
+    assert calls == [("repair", job["job_id"], "A"), ("save", job["expected_level"])]
+
+
+def test_editor_request_queue_is_once_only_with_persistent_receipt(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    workspace, candidate, job, _ = staged(tmp_path, enabled=True)
+    write(workspace / "jobs" / (job["job_id"] + ".json"), job)
+    request_id = "d" * 32
+    write(candidate / ("agent-request-" + request_id + ".json"), {
+        "kind": "cutsceneai.studio.agent_repair_request",
+        "schema_version": "1", "request_id": request_id,
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "strategy": "restore_source_albedo",
+        "expected_project": job["expected_project"],
+        "expected_level": job["expected_level"],
+        "sequence_path": job["sequence_path"],
+        "baseline_fallback": 1,
+    })
+    calls = []
+    def fake_execute(*args, **kwargs):
+        calls.append("native")
+        return {"status": "REPAIR_SAVED_AND_REAUDITED", "changes": 1,
+                "fallback_after": 0}
+    monkeypatch.setattr(executor, "execute", fake_execute)
+    api = SimpleNamespace(log_warning=lambda message: calls.append("warning"))
+    assert executor.service_one(api, workspace, project=job["expected_project"],
+                                level=job["expected_level"], save=write) is True
+    assert executor.service_one(api, workspace, project=job["expected_project"],
+                                level=job["expected_level"], save=write) is False
+    result = json.loads((candidate / ("agent-receipt-" + request_id + ".json")).read_text())
+    assert result["job_id"] == job["job_id"]
+    assert result["fallback_after"] == 0
+    assert calls == ["native"]
