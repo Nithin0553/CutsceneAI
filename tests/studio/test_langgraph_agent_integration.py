@@ -229,3 +229,39 @@ def test_native_failure_is_only_diagnosed_never_replayed(tmp_path):
     assert result["status"] == "UNRESOLVED_NO_SAFE_STRATEGY"
     assert list(candidate.glob("agent-request-*.json")) == []
     assert result["issues"][0]["category"] == "NATIVE_TRANSFER_FAILED_NO_PARITY"
+
+
+
+def test_structured_openai_reasoning_only_receives_diagnostic_summary(monkeypatch):
+    from types import SimpleNamespace
+
+    observed = {}
+    def request(**kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(output_text=json.dumps({
+            "strategy": "report_only", "reason": "Camera lens fidelity unverified",
+        }))
+    fake = SimpleNamespace(responses=SimpleNamespace(create=request))
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(
+        OpenAI=lambda **kwargs: fake
+    ))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only-key")
+    result = graph._model_reasoner({
+        "issues": [{"category": "CAMERA_SOURCE_TARGET_MISMATCH"}],
+        "safe_strategies": ["report_only"],
+    })
+    assert result["strategy"] == "report_only"
+    assert observed["text"]["format"]["strict"] is True
+    assert observed["text"]["format"]["type"] == "json_schema"
+    assert observed["model"]
+    assert "test-only-key" not in observed["input"]
+
+
+def test_llm_proposal_cannot_bypass_source_material_gate(tmp_path):
+    workspace, candidate, job, _ = staged(tmp_path, fallback=0)
+    result = graph.run_once(workspace, job, lambda _: {
+        "strategy": "restore_source_albedo",
+        "reason": "Try editing materials despite no fallback slots",
+    })
+    assert result["status"] == "REJECTED_UNSUPPORTED_STRATEGY"
+    assert list(candidate.glob("agent-request-*.json")) == []
