@@ -372,8 +372,8 @@ def approve_one_click(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, 
         raise ValueError('Approval candidate identity is stale or invalid.')
     if not config.get('source_rights_confirmed'):
         raise ValueError('Source asset-copy rights must be confirmed.')
-    if not current.get('automatic_setup', {}).get('ready'):
-        raise ValueError('Automatic staging is not verified; inspect the blocked candidate.')
+    # Approval records intent only. A verified existing target is also valid;
+    # queue_trial performs the final import/readiness decision in the editor.
     if (folder / 'active-job.json').exists():
         raise ValueError('A job is already active; inspect it instead of approving a replay.')
     atomic_json(folder / 'one-click-approval.json', {
