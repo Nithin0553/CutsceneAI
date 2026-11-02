@@ -77,6 +77,9 @@ EXPLICIT_ACTIONS = {
     "event.trigger": ("marker",),
     "event.state": ("actor_visibility",),
     "scene.visibility": ("actor_visibility",),
+    "camera.postprocess": ("property_float",),
+    "light.shadow": ("property_bool",),
+    "metadata.property_descriptor": ("property_float", "property_bool"),
 }
 LOSSY_ACTION_SEMANTICS = frozenset({
     "event.trigger", "event.state", "light.animation", "audio.track", "audio.section",

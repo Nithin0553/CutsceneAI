@@ -13,6 +13,8 @@ import re
 from collections import Counter
 from typing import Any, Mapping
 
+import feature_dispatch
+
 SOURCE_CAMERA = "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData"
 SOURCE_LIGHT = "UnityEngine.Light"
 SOURCE_COLLIDERS = {"UnityEngine.BoxCollider", "UnityEngine.SphereCollider"}
@@ -140,7 +142,7 @@ def _explicit_actions(
             "target_class": rule["target_class"],
             "target_property_name": rule["target_property_name"],
             "target_property_path": rule["target_property_name"],
-            "source_semantic": str(rule.get("source_semantic") or "metadata.native_property"),
+            "source_semantic": str(rule.get("source_semantic") or "metadata.property_descriptor"),
             "source_component_type": str(row["component_type"]),
             "source_component_id": str(row.get("component_global_id") or ""),
             "source_property_path": rule["source_property_path"],
@@ -172,6 +174,7 @@ def adapt(
     """
     known = _identity_map(csir, mapping)
     rules = _explicit_property_rules(mapping)
+    ced = feature_dispatch.catalog()
     actions: list[dict[str, Any]] = []
     decisions: list[dict[str, Any]] = []
     reserved: set[tuple[str, str]] = set()
@@ -240,7 +243,7 @@ def adapt(
                         "target_class": "CineCameraComponent",
                         "target_property_name": "post_process_blend_weight",
                         "target_property_path": "post_process_blend_weight",
-                        "source_semantic": "camera.post_processing",
+                        "source_semantic": "camera.postprocess",
                         "source_component_type": native_type,
                         "source_component_id": desc["source_component_id"],
                         "source_behavior_strategy": "ced_exact_property_value_partial_renderer_equivalence",
@@ -281,7 +284,7 @@ def adapt(
                         "target_class": "LightComponent",
                         "target_property_name": "cast_shadows",
                         "target_property_path": "cast_shadows",
-                        "source_semantic": "light.shadow_casting",
+                        "source_semantic": "light.shadow",
                         "source_component_type": native_type,
                         "source_component_id": desc["source_component_id"],
                         "source_behavior_strategy": "ced_light_shadow_cast_property",
@@ -321,6 +324,28 @@ def adapt(
               and desc["status"] == "SOURCE_COMPONENT_ADAPTER_MISSING"):
             desc["status"] = "EXPLICIT_COMPONENT_PROPERTY_UNAVAILABLE"
         decisions.append(desc)
+    # The CED is now an executable dispatch constraint, not just a catalog
+    # printed alongside the plan. Native handlers must declare the actual
+    # source concept and be registered to a builder action kind.
+    for action in actions:
+        semantic = str(action["source_semantic"])
+        if semantic in ced["_domain_for"]:
+            recipe = feature_dispatch.recipe(semantic, features=ced)
+            if action["kind"] not in recipe["potential_builder_actions"]:
+                raise ValueError(
+                    "CED has no registered native action for " + semantic
+                    + ": " + action["kind"]
+                )
+            action["ced_resolution"] = "KNOWN_SEMANTIC_AND_NATIVE_HANDLER"
+        else:
+            # Only an explicit user-authored namespaced plugin mapping may
+            # extend the fixed CED. Unknown source data never auto-executes.
+            if not any(
+                rule.get("source_semantic") == semantic
+                for rule in rules
+            ):
+                raise ValueError("Unregistered CED source semantic: " + semantic)
+            action["ced_resolution"] = "EXPLICIT_PLUGIN_ADAPTER_UNVERIFIED"
     if len({(a["actor_label"], a["target_property_path"]) for a in actions}) != len(actions):
         raise ValueError("Adaptive component rules produced duplicate Unreal target properties.")
     # No arbitrary per-native reflection remapping: a new CED adapter is code,
