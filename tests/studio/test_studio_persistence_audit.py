@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -310,3 +311,42 @@ def test_legacy_audit_json_from_previous_version_can_be_summarized(tmp_path):
     assert summary["native_structure_status"] == "PASS"
     assert summary["actors_verified"] == 2
     assert summary["assets_verified"] == 2
+
+
+
+def test_distinct_editor_process_proves_independent_saved_native_readback(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    job = json.loads(jobfile.read_text(encoding="utf-8"))
+    job["generation_editor_pid"] = os.getpid() + 1
+    _write(jobfile, job)
+    report_path = candidate / "audit.json"
+    report = AUDIT.audit(jobfile, report_path, unreal_api=fake)
+    assert report["restart_verified"] is True
+    assert report["native_structure_status"] == "PASS"
+    assert report["generation_editor_pid"] != report["observed_editor_pid"]
+    assert report["status"] == "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS"
+    assert AUDIT.summarize_report(report_path)["restart_verified"] is True
+
+
+def test_same_editor_process_cannot_fake_reopen_evidence(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    job = json.loads(jobfile.read_text(encoding="utf-8"))
+    job["generation_editor_pid"] = os.getpid()
+    _write(jobfile, job)
+    report = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert report["restart_verified"] is False
+    assert report["status"] == "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
+
+
+def test_distinct_process_does_not_override_provenance_incomplete(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    job = json.loads(jobfile.read_text(encoding="utf-8"))
+    job["generation_editor_pid"] = os.getpid() + 1
+    _write(jobfile, job)
+    setup = candidate / "setup.json"
+    setup_data = json.loads(setup.read_text(encoding="utf-8"))
+    setup_data.pop("target_sequence")
+    _write(setup, setup_data)
+    report = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert report["restart_verified"] is False
+    assert report["status"] == "STRUCTURAL_READBACK_INCOMPLETE"
