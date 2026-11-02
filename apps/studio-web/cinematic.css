@@ -15,3 +15,11 @@
 .census-finding span{color:#c3cac2;overflow-wrap:anywhere;flex:1 1 230px}
 .census-finding small{color:#d7b38d;overflow-wrap:anywhere}
 .census-blocker .button{margin-top:10px}
+
+/* Agent-assisted correction is an explicit opt-in, visually separate
+   from source permissions and fidelity/coverage controls. */
+.ai-agents-option{margin-top:9px;padding:11px 13px;border:1px solid #384539;
+  background:#0e130f;border-radius:9px}
+.ai-agents-option label{color:#f1f6f0;font-weight:600;font-size:13px;align-items:center}
+.ai-agents-option input{width:15px;height:15px;margin:0;flex:0 0 auto}
+.ai-agents-option .subnote{padding-left:24px;margin:4px 0 0;max-width:580px}
