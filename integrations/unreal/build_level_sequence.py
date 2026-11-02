@@ -1101,6 +1101,11 @@ def build_prepared_files(
     STUDIO_DIR = SCRIPT_DIR.parents[1] / "packages" / "studio"
     if str(STUDIO_DIR) not in sys.path:
         sys.path.insert(0, str(STUDIO_DIR))
+    # Direct engine-builder entry points must also reload the canonical
+    # disk-backed planner. The incoming plan is still independently
+    # recomputed and hash/semantic-checked after this synchronization.
+    import studio_planner_sync
+    studio_planner_sync.synchronize()
     import transfer_backend
 
     receipt = {

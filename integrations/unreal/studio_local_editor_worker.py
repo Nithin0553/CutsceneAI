@@ -116,6 +116,12 @@ def _execute(job):
     readiness = sys.modules.get('transfer_readiness')
     if readiness is not None and Path(getattr(readiness, '__file__', '')).resolve() != (ROOT / 'packages/cinetwin/transfer_readiness.py').resolve():
         raise RuntimeError('Unreal has stale transfer_readiness imported from tools/. Restart Unreal Editor, then start the Studio worker again.')
+    # The Unreal Editor Python VM survives git pulls. Refresh the *entire*
+    # native planning dependency chain before verifying an immutable candidate,
+    # so a previously imported 25-action backend cannot falsely compare
+    # against a newly prepared 29-action adaptive CED plan.
+    import studio_planner_sync
+    studio_planner_sync.synchronize()
     import prepared_transfer
     prepared = prepared_transfer.verify(candidate_dir)
     if prepared['source']['csir_path'] != job['csir'] or prepared['target']['mapping_path'] != job['mapping']:
