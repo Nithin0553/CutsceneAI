@@ -152,6 +152,9 @@ def _execute(job):
                 job['setup_receipt_file'] = str(setup_receipt)
                 job['setup_status'] = _load(setup_receipt).get('status')
                 _save(WORKSPACE / 'jobs' / (job['job_id'] + '.json'), job)
+        if staged.get('status') == 'SETUP_SAVED_UNVERIFIED':
+            job['assets_imported_count'] = len(staged.get('assets_imported') or [])
+            job['actors_created_count'] = len(staged.get('actors_created') or [])
         if staged['status'] != 'SETUP_SAVED_UNVERIFIED':
             raise RuntimeError('Automatic setup not saved; sequence generation blocked.')
     # Last-second check: an actor may have been removed after the UI approved
@@ -172,6 +175,10 @@ def _execute(job):
         expected_level_path=job['expected_level'],
     )
     job['generation_status'] = 'GENERATED_UNVERIFIED'
+    try:
+        job['bindings_created_count'] = len(result.get_bindings())
+    except Exception:
+        job['bindings_created_count'] = None
     job['generated_sequence'] = result.get_path_name()
     if job.get('automatic_setup'):
         # The builder may change camera poses, root alignment and attachments
@@ -186,6 +193,7 @@ def _execute(job):
             return job
     job['receipt_file'] = str(receipt)
     _save(WORKSPACE / 'jobs' / (job['job_id'] + '.json'), job)
+    cine_report = None
     # Diagnostic is read-only and independent of the builder's plan; it does
     # not prove image, camera lens, lighting, waveform or full joint parity.
     try:
@@ -203,10 +211,66 @@ def _execute(job):
         if not created or report.get('kind') != 'cutsceneai.cinetwin.unreal_world_pose_diagnostic':
             raise RuntimeError('Diagnostic returned without the expected report.')
         job['diagnostic_file'] = str(created[-1])
+        cine_report = report
         job['status'] = 'GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED'
     except Exception as exc:
         job['status'] = 'GENERATED_DIAGNOSTIC_INCOMPLETE'
         job['error'] = 'CineTwin analysis unavailable: ' + str(exc)
+    # Read-only native visual audit and CineTwin feedback, without inventing a
+    # rendered-frame PASS or modifying the generated sequence again.
+    visual_report = None
+    try:
+        import studio_visual_audit
+        visual_report = studio_visual_audit.audit_latest(WORKSPACE, api=unreal)
+        job['visual_audit_status'] = visual_report['status']
+    except Exception as exc:
+        job['visual_audit_error'] = str(exc)
+        unreal.log_warning('[CutSceneAI Studio] Automatic visual audit incomplete: ' + str(exc))
+    # Attempt only a proven material-slot correction on newly staged actors.
+    # Re-audit after each change and stop on no progress, a source mismatch,
+    # or the hard two-round cap. Other domains are not safely auto-repairable.
+    repairs = []
+    if visual_report is not None and job.get('automatic_setup'):
+        previous_fallback = int(visual_report.get('material_slots_engine_default', 0))
+        for _ in range(2):
+            if previous_fallback <= 0:
+                break
+            try:
+                import studio_visual_repair
+                repair = studio_visual_repair.attempt(job, staged, unreal)
+                if repair.get('changed', 0) <= 0:
+                    break
+                import studio_auto_scene
+                studio_auto_scene._save_level(unreal, job['expected_level'])
+                repairs.append({'changed': repair['changed'], 'strategy': repair['status']})
+                import studio_visual_audit
+                refreshed = studio_visual_audit.audit_latest(WORKSPACE, api=unreal)
+                visual_report = refreshed
+                current_fallback = int(refreshed.get('material_slots_engine_default', 0))
+                if current_fallback >= previous_fallback:
+                    break
+                previous_fallback = current_fallback
+            except Exception as exc:
+                job['repair_status'] = 'PARTIAL_REPAIR_MUST_INSPECT'
+                job['repair_error'] = str(exc)
+                unreal.log_warning('[CutSceneAI Studio] Source-backed visual repair stopped: ' + str(exc))
+                break
+    job['repair_iterations'] = len(repairs)
+    job['repair_changes'] = sum(row['changed'] for row in repairs)
+    if visual_report is not None:
+        job['visual_audit_status'] = visual_report['status']
+    try:
+        import closed_loop_evaluation
+        assessment = closed_loop_evaluation.evaluate(
+            cine_report, visual_report, repair_iterations=len(repairs)
+        )
+        assessment_path = candidate_dir / ('closed-loop-evaluation-' + job['job_id'] + '.json')
+        closed_loop_evaluation.write_new(assessment_path, assessment)
+        job['closed_loop_report_file'] = str(assessment_path)
+        job['closed_loop_status'] = assessment['status']
+    except Exception as exc:
+        job['closed_loop_error'] = str(exc)
+        unreal.log_warning('[CutSceneAI Studio] Post-transfer assessment incomplete: ' + str(exc))
     job['fidelity_verified'] = False
     return job
 

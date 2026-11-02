@@ -24,7 +24,7 @@ jobs:
       - name: Run test suite
         run: python -m pytest -q
       - name: Check Studio JavaScript syntax
-        run: node --check apps/studio-web/app.js
+        run: node --check apps/studio-web/app.js && node --check apps/studio-web/cinematic.js && node tests/studio/test_cinematic_ui.cjs
       - name: Ruff test checks
         run: python -m ruff check tests
       - name: Repository hygiene and docs navigation

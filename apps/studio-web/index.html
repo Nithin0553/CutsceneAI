@@ -1,9 +1,20 @@
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="dark"><meta name="theme-color" content="#0a0d12">
+<meta name="color-scheme" content="dark"><meta name="theme-color" content="#080A09">
 <meta name="description" content="CutSceneAI Studio — a locally connected Unity to Unreal cinematic transfer workspace.">
 <title>CutSceneAI Studio</title>
-<link rel="stylesheet" href="styles.css">
-<script src="app.js" defer></script>
-</head><body><div id="app"><p class="boot">Opening CutSceneAI Studio…</p></div><noscript>JavaScript is required to connect to the local Studio companion.</noscript></body></html>
+<link id="studio-style" rel="stylesheet" href="cinematic.css">
+</head><body>
+<div id="app"><p class="boot">Opening CutSceneAI Studio…</p></div>
+<noscript>JavaScript is required to connect to the local Studio companion.</noscript>
+<script>
+(function () {
+  const advanced = new URLSearchParams(window.location.search).get('advanced') === '1';
+  if (advanced) document.getElementById('studio-style').href = 'styles.css';
+  const script = document.createElement('script');
+  script.src = advanced ? 'app.js' : 'cinematic.js';
+  document.body.appendChild(script);
+})();
+</script>
+</body></html>

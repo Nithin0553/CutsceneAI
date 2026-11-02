@@ -143,16 +143,21 @@ def validate_options(config: dict[str, Any], request: dict[str, Any]) -> dict[st
         )
         if selected is None:
             raise ValueError("Feature census must belong to the connected Unity project.")
+        if not selected.get("project_identity_proven") or not selected.get("source_scope_matched"):
+            raise ValueError(
+                "Source census identity or scene scope does not match the selected "
+                "Unity cutscene. Re-run Unity feature discovery for this exact source; "
+                "best-effort mode cannot bypass source identity checks."
+            )
         strict = request.get("require_complete_source_features", True)
         if strict and not selected["strict_ready"]:
             raise ValueError(
                 "Strict source census blocked: "
                 + str(selected.get("unresolved_components", 0))
-                + " unresolved component/scope findings. "
-                  "Expand source-component details on Review. For a labelled "
-                  "best-effort Benchmark002 regression, uncheck strict source "
-                  "completeness; full source coverage will remain unverified. "
-                  "No engine assets were touched."
+                + " unresolved component/scope findings. Review their native component "
+                  "types and Unity object paths. An explicitly approved research "
+                  "best-effort transfer keeps these source features unverified. "
+                  "No Unreal assets were touched."
             )
         overrides["source_feature_surface_path"] = selected["path"]
         overrides["require_complete_source_features"] = strict
