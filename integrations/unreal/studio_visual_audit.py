@@ -59,6 +59,12 @@ def inspect_scene(
     no_material_slots = 0
     default_material_slots = 0
     imported_or_custom_material_slots = 0
+    editor_proxy_slots = 0
+    editor_proxy_details: list[dict[str, Any]] = []
+    character_material_slots = 0
+    character_default_slots = 0
+    character_empty_slots = 0
+    character_nondefault_slots = 0
     for actor in all_actors:
         name = str(actor.get_actor_label())
         if name not in planned_actor_labels:
@@ -68,6 +74,30 @@ def inspect_scene(
             + _components(actor, api, "StaticMeshComponent")
         )
         for component in renderer_list:
+            # Unreal's CineCameraActor uses a CameraProxyMeshComponent for
+            # editor visualization. Its MI_CineMat_* materials are NOT
+            # transferred scene art and must not inflate fidelity counts.
+            component_class = _class(component)
+            if component_class == "CameraProxyMeshComponent" or (
+                _class(actor) == "CineCameraActor"
+                and component_class in {"StaticMeshComponent", "CameraProxyMeshComponent"}
+            ):
+                getter = getattr(component, "get_num_materials", None)
+                slots = None
+                if callable(getter):
+                    try:
+                        slots = int(getter())
+                        editor_proxy_slots += slots
+                    except Exception:
+                        pass
+                editor_proxy_details.append({
+                    "actor_label": name,
+                    "component_class": component_class,
+                    "material_status": "EDITOR_CAMERA_PROXY_EXCLUDED_FROM_SCENE_MATERIAL_FIDELITY",
+                    "material_slots": slots,
+                })
+                continue
+            is_character = component_class == "SkeletalMeshComponent"
             getter = getattr(component, "get_num_materials", None)
             material_getter = getattr(component, "get_material", None)
             if not callable(getter) or not callable(material_getter):
@@ -92,8 +122,12 @@ def inspect_scene(
                 except Exception:
                     ref = ""
                 material_slots += 1
+                if is_character:
+                    character_material_slots += 1
                 if not ref:
                     no_material_slots += 1
+                    if is_character:
+                        character_empty_slots += 1
                     status = "MATERIAL_SLOT_EMPTY"
                 elif any(token in ref.lower() for token in (
                     "/enginematerials/defaultmaterial",
@@ -101,9 +135,13 @@ def inspect_scene(
                     "/enginematerials/default",
                 )):
                     default_material_slots += 1
+                    if is_character:
+                        character_default_slots += 1
                     status = "ENGINE_FALLBACK_MATERIAL"
                 else:
                     imported_or_custom_material_slots += 1
+                    if is_character:
+                        character_nondefault_slots += 1
                     status = "MATERIAL_PRESENT_APPEARANCE_UNVERIFIED"
                 materials.append({"index": index, "asset": ref, "status": status})
             actors.append({
@@ -174,6 +212,12 @@ def inspect_scene(
         "actor_classes": dict(sorted(types.items())),
         "planned_renderers_inspected": len(actors),
         "renderer_details": actors,
+        "editor_camera_proxy_material_slots_excluded": editor_proxy_slots,
+        "editor_camera_proxy_details_excluded": editor_proxy_details,
+        "character_material_slots": character_material_slots,
+        "character_material_slots_engine_default": character_default_slots,
+        "character_material_slots_empty": character_empty_slots,
+        "character_material_slots_nondefault": character_nondefault_slots,
         "material_slots": material_slots,
         "material_slots_empty": no_material_slots,
         "material_slots_engine_default": default_material_slots,
