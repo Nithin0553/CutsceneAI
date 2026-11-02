@@ -191,6 +191,10 @@ def _execute(job):
             job['error'] = 'Sequence exists, but the updated level could not be saved: ' + str(save_error)
             job['fidelity_verified'] = False
             return job
+    # Record the real editor OS process that generated this saved sequence.
+    # Independent persistence needs the target reopened in another process;
+    # a Python module reload in this same editor cannot spoof that evidence.
+    job['generation_editor_pid'] = os.getpid()
     job['receipt_file'] = str(receipt)
     _save(WORKSPACE / 'jobs' / (job['job_id'] + '.json'), job)
     cine_report = None
