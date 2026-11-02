@@ -136,7 +136,7 @@ async function testOfflineDoesNotExecute() {
   await x.poll();
   assert.equal(x.calls.filter(v=>v==='/api/execute').length,0);
   assert.match(x.app.innerHTML,/Copy Unreal companion command/);
-  assert.match(x.app.innerHTML,/Waiting for/);
+  assert.match(x.app.innerHTML,/WAITING_FOR_EDITOR/);
 }
 
 (async()=>{
