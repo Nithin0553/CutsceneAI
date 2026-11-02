@@ -212,7 +212,7 @@ def test_generic_custom_plugin_property_creates_verified_type_matched_native_act
         "value_type": "float",
         "target_scope": "component",
         "target_class": "CineCameraComponent",
-        "target_property_name": "post_process_blend_weight",
+        "target_property_name": "ortho_width",
         "value_scale": 0.75,
         "value_offset": 0.1,
     }]
