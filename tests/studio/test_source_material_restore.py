@@ -1,0 +1,108 @@
+"""Regression tests for source-driven albedo restoration (no Unreal Editor required)."""
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "integrations" / "unreal"))
+import studio_auto_assets
+import studio_material_restore
+from test_studio_auto_assets import create
+
+
+def test_source_guid_material_is_planned_and_tamper_detected(tmp_path):
+    project, docs = create(tmp_path)
+    directory = project / "Assets" / "Benchmark002" / "Characters"
+    texture = directory / "Body.png"
+    texture.write_bytes(b"\x89PNG\r\n\x1a\nfixture")
+    (directory / "Body.png.meta").write_text(
+        "fileFormatVersion: 2\nguid: abcdef0123456789abcdef0123456789\n"
+    )
+    material = directory / "Body.mat"
+    material.write_text(
+        "Material:\n  m_SavedProperties:\n    m_TexEnvs:\n"
+        "    - _BaseMap:\n        m_Texture: {fileID: 2800000, guid: abcdef0123456789abcdef0123456789, type: 3}\n"
+    )
+    plan = studio_auto_assets.inspect(
+        *docs, project, "Assets/Benchmark002", "/Game/CutSceneAI/AutoTransfer/T_GUID"
+    )
+    assert plan["ready"]
+    assert len(plan["source_albedo_material_candidates"]) == 1
+    candidate = plan["source_albedo_material_candidates"][0]
+    assert candidate["slot_name"] == "Body"
+    assert candidate["target_texture"].startswith("/Game/")
+    assert candidate["fidelity_verified"] is False
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(plan))
+    assert studio_auto_assets.verify(manifest, *docs) == plan
+    material.write_text(material.read_text() + "\n# source edited")
+    import pytest
+    with pytest.raises(studio_auto_assets.AutoAssetError, match="changed"):
+        studio_auto_assets.verify(manifest, *docs)
+
+
+def test_ambiguous_material_name_never_gets_guessed(tmp_path):
+    project, docs = create(tmp_path)
+    root = project / "Assets" / "Benchmark002"
+    for folder in ("Characters", "Animations"):
+        target = root / folder
+        (target / "Body.mat").write_text(
+            "    - _MainTex:\n        m_Texture: {fileID: 2800000, guid: abcdef0123456789abcdef0123456789, type: 3}\n"
+        )
+    result = studio_auto_assets.inspect(
+        *docs, project, "Assets/Benchmark002", "/Game/CutSceneAI/AutoTransfer/T_GUID"
+    )
+    assert result["source_albedo_material_candidates"] == []
+    assert any("Ambiguous Unity material name" in x for x in result["warnings"])
+
+
+class FakeMaterial:
+    def __init__(self, path):
+        self.path = path
+    def get_path_name(self):
+        return self.path
+
+
+class FakeMesh:
+    def get_editor_property(self, name):
+        if name == "materials":
+            return [SimpleNamespace(get_editor_property=lambda p: "Body")]
+        raise AttributeError(name)
+
+
+class FakeComponent:
+    def __init__(self, material):
+        self.material = material
+        self.assignments = []
+    def get_editor_property(self, name):
+        if name == "skeletal_mesh_asset":
+            return FakeMesh()
+        raise AttributeError(name)
+    def get_material(self, index):
+        return self.material
+    def set_material(self, index, material):
+        self.assignments.append((index, material))
+
+
+def _restore(component, candidates):
+    class API:
+        SkeletalMeshComponent = "SkeletalMeshComponent"
+        StaticMeshComponent = "StaticMeshComponent"
+    actor = SimpleNamespace(get_components_by_class=lambda cls: [component] if cls == "SkeletalMeshComponent" else [])
+    return studio_material_restore.restore(API, actor, candidates)
+
+
+def test_existing_custom_material_is_never_overwritten():
+    component = FakeComponent(FakeMaterial("/Game/User/ExistingMat"))
+    result = _restore(component, [{"slot_name": "Body"}])
+    assert result[0]["status"] == "EXISTING_NONDEFAULT_PRESERVED"
+    assert component.assignments == []
+
+
+def test_unmatched_and_ambiguous_slots_preserve_worldgrid():
+    component = FakeComponent(FakeMaterial("/Engine/EngineMaterials/WorldGridMaterial"))
+    source = {"slot_name": "Body"}
+    assert _restore(component, [source, source])[0]["status"] == "NO_UNIQUE_SOURCE_MATERIAL_MATCH"
+    assert _restore(component, [dict(source, slot_name="Other")])[0]["status"] == "NO_UNIQUE_SOURCE_MATERIAL_MATCH"
+    assert component.assignments == []
