@@ -5,6 +5,7 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 ## Start here
 
 - [CED-first pre-conversion discovery](architecture/CED_FIRST_PREFLIGHT_V0_1.md)
+- [CED local discovery registry](architecture/CED_DISCOVERY_REGISTRY_V0_1.md) — opt-in, redacted, deduplicated unknown-element observations
 
 
 | Question | Read |
