@@ -16,8 +16,10 @@
   const worker = () => state.status?.unreal_worker || {};
   const readiness = () => state.status?.destination_readiness || {};
   const terminal = job => job && !['RUNNING','QUEUED'].includes(job.status);
-  const generated = () => state.job && (state.job.generation_status === 'GENERATED_UNVERIFIED' ||
-    String(state.job.status||'').startsWith('GENERATED'));
+  const generated = () => Boolean(state.job &&
+    state.job.generation_status === 'GENERATED_UNVERIFIED' &&
+    ['GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED',
+      'GENERATED_DIAGNOSTIC_INCOMPLETE'].includes(state.job.status));
   const ico = name => ({check:'✓',folder:'▱',link:'↔',arrow:'➜',menu:'☰',alert:'!',down:'↓',layers:'▤',report:'▧'}[name]||'●');
   const button = (label,name,disabled=false,variant='primary') =>
     '<button type="button" class="button '+variant+'" data-action="'+name+'" '+(disabled?'disabled':'')+'>'+label+'</button>';
@@ -213,8 +215,9 @@
     const gate=state.releaseReadiness||{status:'INCOMPLETE',release_ready:false,incomplete:[]};
     const imports=Number.isInteger(j.assets_imported_count)?j.assets_imported_count:'Not independently verified';
     const bindings=Number.isInteger(j.bindings_created_count)?j.bindings_created_count:'Not independently verified';
-    return progress()+'<main class="results-view"><div class="results-card '+(ok?'ok':'')+'">'+
-      '<h1>'+(ok?'<span class="success-check">✓</span> Sequence Generated Successfully':'Transfer Results')+'</h1>'+
+    return progress()+'<main class="results-view"><div class="results-card '+(gate.release_ready?'ok':'')+'">'+
+      '<h1>'+(gate.release_ready?'<span class="success-check">✓</span> Verified Release Transfer':
+        ok?'Editable Sequence Generated — Fidelity Unverified':'Transfer Results')+'</h1>'+
       resultRow('Generated Sequence',ok?short(j.generated_sequence||j.sequence_path):'Not generated')+
       resultRow('Assets Imported',imports)+resultRow('Bindings Created',bindings)+
       '<div class="result-row"><span>Transfer Report</span><button class="report-link" data-action="view-report">View Report</button></div>'+
