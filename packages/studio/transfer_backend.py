@@ -26,6 +26,7 @@ import root_world_lock
 import feature_dispatch
 import visual_activation
 import source_surface_gap
+import adaptive_components
 import scalar_property_adapter
 
 NATIVE_GAPS = {
@@ -823,6 +824,37 @@ def compose_files(
                 + ". Add a matching Unity source census or documented adapter "
                   "before a strict transfer."
             )
+    # The original CED path was only a semantic audit. Execute the actual
+    # source-valued native component registry for *new* candidates with a
+    # matching Unity census. This changes the sequence action plan, not just
+    # the count of known CED concepts.
+    adaptive = None
+    if source_surface is not None:
+        surface_data = _load(surface_file)
+        adaptive = adaptive_components.adapt(csir, mapping, surface_data)
+        new_actions = adaptive["actions"]
+        all_targets = {
+            (str(a.get("actor_label", "")), str(a.get("target_property_path", "")))
+            for a in plan["actions"] if a.get("kind") in {"property_float", "property_bool"}
+        }
+        for action in new_actions:
+            identity = (str(action["actor_label"]), str(action["target_property_path"]))
+            if identity in all_targets:
+                raise TransferBackendError(
+                    "Adaptive source-component property conflicts with authored "
+                    "Unreal target property: " + str(identity)
+                )
+            all_targets.add(identity)
+        plan["actions"].extend(new_actions)
+        try:
+            feature_dispatch.verify_executable_actions(plan)
+        except feature_dispatch.FeatureDispatchError as exc:
+            raise TransferBackendError(str(exc)) from exc
+        report["actions"] = dict(Counter(a["kind"] for a in plan["actions"]))
+        # Recompute the feature ledger against the actual source-augmented plan.
+        # Census-only components are stored separately with their native IDs.
+        report["feature_dispatch"] = feature_dispatch.audit(csir, plan)
+    report["adaptive_components"] = adaptive
     report["source_feature_surface"] = source_surface
     report["source_feature_surface_state"] = (
         "SOURCE_CENSUS_VERIFIED_NO_UNRESOLVED_COMPONENTS"
