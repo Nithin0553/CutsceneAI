@@ -89,3 +89,23 @@ safely, each additional CED strategy needs source extraction, native
 construction, independent matching-time verification, an isolated retry
 target, and an explicit regression gate. Do not mark master Issue #80 complete
 based solely on generated UI/sequence or a green CI run.
+
+## Future optional LangGraph AI agents mode
+
+In the Studio project-connection form there is now an **Enable AI agents**
+checkbox, default **off**. For this UI-only implementation it changes local
+checkbox state only; it is **not** sent to `/api/prepare` or `/api/execute`,
+and no LangGraph agent is invoked. The screen explicitly states this.
+
+The next separately implemented backend phase should honor the requested
+architecture: run the existing deterministic transfer first in all cases;
+if it meets the declared acceptance requirements, finish normally. If it
+cannot transfer or validate important source elements, then (and only then)
+start LangGraph-assisted diagnosis / repair if the user explicitly selected
+**Enable AI agents** for that transfer. An unchecked option must never call
+an agent or incur an external model cost. All agent-proposed changes must pass
+CED/source-provenance constraints, isolated Unreal execution checks, matching-
+time CineTwin measurements, and bounded retry/stop conditions. Failed or
+unsupported repairs must remain visible and must never be reported as perfect.
+
+**Status:** UI opt-in added, LangGraph execution and persistence not yet wired.
