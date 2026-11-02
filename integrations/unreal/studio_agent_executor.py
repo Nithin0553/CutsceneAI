@@ -97,6 +97,21 @@ def service_one(api: Any, workspace: Path, *, project: str, level: str,
         receipt_path = candidate / ("agent-receipt-" + request_id + ".json")
         if receipt_path.exists():
             continue
+        # The host writes the request file before persisting its graph state.
+        # Ignore uncommitted/orphaned requests: an editor must never execute
+        # a command that LangGraph cannot subsequently verify or resume.
+        state_path = candidate / ("agent-state-" + job_id + ".json")
+        if not state_path.is_file():
+            continue
+        try:
+            committed = _load(state_path)
+        except (ValueError, OSError, json.JSONDecodeError):
+            continue
+        if (committed.get("job_id") != job_id
+                or committed.get("candidate_id") != job["candidate_id"]
+                or committed.get("pending_request") != request_id
+                or committed.get("status") != "WAITING_FOR_UNREAL_AGENT_REPAIR"):
+            continue
         claim_path = candidate / ("agent-claim-" + request_id + ".json")
         request = None
         try:
