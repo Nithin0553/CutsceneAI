@@ -462,8 +462,8 @@ def test_editor_rejects_request_until_graph_state_is_durable(tmp_path, monkeypat
                             "changes": 1, "fallback_after": 1,
                         })
     api = SimpleNamespace(log_warning=lambda _: None)
-    arguments = dict(project=job["expected_project"], level=job["expected_level"],
-                     save=write)
+    arguments = {"project": job["expected_project"], "level": job["expected_level"],
+                 "save": write}
     assert not executor.service_one(api, workspace, **arguments)
     assert not called
     # Wrong pending identity cannot authorize mutation.
