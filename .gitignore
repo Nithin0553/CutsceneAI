@@ -73,6 +73,9 @@ transfer-plan.json
 coverage-report.json
 evidence.json
 runtime-receipt*.json
+*ced-discoveries*.jsonl
+*CED_Discoveries*.jsonl
+*ced-registry*.jsonl
 *CED_Preflight*.json
 *ced-preflight*.json
 *ced-discovery*.json

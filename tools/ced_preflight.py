@@ -8,6 +8,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ if str(STUDIO) not in sys.path:
     sys.path.insert(0, str(STUDIO))
 
 import ced_preflight
+import ced_discovery_registry
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,14 +28,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mapping", type=Path, required=True)
     parser.add_argument("--out", type=Path, help="New report file; existing files are never overwritten")
     parser.add_argument(
+        "--discovery-registry", type=Path,
+        help="Opt-in local JSONL registry; writes only novel unknown observations",
+    )
+    parser.add_argument(
         "--strict", action="store_true",
         help="Exit 2 if any active feature needs review, lacks a rule or is only partial",
     )
     args = parser.parse_args(argv)
     try:
-        csir = json.loads(args.csir.read_text(encoding="utf-8-sig"))
+        source_bytes = args.csir.read_bytes()
+        csir = json.loads(source_bytes.decode("utf-8-sig"))
         mapping = json.loads(args.mapping.read_text(encoding="utf-8-sig"))
         report = ced_preflight.audit(csir, mapping)
+        report["source_csir_sha256"] = hashlib.sha256(source_bytes).hexdigest()
         if args.out:
             if args.out.exists():
                 raise ced_preflight.CEDPreflightError(
@@ -59,6 +67,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         if report["active_alert_count"]:
             print("[CutSceneAI] Full indexed findings are in the JSON report.")
+        if args.discovery_registry:
+            result = ced_discovery_registry.record(report, args.discovery_registry)
+            print("[CutSceneAI] Discovery registry: "
+                  f"{result['new_feature_signatures']} new signatures, "
+                  f"{result['new_observations']} new observations.")
+            print("[CutSceneAI] No automatic CED updates or remote notifications.")
         if args.strict and not report["strict_transfer_allowed"]:
             print("[CutSceneAI] STRICT CED PREFLIGHT: BLOCKED", file=sys.stderr)
             return 2
