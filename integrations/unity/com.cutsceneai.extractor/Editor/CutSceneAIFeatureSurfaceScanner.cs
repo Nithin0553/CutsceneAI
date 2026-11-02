@@ -74,6 +74,12 @@ namespace CutsceneAI.UnityExtractor
             public float float_value;
             public int int_value;
             public string string_value;
+            public int enum_value_index;
+            public string enum_name;
+            public bool object_reference_is_null;
+            public string object_reference_global_id;
+            public string object_reference_asset_path;
+            public string object_reference_guid;
         }
 
         [Serializable]
@@ -205,6 +211,32 @@ namespace CutsceneAI.UnityExtractor
                         case SerializedPropertyType.String:
                             value.native_type = "string";
                             value.string_value = property.stringValue;
+                            break;
+                        case SerializedPropertyType.Enum:
+                            value.native_type = "enum";
+                            value.int_value = property.intValue;
+                            value.enum_value_index = property.enumValueIndex;
+                            var names = property.enumNames;
+                            if (value.enum_value_index >= 0 &&
+                                value.enum_value_index < names.Length)
+                                value.enum_name = names[value.enum_value_index];
+                            break;
+                        case SerializedPropertyType.ObjectReference:
+                            // Record identity only; never traverse or execute the
+                            // referenced asset or scene object's serialized data.
+                            value.native_type = "object_reference";
+                            var reference = property.objectReferenceValue;
+                            value.object_reference_is_null = reference == null;
+                            if (reference != null)
+                            {
+                                value.object_reference_global_id =
+                                    GlobalObjectId.GetGlobalObjectIdSlow(reference).ToString();
+                                value.object_reference_asset_path =
+                                    AssetDatabase.GetAssetPath(reference);
+                                if (!string.IsNullOrEmpty(value.object_reference_asset_path))
+                                    value.object_reference_guid = AssetDatabase.AssetPathToGUID(
+                                        value.object_reference_asset_path);
+                            }
                             break;
                         default:
                             continue;

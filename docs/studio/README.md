@@ -105,6 +105,35 @@ integration-test compatibility; the normal GUI no longer exposes them.
 
 ## Texture and readiness diagnostics (v0.8)
 
-A broad Unity `Assets/` scope can contain unrelated tutorial/editor PNG files whose actual bytes are not PNG images. An invalid **optional** texture is now skipped with an explicit warning, instead of blocking source-bound model, animation, audio and actor setup. A required asset file that is empty or an invalid WAV continues to block import. No fabricated textures or materials are created.
+The current Unity exporter records the rendered mesh's actual AssetDatabase
+path/GUID and the renderer's material and base-color texture references. After
+updating the Unity extractor package, run **Tools → CutsceneAI → Export Selected
+Timeline** again to create a CSIR with these identities. For a strict source
+census, also rerun **Discover Installed Feature Surface**. Older CSIR files
+without these fields retain the conservative name-resolution fallback and do
+not establish material provenance.
+
+The current census records serialized enum values and referenced Unity
+object/asset identities alongside scalar component properties. Strict source
+scope requires a matching Transform for every CSIR scene object; a census
+that sees only some cutscene objects is blocked and identifies each missing
+path. These extra source values are evidence for future adapters, not proof
+that URP render behavior, colliders, or signal callbacks transfer to Unreal.
+
+Automatic staging can follow an exact renderer FBX, `.mat`, or PNG reference
+elsewhere inside the selected Unity project's `Assets/`, even when the chosen
+search subtree is narrower. It checks the exported GUID against the Unity
+`.meta` file when a GUID is present and blocks conflicting character identity.
+An exported character with no rendered model asset is not replaced by an FBX
+whose filename happens to match its name. Native `.anim`, non-FBX meshes and
+other unsupported source formats still need an explicit adapter or a truthful
+blocked/partial outcome.
+
+Only source-referenced PNGs are planned for import. Unrelated tutorial/editor
+PNG files are ignored; a referenced invalid PNG is reported and skipped, with
+material appearance still unverified. Source-backed `.mat` + texture GUID and
+the actual imported FBX slot name are required for automatic albedo recovery;
+arbitrary URP shader/sky behavior is not reconstructed. An empty required
+asset or invalid required WAV still blocks preparation.
 
 The Transfer screen no longer shows an indefinite `Checking...` when the editor probe is missing, stale or failing: it reports `INSPECTION_UNAVAILABLE`, `INSPECTION_FAILED` or `UPGRADE_COMPANION` and explains the next action. The Unreal worker emits a diagnostic readiness report on inspection errors; generation remains disabled until verified. The new companion version is `studio-editor-v0.4`; **restart Unreal Editor after pulling changes** to unload the previous Python module before running the companion command.

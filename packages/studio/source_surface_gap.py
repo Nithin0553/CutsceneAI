@@ -11,8 +11,9 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 
 class SourceSurfaceGapError(ValueError):
@@ -61,9 +62,19 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
         hierarchy = str(metadata.get("hierarchy_path") or "")
         if scene and hierarchy:
             scoped_scenes.add(scene)
-            scene_objects[(scene, hierarchy)] = str(entity.get("entity_id") or "")
+            key = (scene, hierarchy)
+            if key in scene_objects:
+                scene_objects[key]["duplicate"] = True
+            else:
+                scene_objects[key] = {
+                    "entity_id": str(entity.get("entity_id") or ""),
+                    "native_ref": str(entity.get("native_ref") or ""),
+                    "duplicate": False,
+                }
     cases = []
     seen = set()
+    matched_objects = set()
+    matched_transforms = set()
     totals = Counter()
     for row in source_surface.get("loaded_scene_components", []):
         if not isinstance(row, dict):
@@ -75,7 +86,8 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
         if scene not in scoped_scenes:
             totals["OTHER_LOADED_SCENE_COMPONENT"] += 1
             continue
-        is_member = (scene, hierarchy) in scene_objects
+        source_entity = scene_objects.get((scene, hierarchy))
+        is_member = source_entity is not None
         affects_source = is_member or any(
             hierarchy.startswith(parent + "/")
             for included_scene, parent in scene_objects
@@ -84,7 +96,13 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
         if not affects_source:
             totals["UNRELATED_SCENE_COMPONENT"] += 1
             continue
-        if is_member and native_type == "UnityEngine.Transform":
+        observed_id = str(row.get("global_object_id") or "")
+        if is_member and source_entity["duplicate"]:
+            state = "DUPLICATE_SOURCE_ENTITY_PATH"
+        elif is_member and source_entity["native_ref"] and observed_id != source_entity["native_ref"]:
+            state = ("SOURCE_OBJECT_IDENTITY_MISMATCH" if observed_id
+                     else "SOURCE_OBJECT_IDENTITY_UNVERIFIED")
+        elif is_member and native_type in {"UnityEngine.Transform", "UnityEngine.RectTransform"}:
             state = "SOURCE_OBJECT_TRANSFORM_IDENTIFIED"
         elif native_type in KNOWN_SOURCE_COMPONENTS:
             state = "SOURCE_COMPONENT_SEMANTIC_REQUIRES_TARGET_EVIDENCE"
@@ -98,11 +116,18 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
         if key in seen:
             state = "DUPLICATE_SOURCE_COMPONENT_IDENTITY"
         seen.add(key)
+        if is_member and state not in {
+            "DUPLICATE_SOURCE_ENTITY_PATH", "SOURCE_OBJECT_IDENTITY_MISMATCH",
+            "SOURCE_OBJECT_IDENTITY_UNVERIFIED", "DUPLICATE_SOURCE_COMPONENT_IDENTITY",
+        }:
+            matched_objects.add((scene, hierarchy))
+        if is_member and state == "SOURCE_OBJECT_TRANSFORM_IDENTIFIED":
+            matched_transforms.add((scene, hierarchy))
         totals[state] += 1
         cases.append({
             "scene_path": scene,
             "hierarchy_path": hierarchy,
-            "source_entity_id": scene_objects.get((scene, hierarchy)),
+            "source_entity_id": source_entity["entity_id"] if is_member else None,
             "native_component": native_type,
             "source_component_id": global_id,
             "state": state,
@@ -128,11 +153,25 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
                          "NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED",
                          "MISSING_SOURCE_SCRIPT",
                          "DUPLICATE_SOURCE_COMPONENT_IDENTITY",
+                         "DUPLICATE_SOURCE_ENTITY_PATH",
+                         "SOURCE_OBJECT_IDENTITY_MISMATCH",
+                         "SOURCE_OBJECT_IDENTITY_UNVERIFIED",
                      })
-    # No matching objects means the census cannot prove it inspected the
-    # requested cutscene. Treat as incomplete evidence in strict mode.
-    scope_matched = bool(scene_objects and cases)
-    if not scope_matched:
+    # One matching component cannot prove that every extracted GameObject was
+    # scanned. Require a matching Transform for each source object; a Camera or
+    # other component on one object cannot stand in for a missing sibling.
+    missing_objects = sorted(set(scene_objects) - matched_transforms)
+    missing_object_findings = [
+        {"scene_path": scene, "hierarchy_path": hierarchy,
+         "source_entity_id": scene_objects[(scene, hierarchy)]["entity_id"],
+         "state": "SOURCE_OBJECT_TRANSFORM_NOT_VERIFIED"}
+        for scene, hierarchy in missing_objects
+    ]
+    if missing_objects:
+        totals["SOURCE_OBJECT_TRANSFORM_NOT_VERIFIED"] += len(missing_objects)
+        unresolved += len(missing_objects)
+    scope_matched = bool(scene_objects and matched_objects and not missing_objects)
+    if not scene_objects:
         unresolved += 1
         totals["SOURCE_SCOPE_NOT_VERIFIED"] += 1
     return {
@@ -146,6 +185,8 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
         "loaded_scene_scope": sorted(scoped_scenes),
         "source_scope_matched": scope_matched,
         "indexed_cutscene_entities": len(scene_objects),
+        "verified_cutscene_objects": len(matched_transforms),
+        "missing_cutscene_objects": missing_object_findings,
         "scoped_component_occurrences": len(cases),
         "component_findings": cases,
         "component_counts": dict(sorted(totals.items())),

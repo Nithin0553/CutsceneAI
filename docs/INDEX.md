@@ -7,6 +7,8 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 - [CED-first pre-conversion discovery](architecture/CED_FIRST_PREFLIGHT_V0_1.md)
 - [CED local discovery registry](architecture/CED_DISCOVERY_REGISTRY_V0_1.md) — opt-in, redacted, deduplicated unknown-element observations
 - [Executable CED adapter contract](architecture/CED_ADAPTER_EXECUTION.md) — source-bound handlers, native actions and verification gates
+- [Integrated Studio smoke-test and merge audit (#93)](studio/ISSUE_93_INTEGRATED_SMOKE_TEST.md) — unified source, CED, agent and release gates
+- [Studio release acceptance](studio/RELEASE_ACCEPTANCE.md) — real-engine evidence needed before declaring ready
 
 
 | Question | Read |
