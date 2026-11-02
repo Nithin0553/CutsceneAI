@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import sys
 from pathlib import Path
 
@@ -85,6 +86,12 @@ def test_optin_activation_creates_one_visual_only_native_track():
     assert report["tracks"][0]["outcome"] == "BAKED_PARTIAL"
     assert report["feature_dispatch"]["full_conversion_verified"] is False
     assert report["feature_dispatch"]["unknown_action_kinds"] == []
+    sections = [row for row in report["feature_dispatch"]["source_occurrences"]
+                if row["kind"] == "sections"]
+    assert len(sections) == 2
+    assert all(row["state"] == "CUSTOM_HANDLER_REGISTERED_UNVERIFIED"
+               and row["matching_plan_action_kinds"] == ["actor_visibility"]
+               and row["behavior_fidelity_verified"] is False for row in sections)
     assert source == before_source
     assert {k: v for k, v in mapping.items()
             if k != "enable_actor_visibility_fallback"} == before_mapping
@@ -96,6 +103,26 @@ def test_optout_activation_does_not_invent_a_native_track():
     assert not any(a["kind"] == "actor_visibility" for a in plan["actions"])
     assert report["tracks"][0]["outcome"] == "SKIPPED"
     assert report["no_full_fidelity_claim"] is True
+
+
+def test_installed_adapter_replans_identically_for_unreal_handoff(tmp_path):
+    source, mapping = sample()
+    mapping["enable_actor_visibility_fallback"] = True
+    source_path = tmp_path / "source.csir.json"
+    mapping_path = tmp_path / "mapping.json"
+    source_path.write_text(json.dumps(source))
+    mapping_path.write_text(json.dumps(mapping))
+    prepared = transfer_backend.compose_files(source_path, mapping_path)
+    recomputed = transfer_backend.compose_files(source_path, mapping_path)
+    submitted = tuple(json.loads(json.dumps(row)) for row in prepared)
+    transfer_backend.verify_prepared_artifacts(*submitted, *recomputed)
+    action = next(row for row in prepared[0]["actions"]
+                  if row["kind"] == "actor_visibility")
+    assert action["source_location"] == "tracks[0]"
+    assert action["covered_source_locations"] == [
+        "tracks[0].sections[0]", "tracks[0].sections[1]"
+    ]
+    assert prepared[1]["no_full_fidelity_claim"] is True
 
 
 @pytest.mark.parametrize("corruption", [

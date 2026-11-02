@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -105,15 +106,135 @@ def test_registered_custom_extension_is_versioned_not_auto_verified():
     record = dispatch.audit(_source(), handlers=extensions, features=features)
     row = next(r for r in record["source_occurrences"]
                if r["ced"] == "plugin.proprietary_asset")
-    assert row["state"] == "CUSTOM_HANDLER_REGISTERED_UNVERIFIED"
+    assert row["state"] == "REGISTERED_ADAPTER_NOT_EXECUTED"
     assert row["custom_handler"] == {"name": "My Adapter", "version": "1.0.0"}
     assert row["behavior_fidelity_verified"] is False
+    assert record["missing_adapter_count"] > 0
     with pytest.raises(dispatch.FeatureDispatchError, match="Duplicate"):
         extensions.register("plugin.proprietary_asset", lambda x: x, name="Dup",
                             version="1.1")
     with pytest.raises(dispatch.FeatureDispatchError, match="evidence"):
         extensions.register("ui.canvas", lambda x: x, name="Unsafe",
                             version="1.0", requires=("SOURCE",))
+
+
+def test_registered_entity_adapter_executes_with_exact_source_provenance():
+    source = _source()
+    mapping = {"entities": {"Cam": {"actor_label": "CSAI_Cam"}}}
+    before = deepcopy(source)
+
+    def build(copy_of_csir, copy_of_mapping, entity):
+        copy_of_csir["entities"].clear()
+        copy_of_mapping["entities"].clear()
+        entity["name"] = "changed"
+        return [{"kind": "camera_setup", "entity_name": "Cam",
+                 "actor_label": "CSAI_Cam",
+                 "source_behavior_strategy": "exact_source_camera_metadata"}]
+
+    registry = dispatch.HandlerRegistry()
+    registry.register("entity.camera", build, name="source_camera", version="1.0.0",
+                      source_kinds=("entities",), builder_actions=("camera_setup",))
+    actions = registry.plan_other_occurrences(source, mapping)
+    assert source == before
+    assert mapping["entities"]["Cam"]["actor_label"] == "CSAI_Cam"
+    assert len(actions) == 1
+    assert actions[0]["source_location"] == "entities[0]"
+    assert actions[0]["source_id"] == "c"
+    assert actions[0]["required_evidence_gates"] == [
+        "SOURCE", "PLAN", "NATIVE_READBACK", "BEHAVIOR"
+    ]
+    report = dispatch.audit(source, {"actions": actions}, handlers=registry)
+    camera = next(row for row in report["source_occurrences"]
+                  if row["source_location"] == "entities[0]")
+    assert camera["state"] == "CUSTOM_HANDLER_REGISTERED_UNVERIFIED"
+    assert camera["target_readback_verified"] is False
+    assert report["full_conversion_verified"] is False
+
+
+def test_new_ced_scalar_adapter_can_emit_a_typed_native_action_without_parity_claim():
+    source = _source()
+    mapping = {"entities": {"Cam": {"actor_label": "CSAI_Cam"}}}
+    registry = dispatch.HandlerRegistry()
+    registry.register(
+        "entity.camera",
+        lambda _source, _mapping, _entity: [{
+            "kind": "property_float", "source_semantic": "entity.camera",
+            "entity_name": "Cam", "actor_label": "CSAI_Cam",
+            "target_scope": "component", "target_class": "CineCameraComponent",
+            "target_property_name": "post_process_blend_weight",
+            "target_property_path": "post_process_blend_weight",
+            "source_behavior_strategy": "source_explicit_boolean_to_blend_weight",
+            "keys": [{"frame": 0, "value": 0.0}],
+        }],
+        name="camera_postprocess_candidate", version="1.0.0",
+        source_kinds=("entities",), builder_actions=("property_float",),
+    )
+    actions = registry.plan_other_occurrences(source, mapping)
+    assert len(actions) == 1
+    dispatch.verify_executable_actions({"actions": actions})
+    report = dispatch.audit(source, {"actions": actions}, handlers=registry)
+    camera = next(row for row in report["source_occurrences"]
+                  if row["source_location"] == "entities[0]")
+    assert camera["matching_plan_action_kinds"] == ["property_float"]
+    assert camera["state"] == "CUSTOM_HANDLER_REGISTERED_UNVERIFIED"
+    assert actions[0]["fidelity_status"] == "NATIVE_READBACK_AND_BEHAVIOR_UNVERIFIED"
+    assert camera["behavior_fidelity_verified"] is False
+
+
+def test_same_named_tracks_need_exact_source_location_for_ced_attribution():
+    source = _source()
+    duplicate = deepcopy(source["tracks"][0])
+    duplicate["track_id"] = "another"
+    source["tracks"].append(duplicate)
+    unrelated = dispatch.audit(source, {"actions": [
+        {"kind": "camera_cut", "track_name": "CAM"}
+    ]})
+    assert all(row["state"] == "NATIVE_ACTION_HANDLER_MISSING"
+               for row in unrelated["source_occurrences"] if row["kind"] == "tracks")
+    exact = dispatch.audit(source, {"actions": [
+        {"kind": "camera_cut", "track_name": "CAM", "source_location": "tracks[1]"}
+    ]})
+    tracks = [row for row in exact["source_occurrences"] if row["kind"] == "tracks"]
+    assert [row["state"] for row in tracks] == [
+        "NATIVE_ACTION_HANDLER_MISSING", "NATIVE_ACTION_PLANNED_UNVERIFIED"
+    ]
+
+
+def test_registered_adapter_rejects_a_mismatched_source_location():
+    source = _source()
+    registry = dispatch.HandlerRegistry()
+    registry.register("entity.camera", lambda _c, _m, _e: [],
+                      name="camera", version="1.0.0", source_kinds=("entities",),
+                      builder_actions=("camera_setup",))
+    with pytest.raises(dispatch.FeatureDispatchError, match="source kind"):
+        registry.plan_for(source, {}, source["entities"][0],
+                          kind="entities", location="tracks[0]")
+
+
+@pytest.mark.parametrize("action", [
+    {"kind": "vendor_magic", "entity_name": "Cam", "actor_label": "CSAI_Cam"},
+    {"kind": "property_float", "source_semantic": "entity.camera",
+     "entity_name": "Cam", "actor_label": "CSAI_Cam", "target_scope": "component",
+     "target_class": "CineCameraComponent", "target_property_name": "post_process_blend_weight",
+     "target_property_path": "post_process_blend_weight",
+     "keys": [{"frame": 0, "value": float("nan")}]},
+    {"kind": "property_bool", "source_semantic": "entity.camera",
+     "entity_name": "Cam", "actor_label": "CSAI_Cam", "target_scope": "component",
+     "target_class": "CineCameraComponent", "target_property_name": "bConstrainAspectRatio",
+     "target_property_path": "bConstrainAspectRatio",
+     "keys": [{"frame": 0, "value": 1}]},
+    {"kind": "camera_setup", "source_behavior_strategy": "source_camera",
+     "target_readback_verified": True},
+])
+def test_adapter_rejects_undeclared_unsafe_or_fake_verified_actions(action):
+    registry = dispatch.HandlerRegistry()
+    registry.register("entity.camera", lambda _c, _m, _e: [action],
+                      name="unsafe", version="1.0.0", source_kinds=("entities",),
+                      builder_actions=("camera_setup", "property_float", "property_bool"))
+    with pytest.raises(dispatch.FeatureDispatchError):
+        registry.plan_other_occurrences(
+            _source(), {"entities": {"Cam": {"actor_label": "CSAI_Cam"}}}
+        )
 
 
 def test_new_vendor_semantic_keeps_original_type_and_requires_plugin():
