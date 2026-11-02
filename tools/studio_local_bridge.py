@@ -578,7 +578,8 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                 if not active_file.is_file():
                     return self.reply(200, {
                         'available': False, 'persistence': None,
-                        'hierarchy': None, 'fidelity_verified': False,
+                        'hierarchy': None, 'visual': None,
+                        'fidelity_verified': False,
                     })
                 active = load_json(active_file)
                 job_file = folder / 'jobs' / (str(active['job_id']) + '.json')

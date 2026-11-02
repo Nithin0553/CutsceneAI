@@ -191,20 +191,29 @@
   function verificationPanel(){
     if(!state.job)return '';
     const evidence=state.verification||{};
-    const persistence=evidence.persistence||null, hierarchy=evidence.hierarchy||null;
+    const persistence=evidence.persistence||null, hierarchy=evidence.hierarchy||null, visual=evidence.visual||null;
     const root=String(state.status?.repo_root||'').replaceAll('\\','/').replaceAll('"','');
     const required=[];
     if(!persistence)required.push('persistence.audit_latest()');
     if(!hierarchy)required.push('hierarchy.audit_latest()');
-    const script=`import sys, importlib\nsys.path.insert(0, r"${root}/integrations/unreal")\nimport studio_persistence_audit as persistence, studio_hierarchy_audit as hierarchy\nimportlib.reload(persistence); importlib.reload(hierarchy)\n${required.join('; ')||'# Both native audits are already recorded for this job.'}`;
+    if(!visual)required.push('visual.audit_latest()');
+    const script=`import sys, importlib\nsys.path.insert(0, r"${root}/integrations/unreal")\nimport studio_persistence_audit as persistence, studio_hierarchy_audit as hierarchy, studio_visual_audit as visual\nimportlib.reload(persistence); importlib.reload(hierarchy); importlib.reload(visual)\n${required.join('; ')||'# All three native audits are already recorded for this job.'}`;
     return `<section class="panel pad"><div class="section-head"><h2>Native save/reopen verification</h2>${statusLabel(persistence?.native_structure==='PASS'?'STRUCTURE PASS · FIDELITY UNVERIFIED':'NATIVE AUDITS PENDING',persistence?.native_structure==='PASS'?'good':'warning')}</div>
       <p class="body-copy">Save All in Unreal, close the editor, reopen the exact generated level, then run the read-only audits below. This interface displays existing on-disk reports only; it never invents a PASS.</p>
       ${item('Persistence audit',persistence?.status||'Not recorded')}${persistence?item('Native asset readback',`${size(persistence.assets)} / ${size(persistence.assets_expected)}`):''}${persistence?item('Native actor readback',`${size(persistence.actors)} / ${size(persistence.actors_expected)}`):''}
       ${item('Hierarchy audit',hierarchy?.status||'Not recorded')}${hierarchy?item('Direct parent links',`${size(hierarchy.parent_links)} / ${size(hierarchy.parent_links_expected)}`):''}${hierarchy?item('Fully checked links',`${size(hierarchy.fully_checked)} / ${size(hierarchy.parent_links_expected)}`):''}${hierarchy?item('Unresolved source parents',size(hierarchy.unresolved_source_parents)):''}
       ${hierarchy?.source_groups?.length?item('Unmapped source groups',hierarchy.source_groups.join(', ')):''}
+      <div class="rule"></div><h3>Visual completeness</h3>
+      ${item('Visual audit',visual?.status||'Not recorded')}
+      ${visual?item('Material slots',size(visual.material_slots)):''}
+      ${visual?item('Default engine materials',size(visual.default_material_slots)):''}
+      ${visual?item('Empty material slots',size(visual.empty_material_slots)):''}
+      ${visual?item('Other materials (appearance unverified)',size(visual.nondefault_material_slots)):''}
+      ${visual?item('SkyLight / SkyAtmosphere',`${size(visual.environment?.SkyLight)} / ${size(visual.environment?.SkyAtmosphere)}`):''}
+      ${visual?.visual_issues?.length?`<div class="slim-note"><strong>Unresolved visual diagnostics</strong>${visual.visual_issues.map(x=>`<p class="hint">${esc(x)}</p>`).join('')}</div>`:''}
       <div class="rule"></div><pre id="audit-command" class="command">${esc(script)}</pre>
       <div class="form-actions">${btn('Copy native audit command','copy-audit-command','secondary')}${btn('Refresh evidence','refresh','secondary')}</div>
-      ${persistence?.path?`<p class="hint">Persistence evidence: ${esc(persistence.path)}</p>`:''}${hierarchy?.path?`<p class="hint">Hierarchy evidence: ${esc(hierarchy.path)}</p>`:''}
+      ${persistence?.path?`<p class="hint">Persistence evidence: ${esc(persistence.path)}</p>`:''}${hierarchy?.path?`<p class="hint">Hierarchy evidence: ${esc(hierarchy.path)}</p>`:''}${visual?.path?`<p class="hint">Visual evidence: ${esc(visual.path)}</p>`:''}
       <p class="hint">Even a structural PASS does not verify full source-to-target cinematic playback, rendering, audio or custom scripting.</p></section>`;
   }
   function results(){const r=state.report,j=state.job,c=state.status?.connection;
