@@ -191,3 +191,82 @@ def test_duplicate_census_component_cannot_inflate_native_action_counts():
     result = adaptive_components.adapt(csir, mapped, data)
     assert result["action_count"] == 1
     assert result["status_counts"]["DUPLICATE_TARGET_COMPONENT_PROPERTY"] == 1
+
+
+def test_generic_custom_plugin_property_creates_verified_type_matched_native_action():
+    csir, target = source(), mapping()
+    census = _census(csir)
+    census["loaded_scene_components"].append({
+        "scene_path": "Assets/Benchmark002.unity",
+        "object_path": "Benchmark002/CAM",
+        "component_type": "MyCompany.CinematicGlow",
+        "component_global_id": "glow-123",
+        "feature": {"native_properties": [
+            {"path": "m_BloomFactor", "native_type": "float", "float_value": 0.5},
+        ]},
+    })
+    target["component_property_mappings"] = [{
+        "source_component_type": "MyCompany.CinematicGlow",
+        "source_entity_name": "CAM",
+        "source_property_path": "m_BloomFactor",
+        "value_type": "float",
+        "target_scope": "component",
+        "target_class": "CineCameraComponent",
+        "target_property_name": "post_process_blend_weight",
+        "value_scale": 0.75,
+        "value_offset": 0.1,
+    }]
+    result = adaptive_components.adapt(csir, target, census)
+    assert result["action_count"] == 2  # One built-in + one custom from real serialized data
+    selected = next(x for x in result["actions"]
+                    if x["source_component_type"] == "MyCompany.CinematicGlow")
+    assert selected["source_property_path"] == "m_BloomFactor"
+    assert selected["keys"] == [{"frame": 0, "value": 0.475}]
+    assert selected["fidelity_status"] == "NATIVE_READBACK_AND_SEMANTIC_PARITY_UNVERIFIED"
+    assert result["all_source_features_converted"] is False
+
+
+def test_custom_bool_component_property_requires_exact_source_type():
+    csir, target = source(), mapping()
+    census = _census(csir)
+    census["loaded_scene_components"] = [{
+        "scene_path": "Assets/Benchmark002.unity",
+        "object_path": "Benchmark002/CAM",
+        "component_type": "Vendor.Visibility",
+        "component_global_id": "vendor",
+        "feature": {"native_properties": [
+            {"path": "m_Enabled", "native_type": "bool", "bool_value": True},
+        ]},
+    }]
+    target["component_property_mappings"] = [{
+        "source_component_type": "Vendor.Visibility",
+        "source_entity_name": "CAM",
+        "source_property_path": "m_Enabled",
+        "target_scope": "actor",
+        "target_class": "CineCameraActor",
+        "target_property_name": "bHidden",
+        "value_type": "bool",
+    }]
+    record = adaptive_components.adapt(csir, target, census)
+    assert record["actions"][0]["kind"] == "property_bool"
+    assert record["actions"][0]["keys"][0]["value"] is True
+    census["loaded_scene_components"][0]["feature"]["native_properties"][0]["native_type"] = "float"
+    missing = adaptive_components.adapt(csir, target, census)
+    assert missing["action_count"] == 0
+    assert missing["decisions"][0]["status"] == "SOURCE_NATIVE_PROPERTY_NOT_CAPTURED"
+
+
+def test_invalid_component_rule_never_executes_untrusted_target_expression():
+    csir, target = source(), mapping()
+    census = _census(csir)
+    target["component_property_mappings"] = [{
+        "source_component_type": "Vendor.Actor",
+        "source_entity_name": "CAM",
+        "source_property_path": "m_Custom",
+        "target_scope": "actor",
+        "target_class": "CineCameraActor",
+        "target_property_name": "__import__('os').system('bad')",
+        "value_type": "float",
+    }]
+    with __import__("pytest").raises(ValueError, match="Invalid target Unreal"):
+        adaptive_components.adapt(csir, target, census)
