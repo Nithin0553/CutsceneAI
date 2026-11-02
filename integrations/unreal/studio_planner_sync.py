@@ -38,7 +38,13 @@ def synchronize() -> dict[str, str]:
     candidate plan or user-supplied path. Loading this pipeline is an explicit
     step before any actual engine mutation.
     """
-    for _name, relative in MODULES:
+    # transfer_backend and prepared_transfer also depend on these core
+    # module roots. Preserve their known directory order and avoid importing
+    # unrelated plugins from a different checkout.
+    for relative in (
+        "packages/learning", "packages/cinetwin", "integrations/unreal",
+        "packages/studio",
+    ):
         path = str(ROOT / relative)
         if path in sys.path:
             sys.path.remove(path)
