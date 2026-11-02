@@ -107,7 +107,7 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
     try:
         from openai import OpenAI
     except ImportError as exc:
-        raise AgentError('Install pip install -e ".[agents]" in the Studio Python environment.') from exc
+        raise AgentError('Install python -m pip install "langgraph>=1.0,<2" "openai>=2,<3" in Studio Python.') from exc
     # Only the diagnostic summary is sent, never source asset bytes, paths,
     # API keys, user scripts or arbitrary file content.
     response = OpenAI(timeout=25.0, max_retries=0).responses.create(
@@ -143,7 +143,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
     try:
         from langgraph.graph import END, START, StateGraph
     except ImportError as exc:
-        raise AgentError('LangGraph is not installed: pip install -e ".[agents]".') from exc
+        raise AgentError('LangGraph missing: python -m pip install "langgraph>=1.0,<2".') from exc
 
     candidate = _candidate(workspace, job)
     job_id = str(job["job_id"])
