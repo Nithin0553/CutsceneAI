@@ -354,3 +354,74 @@ def test_agent_reads_real_ced_contract_not_invented_vocabulary():
     assert "camera.fov" in policy["categories"]["camera"]
     assert "animation.root_motion" in policy["categories"]["animation"]
     assert "material" in policy["categories"]
+
+
+
+def test_agent_interrupted_claim_never_replays_mutating_editor_action(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    workspace, candidate, job, _ = staged(tmp_path, enabled=True)
+    write(workspace / "jobs" / (job["job_id"] + ".json"), job)
+    request_id = "e" * 32
+    write(candidate / ("agent-request-" + request_id + ".json"), {
+        "kind": "cutsceneai.studio.agent_repair_request",
+        "schema_version": "1", "request_id": request_id,
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "strategy": "restore_source_albedo",
+        "expected_project": job["expected_project"],
+        "expected_level": job["expected_level"],
+        "sequence_path": job["sequence_path"],
+        "baseline_fallback": 2,
+    })
+    # Crash simulation: claim persisted, generated content may have changed,
+    # receipt absent. No one is allowed to execute this a second time.
+    write(candidate / ("agent-claim-" + request_id + ".json"), {
+        "kind": "cutsceneai.studio.agent_repair_claim",
+        "request_id": request_id,
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+    })
+    called = []
+    monkeypatch.setattr(executor, "execute",
+                        lambda *args, **kwargs: called.append("MUTATED"))
+    warnings = []
+    api = SimpleNamespace(log_warning=lambda msg: warnings.append(msg))
+    assert executor.service_one(api, workspace, project=job["expected_project"],
+                                level=job["expected_level"], save=write)
+    receipt = json.loads(
+        (candidate / ("agent-receipt-" + request_id + ".json")).read_text()
+    )
+    assert receipt["status"] == "REPAIR_FAILED_OR_BLOCKED"
+    assert "no automatic replay" in receipt["error"]
+    assert not called
+    assert not executor.service_one(api, workspace, project=job["expected_project"],
+                                    level=job["expected_level"], save=write)
+    assert not called
+
+
+def test_agent_write_ahead_claim_is_created_before_execution(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    workspace, candidate, job, _ = staged(tmp_path, enabled=True)
+    request_id = "f" * 32
+    write(candidate / ("agent-request-" + request_id + ".json"), {
+        "kind": "cutsceneai.studio.agent_repair_request",
+        "schema_version": "1", "request_id": request_id,
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "strategy": "restore_source_albedo",
+        "expected_project": job["expected_project"],
+        "expected_level": job["expected_level"],
+        "sequence_path": job["sequence_path"],
+        "baseline_fallback": 2,
+    })
+    calls = []
+    def simulated_native(*args, **kwargs):
+        claim = candidate / ("agent-claim-" + request_id + ".json")
+        assert claim.is_file(), "Native mutation preceded durable claim."
+        calls.append("native")
+        return {"status": "REPAIR_SAVED_AND_REAUDITED",
+                "changes": 1, "fallback_after": 1}
+    monkeypatch.setattr(executor, "execute", simulated_native)
+    assert executor.service_one(SimpleNamespace(log_warning=lambda _: None),
+                                workspace, project=job["expected_project"],
+                                level=job["expected_level"], save=write)
+    assert calls == ["native"]
