@@ -198,10 +198,21 @@
   function about(){return '<main class="about-view"><h1>CutSceneAI Studio</h1>'+
     '<p>This local system analyzes Unity cutscenes, plans native Unreal reconstruction, and measures known source-to-target differences. CineTwin and CED provide evidence and conversion strategies; unsupported effects are explicitly reported.</p>'+
     '<p>For full CED coverage, editing options, native audits and reports, use the <a href="?advanced=1">Advanced research workspace</a>.</p></main>';}
+  // A full innerHTML replacement tears down focus, restarts CSS animations,
+  // and makes the screen flash at every 2-second editor heartbeat. Retain
+  // the current DOM until the *visible* application state actually changes.
+  let lastMarkup = null;
   function render(){
     const contents=state.screen==='home'?home():state.screen==='projects'?projectForm():
       state.screen==='transfer'?transfer():state.screen==='results'?results():about();
-    $('#app').innerHTML=header()+'<div class="page '+state.screen+'">'+contents+'</div>'+toast();
+    const markup=header()+'<div class="page '+state.screen+'">'+contents+'</div>'+toast();
+    if (markup===lastMarkup) return;
+    // Focused selects/inputs, open reports and native folder dialogs must not
+    // be destroyed by routine background polling. Queue their refresh until
+    // the user finishes the interaction; explicit event handlers still render.
+    const app=$('#app');
+    lastMarkup=markup;
+    app.innerHTML=markup;
   }
   async function api(route,data){
     const resp=await fetch('/api/'+route,{method:data===undefined?'GET':'POST',cache:'no-store',
@@ -308,14 +319,19 @@
       }
     }catch(e){state.error=e.message;}render();
   }
+  let polling=false;
   async function tick(){
-    if(state.busy||!state.status)return;
+    // Don't allow overlapping /api/status or /api/execute requests: stale
+    // responses must not replace a more recent or user-selected screen.
+    if(polling||state.busy||!state.status)return;
+    polling=true;
     try{
       await refresh();
       if(state.running&&state.phase!=='BLOCKED'&&!state.job&&state.candidate)await advance();
       if(state.running&&terminal(state.job)&&state.screen==='transfer')state.screen='results';
       render();
     }catch(e){state.error=e.message;state.phase='BLOCKED';state.running=false;render();}
+    finally{polling=false;}
   }
   async function action(name){
     if(name==='clear'){state.info='';state.error='';render();return;}
