@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const src = fs.readFileSync('apps/studio-web/cinematic.js', 'utf8');
 
 function boot({editorReady = true, censusUnresolved = false} = {}) {
-  const listeners = {}, calls = [];
+  const listeners = {}, calls = [], requests = [];
   let html = '', writes = 0;
   const app = {
     get innerHTML() {return html;},
@@ -33,6 +33,7 @@ function boot({editorReady = true, censusUnresolved = false} = {}) {
     fetch: async (url, opts = {}) => {
       calls.push(url);
       const body = opts.body ? JSON.parse(opts.body) : {};
+      requests.push({url,body});
       let result = {};
       if (url === '/api/status') {
         result = {token: 'stubtoken', repo_root: 'B:/Research/CutSceneAI/CutsceneAI',
@@ -105,7 +106,7 @@ function boot({editorReady = true, censusUnresolved = false} = {}) {
     listeners.change({target:{name,value,checked}});
     await pause();
   }
-  return {app,calls,click,change,poll:async()=>{poll();await pause();await pause();},
+  return {app,calls,requests,click,change,poll:async()=>{poll();await pause();await pause();},
     writes:()=>writes, pause,finish:()=>{done=true;}};
 }
 
@@ -118,6 +119,15 @@ async function testOneClick() {
   await x.click('browse-unity');
   await x.click('browse-unreal');
   assert.match(x.app.innerHTML,/Unity Timeline/);
+  assert.match(x.app.innerHTML,/Enable AI agents/);
+  assert.doesNotMatch(x.app.innerHTML.match(/name="ai-agents"([^>]*)>/)[1],/checked/,
+    'agent mode must default to off');
+  await x.change('ai-agents',null,true);
+  assert.match(x.app.innerHTML.match(/name="ai-agents"([^>]*)>/)[1],/checked/,
+    'checkbox must react to user opt-in');
+  await x.change('ai-agents',null,false);
+  assert.doesNotMatch(x.app.innerHTML.match(/name="ai-agents"([^>]*)>/)[1],/checked/);
+  await x.change('ai-agents',null,true);
   await x.change('source-rights',null,true);
   await x.click('connect');
   assert.ok(x.calls.includes('/api/connect-projects'));
@@ -127,6 +137,11 @@ async function testOneClick() {
   assert.deepEqual(x.calls.filter(v=>v==='/api/execute').length,1);
   assert.ok(x.calls.indexOf('/api/prepare')<x.calls.indexOf('/api/approve-one-click'));
   assert.ok(x.calls.indexOf('/api/approve-one-click')<x.calls.indexOf('/api/execute'));
+  const preparation=x.requests.find(req=>req.url==='/api/prepare');
+  assert.ok(preparation);
+  assert.equal(Object.hasOwn(preparation.body,'enable_ai_agents'),false,
+    'UI-only checkbox must not silently activate an unfinished agent backend');
+  assert.equal(x.calls.filter(url=>/\/api\/(agents|langgraph)/.test(url)).length,0);
   x.finish();
   await x.poll();
   assert.match(x.app.innerHTML,/Sequence Generated Successfully/);
@@ -178,5 +193,5 @@ async function testStrictCensusBlockAndExplicitRecovery() {
   await testOneClick();
   await testOfflineDoesNotExecute();
   await testStrictCensusBlockAndExplicitRecovery();
-  console.log('Cinematic UI backend contract: 3 integration paths passed.');
+  console.log('Cinematic UI backend contract: 3 integration paths and optional AI checkbox checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
