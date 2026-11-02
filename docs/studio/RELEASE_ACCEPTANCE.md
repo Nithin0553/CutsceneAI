@@ -47,10 +47,12 @@ fails its saved-session hash comparison.
    trajectories, root motion, orientation, camera cuts, animation poses,
    attachment relationships and audio/event timing. Never treat a measured
    material-slot count as an image or skeletal-pose fidelity result.
-4. Close Unreal Editor, **reopen the target map and generated Level Sequence**,
-   start the current companion and run the Studio native persistence,
-   hierarchy and visual audits from the Results/Advanced UI. Inspect packages,
-   native bindings, materials, attachments and generated audio.
+4. Close Unreal Editor, **reopen the target map and generated Level Sequence
+   in a new Unreal process**, start the current companion and run Studio's
+   native persistence, hierarchy and visual audits from Results/Advanced.
+   The audit compares the real editor process IDs and saved native packages.
+   Old transfers that lack generation process IDs remain restart-unverified.
+   Inspect bindings, materials, attachments and generated audio.
 5. Repeat with **Enable AI agents** only on a fresh candidate/staging level.
    Verify the graph's exact strategy, source provenance, persisted request,
    one-time Unreal execution, native receipt, changed material slots and
@@ -71,8 +73,11 @@ fails its saved-session hash comparison.
 - Matching-time source and target image/camera projection validation,
   complete skeletal joint pose, shaders/sky/environment lighting,
   audio waveform synchronization and event side effects.
-- An independently evidenced editor-process restart and native package
-  persistence check, rather than same-editor structural readback alone.
+- Native persistence needs an actual second Unreal process. New jobs record
+  the generating Unreal OS process ID; the native audit recognizes distinct
+  process ID plus independently loaded, saved package and sequence readback.
+  Existing jobs without that evidence remain INCOMPLETE. This proves a
+  different-process readback, not that the original process was forcibly closed.
 - Actual verified learning: case approval, safe CED policy update, retrieval,
   strategy change and improved outcome on a different source project.
 - Held-out source-project validation and a published compatibility/capability
