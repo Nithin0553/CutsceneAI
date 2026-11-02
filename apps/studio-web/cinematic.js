@@ -9,7 +9,7 @@
   const state = {screen:'home', phase:'IDLE', busy:false, info:'', error:'', status:null,
     discovery:null, folders:{unity:'',unreal:''}, unrealProject:'', csir:'', level:'',
     sourceRights:false, allowPartial:false, candidate:null, job:null, verification:null,
-    diagnosis:null, running:false, detailsOpen:false, menuOpen:false};
+    diagnosis:null, feedback:null, running:false, detailsOpen:false, menuOpen:false};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
   const connection = () => state.status?.connection;
   const worker = () => state.status?.unreal_worker || {};
@@ -104,7 +104,8 @@
     if(chosenU)choices+='<div class="project-choices">'+select('csir','Unity Timeline',cutscenes,csir,'Choose exported timeline')+
       select('level','Unreal Destination Level',levels,level,'Choose level')+'</div>';
     const connected=Boolean(connection());
-    const action=connected?button('Start Transfer '+ico('arrow'),'start',state.busy||!state.sourceRights||state.running):
+    const action=connected&&terminal(state.job)?button('Reconnect for a fresh transfer '+ico('link'),'connect',state.busy||!state.sourceRights):
+      connected?button('Start Transfer '+ico('arrow'),'start',state.busy||!state.sourceRights||state.running):
       button('Connect Projects '+ico('link'),'connect',state.busy||!d.ready||!csir||!level||!state.sourceRights);
     return progress()+'<main class="projects-view"><h1>'+(!chosenU?'Select Unity Project':!chosenR?'Select Unreal Project':'Connect Unity &amp; Unreal')+'</h1>'+
       '<form id="project-form"><div class="engine-pair">'+card('unity',chosenU,Boolean(u.folder))+
@@ -129,6 +130,9 @@
       (c.automatic_setup?.warnings||[]).map(x=>'<p class="subnote">'+esc(x)+'</p>').join('')+
       (c.review_flags||[]).map(x=>'<p class="subnote">'+esc(x)+'</p>').join(''):'<p>Plan not prepared.</p>')+
       (state.job?'<div class="fact">Job status <b>'+esc(state.job.status)+'</b></div>':'')+
+      (state.feedback?'<div class="fact">CineTwin/visual feedback <b>'+esc(state.feedback.status)+'</b></div>'+
+        (state.feedback.issues||[]).map(row=>'<p class="warning">'+esc(row.category)+': '+
+        esc(row.code||row.source||row.detail||row.status)+'</p>').join(''):'')+
       (v?'<div class="fact">Native structure <b>'+esc(v.persistence?.native_structure||'Not verified')+'</b></div>'+
         '<div class="fact">Visual inspection <b>'+esc(v.visual?.status||'Not verified')+'</b></div>':'')+
       '<p class="subnote">Rendering, complete skeletal pose, signals, shaders and audio timing require independent source comparison. No perfect-transfer claim is made from generation alone.</p>'+
@@ -168,10 +172,8 @@
   }
   function results(){
     const j=state.job||{},v=state.verification||{},ok=generated(),candidate=state.candidate||{};
-    const imports=j.setup_status==='SETUP_SAVED_UNVERIFIED'?
-      (candidate.automatic_setup?.planned_imports??'Import-stage complete, count unverified'):
-      'Not independently verified';
-    const bindings=v.persistence?.bindings??'Not independently verified';
+    const imports=Number.isInteger(j.assets_imported_count)?j.assets_imported_count:'Not independently verified';
+    const bindings=Number.isInteger(j.bindings_created_count)?j.bindings_created_count:'Not independently verified';
     return progress()+'<main class="results-view"><div class="results-card '+(ok?'ok':'')+'">'+
       '<h1>'+(ok?'<span class="success-check">✓</span> Sequence Generated Successfully':'Transfer Results')+'</h1>'+
       resultRow('Generated Sequence',ok?short(j.generated_sequence||j.sequence_path):'Not generated')+
@@ -216,7 +218,7 @@
     const info=await api('connect-projects',{unity_folder:state.folders.unity,
       unreal_folder:state.folders.unreal,unreal_project:state.unrealProject,
       csir:state.csir,level:state.level,source_rights_confirmed:state.sourceRights});
-    state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;
+    state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.running=false;
     state.phase='CONNECTED';state.info='Projects connected successfully!';state.error='';
   }
   async function refresh(){
@@ -228,6 +230,9 @@
       try{state.verification=await api('verification');}catch{}
       if(state.job?.diagnostic_file&&!state.diagnosis){
         try{state.diagnosis=await api('diagnostic/'+state.job.job_id);}catch{}
+      }
+      if(!state.feedback) {
+        try{const feedback=await api('closed-loop');if(feedback.available)state.feedback=feedback;}catch{}
       }
     }
   }
@@ -244,6 +249,7 @@
     if(state.candidate.automatic_setup?.blockers?.length)
       throw Error('Cannot stage source assets: '+state.candidate.automatic_setup.blockers.join('; '));
     state.phase='READY_TO_QUEUE';
+    await api('approve-one-click',{candidate_id:state.candidate.candidate_id});
   }
   async function advance(){
     if(!state.running||state.busy||state.job||!state.candidate)return;
@@ -280,8 +286,12 @@
         state.unrealProject=connection().target_project;
         state.sourceRights=Boolean(connection().source_rights_confirmed);
         state.screen=state.job?(terminal(state.job)?'results':'transfer'):'projects';
-        state.running=Boolean(state.job);
+        const approval=state.status.one_click_approval;
+        state.running=Boolean(state.job||(approval?.candidate_id&&
+          approval.candidate_id===state.candidate?.candidate_id&&
+          approval.source_csir===connection().csir));
         if(!terminal(state.job)&&state.job)state.phase='RUNNING';
+        else if(state.running&&!state.job){state.screen='transfer';state.phase='WAITING_FOR_EDITOR';}
         try{await scan();}catch{}
       }
     }catch(e){state.error=e.message;}render();
