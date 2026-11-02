@@ -48,6 +48,8 @@ namespace CutsceneAI.UnityExtractor
             public bool has_use_pipeline_settings;
             public bool use_pipeline_settings;
             public bool has_light_cookie;
+            public bool has_cast_shadows;
+            public bool cast_shadows;
             public bool has_geometry;
             public string shape;
             public bool enabled;
@@ -176,6 +178,13 @@ namespace CutsceneAI.UnityExtractor
                 feature.has_use_pipeline_settings =
                     TryBoolProperty(component, "usePipelineSettings", out flag);
                 if (feature.has_use_pipeline_settings) feature.use_pipeline_settings = flag;
+                return feature;
+            }
+            if (component is Light unityLight)
+            {
+                feature.extraction = "UNITY_LIGHT_NATIVE_PROPERTIES_PARTIAL";
+                feature.has_cast_shadows = true;
+                feature.cast_shadows = unityLight.shadows != LightShadows.None;
                 return feature;
             }
             if (component is BoxCollider box)
