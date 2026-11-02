@@ -319,6 +319,8 @@ namespace CutsceneAI.UnityExtractor
                     camera = CreateCameraMetadata(camera),
                     light = CreateLightMetadata(light),
                     animator = CreateAnimatorMetadata(animator),
+                    source_model_assets = ExtractorUtilities.SourceModelAssets(gameObject),
+                    source_material_assets = ExtractorUtilities.SourceMaterialAssets(gameObject),
                 },
             });
         }
