@@ -211,6 +211,9 @@ def verification(workspace: Path, active_job: dict[str, Any],
         }
         if name == "persistence":
             report.update({
+                "restart_verified": data.get("restart_verified") is True,
+                "generation_editor_pid": data.get("generation_editor_pid"),
+                "observed_editor_pid": data.get("observed_editor_pid"),
                 "native_structure": data.get("native_structure_status"),
                 "assets": data.get("assets_class_and_disk_verified"),
                 "assets_expected": data.get("asset_count"),
