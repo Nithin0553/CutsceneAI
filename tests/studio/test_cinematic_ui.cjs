@@ -85,6 +85,9 @@ function boot({editorReady = true, censusUnresolved = false} = {}) {
           visual:{status:'VISUAL_COMPLETENESS_REVIEW_REQUIRED'}};
       } else if (url === '/api/diagnostic/'+'a'.repeat(32)) {
         result={entities:{A:{actor_max_cm:10}}};
+      } else if (url === '/api/agents') {
+        result={enabled:true,status:'UNRESOLVED_NO_SAFE_STRATEGY',
+          iterations:0,reasoning:'No source-backed repair for remaining issues'};
       } else if (url === '/api/closed-loop') {
         result={available:true,status:'REVIEW_REQUIRED',issues:[{category:'VISUAL_NATIVE_READBACK',code:'NO_DIRECTIONAL_LIGHT_FOUND'}]};
       } else {
@@ -140,8 +143,12 @@ async function testOneClick() {
   const preparation=x.requests.find(req=>req.url==='/api/prepare');
   assert.ok(preparation);
   assert.equal(Object.hasOwn(preparation.body,'enable_ai_agents'),false,
-    'UI-only checkbox must not silently activate an unfinished agent backend');
-  assert.equal(x.calls.filter(url=>/\/api\/(agents|langgraph)/.test(url)).length,0);
+    'normal source preparation remains deterministic');
+  const approval=x.requests.find(req=>req.url==='/api/approve-one-click');
+  assert.equal(approval.body.enable_ai_agents,true,
+    'explicit opt-in must be bound to one candidate approval');
+  assert.ok(x.calls.some(url=>url==='/api/agents'),
+    'enabled UI should show actual agent status');
   x.finish();
   await x.poll();
   assert.match(x.app.innerHTML,/Sequence Generated Successfully/);
