@@ -8,7 +8,7 @@
   const norm = v => String(v || '').replaceAll('\\','/').toLowerCase();
   const state = {screen:'home', phase:'IDLE', busy:false, info:'', error:'', status:null,
     discovery:null, folders:{unity:'',unreal:''}, unrealProject:'', csir:'', level:'',
-    sourceRights:false, allowPartial:false, candidate:null, job:null, verification:null,
+    sourceRights:false, allowPartial:false, aiAgentsEnabled:false, candidate:null, job:null, verification:null,
     diagnosis:null, feedback:null, running:false, detailsOpen:false, menuOpen:false,
     censusSelection:null, censusIssue:false};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
@@ -118,7 +118,11 @@
       choices+(chosenU?'<div class="permissions"><label><input type="checkbox" name="source-rights" '+
       (state.sourceRights?'checked':'')+' /> I have permission to import the source assets</label>'+
       '<label><input type="checkbox" name="allow-partial" '+(state.allowPartial?'checked':'')+
-      ' /> Allow best-effort conversion when source components are unsupported (reported as incomplete)</label></div>':'')+
+      ' /> Allow best-effort conversion when source components are unsupported (reported as incomplete)</label>'+
+      '<div class="ai-agents-option"><label><input type="checkbox" name="ai-agents" '+
+      (state.aiAgentsEnabled?'checked':'')+
+      ' /> Enable AI agents</label>'+
+      '<p class="subnote">Optional AI-assisted recovery (coming next). This checkbox does not activate LangGraph or change transfers yet.</p></div></div>':'')+
       (Object.values(d.errors||{})).map(v=>'<p class="warning">'+esc(v)+'</p>').join('')+
       '<div class="center-actions">'+(chosenU?action:'')+'</div></form>'+
       (connected?'<p class="subnote">Connected successfully. Start Transfer automatically prepares, imports, generates, and inspects the result.</p>':'')+
@@ -465,6 +469,7 @@
     const n=e.target?.name,v=e.target?.value;
     if(n==='source-rights'){state.sourceRights=e.target.checked;render();return;}
     if(n==='allow-partial'){state.allowPartial=e.target.checked;render();return;}
+    if(n==='ai-agents'){state.aiAgentsEnabled=e.target.checked;render();return;}
     if(n==='csir'){state.csir=v;render();return;}
     if(n==='level'){state.level=v;render();return;}
     if(['unity-project','unreal-project-root','unreal-project-file'].includes(n)){
