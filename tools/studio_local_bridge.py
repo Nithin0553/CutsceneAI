@@ -353,6 +353,40 @@ def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> 
     return info
 
 
+def approve_one_click(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
+    """Persist explicit one-click approval across a page refresh.
+
+    This never queues work; queue_trial still enforces exact current Editor
+    identity, target, source hashes and destination readiness on submission.
+    """
+    active = folder / 'active-candidate.json'
+    connected = folder / 'connection.json'
+    if not active.is_file() or not connected.is_file():
+        raise ValueError('Connect projects and prepare a candidate first.')
+    current = load_json(active)
+    config = load_json(connected)
+    if (not isinstance(candidate_id, str) or
+        candidate_id != current.get('candidate_id') or
+        not candidate_id.isascii() or
+        not candidate_id.replace('_', '').isalnum()):
+        raise ValueError('Approval candidate identity is stale or invalid.')
+    if not config.get('source_rights_confirmed'):
+        raise ValueError('Source asset-copy rights must be confirmed.')
+    if not current.get('automatic_setup', {}).get('ready'):
+        raise ValueError('Automatic staging is not verified; inspect the blocked candidate.')
+    if (folder / 'active-job.json').exists():
+        raise ValueError('A job is already active; inspect it instead of approving a replay.')
+    atomic_json(folder / 'one-click-approval.json', {
+        'kind': 'cutsceneai.studio.one_click_approval',
+        'candidate_id': candidate_id,
+        'source_csir': config['csir'],
+        'target_project': config['target_project'],
+        'target_level': config['level_path'],
+        'approved_at': datetime.now(timezone.utc).isoformat(),
+    })
+    return {'approved': True, 'candidate_id': candidate_id}
+
+
 def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     if not candidate_id.isascii() or not candidate_id.replace('_', '').isalnum():
         raise ValueError('Invalid candidate identity.')
@@ -438,7 +472,10 @@ def job_status(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     job = load_json(job_path)
     return {key: job.get(key) for key in (
         'job_id', 'status', 'generation_status', 'sequence_path', 'diagnostic_file',
-        'receipt_file', 'error', 'fidelity_verified', 'generated_sequence', 'setup_receipt_file', 'setup_status')}
+        'receipt_file', 'error', 'fidelity_verified', 'generated_sequence', 'setup_receipt_file', 'setup_status',
+        'assets_imported_count', 'actors_created_count', 'bindings_created_count',
+        'visual_audit_status', 'visual_audit_error', 'closed_loop_status',
+        'closed_loop_report_file', 'closed_loop_error')}
 
 
 def diagnostic_summary(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
@@ -595,6 +632,7 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                                         'destination_readiness': destination_readiness(folder),
                                         'candidate': load_json(folder / 'active-candidate.json') if (folder / 'active-candidate.json').is_file() else None,
                                         'active_job': load_json(folder / 'active-job.json').get('job_id') if (folder / 'active-job.json').is_file() else None,
+                                        'one_click_approval': load_json(folder / 'one-click-approval.json') if (folder / 'one-click-approval.json').is_file() else None,
                                         'observation': load_json(folder / 'attached-observation.json') if (folder / 'attached-observation.json').is_file() else None,
                                         'fidelity_verified': False})
             if path.startswith('/api/jobs/'):
@@ -607,6 +645,22 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                     return self.reply(200, diagnostic_summary(path.rsplit('/', 1)[-1], folder))
                 except ValueError as e:
                     return self.reply(404, {'error': str(e)})
+            if path == '/api/closed-loop':
+                active_path = folder / 'active-job.json'
+                if not active_path.is_file():
+                    return self.reply(200, {'available': False, 'status': 'NOT_GENERATED'})
+                current_job = load_json(active_path)
+                job = load_json(folder / 'jobs' / (current_job['job_id'] + '.json'))
+                candidate = Path(job.get('candidate_dir') or '').resolve()
+                if not candidate.is_relative_to((folder / 'candidates').resolve()):
+                    return self.reply(409, {'error': 'Unsafe candidate path.'})
+                report = candidate / ('closed-loop-evaluation-' + current_job['job_id'] + '.json')
+                if not report.is_file():
+                    return self.reply(200, {'available': False, 'status': 'EVIDENCE_INCOMPLETE'})
+                data = load_json(report)
+                if data.get('kind') != 'cutsceneai.studio.closed_loop_evaluation':
+                    return self.reply(409, {'error': 'Unexpected feedback report type.'})
+                return self.reply(200, {'available': True, **data})
             if path == '/api/cutscenes':
                 cfg = folder / 'connection.json'
                 if not cfg.is_file():
@@ -659,10 +713,12 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                             fields = data
                         result = config_check(fields)
                         atomic_json(folder / 'connection.json', result)
-                        for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json', 'destination-readiness.json'):
+                        for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json', 'destination-readiness.json', 'one-click-approval.json'):
                             (folder / name).unlink(missing_ok=True)
                     elif route == '/api/prepare':
                         result = prepare(folder, data)
+                    elif route == '/api/approve-one-click':
+                        result = approve_one_click(str(data.get('candidate_id', '')), folder)
                     elif route == '/api/execute':
                         result = queue_trial(str(data.get('candidate_id', '')), folder)
                     elif route == '/api/observation':
