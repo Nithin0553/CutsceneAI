@@ -56,6 +56,11 @@ def _source_census(tmp_path):
         "loaded_scene_components": [{
             "scene_path": "Assets/Benchmark002.unity",
             "object_path": "Root/CAM_A",
+            "component_type": "UnityEngine.Transform",
+            "component_global_id": "transform-a-1",
+        }, {
+            "scene_path": "Assets/Benchmark002.unity",
+            "object_path": "Root/CAM_A",
             "component_type": "UnityEngine.Camera",
             "component_global_id": "camera-a-1",
         }],
@@ -126,6 +131,32 @@ def test_incomplete_census_may_be_reviewed_but_not_strictly_misrepresented(tmp_p
         "require_complete_source_features": False,
     })
     assert allowed["require_complete_source_features"] is False
+
+
+def test_missing_cutscene_object_is_visible_and_blocks_even_best_effort(tmp_path):
+    config, census = _source_census(tmp_path)
+    source_path = Path(config["csir"])
+    source = json.loads(source_path.read_text())
+    extra = dict(source["entities"][0])
+    extra["entity_id"] = "missing-object"
+    extra["name"] = "CAM_B"
+    extra["metadata"] = {
+        "scene_path": "Assets/Benchmark002.unity", "hierarchy_path": "Root/CAM_B",
+    }
+    source["entities"].append(extra)
+    source_path.write_text(json.dumps(source))
+    option = feat.source_surfaces(config)["options"][0]
+    assert option["source_scope_matched"] is False
+    assert option["unresolved_findings"] == [{
+        "native_type": "UnityEngine.Transform", "object_path": "Root/CAM_B",
+        "scene_path": "Assets/Benchmark002.unity",
+        "state": "SOURCE_OBJECT_TRANSFORM_NOT_VERIFIED",
+    }]
+    with pytest.raises(ValueError, match="scene scope does not match"):
+        feat.validate_options(config, {
+            "source_feature_surface_path": str(census),
+            "require_complete_source_features": False,
+        })
 
 
 def test_capture_candidate_ui_options_apply_only_to_unique_mapping_copy(tmp_path, monkeypatch):
