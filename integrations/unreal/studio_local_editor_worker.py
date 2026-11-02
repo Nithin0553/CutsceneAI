@@ -388,6 +388,16 @@ def _tick(_delta):
             except Exception as report_error:
                 unreal.log_error('[CutSceneAI Studio] Unable to record readiness failure: ' + str(report_error))
             unreal.log_warning('[CutSceneAI Studio] Destination inspection unavailable: ' + str(readiness_error))
+        # The standard deterministic transfer remains the default. The
+        # editor companion executes only strict, candidate-bound agent actions.
+        try:
+            import studio_agent_executor
+            studio_agent_executor.service_one(
+                unreal, WORKSPACE, project=_loaded_project(),
+                level=_loaded_level(), save=_save
+            )
+        except Exception as agent_error:
+            unreal.log_warning('[CutSceneAI Studio] Agent request inspection blocked: ' + str(agent_error))
         jobs_folder = WORKSPACE / 'jobs'
         if not jobs_folder.is_dir():
             return
