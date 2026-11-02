@@ -94,12 +94,13 @@
   function projectForm(){
     const d=state.discovery||{},u=d.unity||{},r=d.unreal||{};
     const cutscenes=u.cutscenes||[],levels=r.levels||[],sources=d.unity_projects||[],
-      projects=r.project_options||[];
+      unrealRoots=d.unreal_projects||[],projects=r.project_options||[];
     const csir=state.csir||(cutscenes.length===1?cutscenes[0].path:'');
     const level=state.level||r.active_level||(levels.length===1?levels[0]:'');
     const chosenU=u.folder||state.folders.unity,chosenR=r.folder||state.folders.unreal;
     let choices='';
     if(sources.length>1&&!u.folder)choices+=select('unity-project','Unity project',sources,state.folders.unity,'Choose project');
+    if(unrealRoots.length>1&&!r.folder)choices+=select('unreal-project-root','Unreal project folder',unrealRoots,state.folders.unreal,'Choose Unreal project');
     if(projects.length>1)choices+=select('unreal-project-file','Unreal project file',projects,state.unrealProject,'Choose project');
     if(chosenU)choices+='<div class="project-choices">'+select('csir','Unity Timeline',cutscenes,csir,'Choose exported timeline')+
       select('level','Unreal Destination Level',levels,level,'Choose level')+'</div>';
@@ -360,8 +361,10 @@
     if(n==='allow-partial'){state.allowPartial=e.target.checked;render();return;}
     if(n==='csir'){state.csir=v;render();return;}
     if(n==='level'){state.level=v;render();return;}
-    if(['unity-project','unreal-project-file'].includes(n)){
-      if(n==='unity-project')state.folders.unity=v;else state.unrealProject=v;
+    if(['unity-project','unreal-project-root','unreal-project-file'].includes(n)){
+      if(n==='unity-project')state.folders.unity=v;
+      else if(n==='unreal-project-root'){state.folders.unreal=v;state.unrealProject='';}
+      else state.unrealProject=v;
       state.busy=true;render();try{await scan();}catch(e){state.error=e.message;}
       finally{state.busy=false;render();}
     }
