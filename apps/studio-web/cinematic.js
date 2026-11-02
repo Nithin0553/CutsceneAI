@@ -139,9 +139,17 @@
       '<a href="?advanced=1" class="report-link">Open advanced research controls and audits</a></details>';
   }
   function movement(){
+    // Small original vector silhouettes, purely decorative. These are not
+    // assertions that the named assets exist in the source cutscene.
+    const silhouettes = [
+      '<circle cx="16" cy="5" r="4"/><path d="M10 11h12l2 10h-4l-2-7v16h-4V20l-3 10H7l3-17z"/>',
+      '<path d="M8 29h19v-4l-5-4 1-5-7-11-5-2-5 8 6 4-3 5 4 4-5 2z"/><circle cx="17" cy="12" r="1" fill="#080a09"/>',
+      '<path d="M6 5l5 6 5-3 6 3 5-6-1 9 4 7-4 1-1 7h-6l-3-5-3 5H7l-1-7-4-1 4-7z"/><circle cx="12" cy="16" r="2" fill="#080a09"/><circle cx="21" cy="16" r="2" fill="#080a09"/>',
+      '<path d="M11 16c0-9 10-9 10 0z"/><ellipse cx="16" cy="20" rx="15" ry="5"/><path d="M9 25l-3 6m10-6v6m7-6 3 6" stroke="currentColor" stroke-width="2"/>'
+    ];
     return '<div class="movement" aria-hidden="true"><div class="movement-line"></div>'+
-      '<span class="asset a">♟</span><span class="asset b">♞</span>'+
-      '<span class="asset c">✦</span><span class="asset d">◈</span></div>';
+      silhouettes.map((shape,i)=>'<span class="asset '+['a','b','c','d'][i]+'">'+
+      '<svg viewBox="0 0 32 32" width="22" height="22" fill="currentColor">'+shape+'</svg></span>').join('')+'</div>';
   }
   function transfer(){
     const phase=state.phase,d=readiness(),j=state.job||{};
