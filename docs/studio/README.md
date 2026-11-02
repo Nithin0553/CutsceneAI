@@ -113,6 +113,13 @@ census, also rerun **Discover Installed Feature Surface**. Older CSIR files
 without these fields retain the conservative name-resolution fallback and do
 not establish material provenance.
 
+The current census records serialized enum values and referenced Unity
+object/asset identities alongside scalar component properties. Strict source
+scope requires a matching Transform for every CSIR scene object; a census
+that sees only some cutscene objects is blocked and identifies each missing
+path. These extra source values are evidence for future adapters, not proof
+that URP render behavior, colliders, or signal callbacks transfer to Unreal.
+
 Automatic staging can follow an exact renderer FBX, `.mat`, or PNG reference
 elsewhere inside the selected Unity project's `Assets/`, even when the chosen
 search subtree is narrower. It checks the exported GUID against the Unity
