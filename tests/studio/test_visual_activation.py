@@ -195,3 +195,51 @@ def test_nonzero_playback_origin_is_not_silently_misrepresented():
     source["timing"]["playback_start"] = rt(3)
     with pytest.raises(visual_activation.VisualActivationError, match="zero playback start"):
         visual_activation.build_action(source, mapping, source["tracks"][0])
+
+
+
+def test_integrated_unity_scope_and_executable_ced_adapter_share_one_planner(
+    tmp_path, monkeypatch,
+):
+    """Integration regression for non-overlapping PR #90 and #92 source gates."""
+    source, mapping = sample()
+    mapping["enable_actor_visibility_fallback"] = True
+    source_file = tmp_path / "source.csir.json"
+    mapping_file = tmp_path / "mapping.json"
+    census_file = tmp_path / "feature-census.json"
+    source_file.write_text(json.dumps(source), encoding="utf-8")
+    census_file.write_text(json.dumps({"kind": "synthetic-test-census"}), encoding="utf-8")
+    mapping["source_feature_surface_path"] = str(census_file)
+    mapping_file.write_text(json.dumps(mapping), encoding="utf-8")
+    state = {
+        "unresolved_component_count": 0,
+        "project_identity_proven": True,
+        "source_scope_matched": True,
+    }
+    observed = []
+    monkeypatch.setattr(transfer_backend.source_surface_gap, "audit_files",
+                        lambda *args: dict(state))
+    def accepted_source_components(csir, mapping, census):
+        observed.append("census_adapt")
+        return {"actions": []}
+    monkeypatch.setattr(transfer_backend.adaptive_components, "adapt",
+                        accepted_source_components)
+
+    plan, report, evidence = transfer_backend.compose_files(source_file, mapping_file)
+    assert observed == ["census_adapt"]
+    assert report["source_feature_surface_state"] == "SOURCE_CENSUS_VERIFIED_NO_UNRESOLVED_COMPONENTS"
+    assert report["feature_dispatch"]["full_conversion_verified"] is False
+    registered = next(action for action in plan["actions"]
+                      if action["kind"] == "actor_visibility")
+    assert registered["source_location"] == "tracks[0]"
+    assert registered["adapter_name"] == "unity_activation_visual_fallback"
+    assert registered["fidelity_status"] == "RENDER_ONLY_PARTIAL_UNVERIFIED"
+    assert evidence["source_feature_surface_sha256"]
+
+    # A partial census cannot be used to smuggle the CED-backed native action
+    # into an ostensibly strict candidate, even with an installed handler.
+    state["source_scope_matched"] = False
+    with pytest.raises(transfer_backend.TransferBackendError,
+                       match="Unity source feature census is incomplete"):
+        transfer_backend.compose_files(source_file, mapping_file)
+    assert observed == ["census_adapt"], "adaptive stage ran despite strict scope rejection"
