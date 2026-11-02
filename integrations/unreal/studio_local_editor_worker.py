@@ -226,9 +226,44 @@ def _execute(job):
     except Exception as exc:
         job['visual_audit_error'] = str(exc)
         unreal.log_warning('[CutSceneAI Studio] Automatic visual audit incomplete: ' + str(exc))
+    # Attempt only a proven material-slot correction on newly staged actors.
+    # Re-audit after each change and stop on no progress, a source mismatch,
+    # or the hard two-round cap. Other domains are not safely auto-repairable.
+    repairs = []
+    if visual_report is not None and job.get('automatic_setup'):
+        previous_fallback = int(visual_report.get('material_slots_engine_default', 0))
+        for _ in range(2):
+            if previous_fallback <= 0:
+                break
+            try:
+                import studio_visual_repair
+                repair = studio_visual_repair.attempt(job, staged, unreal)
+                if repair.get('changed', 0) <= 0:
+                    break
+                import studio_auto_scene
+                studio_auto_scene._save_level(unreal, job['expected_level'])
+                repairs.append({'changed': repair['changed'], 'strategy': repair['status']})
+                import studio_visual_audit
+                refreshed = studio_visual_audit.audit_latest(WORKSPACE, api=unreal)
+                visual_report = refreshed
+                current_fallback = int(refreshed.get('material_slots_engine_default', 0))
+                if current_fallback >= previous_fallback:
+                    break
+                previous_fallback = current_fallback
+            except Exception as exc:
+                job['repair_status'] = 'PARTIAL_REPAIR_MUST_INSPECT'
+                job['repair_error'] = str(exc)
+                unreal.log_warning('[CutSceneAI Studio] Source-backed visual repair stopped: ' + str(exc))
+                break
+    job['repair_iterations'] = len(repairs)
+    job['repair_changes'] = sum(row['changed'] for row in repairs)
+    if visual_report is not None:
+        job['visual_audit_status'] = visual_report['status']
     try:
         import closed_loop_evaluation
-        assessment = closed_loop_evaluation.evaluate(cine_report, visual_report)
+        assessment = closed_loop_evaluation.evaluate(
+            cine_report, visual_report, repair_iterations=len(repairs)
+        )
         assessment_path = candidate_dir / ('closed-loop-evaluation-' + job['job_id'] + '.json')
         closed_loop_evaluation.write_new(assessment_path, assessment)
         job['closed_loop_report_file'] = str(assessment_path)
