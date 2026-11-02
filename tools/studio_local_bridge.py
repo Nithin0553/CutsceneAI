@@ -353,12 +353,15 @@ def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> 
     return info
 
 
-def approve_one_click(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
+def approve_one_click(candidate_id: str, folder: Path = WORKSPACE,
+                      *, enable_ai_agents: bool = False) -> dict[str, Any]:
     """Persist explicit one-click approval across a page refresh.
 
     This never queues work; queue_trial still enforces exact current Editor
     identity, target, source hashes and destination readiness on submission.
     """
+    if type(enable_ai_agents) is not bool:
+        raise ValueError('Enable AI agents must be a Boolean value.')
     active = folder / 'active-candidate.json'
     connected = folder / 'connection.json'
     if not active.is_file() or not connected.is_file():
@@ -382,6 +385,7 @@ def approve_one_click(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, 
         'source_csir': config['csir'],
         'target_project': config['target_project'],
         'target_level': config['level_path'],
+        'enable_ai_agents': enable_ai_agents,
         'approved_at': datetime.now(timezone.utc).isoformat(),
     })
     return {'approved': True, 'candidate_id': candidate_id}
@@ -443,6 +447,16 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     for old_job in (folder / 'jobs').glob('*.json') if (folder / 'jobs').is_dir() else []:
         if load_json(old_job).get('candidate_id') == candidate_id:
             raise ValueError('This candidate was already submitted; inspect its job instead of replaying it.')
+    approval_file = folder / 'one-click-approval.json'
+    approval = load_json(approval_file) if approval_file.is_file() else {}
+    selected_agent = bool(
+        approval.get('kind') == 'cutsceneai.studio.one_click_approval'
+        and approval.get('candidate_id') == candidate_id
+        and approval.get('source_csir') == config['csir']
+        and approval.get('target_project') == config['target_project']
+        and approval.get('target_level') == config['level_path']
+        and approval.get('enable_ai_agents') is True
+    )
     job_id = uuid.uuid4().hex
     job = {'kind': 'cutsceneai.studio.local_unreal_job', 'schema_version': '0.1.0',
            'job_id': job_id, 'status': 'QUEUED', 'candidate_id': candidate_id,
@@ -456,6 +470,7 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
            'expected_level': config['level_path'],
            'create_level': bool(config.get('auto_create_level')),
            'created_at': datetime.now(timezone.utc).isoformat(),
+           'ai_agents_enabled': selected_agent,
            'generation_status': 'NOT_STARTED', 'fidelity_verified': False}
     atomic_json(folder / 'jobs' / (job_id + '.json'), job)
     atomic_json(folder / 'active-job.json', {'job_id': job_id})
@@ -476,7 +491,7 @@ def job_status(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         'assets_imported_count', 'actors_created_count', 'bindings_created_count',
         'visual_audit_status', 'visual_audit_error', 'closed_loop_status',
         'closed_loop_report_file', 'closed_loop_error', 'repair_iterations',
-        'repair_changes', 'repair_status', 'repair_error')}
+        'repair_changes', 'repair_status', 'repair_error', 'ai_agents_enabled')}
 
 
 def diagnostic_summary(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
@@ -662,6 +677,9 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                 if data.get('kind') != 'cutsceneai.studio.closed_loop_evaluation':
                     return self.reply(409, {'error': 'Unexpected feedback report type.'})
                 return self.reply(200, {'available': True, **data})
+            if path == '/api/agents':
+                import studio_agent_coordinator
+                return self.reply(200, studio_agent_coordinator.status(folder))
             if path == '/api/cutscenes':
                 cfg = folder / 'connection.json'
                 if not cfg.is_file():
@@ -719,7 +737,9 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                     elif route == '/api/prepare':
                         result = prepare(folder, data)
                     elif route == '/api/approve-one-click':
-                        result = approve_one_click(str(data.get('candidate_id', '')), folder)
+                        result = approve_one_click(
+                            str(data.get('candidate_id', '')), folder,
+                            enable_ai_agents=data.get('enable_ai_agents', False))
                     elif route == '/api/execute':
                         result = queue_trial(str(data.get('candidate_id', '')), folder)
                     elif route == '/api/observation':
@@ -753,6 +773,11 @@ def main(argv=None) -> int:
     if not (args.web / 'index.html').is_file():
         parser.error('Web UI directory is missing index.html.')
     WORKSPACE.mkdir(parents=True, exist_ok=True)
+    package_dir = str(ROOT / 'packages/studio')
+    if package_dir not in sys.path:
+        sys.path.insert(0, package_dir)
+    import studio_agent_coordinator
+    agent_stop = studio_agent_coordinator.start_daemon(WORKSPACE)
     handler = create_handler(args.web.resolve(), WORKSPACE)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), handler)
     print(f'CutSceneAI Studio: http://127.0.0.1:{args.port}')
@@ -762,6 +787,7 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        agent_stop.set()
         server.server_close()
     return 0
 
