@@ -57,7 +57,7 @@ From the repository root in a PowerShell terminal (with the same Python used
 by \`tools/start_studio.ps1\`):
 
 \`\`\`powershell
-python -m pip install -e ".[agents]"
+python -m pip install "langgraph>=1.0,<2" "openai>=2,<3"
 \`\`\`
 
 Before opening Studio with **Enable AI agents**, configure
