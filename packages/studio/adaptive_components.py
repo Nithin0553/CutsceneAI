@@ -317,7 +317,8 @@ def adapt(
             desc["unconverted_properties"].extend([
                 "shadow_filter", "light_layers", "light_cookie", "render_pipeline_policy",
             ])
-        elif not desc["actions"]:
+        elif (not desc["actions"]
+              and desc["status"] == "SOURCE_COMPONENT_ADAPTER_MISSING"):
             desc["status"] = "EXPLICIT_COMPONENT_PROPERTY_UNAVAILABLE"
         decisions.append(desc)
     if len({(a["actor_label"], a["target_property_path"]) for a in actions}) != len(actions):
