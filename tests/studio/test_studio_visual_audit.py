@@ -202,3 +202,55 @@ def test_results_ui_exposes_visual_audit_command():
     assert "visual.audit_latest()" in app
     assert "Default engine materials" in app
     assert "SkyLight / SkyAtmosphere" in app
+
+def test_cinematic_editor_camera_materials_not_counted_as_transferred_art():
+    camera = Actor("CSAI_CAM", "CineCameraActor", [
+        Renderer("CameraProxyMeshComponent", [
+            "/Engine/EditorMaterials/Camera/MI_CineMat_CameraBody.MI_CineMat_CameraBody",
+            "/Engine/EditorMaterials/Camera/MI_CineMat_CamViewFinder.MI_CineMat_CamViewFinder",
+        ])
+    ])
+    characters = [
+        Actor("CSAI_CHAR_A", "SkeletalMeshActor", [
+            Renderer("SkeletalMeshComponent", [
+                "/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial",
+                "/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial",
+            ])
+        ]),
+        Actor("CSAI_CHAR_B", "SkeletalMeshActor", [
+            Renderer("SkeletalMeshComponent", [
+                "/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial",
+                "/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial",
+            ])
+        ]),
+    ]
+    seq = Sequence([Native("MovieSceneCameraCutTrack")])
+    api = fake_unreal([camera, *characters], seq)
+    report = visual.inspect_scene(
+        api, seq, {"CSAI_CAM", "CSAI_CHAR_A", "CSAI_CHAR_B"}
+    )
+    assert report["editor_camera_proxy_material_slots_excluded"] == 2
+    assert len(report["editor_camera_proxy_details_excluded"]) == 1
+    assert report["material_slots"] == 4
+    assert report["material_slots_engine_default"] == 4
+    assert report["material_slots_nondefault"] == 0
+    assert report["character_material_slots"] == 4
+    assert report["character_material_slots_engine_default"] == 4
+    assert report["character_material_slots_empty"] == 0
+    assert report["character_material_slots_nondefault"] == 0
+    assert report["planned_renderers_inspected"] == 2
+    assert "RENDER_MATERIALS_MISSING_OR_ENGINE_DEFAULT" in report["visual_issues"]
+
+
+def test_camera_gizmo_using_staticmesh_parent_class_is_excluded_too():
+    camera = Actor("CSAI_CAM", "CineCameraActor", [
+        Renderer("StaticMeshComponent", [
+            "/Engine/EditorMaterials/Camera/MI_CineMat_CameraBody",
+        ])
+    ])
+    seq = Sequence([Native("MovieSceneCameraCutTrack")])
+    report = visual.inspect_scene(
+        fake_unreal([camera], seq), seq, {"CSAI_CAM"}
+    )
+    assert report["material_slots"] == 0
+    assert report["editor_camera_proxy_material_slots_excluded"] == 1
