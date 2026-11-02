@@ -34,7 +34,7 @@ assert len(loaded) == len(studio_planner_sync.MODULES)
 assert transfer_backend.compose_files is not old_compose
 assert transfer_backend.compose_files.__module__ == 'transfer_backend'
 assert prepared_transfer.verify.__module__ == 'prepared_transfer'
- print('PLANNER_RELOADED')
+print('PLANNER_RELOADED')
 """
     result = subprocess.run(
         [sys.executable, "-c", script], cwd=ROOT,
