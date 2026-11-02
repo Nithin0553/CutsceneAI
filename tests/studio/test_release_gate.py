@@ -41,7 +41,7 @@ def fixture(tmp_path):
 
 
 def test_generated_sequence_alone_never_release_ready(tmp_path):
-    workspace, candidate, job = fixture(tmp_path)
+    workspace, _candidate, job = fixture(tmp_path)
     result = gate.assess(workspace, job["job_id"])
     assert result["release_ready"] is False
     assert result["status"] == "INCOMPLETE"
@@ -82,7 +82,7 @@ def test_foreign_job_evidence_rejected_not_trusted(tmp_path):
 
 
 def test_untrusted_candidate_path_blocked(tmp_path):
-    workspace, candidate, job = fixture(tmp_path)
+    workspace, _candidate, job = fixture(tmp_path)
     job["candidate_dir"] = str(tmp_path)
     put(workspace / "jobs" / (job["job_id"] + ".json"), job)
     with pytest.raises(gate.ReleaseEvidenceError, match="Candidate path"):
