@@ -101,6 +101,26 @@ def _source_materials(candidate: Path) -> bool:
     return bool(document.get("source_albedo_material_candidates"))
 
 
+def _ced_policy() -> dict[str, Any]:
+    """Use the checked-in CED taxonomy as vocabulary, never free-form actions."""
+    path = (Path(__file__).resolve().parents[2] /
+            "packages/contracts/dictionary/cutscene-elements-v0.2.json")
+    if not path.is_file():
+        raise AgentError("CED taxonomy is unavailable.")
+    document = _json(path)
+    categories = document.get("categories") or {}
+    names = ("material", "texture", "shader", "animation", "character",
+             "transform", "camera", "light", "environment", "event",
+             "audio", "render", "scene", "relationship")
+    return {
+        "ced_version": document.get("version"),
+        "categories": {
+            name: categories.get(name, [])[:18]
+            for name in names if isinstance(categories.get(name), list)
+        },
+    }
+
+
 def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
     if not os.environ.get("OPENAI_API_KEY"):
         raise AgentError("OPENAI_API_KEY is not configured in the local Studio process.")
@@ -203,8 +223,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
 
     def reason(state: AgentState) -> dict[str, Any]:
         summary = {
-            "ced_domains": ["material", "rendering", "animation", "camera", "lighting",
-                            "hierarchy", "audio", "events"],
+            "ced_taxonomy": _ced_policy(),
             "unreal_character_fallback_slots": state["last_fallback"],
             "source_guid_backed_albedo": _source_materials(candidate),
             "safe_strategies": (
