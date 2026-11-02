@@ -677,6 +677,21 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                 if data.get('kind') != 'cutsceneai.studio.closed_loop_evaluation':
                     return self.reply(409, {'error': 'Unexpected feedback report type.'})
                 return self.reply(200, {'available': True, **data})
+            if path == '/api/release-readiness':
+                import studio_release_gate
+                active_path = folder / 'active-job.json'
+                if not active_path.is_file():
+                    return self.reply(200, {
+                        'available': False, 'status': 'INCOMPLETE',
+                        'release_ready': False,
+                        'incomplete': ['No active Studio transfer has been generated.'],
+                    })
+                try:
+                    job_id = str(load_json(active_path)['job_id'])
+                    result = studio_release_gate.assess(folder, job_id)
+                    return self.reply(200, {'available': True, **result})
+                except (ValueError, KeyError, OSError) as exc:
+                    return self.reply(409, {'error': 'Invalid release evidence: ' + str(exc)})
             if path == '/api/agents':
                 import studio_agent_coordinator
                 return self.reply(200, studio_agent_coordinator.status(folder))
