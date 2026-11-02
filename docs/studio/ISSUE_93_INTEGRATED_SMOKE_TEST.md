@@ -19,12 +19,19 @@ verified against their PR #90 blob IDs. The only overlapping file,
 `plan_for`/prepared-plan logic. The merge did **not** overwrite the newer
 CED dispatcher with older transfer planner code.
 
-Older parallel research PRs (#49, #50, #52 and #75–#83) were reviewed for
-scope but not blindly cherry-picked. The stacked Studio branch already
-contains several of their concepts; independently staged CineTwin V9 work
-(#83) and earlier transfer/learning experiments must only be integrated
-after compatibility, source evidence and measurable behavior are examined
-under Issues #95–#100. **PRs and user engine assets remain untouched.**
+Earlier research PRs (#49, #50, #52 and #75–#83) were reviewed by
+changed-file scope to avoid reintroducing older builder behavior. This
+integration branch already has a byte-identical `case_memory.py` to PR #50,
+`asset_staging.py` to PR #82, `ced_discovery_registry.py` to PR #91,
+and `root_world_lock.py`, `cinetwin_root_world_lock.py` and
+`diagnose_cinetwin_parity.py` matching PR #83. Other shared files,
+especially `build_level_sequence.py`, `transfer_backend.py`,
+`prepared_transfer.py` and `ced_preflight.py`, evolved in later Studio
+branches and are **not** byte-identical to their older experimental heads.
+They must be compared and exercised, not wholesale overwritten by PR #83
+or earlier PRs. The unfinished held-out runtime/rig/camera behavior from
+PR #83 belongs under Issues #96–#98; learning claims from PR #50 belong
+under #100. **PRs and user engine assets remain untouched.**
 
 ## Code acceptance
 
