@@ -106,9 +106,8 @@ def _preflight(plan: dict[str, Any]) -> None:
         "audio": ("fade_in_seconds", "fade_out_seconds"),
     }
     for action in plan.get("actions", []):
-        if action.get("kind") == "property_float":
-            # All target components/float properties must be resolved before
-            # scene changes, including the implicit float section bindings.
+        if action.get("kind") in {"property_float", "property_bool"}:
+            # Resolve destination component/property before any mutation.
             _target_scalar_object(
                 _find_actor(str(action["actor_label"])), action
             )
@@ -777,10 +776,19 @@ def _target_scalar_object(actor: unreal.Actor, action: dict[str, Any]) -> Any:
         existing = getter(name)
     except Exception as exc:
         raise UnrealBuildError("Unreal scalar property not exposed: " + name) from exc
-    if isinstance(existing, bool) or not isinstance(existing, (int, float)):
-        raise UnrealBuildError("Unreal target property is not a numeric scalar: " + name)
-    if not math.isfinite(float(existing)):
-        raise UnrealBuildError("Unreal target property's initial value is not finite.")
+    if action.get("kind") == "property_bool":
+        if not isinstance(existing, bool):
+            raise UnrealBuildError("Unreal target property is not Boolean: " + name)
+        if not action.get("keys") or any(
+            not isinstance(row.get("value"), bool) or int(row.get("frame", -1)) < 0
+            for row in action["keys"]
+        ):
+            raise UnrealBuildError("Invalid Boolean property key payload.")
+    else:
+        if isinstance(existing, bool) or not isinstance(existing, (int, float)):
+            raise UnrealBuildError("Unreal target property is not a numeric scalar: " + name)
+        if not math.isfinite(float(existing)):
+            raise UnrealBuildError("Unreal target property's initial value is not finite.")
     return candidate
 
 
@@ -808,6 +816,33 @@ def _add_property_float(
         "[CutSceneAI] Source-linear property track constructed: "
         + str(action["source_semantic"])
         + " | native readback and playback parity not yet verified."
+    )
+
+
+def _add_property_bool(
+    sequence: unreal.LevelSequence, actor: unreal.Actor, action: dict[str, Any],
+) -> None:
+    """A typed editable native BoolTrack. Source light shadow state is not GI parity."""
+    target = _target_scalar_object(actor, action)
+    binding = unreal.MovieSceneSequenceExtensions.add_possessable(sequence, target)
+    track = binding.add_track(unreal.MovieSceneBoolTrack)
+    track.set_display_name("CutSceneAI Boolean: " + str(action["source_semantic"]))
+    track.set_property_name_and_path(
+        str(action["target_property_name"]), str(action["target_property_path"])
+    )
+    section = track.add_section()
+    section.set_range(0, sequence.get_playback_end())
+    channels = unreal_compat.get_section_channels(section)
+    if len(channels) != 1:
+        raise UnrealBuildError("Boolean property needs exactly one native channel.")
+    for key in action["keys"]:
+        channels[0].add_key(
+            unreal.FrameNumber(int(key["frame"])), bool(key["value"])
+        )
+    unreal.log(
+        "[CutSceneAI] Native Boolean property track planned and generated: "
+        + str(action["source_semantic"])
+        + " | independent render/behavior parity not verified."
     )
 
 
@@ -951,6 +986,10 @@ def _build_prepared_plan(
                 _add_actor_visibility(sequence, bindings[action["entity_name"]]["binding"], action)
             elif kind == "property_float":
                 _add_property_float(
+                    sequence, bindings[action["entity_name"]]["actor"], action
+                )
+            elif kind == "property_bool":
+                _add_property_bool(
                     sequence, bindings[action["entity_name"]]["actor"], action
                 )
             elif kind == "audio":
