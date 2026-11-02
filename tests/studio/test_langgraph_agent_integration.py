@@ -320,6 +320,10 @@ def test_editor_request_queue_is_once_only_with_persistent_receipt(tmp_path, mon
     workspace, candidate, job, _ = staged(tmp_path, enabled=True)
     write(workspace / "jobs" / (job["job_id"] + ".json"), job)
     request_id = "d" * 32
+    write(candidate / ("agent-state-" + job["job_id"] + ".json"), {
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "pending_request": request_id, "status": "WAITING_FOR_UNREAL_AGENT_REPAIR",
+    })
     write(candidate / ("agent-request-" + request_id + ".json"), {
         "kind": "cutsceneai.studio.agent_repair_request",
         "schema_version": "1", "request_id": request_id,
@@ -363,6 +367,10 @@ def test_agent_interrupted_claim_never_replays_mutating_editor_action(tmp_path, 
     workspace, candidate, job, _ = staged(tmp_path, enabled=True)
     write(workspace / "jobs" / (job["job_id"] + ".json"), job)
     request_id = "e" * 32
+    write(candidate / ("agent-state-" + job["job_id"] + ".json"), {
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "pending_request": request_id, "status": "WAITING_FOR_UNREAL_AGENT_REPAIR",
+    })
     write(candidate / ("agent-request-" + request_id + ".json"), {
         "kind": "cutsceneai.studio.agent_repair_request",
         "schema_version": "1", "request_id": request_id,
@@ -403,6 +411,10 @@ def test_agent_write_ahead_claim_is_created_before_execution(tmp_path, monkeypat
 
     workspace, candidate, job, _ = staged(tmp_path, enabled=True)
     request_id = "f" * 32
+    write(candidate / ("agent-state-" + job["job_id"] + ".json"), {
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "pending_request": request_id, "status": "WAITING_FOR_UNREAL_AGENT_REPAIR",
+    })
     write(candidate / ("agent-request-" + request_id + ".json"), {
         "kind": "cutsceneai.studio.agent_repair_request",
         "schema_version": "1", "request_id": request_id,
@@ -425,3 +437,47 @@ def test_agent_write_ahead_claim_is_created_before_execution(tmp_path, monkeypat
                                 workspace, project=job["expected_project"],
                                 level=job["expected_level"], save=write)
     assert calls == ["native"]
+
+
+
+def test_editor_rejects_request_until_graph_state_is_durable(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    workspace, candidate, job, _ = staged(tmp_path, enabled=True)
+    request_id = "1" * 32
+    write(candidate / ("agent-request-" + request_id + ".json"), {
+        "kind": "cutsceneai.studio.agent_repair_request",
+        "schema_version": "1", "request_id": request_id,
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "strategy": "restore_source_albedo",
+        "expected_project": job["expected_project"],
+        "expected_level": job["expected_level"],
+        "sequence_path": job["sequence_path"],
+        "baseline_fallback": 2,
+    })
+    called = []
+    monkeypatch.setattr(executor, "execute",
+                        lambda *args, **kwargs: called.append("native") or {
+                            "status": "REPAIR_SAVED_AND_REAUDITED",
+                            "changes": 1, "fallback_after": 1,
+                        })
+    api = SimpleNamespace(log_warning=lambda _: None)
+    arguments = dict(project=job["expected_project"], level=job["expected_level"],
+                     save=write)
+    assert not executor.service_one(api, workspace, **arguments)
+    assert not called
+    # Wrong pending identity cannot authorize mutation.
+    write(candidate / ("agent-state-" + job["job_id"] + ".json"), {
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "pending_request": "2" * 32, "status": "WAITING_FOR_UNREAL_AGENT_REPAIR",
+    })
+    assert not executor.service_one(api, workspace, **arguments)
+    assert not called
+    # The host now durably commits the exact request; it can execute once.
+    write(candidate / ("agent-state-" + job["job_id"] + ".json"), {
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "pending_request": request_id, "status": "WAITING_FOR_UNREAL_AGENT_REPAIR",
+    })
+    assert executor.service_one(api, workspace, **arguments)
+    assert called == ["native"]
+    assert not executor.service_one(api, workspace, **arguments)
