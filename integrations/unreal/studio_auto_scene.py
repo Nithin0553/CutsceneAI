@@ -36,7 +36,7 @@ def _klass(asset):
     return str(asset.get_class().get_name()) if asset is not None else ''
 
 
-def _task(api, source, dest, kind, skeleton=None):
+def _task(api, source, dest, kind, skeleton=None, embedded_materials=False):
     task=api.AssetImportTask()
     for name,val in (('filename',str(source)),('destination_path',dest.rsplit('/',1)[0]),
                      ('destination_name',dest.rsplit('/',1)[-1]),('replace_existing',False),
@@ -47,7 +47,9 @@ def _task(api, source, dest, kind, skeleton=None):
         for key,val in (('automated_import_should_detect_type',False),
                         ('mesh_type_to_import',api.FBXImportType.FBXIT_ANIMATION if kind=='AnimSequence' else api.FBXImportType.FBXIT_STATIC_MESH if kind=='StaticMesh' else api.FBXImportType.FBXIT_SKELETAL_MESH),
                         ('import_as_skeletal',kind=='SkeletalMesh'),('import_mesh',kind in ('SkeletalMesh','StaticMesh')),
-                        ('import_animations',kind=='AnimSequence'),('import_materials',False),('import_textures',False)):
+                        ('import_animations',kind=='AnimSequence'),
+                        ('import_materials',bool(embedded_materials) and kind in ('SkeletalMesh','StaticMesh')),
+                        ('import_textures',bool(embedded_materials) and kind in ('SkeletalMesh','StaticMesh'))):
             opts.set_editor_property(key,val)
         if kind=='AnimSequence':
             opts.set_editor_property('skeleton',skeleton)
@@ -80,7 +82,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
              'status':'BLOCKED','actors_created':[],'assets_imported':[],
              'asset_operations':[],'actor_operations':[],'failed_step':None,
              'level_saved':False,'changes_possible':False,'fidelity_verified':False,
-             'unsupported':['Unity materials are not automatically reconstructed',
+             'unsupported':['Unity .mat materials/shader graphs are not reconstructed; FBX embedded materials are optional and partial',
                             'Unity particle/VFX/constraints/scripts and signal payloads are not reconstructed',
                             'Imported animation bone correspondence and audio playback are not verified']}
     mutation=False
@@ -96,6 +98,9 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
         data=json.loads(Path(plan_path).read_text(encoding='utf-8-sig'))
         sequence=data['sequence_asset_path']
         receipt['target_namespace']=manifest['target_folder']
+        receipt['fbx_embedded_material_import_requested'] = (
+            manifest.get('fbx_embedded_material_import_requested') is True
+        )
         receipt['target_sequence']=sequence
         receipt['asset_operations']=[
             {'kind':row['kind'], 'path':row['target_asset_path'],
@@ -155,7 +160,12 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                     skeleton=mesh.get_editor_property('skeleton')
                     if skeleton is None:
                         raise AutomaticSetupError('Imported mesh has no skeleton: '+row.get('character',''))
-                task=_task(api,source,row['target_asset_path'],kind,skeleton)
+                task=_task(
+                    api,source,row['target_asset_path'],kind,skeleton,
+                    embedded_materials=(
+                        manifest.get('fbx_embedded_material_import_requested') is True
+                    ),
+                )
                 operation=asset_ops[row['target_asset_path']]
                 operation['status']='IMPORT_STARTED'
                 receipt['failed_step']={'phase':'asset_import','kind':kind,

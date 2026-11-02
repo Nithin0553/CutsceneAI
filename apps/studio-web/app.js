@@ -8,7 +8,7 @@
     candidate:null, job:null, report:null, source:null, detailsOpen:false, evidencePath:'',
     selectedFolders:{unity:'',unreal:''}, discovery:null, selectedCutscene:'', selectedLevel:'', selectedUnrealProject:'', sourceRightsConfirmed:false,
     capabilities:null, sourceSurfaces:null, censusIdentity:'', selectedCensus:'', strictSourceCensus:true,
-    visibilityFallback:false, verification:null };
+    visibilityFallback:false, importFbxMaterials:false, verification:null };
   const steps = [['connect','Connect'],['select','Select'],['review','Review'],['transfer','Transfer'],['results','Results']];
   const mark = `<svg viewBox="0 0 36 36" fill="currentColor" aria-hidden="true"><path d="M18 2 3 30h11l4-7h-5l7-14zM23 18l10 12H19l-4-4h8l-4-5z"/></svg>`;
   const icons = {
@@ -139,6 +139,7 @@
       `:''}
       <label class="checkbox"><input type="checkbox" name="strict-source-census" ${state.strictSourceCensus?'checked':''} ${!state.selectedCensus?'disabled':''}><span>Require matching complete source census (recommended)</span></label>
       <label class="checkbox"><input type="checkbox" name="visibility-fallback" ${state.visibilityFallback?'checked':''}><span>Opt in to visual-only ActivationTrack approximation; scripts and physics are not equivalent</span></label>
+      <label class="checkbox"><input type="checkbox" name="fbx-materials" ${state.importFbxMaterials?'checked':''}><span>Try importing basic materials embedded in character/prop FBX files (partial; Unity materials/shaders not included)</span></label>
       <div class="form-actions">${btn('Refresh Unity census','refresh-census','secondary',state.busy)}${btn('Copy Unreal feature scan command','copy-unreal-scan','secondary')}</div>
       <pre id="unreal-scan-command" class="command" hidden>${esc(scanCmd)}</pre>
       ${state.candidate?`<div class="rule"></div><h3>Candidate feature accounting</h3>${item('Source feature occurrences',size(report.source_occurrences))}${item('Accounted occurrences',size(report.accounted_occurrences))}${item('Missing adapter occurrences',size(report.missing_adapters))}${item('Unity census',state.candidate.source_feature_surface_state||'NOT_COLLECTED')}${item('Unresolved source components',size(state.candidate.source_unresolved_components))}
@@ -317,7 +318,10 @@
     }
     if(name==='prepare'){
       state.busy=true;render();try{
-        const preferences={enable_actor_visibility_fallback:state.visibilityFallback};
+        const preferences={
+          enable_actor_visibility_fallback:state.visibilityFallback,
+          enable_fbx_embedded_material_import:state.importFbxMaterials,
+        };
         if(state.selectedCensus){preferences.source_feature_surface_path=state.selectedCensus;preferences.require_complete_source_features=state.strictSourceCensus}
         state.candidate=await api('prepare',preferences);
         state.job=null;state.jobDiagnostic=null;state.verification=null;
@@ -345,6 +349,7 @@
     if(name==='source-census'){state.selectedCensus=event.target.value;render();return}
     if(name==='strict-source-census'){state.strictSourceCensus=event.target.checked;return}
     if(name==='visibility-fallback'){state.visibilityFallback=event.target.checked;return}
+    if(name==='fbx-materials'){state.importFbxMaterials=event.target.checked;return}
     if(name==='csir'){state.selectedCutscene=event.target.value;render();return}
     if(name==='level'){state.selectedLevel=event.target.value;render();return}
     if(!['unity-project','unreal-project-root','unreal-project-file'].includes(name)||!event.target.value)return;

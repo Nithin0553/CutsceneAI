@@ -264,11 +264,21 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
         )
     if any(item['kind'] in ('SkeletalMesh','AnimSequence') for item in imports):
         warnings.append('Resolved FBX source identities; target skeletons, materials and animation motion remain unverified until Unreal readback.')
+    import_fbx_materials = mapping.get('enable_fbx_embedded_material_import') is True
+    if import_fbx_materials:
+        warnings.append(
+            'Opt-in FBX material import requested: only basic material information '
+            'embedded in the original FBX can be reconstructed. Unity .mat, '
+            'shader graphs, URP features and sky/ambient settings are NOT mapped. '
+            'New material assets may appear in this unique target namespace; '
+            'inspect material slots and visual parity after import.'
+        )
     return {'kind':'cutsceneai.studio.automatic_setup_plan','schema_version':'0.1.0',
             'source_project':str(root),'source_scope':scope,'target_folder':target_folder,
             'source_csir_sha256':digest(csir_path),'mapping_sha256':digest(mapping_path),
             'transfer_plan_sha256':digest(plan_path),
             'actors':actors,'imports':imports,'asset_resolutions':asset_resolutions,
+            'fbx_embedded_material_import_requested': import_fbx_materials,
             'deduplicated_textures':deduplicated_textures,
             'unmapped_source_entities':unmapped_entities,
             'source_entity_count':len(csir.get('entities', [])),

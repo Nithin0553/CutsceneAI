@@ -124,10 +124,12 @@ def source_surfaces(config: dict[str, Any]) -> dict[str, Any]:
 
 def validate_options(config: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
     allowed = {"source_feature_surface_path", "require_complete_source_features",
-               "enable_actor_visibility_fallback"}
+               "enable_actor_visibility_fallback",
+               "enable_fbx_embedded_material_import"}
     if set(request) - allowed:
         raise ValueError("Unknown Studio conversion option.")
-    for name in ("require_complete_source_features", "enable_actor_visibility_fallback"):
+    for name in ("require_complete_source_features", "enable_actor_visibility_fallback",
+                 "enable_fbx_embedded_material_import"):
         if name in request and not isinstance(request[name], bool):
             raise ValueError(name + " must be Boolean.")
     choice = str(request.get("source_feature_surface_path") or "").strip()
@@ -158,6 +160,8 @@ def validate_options(config: dict[str, Any], request: dict[str, Any]) -> dict[st
         raise ValueError("Strict completeness requires a matching Unity feature census.")
     if request.get("enable_actor_visibility_fallback"):
         overrides["enable_actor_visibility_fallback"] = True
+    if request.get("enable_fbx_embedded_material_import"):
+        overrides["enable_fbx_embedded_material_import"] = True
     return overrides
 
 

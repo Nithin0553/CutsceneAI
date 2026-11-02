@@ -50,7 +50,8 @@ def prepare_candidate(
     copy["overwrite_sequence"] = False
     # UI flags are applied ONLY to this new immutable candidate mapping.
     allowed = {'source_feature_surface_path', 'require_complete_source_features',
-               'enable_actor_visibility_fallback'}
+               'enable_actor_visibility_fallback',
+               'enable_fbx_embedded_material_import'}
     if set(transfer_options or {}) - allowed:
         raise ValueError('Unexpected candidate conversion option.')
     copy.update(transfer_options or {})
