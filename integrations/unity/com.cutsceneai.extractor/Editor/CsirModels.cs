@@ -122,6 +122,29 @@ namespace CutsceneAI.UnityExtractor
         public CameraMetadata camera;
         public LightMetadata light;
         public AnimatorMetadata animator;
+        public List<ModelAssetReference> source_model_assets = new();
+        public List<MaterialAssetReference> source_material_assets = new();
+    }
+
+    [Serializable]
+    internal sealed class ModelAssetReference
+    {
+        public string asset_path;
+        public string guid;
+        public string renderer_path;
+        public string mesh_name;
+    }
+
+    [Serializable]
+    internal sealed class MaterialAssetReference
+    {
+        public string asset_path;
+        public string guid;
+        public string renderer_path;
+        public int slot_index;
+        public string material_name;
+        public string albedo_texture_asset_path;
+        public string albedo_texture_guid;
     }
 
     [Serializable]

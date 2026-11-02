@@ -154,6 +154,19 @@ def test_source_engine_version_mismatch_blocks_census():
         source_surface_gap.audit(csir, census)
 
 
+def test_same_hierarchy_path_with_different_unity_object_id_blocks_strict_census():
+    csir, census = _fixtures()
+    csir['source']['project_fingerprint'] = 'same-project'
+    census['project_fingerprint'] = 'same-project'
+    csir['entities'][0]['native_ref'] = 'GlobalObjectId_V1-1-REAL'
+    for component in census['loaded_scene_components'][:3]:
+        component['global_object_id'] = 'GlobalObjectId_V1-1-REPLACEMENT'
+    report = source_surface_gap.audit(csir, census)
+    assert report['source_scope_matched'] is False
+    assert report['unresolved_component_count'] >= 3
+    assert report['component_counts']['SOURCE_OBJECT_IDENTITY_MISMATCH'] == 3
+
+
 def test_cli_strict_rejects_missing_project_provenance_even_if_components_known(tmp_path):
     csir, surface = _fixtures()
     surface["loaded_scene_components"] = [

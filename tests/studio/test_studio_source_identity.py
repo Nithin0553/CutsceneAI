@@ -63,6 +63,30 @@ def test_explicit_path_still_works_without_optional_meta_file(tmp_path):
     assert result["strategy"] == "UNITY_ASSET_PATH"
 
 
+def test_renderer_guid_from_windows_crlf_meta_is_verified(tmp_path):
+    guid = "aabbccddeeff00112233445566778899"
+    model = _file(tmp_path, "Guard.fbx", b"model")
+    model.with_name(model.name + ".meta").write_bytes(
+        b"fileFormatVersion: 2\r\nguid: " + guid.encode() + b"\r\n"
+    )
+    result = identity.resolve(
+        [model], "DifferentRigName", {".fbx"}, project_root=tmp_path,
+        records=[{"asset_path": "Assets/Models/Guard.fbx", "guid": guid}],
+    )
+    assert result["selected"] == model
+
+
+def test_exported_guid_cannot_use_path_without_matching_meta(tmp_path):
+    model = _file(tmp_path, "Guard.fbx", b"model")
+    result = identity.resolve(
+        [model], "Guard", {".fbx"}, project_root=tmp_path,
+        records=[{"asset_path": "Assets/Models/Guard.fbx",
+                  "guid": "aabbccddeeff00112233445566778899"}],
+    )
+    assert result["selected"] is None
+    assert result["strategy"] == "UNITY_META_GUID_NOT_VERIFIABLE"
+
+
 def test_identical_copies_resolve_but_different_bytes_block(tmp_path):
     one = _file(tmp_path, "A/Hero.fbx", b"same")
     two = _file(tmp_path, "B/Hero.fbx", b"same")

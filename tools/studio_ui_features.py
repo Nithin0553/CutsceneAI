@@ -80,6 +80,9 @@ def source_surfaces(config: dict[str, Any]) -> dict[str, Any]:
                 "NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED",
                 "MISSING_SOURCE_SCRIPT",
                 "DUPLICATE_SOURCE_COMPONENT_IDENTITY",
+                "DUPLICATE_SOURCE_ENTITY_PATH",
+                "SOURCE_OBJECT_IDENTITY_MISMATCH",
+                "SOURCE_OBJECT_IDENTITY_UNVERIFIED",
             }
             findings = [
                 {

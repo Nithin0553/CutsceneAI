@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import studio_source_identity as source_identity
@@ -51,15 +51,89 @@ def _match(files, name, suffixes, *, aliases=()):
     return options[0] if len(options) == 1 else None, [str(p) for p in options]
 
 
+def _model_records(entity):
+    models = (entity.get('metadata') or {}).get('source_model_assets') or []
+    if not isinstance(models, list) or any(not isinstance(row, dict) for row in models):
+        raise AutoAssetError('Invalid Unity renderer model identity for '+str(entity.get('name')))
+    return (entity, *models)
+
+
+def _resolve_model(files, name, entity, root):
+    metadata = entity.get('metadata') or {}
+    records = _model_records(entity)
+    # A new extractor that explicitly found no imported renderer mesh must
+    # never turn a coincidentally named FBX into that character or prop.
+    if 'source_model_assets' in metadata and len(records) == 1:
+        return {'selected': None, 'strategy': 'NO_RENDERED_MODEL_ASSET_REFERENCE',
+                'candidates': []}
+    return source_identity.resolve(files, name, {'.fbx'}, project_root=root, records=records)
+
+
+def _source_model_files(root, csir):
+    """Include only source-exported FBX identities outside the selected scan scope.
+
+    Broad filename guessing still stays inside the chosen source scope. A
+    renderer's exact AssetDatabase path may legitimately live elsewhere in
+    this same Unity Assets/ tree; its Unity .meta GUID is checked when exported.
+    """
+    assets_root = (root / 'Assets').resolve()
+    result = set()
+    for entity in csir.get('entities', []):
+        for record in _model_records(entity)[1:]:
+            relative = str(record.get('asset_path') or '').replace('\\', '/')
+            parts = relative.split('/')
+            if not relative.startswith('Assets/') or '..' in parts or '.' in parts:
+                continue
+            if Path(relative).suffix.lower() != '.fbx':
+                continue
+            path = (root / relative).resolve()
+            if not path.is_relative_to(assets_root):
+                raise AutoAssetError('Unity model identity escapes Assets/: '+relative)
+            if path.is_file():
+                result.add(path)
+            if len(result) > 3000:
+                raise AutoAssetError('Too many source-referenced model assets.')
+    return result
+
+
+def _source_reference(root, asset_path, guid, suffix):
+    """Verify one exact Unity asset identity inside this project, if supported."""
+    relative = str(asset_path or '').replace('\\', '/')
+    parts = relative.split('/')
+    if not relative.startswith('Assets/') or '..' in parts or '.' in parts:
+        return None, 'UNSUPPORTED_OR_UNSAFE_SOURCE_PATH'
+    if Path(relative).suffix.lower() != suffix:
+        return None, 'UNSUPPORTED_SOURCE_FORMAT'
+    path = (root / relative).resolve()
+    if not path.is_relative_to((root / 'Assets').resolve()):
+        raise AutoAssetError('Referenced Unity asset escapes Assets/: '+relative)
+    if not path.is_file():
+        return None, 'SOURCE_FILE_NOT_FOUND'
+    identity = source_identity.resolve(
+        [path], Path(relative).stem, {suffix}, project_root=root,
+        records=({'asset_path': relative, 'guid': guid},),
+    )
+    return identity['selected'], identity['strategy']
+
+
+def _material_records(entity):
+    rows = (entity.get('metadata') or {}).get('source_material_assets') or []
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise AutoAssetError('Invalid Unity renderer material identity for '+str(entity.get('name')))
+    return rows
+
+
 def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, target_folder):
     """Describe every file needed by mapped actions before an editor runs.
 
     Source root is real Unity Assets/, not a CSIR guess. `source_scope` narrows
     lookup to avoid similarly named models in other scenes.
     """
-    csir_path, mapping_path, plan_path = map(lambda p: Path(p).resolve(), (csir_path, mapping_path, plan_path))
+    csir_path, mapping_path, plan_path = (
+        Path(p).resolve() for p in (csir_path, mapping_path, plan_path)
+    )
     root = Path(source_project).resolve()
-    if not (root / 'Assets').is_dir():
+    if not (root / 'Assets').is_dir() or (root / 'Assets').is_symlink():
         raise AutoAssetError('Select a Unity project folder containing Assets/.')
     scope = str(source_scope).replace('\\', '/').strip('/')
     if not scope or not (scope == 'Assets' or scope.startswith('Assets/')) or '..' in scope.split('/'):
@@ -76,18 +150,26 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
         raise AutoAssetError('Prepared sequence and mapping disagree.')
     if mapping.get('overwrite_sequence'):
         raise AutoAssetError('Automatic import refuses sequence overwriting.')
-    files = sorted((x.resolve() for x in search_root.rglob('*') if x.is_file() and x.suffix.lower() in {'.fbx', '.png', '.wav', '.mp3'}), key=lambda p:str(p).lower())
+    files = sorted((x.resolve() for x in search_root.rglob('*')
+                    if x.is_file() and x.suffix.lower() in {'.fbx', '.wav', '.mp3'}),
+                   key=lambda p:str(p).lower())
     if len(files) > 3000:
         raise AutoAssetError('Source scope contains too many import candidates; select a smaller folder.')
     for f in files:
         if not f.is_relative_to(search_root):
             raise AutoAssetError('Source symlink escapes chosen Unity scope: '+str(f))
-    # A whole Unity Assets/ folder often includes unrelated editor icons,
-    # tutorial placeholders and mismatched image extensions. Validate only
-    # files that are actually selected for import, never every file scanned.
+    files = sorted(set(files) | _source_model_files(root, csir), key=lambda p:str(p).lower())
+    # A whole Unity Assets/ folder can include unrelated editor icons and
+    # tutorial placeholders. Images are resolved only from source references.
     assets = {str(a.get('asset_id')): a for a in csir.get('assets', [])}
+    entity_names = Counter(str(e.get('name')) for e in csir.get('entities', []))
+    asset_ids = Counter(str(a.get('asset_id')) for a in csir.get('assets', []))
     entities = {str(e.get('name')): e for e in csir.get('entities', [])}
     blockers, warnings, imports, actors = [], [], [], []
+    blockers.extend('Duplicate source entity name requires source-ID mapping: '+name
+                    for name, count in sorted(entity_names.items()) if count > 1)
+    blockers.extend('Duplicate source asset ID in CSIR: '+asset_id
+                    for asset_id, count in sorted(asset_ids.items()) if count > 1)
     asset_resolutions = []
     skipped_optional_textures = []
     deduplicated_textures = []
@@ -144,8 +226,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             continue
         kind = str(entity.get('ced_type') or '')
         if kind == 'entity.character':
-            evidence = source_identity.resolve(files, name, {'.fbx'}, project_root=root,
-                                               records=(entity,))
+            evidence = _resolve_model(files, name, entity, root)
             found = evidence['selected']
             asset_resolutions.append({'source': name, 'kind': 'character',
                                       'strategy': evidence['strategy'],
@@ -161,8 +242,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             continue
         actors.append({'name':name, 'label':str(label), 'kind':kind})
         if kind == 'entity.prop':
-            evidence = source_identity.resolve(files, name, {'.fbx'}, project_root=root,
-                                               records=(entity,))
+            evidence = _resolve_model(files, name, entity, root)
             asset_resolutions.append({'source': name, 'kind': 'prop_mesh',
                                       'strategy': evidence['strategy'],
                                       'candidates': evidence['candidates']})
@@ -239,9 +319,43 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     ]
     if unmapped_entities:
         warnings.append(str(len(unmapped_entities)) + ' source entities have no independent target actor binding; inspect CED coverage before claiming full scene transfer.')
-    # Texture imports are independent of the Sequence track bindings. The
-    # corresponding UE materials are not inferred from a filename.
-    for file in files:
+    # Import only textures identified by a mapped renderer's source material
+    # or an explicit CSIR asset. Scanning all project PNGs imports unrelated
+    # tutorial/editor assets and turns invalid placeholders into false warnings.
+    material_files = set()
+    texture_files = set()
+    for name in sorted(bindings):
+        entity = entities.get(name)
+        if entity is None or entity.get('ced_type') not in ('entity.character', 'entity.prop'):
+            continue
+        for record in _material_records(entity):
+            path = record.get('asset_path')
+            if path:
+                material, strategy = _source_reference(root, path, record.get('guid'), '.mat')
+                if material is not None:
+                    material_files.add(material)
+                elif Path(str(path)).suffix.lower() == '.mat':
+                    warnings.append('Renderer material '+str(path)+' is unresolved ('+strategy+').')
+            texture_path = record.get('albedo_texture_asset_path')
+            if texture_path:
+                texture, strategy = _source_reference(
+                    root, texture_path, record.get('albedo_texture_guid'), '.png'
+                )
+                if texture is not None:
+                    texture_files.add(texture)
+                else:
+                    warnings.append('Renderer albedo '+str(texture_path)+' is unresolved ('+strategy+').')
+    for asset in csir.get('assets', []):
+        metadata = asset.get('metadata') or {}
+        path = str(metadata.get('asset_path') or '')
+        if Path(path).suffix.lower() != '.png':
+            continue
+        texture, strategy = _source_reference(root, path, metadata.get('guid'), '.png')
+        if texture is not None:
+            texture_files.add(texture)
+        else:
+            warnings.append('Referenced source texture '+path+' is unresolved ('+strategy+').')
+    for file in sorted(texture_files):
         if file.suffix.lower()=='.png':
             # The filename is only used after header validation. An invalid
             # *optional* image never blocks models, clips or sequence creation.
@@ -253,7 +367,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             dest=target_folder+'/Textures/CSAI_'+re.sub('[^A-Za-z0-9_]','_',file.stem)+'_'+digest(file)[:8]
             add_import(file,dest,'Texture2D')
     material_candidates, material_diagnostics = studio_source_materials.candidates(
-        search_root, imports, target_folder, digest
+        material_files, imports, target_folder, digest
     )
     warnings.extend(material_diagnostics)
     planned_labels = [str(row['label']) for row in actors]
