@@ -182,3 +182,50 @@ def test_missing_model_configuration_is_reported(tmp_path, monkeypatch):
     assert result["status"] == "AGENT_REASONING_UNAVAILABLE"
     assert "OPENAI_API_KEY" in result["failure"]
     assert list(candidate.glob("agent-request-*.json")) == []
+
+
+
+def test_bridge_persists_agent_consent_per_candidate_and_rejects_text_booleans(tmp_path):
+    import studio_local_bridge as bridge
+    workspace, candidate, job, _ = staged(tmp_path, enabled=False)
+    (workspace / "active-job.json").unlink()
+    write(workspace / "active-candidate.json", {"candidate_id": job["candidate_id"]})
+    write(workspace / "connection.json", {
+        "csir": "source.csir.json",
+        "target_project": job["expected_project"],
+        "level_path": job["expected_level"],
+        "source_rights_confirmed": True,
+    })
+    approved = bridge.approve_one_click(job["candidate_id"], workspace, enable_ai_agents=True)
+    assert approved["approved"] is True
+    record = json.loads((workspace / "one-click-approval.json").read_text())
+    assert record["enable_ai_agents"] is True
+    with pytest.raises(ValueError, match="Boolean"):
+        bridge.approve_one_click(job["candidate_id"], workspace, enable_ai_agents="false")
+    bridge.approve_one_click(job["candidate_id"], workspace)
+    record = json.loads((workspace / "one-click-approval.json").read_text())
+    assert record["enable_ai_agents"] is False
+    assert list(candidate.glob("agent-request-*.json")) == []
+
+
+def test_agent_diagnoses_unsupported_domain_but_cannot_execute_it(tmp_path):
+    workspace, candidate, job, _ = staged(tmp_path, fallback=0)
+    result = graph.run_once(workspace, job, lambda summary: {
+        "strategy": "report_only", "reason": "Missing semantic camera adapter"
+    })
+    assert result["status"] == "UNRESOLVED_NO_SAFE_STRATEGY"
+    assert result["reasoning"] == "Missing semantic camera adapter"
+    assert list(candidate.glob("agent-request-*.json")) == []
+
+
+def test_native_failure_is_only_diagnosed_never_replayed(tmp_path):
+    workspace, candidate, job, _ = staged(tmp_path)
+    job.update({"generation_status": "NOT_STARTED",
+                "status": "BLOCKED_OR_FAILED", "automatic_setup": False})
+    (candidate / ("closed-loop-evaluation-" + job["job_id"] + ".json")).unlink()
+    result = graph.run_once(workspace, job, lambda summary: {
+        "strategy": "report_only", "reason": "Source asset mapping is unresolved"
+    })
+    assert result["status"] == "UNRESOLVED_NO_SAFE_STRATEGY"
+    assert list(candidate.glob("agent-request-*.json")) == []
+    assert result["issues"][0]["category"] == "NATIVE_TRANSFER_FAILED_NO_PARITY"
