@@ -151,7 +151,22 @@ def build_graph(workspace: Path, job: dict[str, Any],
     def inspect(state: AgentState) -> dict[str, Any]:
         if state.get("pending_request"):
             return {"status": "CHECKING_EDITOR_RECEIPT"}
-        feedback, visual = _evidence(candidate, job_id)
+        try:
+            feedback, visual = _evidence(candidate, job_id)
+        except AgentError:
+            # A failed native conversion may never produce a CineTwin report.
+            # The agent still diagnoses the stage, without receiving raw
+            # project files or attempting to replay a partially mutated level.
+            if job.get("generation_status") == "GENERATED_UNVERIFIED":
+                raise
+            feedback, visual = ({
+                "kind": "cutsceneai.studio.closed_loop_evaluation",
+                "issues": [{
+                    "category": "NATIVE_TRANSFER_FAILED_NO_PARITY",
+                    "status": str(job.get("status") or "FAILED")[:100],
+                    "stage": str(job.get("generation_status") or "NOT_GENERATED")[:100],
+                }],
+            }, {})
         count = _valid_fallback(visual)
         issues = feedback.get("issues") or []
         if not isinstance(issues, list):
@@ -167,11 +182,15 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "baseline_fallback": state.get("baseline_fallback", count),
             "source_evidence_sha256": hashlib.sha256(json.dumps(
                 feedback, sort_keys=True).encode()).hexdigest(),
+            "eligible_repair": eligible,
         }
         if not issues:
             return {**base, "status": "NO_DETECTED_GAPS_FIDELITY_UNVERIFIED"}
-        if not eligible:
-            return {**base, "status": "UNRESOLVED_NO_SAFE_STRATEGY"}
+        # The model may explain all incomplete CED/CineTwin domains, but the
+        # only actionable strategy remains source-backed material restoration.
+        # An unsupported issue is never converted into a guessed engine edit.
+        if state.get("iterations", 0) >= MAX_REPAIRS:
+            return {**base, "status": "MAX_SAFE_REPAIRS_REACHED"}
         return {**base, "status": "REASONING"}
 
     def route_inspect(state: AgentState) -> str:
@@ -187,7 +206,10 @@ def build_graph(workspace: Path, job: dict[str, Any],
                             "hierarchy", "audio", "events"],
             "unreal_character_fallback_slots": state["last_fallback"],
             "source_guid_backed_albedo": _source_materials(candidate),
-            "safe_strategies": sorted(ALLOWED_STRATEGIES),
+            "safe_strategies": (
+                sorted(ALLOWED_STRATEGIES) if state.get("eligible_repair")
+                else ["report_only"]
+            ),
             "remaining_repairs": MAX_REPAIRS - state.get("iterations", 0),
             "issues": state["issues"][:30],
         }
@@ -201,6 +223,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             return {"status": "AGENT_REASONING_UNAVAILABLE",
                     "failure": str(exc)[:500], "chosen_strategy": "report_only"}
         if strategy == "restore_source_albedo" and not (
+            state.get("eligible_repair") and
             state["last_fallback"] > 0 and _source_materials(candidate)
         ):
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
