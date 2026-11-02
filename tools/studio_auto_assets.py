@@ -13,6 +13,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import studio_source_identity as source_identity
+import studio_source_materials
 
 
 class AutoAssetError(ValueError):
@@ -251,6 +252,10 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
                 continue
             dest=target_folder+'/Textures/CSAI_'+re.sub('[^A-Za-z0-9_]','_',file.stem)+'_'+digest(file)[:8]
             add_import(file,dest,'Texture2D')
+    material_candidates, material_diagnostics = studio_source_materials.candidates(
+        search_root, imports, target_folder, digest
+    )
+    warnings.extend(material_diagnostics)
     planned_labels = [str(row['label']) for row in actors]
     duplicated_labels = sorted({label for label in planned_labels
                                 if planned_labels.count(label) > 1})
@@ -280,6 +285,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             'actors':actors,'imports':imports,'asset_resolutions':asset_resolutions,
             'fbx_embedded_material_import_requested': import_fbx_materials,
             'deduplicated_textures':deduplicated_textures,
+             'source_albedo_material_candidates': material_candidates,
             'unmapped_source_entities':unmapped_entities,
             'source_entity_count':len(csir.get('entities', [])),
             'source_asset_count':len(csir.get('assets', [])),
