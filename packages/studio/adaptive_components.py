@@ -9,6 +9,7 @@ successful conversion.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter
 from typing import Any, Mapping
 
@@ -50,6 +51,110 @@ def _native_bool(feature: dict[str, Any], member: str) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+
+_NATIVE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SOURCE_MEMBER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]]*$")
+
+
+def _explicit_property_rules(mapping: Mapping[str, Any]) -> list[dict[str, Any]]:
+    specs = mapping.get("component_property_mappings") or []
+    if not isinstance(specs, list):
+        raise ValueError("component_property_mappings must be a list.")
+    seen: set[tuple[str, str, str]] = set()
+    result = []
+    for spec in specs:
+        if not isinstance(spec, dict):
+            raise ValueError("Component property mapping must be a JSON object.")
+        required = (
+            "source_component_type", "source_entity_name", "source_property_path",
+            "target_scope", "target_class", "target_property_name", "value_type",
+        )
+        if any(not isinstance(spec.get(key), str) or not spec[key] for key in required):
+            raise ValueError("Missing required typed CED component mapping field.")
+        if spec["value_type"] not in {"bool", "float"}:
+            raise ValueError("Generic component property mapping only supports bool/float.")
+        if spec["target_scope"] not in {"actor", "component"}:
+            raise ValueError("Invalid native Unreal component property target scope.")
+        if not _SOURCE_MEMBER.fullmatch(spec["source_property_path"]):
+            raise ValueError("Invalid source serialized component property path.")
+        if not all(_NATIVE_IDENTIFIER.fullmatch(spec[key]) for key in (
+            "target_class", "target_property_name"
+        )):
+            raise ValueError("Invalid target Unreal native class/property identifier.")
+        token = (spec["source_entity_name"], spec["target_class"],
+                 spec["target_property_name"])
+        if token in seen:
+            raise ValueError("Duplicate target component property mapping.")
+        seen.add(token)
+        scale = float(spec.get("value_scale", 1.0))
+        offset = float(spec.get("value_offset", 0.0))
+        if not math.isfinite(scale) or not math.isfinite(offset) or scale == 0:
+            raise ValueError("Invalid scale/offset for native component mapping.")
+        if spec["value_type"] == "bool" and (scale != 1 or offset != 0):
+            raise ValueError("Boolean property values cannot be scaled.")
+        result.append(spec)
+    return result
+
+
+def _explicit_actions(
+    row: Mapping[str, Any], target: Mapping[str, Any], feature: Mapping[str, Any],
+    rules: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    actions: list[dict[str, Any]] = []
+    not_found: list[str] = []
+    for rule in rules:
+        if (rule["source_component_type"] != row.get("component_type") or
+                rule["source_entity_name"] != target["name"]):
+            continue
+        matches = [
+            x for x in feature.get("native_properties", [])
+            if isinstance(x, dict) and x.get("path") == rule["source_property_path"]
+            and x.get("native_type") == rule["value_type"]
+        ]
+        if len(matches) != 1:
+            not_found.append(rule["source_property_path"])
+            continue
+        property_value = matches[0]
+        if rule["value_type"] == "bool":
+            value = property_value.get("bool_value")
+            if not isinstance(value, bool):
+                not_found.append(rule["source_property_path"])
+                continue
+        else:
+            try:
+                original = float(property_value["float_value"])
+                value = original * float(rule.get("value_scale", 1)) + float(
+                    rule.get("value_offset", 0))
+            except (TypeError, ValueError, KeyError):
+                not_found.append(rule["source_property_path"])
+                continue
+            if not math.isfinite(value):
+                not_found.append(rule["source_property_path"])
+                continue
+        actions.append({
+            "kind": "property_bool" if rule["value_type"] == "bool" else "property_float",
+            "entity_name": target["name"],
+            "actor_label": target["actor_label"],
+            "track_name": "CutSceneAI Native Component: " + rule["source_property_path"],
+            "target_scope": rule["target_scope"],
+            "target_class": rule["target_class"],
+            "target_property_name": rule["target_property_name"],
+            "target_property_path": rule["target_property_name"],
+            "source_semantic": str(rule.get("source_semantic") or "metadata.native_property"),
+            "source_component_type": str(row["component_type"]),
+            "source_component_id": str(row.get("component_global_id") or ""),
+            "source_property_path": rule["source_property_path"],
+            "source_behavior_strategy": "explicit_ced_scalar_component_property",
+            "keys": [{"frame": 0, "value": value}],
+            "fidelity_status": "NATIVE_READBACK_AND_SEMANTIC_PARITY_UNVERIFIED",
+            "semantic_losses": [
+                "Matching native property values does not establish equivalent "
+                "shader, plugin or runtime behavior."
+            ],
+        })
+    return actions, not_found
+
+
 def adapt(
     csir: Mapping[str, Any],
     mapping: Mapping[str, Any],
@@ -66,6 +171,7 @@ def adapt(
     and collider runtime geometry are NOT silently equated.
     """
     known = _identity_map(csir, mapping)
+    rules = _explicit_property_rules(mapping)
     actions: list[dict[str, Any]] = []
     decisions: list[dict[str, Any]] = []
     reserved: set[tuple[str, str]] = set()
@@ -75,7 +181,11 @@ def adapt(
             continue
         native_type = str(row.get("component_type") or "")
         if native_type not in {SOURCE_CAMERA, SOURCE_LIGHT, SOURCE_RECEIVER, *SOURCE_COLLIDERS,
-                               "UnityEngine.Rendering.Universal.UniversalAdditionalLightData"}:
+                               "UnityEngine.Rendering.Universal.UniversalAdditionalLightData"} and not any(
+                                   r["source_component_type"] == native_type for r in
+                                   mapping.get("component_property_mappings", [])
+                                   if isinstance(r, dict)
+                               ):
             continue
         scene = str(row.get("scene_path") or "")
         path = str(row.get("object_path") or "")
@@ -96,6 +206,19 @@ def adapt(
             desc["status"] = "EXACT_TARGET_OBJECT_MAPPING_REQUIRED"
             decisions.append(desc)
             continue
+        custom_actions, unresolved_paths = _explicit_actions(row, target, feature, rules)
+        for new_action in custom_actions:
+            token = (target["actor_label"], new_action["target_property_path"])
+            if token in reserved:
+                desc["status"] = "DUPLICATE_TARGET_COMPONENT_PROPERTY"
+                continue
+            reserved.add(token)
+            actions.append(new_action)
+            desc["actions"].append(new_action["kind"])
+            desc["status"] = "NATIVE_PROPERTY_PLANNED_PARTIAL_UNVERIFIED"
+        if unresolved_paths:
+            desc["unconverted_properties"].extend(unresolved_paths)
+            desc["status"] = "SOURCE_NATIVE_PROPERTY_NOT_CAPTURED"
         if native_type == SOURCE_CAMERA:
             if target.get("entity_ced") != "entity.camera":
                 desc["status"] = "SOURCE_CAMERA_MAPPED_TO_NONCAMERA_ACTOR"
@@ -189,11 +312,13 @@ def adapt(
             desc["unconverted_properties"].extend([
                 "signal_event_payload", "call_target_mapping", "event_execution_order",
             ])
-        else:
+        elif native_type == "UnityEngine.Rendering.Universal.UniversalAdditionalLightData":
             desc["status"] = "URP_LIGHT_OVERRIDE_TARGET_ADAPTER_REQUIRED"
             desc["unconverted_properties"].extend([
                 "shadow_filter", "light_layers", "light_cookie", "render_pipeline_policy",
             ])
+        elif not desc["actions"]:
+            desc["status"] = "EXPLICIT_COMPONENT_PROPERTY_UNAVAILABLE"
         decisions.append(desc)
     if len({(a["actor_label"], a["target_property_path"]) for a in actions}) != len(actions):
         raise ValueError("Adaptive component rules produced duplicate Unreal target properties.")
