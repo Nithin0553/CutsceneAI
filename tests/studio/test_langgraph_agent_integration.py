@@ -10,9 +10,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 for folder in ("packages/studio", "tools", "integrations/unreal"):
     sys.path.insert(0, str(ROOT / folder))
-import studio_agent_graph as graph
 import studio_agent_coordinator as coordinator
 import studio_agent_executor as executor
+import studio_agent_graph as graph
 
 
 def write(path, document):
@@ -72,7 +72,7 @@ def test_disabled_never_calls_reasoner_or_writes_requests(tmp_path):
 
 
 def test_lifecycle_repair_request_receipt_verify_and_terminate(tmp_path):
-    workspace, candidate, job, visual_file = staged(tmp_path)
+    workspace, candidate, job, _visual_file = staged(tmp_path)
     decisions = []
     def select(summary):
         decisions.append(summary)
