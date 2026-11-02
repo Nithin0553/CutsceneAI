@@ -88,6 +88,11 @@ function boot({editorReady = true, censusUnresolved = false} = {}) {
       } else if (url === '/api/agents') {
         result={enabled:true,status:'UNRESOLVED_NO_SAFE_STRATEGY',
           iterations:0,reasoning:'No source-backed repair for remaining issues'};
+      } else if (url === '/api/release-readiness') {
+        result={available:true,status:'INCOMPLETE',release_ready:false,
+          failed:[],incomplete:['rendered_frame_parity','heldout_project_validation'],
+          checks:{rendered_frame_parity:{status:'INCOMPLETE',explanation:'Frames unverified'},
+            heldout_project_validation:{status:'INCOMPLETE',explanation:'Held-out test missing'}}};
       } else if (url === '/api/closed-loop') {
         result={available:true,status:'REVIEW_REQUIRED',issues:[{category:'VISUAL_NATIVE_READBACK',code:'NO_DIRECTIONAL_LIGHT_FOUND'}]};
       } else {
@@ -151,10 +156,14 @@ async function testOneClick() {
     'enabled UI should show actual agent status');
   x.finish();
   await x.poll();
-  assert.match(x.app.innerHTML,/Sequence Generated Successfully/);
+  assert.match(x.app.innerHTML,/Editable Sequence Generated/);
+  assert.doesNotMatch(x.app.innerHTML,/Verified Release Transfer/);
   assert.match(x.app.innerHTML,/18/);
   assert.match(x.app.innerHTML,/12/);
   assert.match(x.app.innerHTML,/not certified/);
+  assert.match(x.app.innerHTML,/Release readiness: INCOMPLETE/);
+  assert.ok(x.calls.includes('/api/release-readiness'),
+    'a generated sequence must be independently checked for release readiness');
   assert.ok(!x.app.innerHTML.includes('72%'));
   const writes=x.writes();
   await x.poll();

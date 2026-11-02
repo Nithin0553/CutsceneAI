@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import ntpath
+import os
 from pathlib import Path
 from typing import Any
 
@@ -225,10 +226,22 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
     # Native persistence and historical source provenance are separate claims:
     # a missing 2026 receipt field cannot erase a real structural readback,
     # nor may it silently become a complete provenance PASS.
+    generated_pid = job.get("generation_editor_pid")
+    current_pid = os.getpid()
+    # A distinct OS process reading the same saved packages is stronger than
+    # simply reloading Python in the same Unreal Editor. Missing legacy PID
+    # evidence is always INCOMPLETE, never silently treated as a restart.
+    independent_process = bool(
+        type(generated_pid) is int and generated_pid > 0
+        and generated_pid != current_pid
+        and native_status == "PASS" and not provenance_missing
+    )
     if native_status == "FAIL":
         status = "STRUCTURAL_READBACK_FAIL"
     elif native_status == "INCOMPLETE" or provenance_missing:
         status = "STRUCTURAL_READBACK_INCOMPLETE"
+    elif independent_process:
+        status = "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS"
     else:
         status = "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
     actors_verified = sum(bool(row["class_matches"]) for row in actor_rows)
@@ -248,7 +261,10 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         native_issues.append("SEQUENCE_BINDING_OR_TRACK_READBACK_UNAVAILABLE")
     report = {
         "kind": "cutsceneai.studio.persistence_audit", "schema_version": "0.1.0",
-        "status": status, "fidelity_verified": False, "restart_verified": False,
+        "status": status, "fidelity_verified": False,
+        "restart_verified": independent_process,
+        "generation_editor_pid": generated_pid,
+        "observed_editor_pid": current_pid,
         "engine_generated": True, "no_editor_mutation": True,
         "provenance_status": "INCOMPLETE_LEGACY_RECEIPT" if provenance_missing else "COMPLETE",
         "provenance_missing_fields": provenance_missing,
@@ -267,7 +283,7 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         "setup_receipt_sha256": _sha(setup_file),
         "generation_receipt_sha256": _sha(runtime_file),
         "limitations": [
-            "Editor snapshot cannot independently prove process restart.",
+            "Different editor OS process IDs and saved native readback are independent-process evidence, not proof that the initial editor was closed.",
             "A missing historical receipt identity field is incomplete evidence, not a verified match.",
             "Structural readback is not source-to-target pose, camera, audio or rendered-frame parity.",
             "Actor parent labels are observations only, not verified against Unity hierarchy.",
@@ -330,6 +346,7 @@ def summarize_report(report_path: str | Path) -> dict[str, Any]:
         "sequence_root_track_count": sequence.get("root_track_count"),
         "native_structure_issues": problems,
         "fidelity_verified": False,
+        "restart_verified": record.get("restart_verified") is True,
     }
 
 
