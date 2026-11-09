@@ -218,6 +218,11 @@ def _partial_source_evidence(row: Mapping[str, Any]) -> bool:
     return False
 
 
+def source_capture_valid(row: Mapping[str, Any]) -> bool:
+    """Public source-evidence gate; not a native Unreal adapter certification."""
+    return _partial_source_evidence(row)
+
+
 def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[str, Any]:
     if csir.get("source", {}).get("engine") != "unity":
         raise SourceSurfaceGapError("Expected a Unity source CSIR.")
