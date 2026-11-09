@@ -7,7 +7,7 @@ const src = fs.readFileSync('apps/studio-web/cinematic.js', 'utf8');
 const css = fs.readFileSync('apps/studio-web/cinematic.css', 'utf8');
 
 function boot({editorReady = true, censusUnresolved = false, multiSources = false,
-  restoredJob = ''} = {}) {
+  restoredJob = '', restoredPending = false} = {}) {
   const listeners = {}, calls = [], requests = [];
   let html = '', writes = 0, copied = '';
   const app = {
@@ -19,6 +19,7 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
   let connected = null;
   let candidate = null;
   let currentJob = null;
+  let approval = null;
   let done = false;
   const unity = 'D:/CutSceneAI_Unity';
   const unreal = 'D:/CutSceneAI_Unreal';
@@ -30,10 +31,16 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
   let availableCensuses = true;
   const level = '/Game/CutSceneAI/L_Trial01';
   const file = unreal + '/CutSceneAI.uproject';
-  if(restoredJob) {
+  if(restoredJob || restoredPending) {
     connected={unity_project:unity,target_project:file,level_path:level,
       csir,scene_name:'Benchmark002',source_rights_confirmed:true};
-    currentJob={job_id:'a'.repeat(32),candidate_id:'candidate001',
+    if(restoredPending){
+      candidate={candidate_id:'older_pending_candidate',action_total:26,
+        automatic_setup:{available:true,ready:true,blockers:[]}};
+      approval={candidate_id:'older_pending_candidate',source_csir:csir,
+        target_project:file,target_level:level};
+    }
+    if(restoredJob)currentJob={job_id:'a'.repeat(32),candidate_id:'candidate001',
       created_at:'2026-11-09T17:00:00Z',
       status:restoredJob==='running'?'RUNNING':restoredJob==='failed'?
       'PARTIAL_SETUP_MUST_INSPECT':'GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED',
@@ -63,6 +70,7 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
       if (url === '/api/status') {
         result = {token: 'stubtoken', repo_root: 'B:/Research/CutSceneAI/CutsceneAI',
           connection: connected, candidate, active_job: currentJob?.job_id || null,
+          one_click_approval: approval,
           unreal_worker: {connected: editorReady, project: file, level, worker_version: 'studio-editor-v0.5'},
           destination_readiness: candidate && editorReady ?
             {status: 'READY', ready:true, candidate_id:candidate.candidate_id} :
@@ -77,6 +85,9 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
       } else if (url === '/api/connect-projects') {
         connected = {unity_project:unity,target_project:file,level_path:level,
           csir:body.csir,scene_name:'Benchmark002',source_rights_confirmed:true};
+        // Reconnect resets the active candidate and one-click approval on
+        // the real Studio backend without deleting their archived files.
+        candidate=null;currentJob=null;approval=null;
         result = connected;
       } else if (url === '/api/source-surfaces') {
         result = {options:availableCensuses?[
@@ -106,6 +117,8 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
         result = candidate;
       } else if (url === '/api/approve-one-click') {
         assert.equal(body.candidate_id,'candidate001');
+        approval={candidate_id:body.candidate_id,source_csir:connected.csir,
+          enable_ai_agents:body.enable_ai_agents};
         result={approved:true,candidate_id:body.candidate_id};
       } else if (url === '/api/execute') {
         assert.equal(body.candidate_id,'candidate001');
@@ -375,15 +388,91 @@ async function testBlockedGenerationShowsActualNativeFailureAndRecovery() {
   assert.match(x.copied(),/Candidate: candidate001/);
 }
 
+
+async function testConnectedReadySelectionEnablesStart() {
+  const x=boot();
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('source-rights',null,true);
+  await x.click('connect');
+  await x.change('census',x.censusB);
+  const matches=x.app.innerHTML.match(/<button[^>]*data-action="start"[^>]*>/g)||[];
+  assert.equal(matches.length,1,'Start Transfer must exist with connected matching source');
+  assert.doesNotMatch(matches[0],/\bdisabled\b/,
+    'valid CSIR, matching census and permission must enable the button');
+}
+
+async function testRestoredUnsubmittedCandidateCanStartFreshWithoutReplay() {
+  const x=boot({restoredPending:true});
+  await x.pause();
+  await x.pause();
+  await x.click('projects');
+  assert.match(x.app.innerHTML,/Start New Transfer/);
+  assert.match(x.app.innerHTML,/A previous candidate was prepared but no Unreal job was submitted/);
+  await x.change('census',x.censusB);
+  const matches=x.app.innerHTML.match(/<button[^>]*data-action="start-fresh"[^>]*>/g)||[];
+  assert.equal(matches.length,1,'the old approved candidate must have an explicit fresh option');
+  assert.doesNotMatch(matches[0],/\bdisabled\b/,
+    'a stale approval is not an active Unreal job');
+  await x.click('start-fresh');
+  await x.poll();
+  const calls=x.requests;
+  const reconnects=calls.filter(r=>r.url==='/api/connect-projects');
+  const preparations=calls.filter(r=>r.url==='/api/prepare');
+  const executions=calls.filter(r=>r.url==='/api/execute');
+  assert.equal(reconnects.length,1,'fresh start must clear old active pointer on backend');
+  assert.equal(preparations.length,1,'fresh start prepares one NEW candidate');
+  assert.equal(preparations[0].body.source_feature_surface_path,x.censusB,
+    'explicit census selection survives an intentional fresh reconnection');
+  assert.equal(executions.length,1);
+  assert.equal(executions[0].body.candidate_id,'candidate001');
+  assert.ok(calls.findIndex(r=>r.url==='/api/connect-projects')<
+    calls.findIndex(r=>r.url==='/api/prepare'),'reconnect before prepare');
+}
+
+async function testPendingFreshStartCannotSilentlySubstituteCensus() {
+  const x=boot({restoredPending:true});
+  await x.pause();
+  await x.pause();
+  await x.click('projects');
+  await x.change('census',x.censusB);
+  x.removeCensuses();
+  await x.click('start-fresh');
+  assert.equal(x.calls.filter(v=>v==='/api/prepare').length,0);
+  assert.equal(x.calls.filter(v=>v==='/api/execute').length,0);
+  assert.match(x.app.innerHTML,/selected Source Census is no longer valid/);
+  assert.match(x.app.innerHTML,/no transfer was prepared/);
+}
+
+async function testRunningJobShowsResumeInsteadOfDisabledStart() {
+  const x=boot({restoredJob:'running'});
+  await x.pause();
+  await x.pause();
+  await x.click('projects');
+  assert.match(x.app.innerHTML,/View Active Transfer/);
+  assert.match(x.app.innerHTML,/An Unreal job is already queued or running/);
+  assert.doesNotMatch(x.app.innerHTML,/data-action="start"[^>]*>/,
+    'never start a second candidate while an Unreal job is running');
+  await x.click('resume-transfer');
+  assert.match(x.app.innerHTML,/class="transfer-view"/);
+  assert.equal(x.calls.filter(v=>v==='/api/prepare').length,0);
+}
+
 (async()=>{
   await testSelectionLayoutContract();
   await testStartupAlwaysHomeWithSavedResults();
   await testStartupHomeWithRunningJobCanResume();
   await testBlockedGenerationShowsActualNativeFailureAndRecovery();
+  await testConnectedReadySelectionEnablesStart();
+  await testRestoredUnsubmittedCandidateCanStartFreshWithoutReplay();
+  await testPendingFreshStartCannotSilentlySubstituteCensus();
+  await testRunningJobShowsResumeInsteadOfDisabledStart();
   await testOneClick();
   await testOfflineDoesNotExecute();
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
   await testMissingSelectedCensusFailsClosed();
-  console.log('Cinematic UI backend contract: 9 scenarios including native generation failure disclosure, responsive selectors and Home on restart passed.');
+  console.log('Cinematic UI backend contract: 13 scenarios including actionable Start Transfer recovery, native errors, responsive selectors and Home-first startup passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

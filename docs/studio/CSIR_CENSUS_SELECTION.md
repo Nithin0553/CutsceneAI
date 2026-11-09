@@ -71,3 +71,36 @@ Actual Unity and Unreal Editor behavior remains a separate acceptance test.
 - Source identity mismatches are never hidden to improve appearance.
   If no matching Source Census is available, re-export in Unity,
   refresh exports and reconnect to the desired CSIR.
+
+
+## Start Transfer appears disabled after a previous attempt
+
+An older UI build restored `state.running=true` whenever an earlier
+one-click-approved candidate matched the connected CSIR, **even when no
+Unreal job had been queued**. It then disabled **Start Transfer** without
+explaining why. The folder, census and source-permission selectors could
+all show valid choices, as in the 2026-11-09 screenshot.
+
+Studio now distinguishes three situations:
+
+- **Ready and no pending candidate:** `Start Transfer` is enabled when
+  you have selected the matching source census and confirmed import rights.
+- **An earlier candidate was approved but never submitted:** the UI shows
+  `Start New Transfer` with a clear explanation. This **reconnects the
+  same project pair**, uses the same CSIR and revalidates the selected
+  Source Census, then prepares and submits an entirely **new** candidate.
+  It clears active pointers but never deletes the earlier candidate files,
+  modifies source Unity assets, or replays an old Unreal job.
+- **A job is genuinely queued/running:** the UI displays
+  `View Active Transfer` instead of leaving a disabled Start button.
+  The existing Unreal job must be inspected rather than automatically
+  submitting another one. A completed or failed job still requires
+  reconnection before a fresh candidate can be created.
+
+If the selected source census disappears or changes after clicking
+`Start New Transfer`, Studio aborts before preparation; it never falls
+back to a different census silently. An active Unreal job appearing
+during reconnection also blocks via the server's existing safety rule.
+
+These are UI/state handling fixes with simulated browser tests. Fresh
+Unity/Unreal Editor acceptance is still required.

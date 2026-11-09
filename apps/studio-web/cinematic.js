@@ -110,6 +110,10 @@
     const chosenU=u.folder||state.folders.unity,chosenR=r.folder||state.folders.unreal;
     const connected=Boolean(connection());
     const selectionChanged=connected&&(csir!==connection().csir||level!==connection().level_path);
+    const activeJob=Boolean(state.job&&!terminal(state.job));
+    // An approved candidate without a queued Unreal job is NOT an active
+    // engine transfer. It must never leave Start Transfer silently disabled.
+    const pendingCandidate=Boolean(connected&&state.running&&state.candidate&&!state.job);
     const matchingCensuses=state.censusOptions.filter(x=>x.project_identity_proven &&
       x.source_scope_matched && x.state!=='INVALID');
     let choices='';
@@ -138,11 +142,16 @@
       button('Refresh CSIR &amp; Census exports','refresh-exports',state.busy,'secondary')+
       (selectionChanged?'<p class="warning" role="status">CSIR or destination changed. Reconnect projects before starting a new transfer.</p>':'')+
       '</div></div>';
-    const action=connected&&(terminal(state.job)||selectionChanged)?
+    const action=activeJob?
+      button('View Active Transfer '+ico('arrow'),'resume-transfer',state.busy,'secondary'):
+      connected&&(terminal(state.job)||selectionChanged)?
       button('Reconnect for a fresh transfer '+ico('link'),'connect',
-        state.busy||!state.sourceRights||!d.ready||!csir||!level||(state.running&&!terminal(state.job))):
+        state.busy||!state.sourceRights||!d.ready||!csir||!level):
+      pendingCandidate?
+      button('Start New Transfer '+ico('arrow'),'start-fresh',
+        state.busy||!state.sourceRights||!state.censusSelection):
       connected?button('Start Transfer '+ico('arrow'),'start',
-        state.busy||!state.sourceRights||state.running||!state.censusSelection):
+        state.busy||!state.sourceRights||!state.censusSelection):
       button('Connect Projects '+ico('link'),'connect',state.busy||!d.ready||!csir||!level||!state.sourceRights);
     return progress()+'<main class="projects-view"><h1>'+(!chosenU?'Select Unity Project':!chosenR?'Select Unreal Project':'Connect Unity &amp; Unreal')+'</h1>'+
       '<form id="project-form"><div class="engine-pair">'+card('unity',chosenU,Boolean(u.folder))+
@@ -157,7 +166,9 @@
       '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local agent dependencies and an API key; usage may incur model charges.</p></div></div>':'')+
       (Object.values(d.errors||{})).map(v=>'<p class="warning">'+esc(v)+'</p>').join('')+
       '<div class="center-actions">'+(chosenU?action:'')+'</div></form>'+
-      (connected?'<p class="subnote">Connected successfully. Start Transfer automatically prepares, imports, generates, and inspects the result.</p>':'')+
+      (activeJob?'<p class="subnote">An Unreal job is already queued or running. View its progress before starting another transfer.</p>':
+       pendingCandidate?'<p class="subnote">A previous candidate was prepared but no Unreal job was submitted. Start New Transfer safely creates a fresh candidate and preserves the earlier files; it does not replay the old one.</p>':
+       connected?'<p class="subnote">Connected successfully. Start Transfer prepares, imports, generates, and inspects the result.</p>':'')+
       '</main>';
   }
   function research(){
@@ -475,6 +486,26 @@
       state.phase='RUNNING';state.error='';
     }finally{state.busy=false;render();}
   }
+  async function startFresh(){
+    // User explicitly requested a new candidate instead of reusing the
+    // restored approval. The backend refuses reconnect if an Unreal job
+    // was queued while this screen was open.
+    if(!connection()||state.job||!state.running||!state.candidate)
+      throw Error('There is no unsubmitted candidate to replace. Inspect the active job or reconnect.');
+    const chosenCSIR=state.csir,chosenLevel=state.level,chosenCensus=state.censusPath;
+    if(!chosenCensus||!state.censusSelection)
+      throw Error('Choose a matching Source Census before starting a fresh transfer.');
+    await connectProjects();
+    if(state.csir!==chosenCSIR||state.level!==chosenLevel)
+      throw Error('Connected source or destination changed. Select the correct CSIR and level again.');
+    const selected=state.censusOptions.find(x=>x.path===chosenCensus &&
+      x.project_identity_proven&&x.source_scope_matched&&x.state!=='INVALID');
+    if(!selected)
+      throw Error('The selected Source Census is no longer valid. Refresh exports and select it again; no transfer was prepared.');
+    state.censusPath=chosenCensus;
+    state.censusSelection=selected;
+    await start();
+  }
   async function start(){
     if(!connection()||!state.sourceRights)throw Error('Connect projects and confirm asset-copy rights.');
     if(state.csir!==connection().csir||state.level!==connection().level_path)
@@ -544,7 +575,10 @@
       return;
     }
     if(name==='resume-transfer'){
-      if(state.job&&!terminal(state.job)){state.screen='transfer';render();}
+      if((state.job&&!terminal(state.job))||
+         (state.running&&state.candidate&&!state.job)){
+        state.screen='transfer';render();
+      }
       return;
     }
     if(name==='account'){state.info='Account management is not implemented in this local Studio build.';render();return;}
@@ -610,10 +644,14 @@
         }
       }catch(e){state.error=e.message;}finally{state.busy=false;render();}return;
     }
-    if(name==='connect'||name==='start'){
+    if(name==='connect'||name==='start'||name==='start-fresh'){
       if(state.busy)return;
       state.busy=true;render();
-      try{if(name==='connect')await connectProjects();else await start();}
+      try{
+        if(name==='connect')await connectProjects();
+        else if(name==='start-fresh')await startFresh();
+        else await start();
+      }
       catch(e){state.error=e.message;state.phase='BLOCKED';state.running=false;}
       finally{state.busy=false;render();}return;
     }
