@@ -181,7 +181,7 @@ def worker_code_mismatch(worker: dict[str, Any]) -> str | None:
 
 def companion_upgrade_action(reason: str) -> str:
     return (reason + ' Save the target project, completely close Unreal Editor, '
-            'reopen it, and start the Python companion from this exact checkout. '
+            'restart Unreal Editor, and start the Python companion from this exact checkout. '
             'Prepare a new transfer candidate after reconnecting.')
 
 
