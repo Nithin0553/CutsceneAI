@@ -230,7 +230,9 @@
       '<div class="result-row"><span>Transfer Report</span><button class="report-link" data-action="view-report">View Report</button></div>'+
       '<p class="subnote">'+esc(j.status||'Not started')+' — '+(ok?'generation succeeded; fidelity is not certified':'no success claim')+'</p></div>'+
       '<div class="verification"><p>Native structure: '+esc(v.persistence?.native_structure||'Not verified')+'</p>'+
-      '<p>Persistence after reopen: '+esc(v.persistence?.status||'Not verified')+'</p>'+
+      '<p>Persistence after reopen: '+esc(v.persistence?.restart_verified ?
+        'Verified in a different Unreal process' :
+        'Not verified — reopen the saved map in a new Unreal Editor process')+'</p>'+
       '<p>CineTwin behavioral parity: '+(state.diagnosis?'Measured — not full fidelity':'Not verified')+'</p>'+
       '<p>Visual fidelity: '+esc(v.visual?.status||'Not verified')+'</p>'+
       '<p><strong>Release readiness: '+esc(gate.release_ready?'VERIFIED':gate.status)+
