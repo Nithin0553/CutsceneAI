@@ -123,3 +123,18 @@ def test_audio_ease_durations_are_exported_as_canonical_fades() -> None:
     assert "start_seconds = clip.start" in extractor
     assert "end_seconds = clip.end" in extractor
     assert 'FinalExtractorVersion = "0.1.9"' in augmenter
+
+
+def test_scene_renderer_and_lod_source_provenance_is_exported() -> None:
+    models = (EDITOR / "CsirModels.cs").read_text(encoding="utf-8")
+    extractor = (EDITOR / "UnityTimelineExtractor.cs").read_text(encoding="utf-8")
+    augmenter = (EDITOR / "UnityTimelineOffsetAugmenter.cs").read_text(encoding="utf-8")
+
+    assert "public bool scene_renderable_root;" in models
+    assert "public bool source_lod_group_root;" in models
+    for source in (extractor, augmenter):
+        assert "scene_renderable_root = gameObject.GetComponent<MeshRenderer>()" in source
+        assert "gameObject.GetComponent<LODGroup>() != null" in source
+        assert "PrefabUtility.IsAnyPrefabInstanceRoot(gameObject)" in source
+    assert "AugmentStaticSceneContext(director, document);" in augmenter
+    assert "AugmentParentRelationships(director, document);" in augmenter
