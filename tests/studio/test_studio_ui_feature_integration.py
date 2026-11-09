@@ -277,3 +277,50 @@ def test_source_ui_static_wiring_and_benchmark_guidance():
                  "unresolved_findings", "exact source objects",
                  "Best-effort mode selected", "Strict mode will block"):
         assert part in app
+
+
+
+def test_known_captured_urp_component_is_source_accounted_but_still_unverified(tmp_path):
+    config, census_file = _source_census(tmp_path)
+    data = json.loads(census_file.read_text())
+    data["loaded_scene_components"].append({
+        "scene_path": "Assets/Benchmark002.unity", "object_path": "Root/CAM_A",
+        "component_type":
+            "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData",
+        "component_global_id": "urp-extra-camera-1",
+        "feature": {
+            "extraction": "URP_CAMERA_PROPERTIES_PARTIAL",
+            "native_properties_truncated": False,
+            "has_render_post_processing": True, "render_post_processing": True,
+            "native_properties": [],
+        },
+    })
+    census_file.write_text(json.dumps(data))
+    option = feat.source_surfaces(config)["options"][0]
+    assert option["source_snapshot_partial_count"] == 1
+    assert option["unresolved_components"] == 0
+    assert option["strict_ready"] is True
+    assert option["source_snapshot_partial_findings"][0]["native_type"].endswith(
+        "UniversalAdditionalCameraData"
+    )
+    assert feat.validate_options(config, {
+        "source_feature_surface_path": str(census_file),
+        "require_complete_source_features": True,
+    })["require_complete_source_features"] is True
+
+    # An exporter that omitted the actual camera evidence is still blocked.
+    data["loaded_scene_components"][-1]["feature"] = {
+        "extraction": "URP_CAMERA_PROPERTIES_PARTIAL",
+        "native_properties_truncated": False,
+        "native_properties": [],
+    }
+    census_file.write_text(json.dumps(data))
+    option = feat.source_surfaces(config)["options"][0]
+    assert option["unresolved_components"] == 1
+    assert option["source_snapshot_partial_count"] == 0
+    assert option["strict_ready"] is False
+    with pytest.raises(ValueError, match="Strict source census"):
+        feat.validate_options(config, {
+            "source_feature_surface_path": str(census_file),
+            "require_complete_source_features": True,
+        })
