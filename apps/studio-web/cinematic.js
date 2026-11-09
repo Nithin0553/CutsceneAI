@@ -74,7 +74,11 @@
     return '<section class="landing"><div class="landing-center"><h1>CUTSCENE AI</h1>'+
       '<div class="studio-title"><i></i><span>STUDIO</span><i></i></div>'+
       '<p>Reconstruct editable cinematic sequences across game engines.</p>'+
-      button('▶ &nbsp; Start Transfer','projects')+'</div>'+people()+'</section>';
+      button('▶ &nbsp; Start Transfer','projects')+
+      (state.job?(terminal(state.job)?
+        '<div class="landing-previous">'+button('View Previous Transfer Report','results',false,'secondary')+'</div>':
+        '<div class="landing-previous">'+button('View Active Transfer','resume-transfer',false,'secondary')+'</div>'):'')+
+      '</div>'+people()+'</section>';
   }
   function card(kind,folder,ready){
     const name=kind==='unity'?'Unity':'Unreal Engine';
@@ -116,7 +120,8 @@
       select('csir','Unity CSIR Export',cutscenes.map(x=>({...x,
         name:(x.name||'Cutscene')+' — '+short(x.path)})),csir,'Select a CSIR file')+
       select('level','Unreal Destination Level',levels,level,'Choose level')+
-      (connected?select('census','Unity Source Census',matchingCensuses.map(x=>({...x,
+      (connected?'<section class="source-census-panel" aria-label="Source Census selection">'+
+        select('census','Unity Source Census',matchingCensuses.map(x=>({...x,
         name:x.name+(x.strict_ready?' — source complete':
           ' — '+x.unresolved_components+' findings')})),state.censusPath,
         'Select a matching Source Census')+
@@ -127,10 +132,12 @@
           '<p class="warning">Select a matching Source Census before starting the transfer.</p>')+
         (!matchingCensuses.length?'<p class="subnote">No compatible census found. In Unity run Discover Installed Feature Surface, then Refresh exports.</p>':'')+
         (state.censusOptions.length>matchingCensuses.length?
-          '<p class="subnote">Other census files were excluded because their project or cutscene scope does not match.</p>':''):'')+
+          '<p class="subnote">Other census files were excluded because their project or cutscene scope does not match.</p>':'')+
+        '</section>':'')+
+      '<div class="export-refresh-row">'+
       button('Refresh CSIR &amp; Census exports','refresh-exports',state.busy,'secondary')+
-      (selectionChanged?'<p class="warning">CSIR or destination changed. Reconnect projects before starting a new transfer.</p>':'')+
-      '</div>';
+      (selectionChanged?'<p class="warning" role="status">CSIR or destination changed. Reconnect projects before starting a new transfer.</p>':'')+
+      '</div></div>';
     const action=connected&&(terminal(state.job)||selectionChanged)?
       button('Reconnect for a fresh transfer '+ico('link'),'connect',
         state.busy||!state.sourceRights||!d.ready||!csir||!level||(state.running&&!terminal(state.job))):
@@ -460,13 +467,15 @@
         state.sourceRights=Boolean(connection().source_rights_confirmed);
         state.aiAgentsEnabled=state.job?Boolean(state.job.ai_agents_enabled):
           Boolean(state.status.one_click_approval?.enable_ai_agents);
-        state.screen=state.job?(terminal(state.job)?'results':'transfer'):'projects';
+        // A browser restart always lands on Home. Preserve server-side
+        // transfer/report state, but never auto-navigate to the last report.
+        state.screen='home';
         const approval=state.status.one_click_approval;
         state.running=Boolean(state.job||(approval?.candidate_id&&
           approval.candidate_id===state.candidate?.candidate_id&&
           approval.source_csir===connection().csir));
         if(!terminal(state.job)&&state.job)state.phase='RUNNING';
-        else if(state.running&&!state.job){state.screen='transfer';state.phase='WAITING_FOR_EDITOR';}
+        else if(state.running&&!state.job){state.phase='WAITING_FOR_EDITOR';}
         try{await scan();}catch{}
       }
     }catch(e){state.error=e.message;}render();
@@ -502,6 +511,10 @@
         state.error='';
       }catch(e){state.error=e.message;}
       finally{state.busy=false;render();}
+      return;
+    }
+    if(name==='resume-transfer'){
+      if(state.job&&!terminal(state.job)){state.screen='transfer';render();}
       return;
     }
     if(name==='account'){state.info='Account management is not implemented in this local Studio build.';render();return;}

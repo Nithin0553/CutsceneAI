@@ -52,3 +52,22 @@ Studio no longer silently selects the first or newest Unity Source Census.
 Tests: `node tests/studio/test_cinematic_ui.cjs`,
 `python -m pytest tests/studio/test_studio_ui_feature_integration.py`.
 Actual Unity and Unreal Editor behavior remains a separate acceptance test.
+
+
+## Project selection layout and startup behavior
+
+- The project form places **Unity CSIR Export** and **Unreal Destination Level**
+  in two separate columns. **Unity Source Census** uses a dedicated full-width
+  panel, including source warnings and explanatory text. The refresh control
+  occupies its own row. On smaller screens the selectors stack vertically;
+  paths remain readable and cannot shrink the button or other labels.
+- Every **new Studio browser session or page reload opens Home**, even if the
+  server still has an older result or active transfer. Opening Home does not
+  destroy or overwrite the saved candidate, native evidence or job.
+- On Home, **View Previous Transfer Report** opens a previously completed
+  result; **View Active Transfer** resumes an existing running transfer.
+  **Start Transfer** leads to project connection/selection. A fresh transfer
+  still requires a new connection and a source-census choice.
+- Source identity mismatches are never hidden to improve appearance.
+  If no matching Source Census is available, re-export in Unity,
+  refresh exports and reconnect to the desired CSIR.
