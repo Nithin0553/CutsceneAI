@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import hashlib
-import hashlib
+import importlib
 import os
 import sys
 import time
@@ -20,6 +20,11 @@ from pathlib import Path
 import unreal
 
 ROOT = Path(__file__).resolve().parents[2]
+# Fixed at module IMPORT, not recomputed from disk on every heartbeat.
+# A Python interpreter retaining an older worker across a git pull cannot
+# falsely claim that its runtime code matches the new Studio host.
+WORKER_PROTOCOL = 'studio-editor-v0.6'
+WORKER_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 if str(ROOT / 'integrations/unreal') not in sys.path:
     sys.path.insert(0, str(ROOT / 'integrations/unreal'))
 
@@ -123,6 +128,11 @@ def _execute(job):
     # against a newly prepared 29-action adaptive CED plan.
     job['execution_stage'] = 'VERIFYING_PREPARED_TRANSFER'
     import studio_planner_sync
+    expected_sync = (ROOT / 'integrations/unreal/studio_planner_sync.py').resolve()
+    if Path(getattr(studio_planner_sync, '__file__', '')).resolve() != expected_sync:
+        raise RuntimeError('Unreal planner sync is loaded from a different checkout. Restart Unreal Editor.')
+    # The sync module itself may have been imported prior to a git pull.
+    importlib.reload(studio_planner_sync)
     studio_planner_sync.synchronize()
     import prepared_transfer
     prepared = prepared_transfer.verify(candidate_dir)
@@ -134,6 +144,20 @@ def _execute(job):
     # or spawning any actor. A missing/circular module must not leave behind
     # a saved but unusable automatic setup.
     import build_level_sequence
+    if job.get('automatic_setup'):
+        # Essential source-content and adapter verification MUST precede
+        # _ensure_target_level, which can create an empty Unreal map.
+        # This path runs before any editor mutation and provides a precise
+        # error when the previously prepared manifest no longer matches.
+        job['execution_stage'] = 'VERIFYING_SOURCE_ASSET_MANIFEST'
+        import studio_auto_assets
+        inspected = studio_auto_assets.verify(
+            job['automatic_setup_manifest'], job['csir'], job['mapping'],
+            str(candidate_dir / 'transfer-plan.json')
+        )
+        if not inspected.get('ready'):
+            raise RuntimeError('Prepared source setup is not ready: ' +
+                               '; '.join(inspected.get('blockers', [])[:8]))
     job['execution_stage'] = 'PREPARING_DESTINATION_LEVEL'
     _ensure_target_level(job)
     if job.get('automatic_setup'):
@@ -410,7 +434,9 @@ def _tick(_delta):
         WORKSPACE.mkdir(parents=True, exist_ok=True)
         _save(WORKSPACE / 'unreal-worker.json', {
             'heartbeat': _now(), 'project': _loaded_project(),
-            'level': _loaded_level(), 'worker': 'studio-editor-v0.5'
+            'level': _loaded_level(), 'worker': WORKER_PROTOCOL,
+            'checkout_root': str(ROOT.resolve()),
+            'worker_source_sha256': WORKER_SOURCE_SHA256,
         })
         try:
             _update_destination_readiness()
