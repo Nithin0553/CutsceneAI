@@ -346,6 +346,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     # or an explicit CSIR asset. Scanning all project PNGs imports unrelated
     # tutorial/editor assets and turns invalid placeholders into false warnings.
     material_files = set()
+    material_files_by_actor = defaultdict(set)
     texture_files = set()
     for name in sorted(bindings):
         entity = entities.get(name)
@@ -357,6 +358,9 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
                 material, strategy = _source_reference(root, path, record.get('guid'), '.mat')
                 if material is not None:
                     material_files.add(material)
+                    # Keep source material identity tied to the exact CSIR
+                    # renderer actor. Slot names are not globally unique.
+                    material_files_by_actor[name].add(material)
                 elif Path(str(path)).suffix.lower() == '.mat':
                     warnings.append('Renderer material '+str(path)+' is unresolved ('+strategy+').')
             texture_path = record.get('albedo_texture_asset_path')
@@ -389,10 +393,19 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
                 continue
             dest=target_folder+'/Textures/CSAI_'+re.sub('[^A-Za-z0-9_]','_',file.stem)+'_'+digest(file)[:8]
             add_import(file,dest,'Texture2D')
-    material_candidates, material_diagnostics = studio_source_materials.candidates(
+    # The legacy unscoped summary is retained for diagnostics/older clients.
+    # Never use it to assign materials to a particular actor: two unrelated
+    # imported meshes may both have a "Body" slot but different source .mat.
+    material_candidates, _global_diagnostics = studio_source_materials.candidates(
         material_files, imports, target_folder, digest
     )
-    warnings.extend(material_diagnostics)
+    actor_material_candidates = {}
+    for actor_name, files_for_actor in sorted(material_files_by_actor.items()):
+        candidates_for_actor, diagnostics = studio_source_materials.candidates(
+            files_for_actor, imports, target_folder, digest
+        )
+        actor_material_candidates[actor_name] = candidates_for_actor
+        warnings.extend(actor_name + ': ' + message for message in diagnostics)
     planned_labels = [str(row['label']) for row in actors]
     duplicated_labels = sorted({label for label in planned_labels
                                 if planned_labels.count(label) > 1})
@@ -427,7 +440,8 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             'actors':actors,'imports':imports,'asset_resolutions':asset_resolutions,
             'fbx_embedded_material_import_requested': import_fbx_materials,
             'deduplicated_textures':deduplicated_textures,
-             'source_albedo_material_candidates': material_candidates,
+            'source_albedo_material_candidates': material_candidates,
+            'source_albedo_actor_candidates': actor_material_candidates,
             'unmapped_source_entities':unmapped_entities,
             'source_entity_count':len(csir.get('entities', [])),
             'source_asset_count':len(csir.get('assets', [])),
