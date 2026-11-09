@@ -59,10 +59,47 @@ namespace CutsceneAI.UnityExtractor
             public Vec3 world_size_m;
             public float world_radius_m;
             public string collider_scale_policy;
+            // Source-native MeshCollider evidence: mesh identity is retained
+            // rather than substituting a bounding-box collision shape.
+            public bool mesh_collider_convex;
+            public int mesh_collider_cooking_options;
+            public string mesh_asset_path;
+            public string mesh_asset_guid;
+            public string mesh_global_id;
+            public string mesh_name;
+            public string physics_material_asset_path;
+            public string physics_material_guid;
+            // LODGroup is a renderer-binding graph, not a single mesh.
+            public bool lod_enabled;
+            public string lod_fade_mode;
+            public bool lod_animate_cross_fading;
+            public bool lod_last_billboard;
+            public float lod_size;
+            public Vec3 lod_local_reference_point;
+            public List<LODSourceLevel> lod_levels = new List<LODSourceLevel>();
             public int signal_reaction_count;
             public List<string> signal_reactions = new List<string>();
             public List<NativeValue> native_properties = new List<NativeValue>();
             public bool native_properties_truncated;
+        }
+
+        [Serializable]
+        private sealed class LODSourceLevel
+        {
+            public float screen_relative_transition_height;
+            public float fade_transition_width;
+            public List<LODSourceRenderer> renderers = new List<LODSourceRenderer>();
+        }
+
+        [Serializable]
+        private sealed class LODSourceRenderer
+        {
+            public string renderer_global_id;
+            public string renderer_path;
+            public string renderer_type;
+            public string mesh_asset_path;
+            public string mesh_asset_guid;
+            public string mesh_global_id;
         }
 
         [Serializable]
@@ -323,6 +360,104 @@ namespace CutsceneAI.UnityExtractor
                 feature.world_radius_m = sphere.radius * Mathf.Max(
                     Mathf.Abs(scale.x), Mathf.Abs(scale.y), Mathf.Abs(scale.z));
                 feature.collider_scale_policy = "UNITY_SPHERE_MAX_AXIS_LOSSY_SCALE";
+                return feature;
+            }
+            if (component is MeshCollider meshCollider)
+            {
+                // Collision behavior cannot be reconstructed from the visible
+                // mesh alone. Keep exact source mesh reference and authored flags.
+                feature.extraction = "MESH_COLLIDER_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED";
+                feature.enabled = meshCollider.enabled;
+                feature.is_trigger = meshCollider.isTrigger;
+                feature.mesh_collider_convex = meshCollider.convex;
+                feature.mesh_collider_cooking_options = (int)meshCollider.cookingOptions;
+                var mesh = meshCollider.sharedMesh;
+                if (mesh == null)
+                {
+                    feature.extraction = "MESH_COLLIDER_SOURCE_MESH_UNRESOLVED";
+                }
+                else
+                {
+                    feature.mesh_name = mesh.name;
+                    feature.mesh_global_id =
+                        GlobalObjectId.GetGlobalObjectIdSlow(mesh).ToString();
+                    feature.mesh_asset_path = AssetDatabase.GetAssetPath(mesh);
+                    if (!string.IsNullOrEmpty(feature.mesh_asset_path))
+                        feature.mesh_asset_guid =
+                            AssetDatabase.AssetPathToGUID(feature.mesh_asset_path);
+                    if (string.IsNullOrEmpty(feature.mesh_asset_guid))
+                        feature.extraction = "MESH_COLLIDER_SOURCE_MESH_UNRESOLVED";
+                }
+                var material = meshCollider.sharedMaterial;
+                if (material != null)
+                {
+                    feature.physics_material_asset_path =
+                        AssetDatabase.GetAssetPath(material);
+                    if (!string.IsNullOrEmpty(feature.physics_material_asset_path))
+                        feature.physics_material_guid = AssetDatabase.AssetPathToGUID(
+                            feature.physics_material_asset_path);
+                }
+                return feature;
+            }
+            if (component is LODGroup lodGroup)
+            {
+                feature.extraction = "LOD_GROUP_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED";
+                feature.lod_enabled = lodGroup.enabled;
+                feature.lod_fade_mode = lodGroup.fadeMode.ToString();
+                feature.lod_animate_cross_fading = lodGroup.animateCrossFading;
+                feature.lod_last_billboard = lodGroup.lastLODBillboard;
+                feature.lod_size = lodGroup.size;
+                feature.lod_local_reference_point = new Vec3(lodGroup.localReferencePoint);
+                var levels = lodGroup.GetLODs();
+                if (levels == null || levels.Length == 0 || levels.Length > 32)
+                {
+                    feature.extraction = "LOD_GROUP_LEVELS_UNRESOLVED";
+                    return feature;
+                }
+                foreach (var level in levels)
+                {
+                    var evidence = new LODSourceLevel
+                    {
+                        screen_relative_transition_height =
+                            level.screenRelativeTransitionHeight,
+                        fade_transition_width = level.fadeTransitionWidth,
+                    };
+                    foreach (var renderer in level.renderers)
+                    {
+                        if (renderer == null)
+                        {
+                            feature.extraction = "LOD_GROUP_RENDERER_UNRESOLVED";
+                            continue;
+                        }
+                        Mesh mesh = null;
+                        if (renderer is SkinnedMeshRenderer skinned)
+                            mesh = skinned.sharedMesh;
+                        else if (renderer is MeshRenderer)
+                        {
+                            var filter = renderer.GetComponent<MeshFilter>();
+                            mesh = filter == null ? null : filter.sharedMesh;
+                        }
+                        var path = mesh == null ? "" : AssetDatabase.GetAssetPath(mesh);
+                        var guid = string.IsNullOrEmpty(path) ? "" :
+                            AssetDatabase.AssetPathToGUID(path);
+                        var rendererEvidence = new LODSourceRenderer
+                        {
+                            renderer_global_id =
+                                GlobalObjectId.GetGlobalObjectIdSlow(renderer).ToString(),
+                            renderer_path = HierarchyPath(renderer.transform),
+                            renderer_type = renderer.GetType().FullName,
+                            mesh_asset_path = path,
+                            mesh_asset_guid = guid,
+                            mesh_global_id = mesh == null ? "" :
+                                GlobalObjectId.GetGlobalObjectIdSlow(mesh).ToString(),
+                        };
+                        evidence.renderers.Add(rendererEvidence);
+                        if (string.IsNullOrEmpty(guid) ||
+                            string.IsNullOrEmpty(rendererEvidence.mesh_global_id))
+                            feature.extraction = "LOD_GROUP_RENDERER_UNRESOLVED";
+                    }
+                    feature.lod_levels.Add(evidence);
+                }
                 return feature;
             }
             if (component is UnityEngine.Timeline.SignalReceiver receiver)
