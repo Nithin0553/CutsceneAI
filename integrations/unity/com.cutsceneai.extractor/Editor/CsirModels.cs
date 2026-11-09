@@ -120,6 +120,7 @@ namespace CutsceneAI.UnityExtractor
         // Direct MeshRenderer/SkinnedMeshRenderer/LODGroup source root; scene-only
         // renderers can be mapped without inventing a Timeline track.
         public bool scene_renderable_root;
+        public bool source_lod_group_root;
         public TransformSnapshot local_transform;
         public TransformSnapshot world_transform;
         public CameraMetadata camera;
