@@ -388,15 +388,91 @@ async function testBlockedGenerationShowsActualNativeFailureAndRecovery() {
   assert.match(x.copied(),/Candidate: candidate001/);
 }
 
+
+async function testConnectedReadySelectionEnablesStart() {
+  const x=boot();
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('source-rights',null,true);
+  await x.click('connect');
+  await x.change('census',x.censusB);
+  const matches=x.app.innerHTML.match(/<button[^>]*data-action="start"[^>]*>/g)||[];
+  assert.equal(matches.length,1,'Start Transfer must exist with connected matching source');
+  assert.doesNotMatch(matches[0],/\bdisabled\b/,
+    'valid CSIR, matching census and permission must enable the button');
+}
+
+async function testRestoredUnsubmittedCandidateCanStartFreshWithoutReplay() {
+  const x=boot({restoredPending:true});
+  await x.pause();
+  await x.pause();
+  await x.click('projects');
+  assert.match(x.app.innerHTML,/Start New Transfer/);
+  assert.match(x.app.innerHTML,/A previous candidate was prepared but no Unreal job was submitted/);
+  await x.change('census',x.censusB);
+  const matches=x.app.innerHTML.match(/<button[^>]*data-action="start-fresh"[^>]*>/g)||[];
+  assert.equal(matches.length,1,'the old approved candidate must have an explicit fresh option');
+  assert.doesNotMatch(matches[0],/\bdisabled\b,
+    'a stale approval is not an active Unreal job');
+  await x.click('start-fresh');
+  await x.poll();
+  const calls=x.requests;
+  const reconnects=calls.filter(r=>r.url==='/api/connect-projects');
+  const preparations=calls.filter(r=>r.url==='/api/prepare');
+  const executions=calls.filter(r=>r.url==='/api/execute');
+  assert.equal(reconnects.length,1,'fresh start must clear old active pointer on backend');
+  assert.equal(preparations.length,1,'fresh start prepares one NEW candidate');
+  assert.equal(preparations[0].body.source_feature_surface_path,x.censusB,
+    'explicit census selection survives an intentional fresh reconnection');
+  assert.equal(executions.length,1);
+  assert.equal(executions[0].body.candidate_id,'candidate001');
+  assert.ok(calls.findIndex(r=>r.url==='/api/connect-projects')<
+    calls.findIndex(r=>r.url==='/api/prepare'),'reconnect before prepare');
+}
+
+async function testPendingFreshStartCannotSilentlySubstituteCensus() {
+  const x=boot({restoredPending:true});
+  await x.pause();
+  await x.pause();
+  await x.click('projects');
+  await x.change('census',x.censusB);
+  x.removeCensuses();
+  await x.click('start-fresh');
+  assert.equal(x.calls.filter(v=>v==='/api/prepare').length,0);
+  assert.equal(x.calls.filter(v=>v==='/api/execute').length,0);
+  assert.match(x.app.innerHTML,/selected Source Census is no longer valid/);
+  assert.match(x.app.innerHTML,/no transfer was prepared/);
+}
+
+async function testRunningJobShowsResumeInsteadOfDisabledStart() {
+  const x=boot({restoredJob:'running'});
+  await x.pause();
+  await x.pause();
+  await x.click('projects');
+  assert.match(x.app.innerHTML,/View Active Transfer/);
+  assert.match(x.app.innerHTML,/An Unreal job is already queued or running/);
+  assert.doesNotMatch(x.app.innerHTML,/data-action="start"[^>]*>/,
+    'never start a second candidate while an Unreal job is running');
+  await x.click('resume-transfer');
+  assert.match(x.app.innerHTML,/class="transfer-view"/);
+  assert.equal(x.calls.filter(v=>v==='/api/prepare').length,0);
+}
+
 (async()=>{
   await testSelectionLayoutContract();
   await testStartupAlwaysHomeWithSavedResults();
   await testStartupHomeWithRunningJobCanResume();
   await testBlockedGenerationShowsActualNativeFailureAndRecovery();
+  await testConnectedReadySelectionEnablesStart();
+  await testRestoredUnsubmittedCandidateCanStartFreshWithoutReplay();
+  await testPendingFreshStartCannotSilentlySubstituteCensus();
+  await testRunningJobShowsResumeInsteadOfDisabledStart();
   await testOneClick();
   await testOfflineDoesNotExecute();
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
   await testMissingSelectedCensusFailsClosed();
-  console.log('Cinematic UI backend contract: 9 scenarios including native generation failure disclosure, responsive selectors and Home on restart passed.');
+  console.log('Cinematic UI backend contract: 13 scenarios including actionable Start Transfer recovery, native errors, responsive selectors and Home-first startup passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
