@@ -422,6 +422,12 @@ namespace CutsceneAI.UnityExtractor
                             level.screenRelativeTransitionHeight,
                         fade_transition_width = level.fadeTransitionWidth,
                     };
+                    if (level.renderers == null || level.renderers.Length == 0)
+                    {
+                        feature.extraction = "LOD_GROUP_RENDERER_UNRESOLVED";
+                        feature.lod_levels.Add(evidence);
+                        continue;
+                    }
                     foreach (var renderer in level.renderers)
                     {
                         if (renderer == null)
