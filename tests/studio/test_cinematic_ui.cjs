@@ -257,10 +257,27 @@ async function testManualCSIRAndCensus() {
   assert.equal(x.requests.find(r=>r.url==='/api/prepare').body.source_feature_surface_path,x.censusA);
 }
 
+async function testMissingSelectedCensusFailsClosed() {
+  const x=boot();
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('source-rights',null,true);
+  await x.click('connect');
+  await x.change('census',x.censusB);
+  x.removeCensuses();
+  await x.click('start');
+  assert.equal(x.calls.filter(v=>v==='/api/prepare').length,0);
+  assert.equal(x.calls.filter(v=>v==='/api/execute').length,0);
+  assert.match(x.app.innerHTML,/Selected Source Census is missing/);
+}
+
 (async()=>{
   await testOneClick();
   await testOfflineDoesNotExecute();
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
-  console.log('Cinematic UI backend contract: 4 integration paths and explicit CSIR/Census selection passed.');
+  await testMissingSelectedCensusFailsClosed();
+  console.log('Cinematic UI backend contract: 5 integration paths and explicit CSIR/Census selection passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
