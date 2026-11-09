@@ -1,0 +1,1411 @@
+{
+  "version": "0.2.0",
+  "status": "open-industry-feature-taxonomy",
+  "principle": "Canonical discovery does not certify successful conversion. Runtime plugins, game-specific scripts and new vendor classes are open-ended.",
+  "transfer_outcomes": [
+    "EXACT",
+    "CONVERTED",
+    "RETARGETED",
+    "BAKED",
+    "RECONSTRUCTED",
+    "TARGET_MAPPED",
+    "BLOCKED"
+  ],
+  "categories": {
+    "sequence": [
+      "sequence.root",
+      "sequence.instance",
+      "sequence.subsequence",
+      "sequence.duration",
+      "sequence.timebase",
+      "sequence.playback_range",
+      "sequence.preroll",
+      "sequence.postroll",
+      "sequence.master_sequence",
+      "sequence.shot_sequence",
+      "sequence.sub_sequence",
+      "sequence.time_dilation",
+      "sequence.spawnable",
+      "sequence.possessable",
+      "sequence.take"
+    ],
+    "timeline": [
+      "timeline.track",
+      "timeline.section",
+      "timeline.clip",
+      "timeline.key",
+      "timeline.curve",
+      "timeline.marker",
+      "timeline.group",
+      "timeline.mute",
+      "timeline.lock",
+      "timeline.blend",
+      "timeline.weight",
+      "timeline.playable_track",
+      "timeline.control_track",
+      "timeline.signal_track",
+      "timeline.activation_track",
+      "timeline.cinemachine_track",
+      "timeline.material_track",
+      "timeline.visibility_track",
+      "timeline.spawn_track",
+      "timeline.media_track",
+      "timeline.geometry_cache_track"
+    ],
+    "time": [
+      "time.timestamp",
+      "time.source_rate",
+      "time.display_rate",
+      "time.tick_resolution",
+      "time.start",
+      "time.end",
+      "time.duration",
+      "time.offset",
+      "time.scale",
+      "time.loop",
+      "time.timecode",
+      "time.subframe",
+      "time.tick_frame",
+      "time.playback_speed",
+      "time.frame_number",
+      "time.reverse_playback"
+    ],
+    "curve": [
+      "curve.scalar",
+      "curve.vector2",
+      "curve.vector3",
+      "curve.rotation",
+      "curve.color",
+      "curve.interpolation",
+      "curve.in_tangent",
+      "curve.out_tangent",
+      "curve.tangent_weight",
+      "curve.hermite",
+      "curve.bezier",
+      "curve.ease_in",
+      "curve.ease_out",
+      "curve.weighted_tangent"
+    ],
+    "entity": [
+      "entity.actor",
+      "entity.character",
+      "entity.prop",
+      "entity.camera",
+      "entity.light",
+      "entity.audio_source",
+      "entity.vfx",
+      "entity.environment",
+      "entity.media_surface"
+    ],
+    "binding": [
+      "binding.object",
+      "binding.component",
+      "binding.property",
+      "binding.tag",
+      "binding.role",
+      "binding.spawn_binding",
+      "binding.possess_binding",
+      "binding.component_ref"
+    ],
+    "transform": [
+      "transform.position",
+      "transform.rotation",
+      "transform.scale",
+      "transform.parent",
+      "transform.world",
+      "transform.local",
+      "transform.pivot",
+      "transform.path",
+      "transform.velocity",
+      "transform.angular_velocity",
+      "transform.quaternion",
+      "transform.euler",
+      "transform.negative_scale",
+      "transform.nonuniform_scale",
+      "transform.shear",
+      "transform.local_pose",
+      "transform.world_pose",
+      "transform.parent_entity_id",
+      "transform.component_attachment",
+      "transform.socket_attachment",
+      "transform.world_trajectory"
+    ],
+    "character": [
+      "character.skeleton",
+      "character.rig",
+      "character.reference_pose",
+      "character.bind_pose",
+      "character.root",
+      "character.pelvis",
+      "character.bone",
+      "character.morph_target",
+      "character.control",
+      "character.semantic_bone_map",
+      "character.npc",
+      "character.creature",
+      "character.quadruped",
+      "character.robot",
+      "character.modular_character",
+      "character.metahuman",
+      "character.clothing",
+      "character.accessory"
+    ],
+    "animation": [
+      "animation.clip",
+      "animation.track",
+      "animation.section",
+      "animation.pose",
+      "animation.bone_curve",
+      "animation.property_curve",
+      "animation.root_motion",
+      "animation.additive",
+      "animation.layer",
+      "animation.mask",
+      "animation.blend",
+      "animation.speed",
+      "animation.offset",
+      "animation.loop",
+      "animation.retarget",
+      "animation.ik",
+      "animation.contact",
+      "animation.baked_pose_sequence",
+      "animation.animator_controller",
+      "animation.animation_blueprint",
+      "animation.motion_matching",
+      "animation.motion_warping",
+      "animation.pose_library",
+      "animation.root_velocity",
+      "animation.blend_tree",
+      "animation.blend_space",
+      "animation.animation_montage",
+      "animation.animation_notify"
+    ],
+    "camera": [
+      "camera.entity",
+      "camera.transform",
+      "camera.cut",
+      "camera.blend",
+      "camera.fov",
+      "camera.focal_length",
+      "camera.sensor",
+      "camera.aspect_ratio",
+      "camera.aperture",
+      "camera.focus_distance",
+      "camera.dof",
+      "camera.near_clip",
+      "camera.far_clip",
+      "camera.look_at",
+      "camera.follow",
+      "camera.tracking",
+      "camera.path",
+      "camera.shake",
+      "camera.roll",
+      "camera.postprocess",
+      "camera.composition",
+      "camera.physical_camera",
+      "camera.cinemachine_camera",
+      "camera.cine_camera",
+      "camera.lens_shift",
+      "camera.iso",
+      "camera.shutter",
+      "camera.focus_pull",
+      "camera.camera_rail",
+      "camera.camera_shake",
+      "camera.camera_impulse",
+      "camera.stereo_camera",
+      "camera.panoramic_camera"
+    ],
+    "audio": [
+      "audio.asset",
+      "audio.track",
+      "audio.section",
+      "audio.start",
+      "audio.duration",
+      "audio.offset",
+      "audio.volume",
+      "audio.pitch",
+      "audio.fade_in",
+      "audio.fade_out",
+      "audio.spatial",
+      "audio.attenuation",
+      "audio.sound_cue",
+      "audio.metasound",
+      "audio.adaptive_music",
+      "audio.submix",
+      "audio.mixer_snapshot",
+      "audio.reverb",
+      "audio.audio_listener",
+      "audio.occlusion",
+      "audio.doppler",
+      "audio.spatial_audio"
+    ],
+    "dialogue": [
+      "dialogue.line",
+      "dialogue.speaker",
+      "dialogue.text",
+      "dialogue.audio",
+      "dialogue.start",
+      "dialogue.end",
+      "dialogue.phoneme",
+      "dialogue.viseme",
+      "dialogue.locale",
+      "dialogue.variant",
+      "dialogue.dialogue_choice",
+      "dialogue.dialogue_branch",
+      "dialogue.lip_sync",
+      "dialogue.speech_bubble",
+      "dialogue.voiceover"
+    ],
+    "event": [
+      "event.trigger",
+      "event.state",
+      "event.callback",
+      "event.parameter",
+      "event.spawn",
+      "event.destroy",
+      "event.activate",
+      "event.deactivate",
+      "event.gameplay",
+      "event.semantic_intent",
+      "event.animation_notify",
+      "event.timeline_signal",
+      "event.trigger_enter",
+      "event.trigger_exit",
+      "event.collision_event",
+      "event.spawn_event",
+      "event.event_payload"
+    ],
+    "light": [
+      "light.entity",
+      "light.type",
+      "light.transform",
+      "light.intensity",
+      "light.color",
+      "light.temperature",
+      "light.range",
+      "light.spot_angle",
+      "light.shadow",
+      "light.volumetric",
+      "light.animation",
+      "light.probe",
+      "light.reflection_probe",
+      "light.point_light",
+      "light.sky_light",
+      "light.directional_light",
+      "light.area_light",
+      "light.ies_profile",
+      "light.light_cookie",
+      "light.lighting_channel",
+      "light.lumen"
+    ],
+    "vfx": [
+      "vfx.system",
+      "vfx.asset",
+      "vfx.spawn",
+      "vfx.activation",
+      "vfx.transform",
+      "vfx.parameter",
+      "vfx.intensity",
+      "vfx.duration",
+      "vfx.simulation_time",
+      "vfx.baked_cache",
+      "vfx.particle_emitter",
+      "vfx.particle_lifetime",
+      "vfx.particle_collision",
+      "vfx.particle_ribbon",
+      "vfx.particle_trail",
+      "vfx.niagara_system",
+      "vfx.niagara_emitter",
+      "vfx.vfx_graph",
+      "vfx.gpu_particle"
+    ],
+    "render": [
+      "render.exposure",
+      "render.color_space",
+      "render.tone_mapping",
+      "render.hdr",
+      "render.color_grading",
+      "render.bloom",
+      "render.motion_blur",
+      "render.vignette",
+      "render.depth_of_field",
+      "render.fog",
+      "render.ambient",
+      "render.postprocess",
+      "render.resolution",
+      "render.aspect_ratio",
+      "render.forward",
+      "render.deferred",
+      "render.clustered",
+      "render.path_tracing",
+      "render.urp",
+      "render.hdrp",
+      "render.nanite",
+      "render.substrate",
+      "render.shader_pass"
+    ],
+    "scene": [
+      "scene.level",
+      "scene.environment",
+      "scene.object",
+      "scene.mesh",
+      "scene.material",
+      "scene.texture",
+      "scene.collider",
+      "scene.geometry",
+      "scene.visibility",
+      "scene.layer",
+      "scene.tag",
+      "scene.bounds",
+      "scene.reference",
+      "scene.scene_partition",
+      "scene.scene_hierarchy",
+      "scene.level_streaming",
+      "scene.actor_folder",
+      "scene.data_layer"
+    ],
+    "material": [
+      "material.asset",
+      "material.base_color",
+      "material.metallic",
+      "material.roughness",
+      "material.normal",
+      "material.emission",
+      "material.opacity",
+      "material.custom_logic",
+      "material.baked_texture_set",
+      "material.material_instance",
+      "material.material_variant",
+      "material.pbr",
+      "material.clearcoat",
+      "material.refraction",
+      "material.transparency",
+      "material.masked",
+      "material.subsurface_skin",
+      "material.animated_parameter"
+    ],
+    "constraint": [
+      "constraint.parent",
+      "constraint.position",
+      "constraint.rotation",
+      "constraint.aim",
+      "constraint.look_at",
+      "constraint.follow",
+      "constraint.ik",
+      "constraint.path",
+      "constraint.surface",
+      "constraint.contact",
+      "constraint.spring",
+      "constraint.joint",
+      "constraint.configurable_joint",
+      "constraint.hinge_joint",
+      "constraint.weighted_parent"
+    ],
+    "relationship": [
+      "relationship.actor_target",
+      "relationship.actor_object",
+      "relationship.camera_subject",
+      "relationship.dialogue_speaker",
+      "relationship.animation_actor",
+      "relationship.audio_actor",
+      "relationship.scene_anchor",
+      "relationship.parent_child",
+      "relationship.actor_attachment",
+      "relationship.component_attachment",
+      "relationship.bone_attachment",
+      "relationship.gameplay_binding"
+    ],
+    "asset": [
+      "asset.identity",
+      "asset.source_ref",
+      "asset.target_ref",
+      "asset.hash",
+      "asset.semantic_type",
+      "asset.mapping_status",
+      "asset.mapping_confidence",
+      "asset.mapping_method",
+      "asset.license_metadata",
+      "asset.asset_registry",
+      "asset.asset_bundle",
+      "asset.addressables",
+      "asset.soft_reference",
+      "asset.import_recipe",
+      "asset.redirector",
+      "asset.content_hash"
+    ],
+    "media": [
+      "media.track",
+      "media.clip",
+      "media.asset",
+      "media.start",
+      "media.end",
+      "media.offset",
+      "media.crop",
+      "media.color_space",
+      "media.audio_sync",
+      "media.video_player",
+      "media.media_texture",
+      "media.streaming_video",
+      "media.alpha_video",
+      "media.image_sequence",
+      "media.image_plate"
+    ],
+    "subtitle": [
+      "subtitle.track",
+      "subtitle.cue",
+      "subtitle.text",
+      "subtitle.locale",
+      "subtitle.style",
+      "subtitle.start",
+      "subtitle.end",
+      "subtitle.font_style",
+      "subtitle.color_outline",
+      "subtitle.caption_style"
+    ],
+    "physics": [
+      "physics.body",
+      "physics.collider",
+      "physics.constraint",
+      "physics.initial_state",
+      "physics.result_cache",
+      "physics.ragdoll",
+      "physics.rigid_body",
+      "physics.trigger",
+      "physics.collision_channel",
+      "physics.physics_material",
+      "physics.impulse",
+      "physics.force",
+      "physics.torque",
+      "physics.gravity",
+      "physics.friction",
+      "physics.vehicle"
+    ],
+    "simulation": [
+      "simulation.seed",
+      "simulation.initial_state",
+      "simulation.preroll",
+      "simulation.runtime_capture",
+      "simulation.cache",
+      "simulation.determinism",
+      "simulation.rigid_body",
+      "simulation.ragdoll_cache",
+      "simulation.cloth_cache",
+      "simulation.fluid_cache",
+      "simulation.deterministic_seed"
+    ],
+    "provenance": [
+      "provenance.source",
+      "provenance.native_path",
+      "provenance.source_value",
+      "provenance.conversion",
+      "provenance.transfer_outcome",
+      "provenance.lossiness",
+      "provenance.adapter_version",
+      "provenance.timestamp",
+      "provenance.source_checksum",
+      "provenance.feature_evidence",
+      "provenance.verified_stage"
+    ],
+    "project": [
+      "project.module",
+      "project.package",
+      "project.plugin",
+      "project.project_version",
+      "project.engine_version",
+      "project.build_profile",
+      "project.serialization_config"
+    ],
+    "world": [
+      "world.world_partition",
+      "world.streaming_cell",
+      "world.data_layer",
+      "world.level_instance",
+      "world.additive_scene",
+      "world.loaded_scene",
+      "world.world_origin",
+      "world.subscene"
+    ],
+    "prefab": [
+      "prefab.prefab_instance",
+      "prefab.prefab_variant",
+      "prefab.nested_prefab",
+      "prefab.actor_template",
+      "prefab.blueprint_child_actor"
+    ],
+    "object": [
+      "object.game_object",
+      "object.component",
+      "object.helper_object",
+      "object.grouping_object",
+      "object.child_actor",
+      "object.mobility",
+      "object.visibility",
+      "object.enable_state"
+    ],
+    "mesh": [
+      "mesh.static_mesh",
+      "mesh.skeletal_mesh",
+      "mesh.procedural_mesh",
+      "mesh.geometry_cache",
+      "mesh.morph_mesh",
+      "mesh.instanced_mesh",
+      "mesh.nanite",
+      "mesh.lod",
+      "mesh.uv_set",
+      "mesh.vertex_color",
+      "mesh.mesh_section",
+      "mesh.collision_mesh",
+      "mesh.tangents",
+      "mesh.normals"
+    ],
+    "geometry": [
+      "geometry.procedural_surface",
+      "geometry.geometry_script",
+      "geometry.alembic_cache",
+      "geometry.cad_model",
+      "geometry.displacement"
+    ],
+    "rig": [
+      "rig.avatar",
+      "rig.humanoid_skeleton",
+      "rig.generic_skeleton",
+      "rig.control_rig",
+      "rig.ik_chain",
+      "rig.fk_control",
+      "rig.virtual_bone",
+      "rig.bone_socket",
+      "rig.bind_pose",
+      "rig.retarget_pose"
+    ],
+    "facial": [
+      "facial.blend_shape",
+      "facial.viseme",
+      "facial.phoneme",
+      "facial.eye_track",
+      "facial.eyelid",
+      "facial.facial_capture",
+      "facial.facial_joint",
+      "facial.expression"
+    ],
+    "texture": [
+      "texture.albedo_map",
+      "texture.roughness_map",
+      "texture.metallic_map",
+      "texture.normal_map",
+      "texture.emissive_map",
+      "texture.opacity_map",
+      "texture.height_map",
+      "texture.texture_array",
+      "texture.cubemap",
+      "texture.render_texture",
+      "texture.virtual_texture",
+      "texture.udim",
+      "texture.sampler",
+      "texture.mipmap"
+    ],
+    "shader": [
+      "shader.shader_graph",
+      "shader.shaderlab",
+      "shader.hlsl",
+      "shader.compute_shader",
+      "shader.custom_shader",
+      "shader.fragment_shader",
+      "shader.vertex_shader",
+      "shader.shader_variant"
+    ],
+    "shadow": [
+      "shadow.shadow_map",
+      "shadow.cascaded_shadow",
+      "shadow.virtual_shadow_map",
+      "shadow.contact_shadow",
+      "shadow.raytraced_shadow",
+      "shadow.shadow_bias"
+    ],
+    "postprocess": [
+      "postprocess.bloom",
+      "postprocess.exposure",
+      "postprocess.tone_mapping",
+      "postprocess.color_grade",
+      "postprocess.lut",
+      "postprocess.film_grain",
+      "postprocess.chromatic_aberration",
+      "postprocess.vignette",
+      "postprocess.motion_blur",
+      "postprocess.depth_of_field",
+      "postprocess.ssao"
+    ],
+    "environment": [
+      "environment.skybox",
+      "environment.atmosphere",
+      "environment.cloud",
+      "environment.fog",
+      "environment.hdr_environment",
+      "environment.weather",
+      "environment.wind",
+      "environment.day_night_cycle",
+      "environment.global_illumination",
+      "environment.reflection_probe"
+    ],
+    "terrain": [
+      "terrain.heightmap",
+      "terrain.terrain_layer",
+      "terrain.foliage_tree",
+      "terrain.foliage_grass",
+      "terrain.water_body",
+      "terrain.landscape_sculpt",
+      "terrain.terrain_hole"
+    ],
+    "navigation": [
+      "navigation.nav_mesh",
+      "navigation.nav_agent",
+      "navigation.nav_link",
+      "navigation.pathfinding",
+      "navigation.waypoint",
+      "navigation.collision_avoidance"
+    ],
+    "ai": [
+      "ai.behavior_tree",
+      "ai.state_tree",
+      "ai.perception",
+      "ai.blackboard",
+      "ai.decision_state",
+      "ai.crowd_agent"
+    ],
+    "interaction": [
+      "interaction.grab",
+      "interaction.equip",
+      "interaction.inspect",
+      "interaction.interactable",
+      "interaction.trigger_volume",
+      "interaction.smart_object"
+    ],
+    "gameplay": [
+      "gameplay.quick_time_event",
+      "gameplay.dialog_choice",
+      "gameplay.branching_cutscene",
+      "gameplay.cinematic_handoff",
+      "gameplay.input_lock",
+      "gameplay.input_restore",
+      "gameplay.cutscene_skip",
+      "gameplay.save_state",
+      "gameplay.rewind"
+    ],
+    "script": [
+      "script.mono_behaviour",
+      "script.scriptable_object",
+      "script.blueprint",
+      "script.cpp_class",
+      "script.custom_playable",
+      "script.playable_behaviour",
+      "script.callback",
+      "script.custom_timeline_track",
+      "script.event_dispatch"
+    ],
+    "ui": [
+      "ui.canvas",
+      "ui.widget",
+      "ui.button",
+      "ui.text",
+      "ui.slider",
+      "ui.image",
+      "ui.panel",
+      "ui.mask",
+      "ui.ui_animation",
+      "ui.hud",
+      "ui.dialogue_box",
+      "ui.subtitle_overlay"
+    ],
+    "sprite": [
+      "sprite.sprite_renderer",
+      "sprite.sprite_mask",
+      "sprite.sprite_atlas",
+      "sprite.sprite_animation",
+      "sprite.tilemap",
+      "sprite.pixel_perfect",
+      "sprite.light_2d",
+      "sprite.physics_2d"
+    ],
+    "procedural": [
+      "procedural.pcg_graph",
+      "procedural.spline_generation",
+      "procedural.random_seed",
+      "procedural.procedural_terrain",
+      "procedural.procedural_city",
+      "procedural.runtime_mesh",
+      "procedural.houdini"
+    ],
+    "cloth": [
+      "cloth.cloth_simulation",
+      "cloth.cloth_collision",
+      "cloth.fabric_constraint",
+      "cloth.cloth_cache"
+    ],
+    "hair": [
+      "hair.groom",
+      "hair.groom_binding",
+      "hair.hair_strands",
+      "hair.hair_physics",
+      "hair.fur"
+    ],
+    "fluid": [
+      "fluid.water_simulation",
+      "fluid.fluid_simulation",
+      "fluid.liquid_foam",
+      "fluid.buoyancy"
+    ],
+    "destruction": [
+      "destruction.fracture",
+      "destruction.geometry_collection",
+      "destruction.chaos_break",
+      "destruction.destructible_mesh"
+    ],
+    "input": [
+      "input.gamepad",
+      "input.touch",
+      "input.keyboard",
+      "input.mouse",
+      "input.input_action",
+      "input.input_mapping",
+      "input.haptic_feedback",
+      "input.force_feedback"
+    ],
+    "xr": [
+      "xr.stereo_camera",
+      "xr.vr_controller",
+      "xr.ar_anchor",
+      "xr.mixed_reality",
+      "xr.eye_tracking",
+      "xr.hand_tracking"
+    ],
+    "mocap": [
+      "mocap.motion_capture",
+      "mocap.facial_performance",
+      "mocap.live_link",
+      "mocap.take_recorder",
+      "mocap.virtual_camera",
+      "mocap.dmx"
+    ],
+    "localization": [
+      "localization.locale",
+      "localization.string_table",
+      "localization.subtitle_language",
+      "localization.voice_variant",
+      "localization.font_fallback"
+    ],
+    "metadata": [
+      "metadata.native_class",
+      "metadata.source_guid",
+      "metadata.property_descriptor",
+      "metadata.object_tag",
+      "metadata.license",
+      "metadata.author"
+    ],
+    "network": [
+      "network.replicated_actor",
+      "network.rpc",
+      "network.ownership",
+      "network.authority",
+      "network.network_clock",
+      "network.replicated_property",
+      "network.synchronized_cutscene"
+    ],
+    "platform": [
+      "platform.texture_streaming",
+      "platform.occlusion_culling",
+      "platform.dynamic_resolution",
+      "platform.ray_tracing",
+      "platform.h_lod",
+      "platform.upscaler",
+      "platform.frame_pacing"
+    ],
+    "delivery": [
+      "delivery.movie_render_graph",
+      "delivery.offline_render",
+      "delivery.hdr_output",
+      "delivery.render_layer",
+      "delivery.render_pass",
+      "delivery.frame_rate",
+      "delivery.render_resolution"
+    ],
+    "format": [
+      "format.fbx",
+      "format.obj",
+      "format.gltf",
+      "format.glb",
+      "format.usd",
+      "format.alembic",
+      "format.dae",
+      "format.png",
+      "format.jpg",
+      "format.tga",
+      "format.exr",
+      "format.hdr",
+      "format.dds",
+      "format.wav",
+      "format.mp3",
+      "format.ogg",
+      "format.flac",
+      "format.mp4",
+      "format.mov",
+      "format.ttf",
+      "format.otf",
+      "format.json",
+      "format.xml",
+      "format.yaml"
+    ],
+    "dependency": [
+      "dependency.asset_ref",
+      "dependency.asset_guid",
+      "dependency.import_setting",
+      "dependency.imported_version",
+      "dependency.material_dependency",
+      "dependency.skeleton_dependency",
+      "dependency.plugin_dependency"
+    ],
+    "plugin": [
+      "plugin.unity_package",
+      "plugin.unreal_plugin",
+      "plugin.custom_importer",
+      "plugin.custom_exporter",
+      "plugin.middleware",
+      "plugin.fmod",
+      "plugin.wwise",
+      "plugin.houdini_engine",
+      "plugin.proprietary_extension"
+    ]
+  },
+  "interpolation_types": [
+    "CONSTANT",
+    "LINEAR",
+    "CUBIC",
+    "BEZIER",
+    "AUTO",
+    "USER",
+    "BREAK",
+    "ENGINE_NATIVE"
+  ],
+  "mapping_statuses": [
+    "EXACT",
+    "COMPATIBLE",
+    "APPROXIMATE",
+    "RECONSTRUCTED",
+    "MISSING",
+    "UNSUPPORTED",
+    "NEEDS_CONFIRMATION"
+  ],
+  "parent_dictionary": "cutscene-elements-v0.1.json",
+  "feature_families": [
+    {
+      "id": "project_scene",
+      "ced_domains": [
+        "project",
+        "world",
+        "prefab",
+        "object",
+        "scene"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "object_actor",
+      "ced_domains": [
+        "entity",
+        "object"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "transform_hierarchy",
+      "ced_domains": [
+        "transform",
+        "constraint",
+        "relationship"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "mesh_geometry",
+      "ced_domains": [
+        "mesh",
+        "geometry"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "assets_dependencies",
+      "ced_domains": [
+        "asset",
+        "dependency"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "character_rig",
+      "ced_domains": [
+        "character",
+        "rig"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "character_animation",
+      "ced_domains": [
+        "animation"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "facial_animation",
+      "ced_domains": [
+        "facial"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "timeline",
+      "ced_domains": [
+        "sequence",
+        "timeline",
+        "time",
+        "curve",
+        "binding"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "unity_timeline",
+      "ced_domains": [
+        "timeline",
+        "script"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "unreal_sequencer",
+      "ced_domains": [
+        "timeline",
+        "sequence"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "camera_lens",
+      "ced_domains": [
+        "camera"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "camera_motion",
+      "ced_domains": [
+        "camera"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "lighting",
+      "ced_domains": [
+        "light"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "shadows",
+      "ced_domains": [
+        "shadow"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "materials_shaders",
+      "ced_domains": [
+        "material",
+        "shader"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "textures",
+      "ced_domains": [
+        "texture"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "rendering",
+      "ced_domains": [
+        "render"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "post_processing",
+      "ced_domains": [
+        "postprocess"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "particles_vfx",
+      "ced_domains": [
+        "vfx"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "physics",
+      "ced_domains": [
+        "physics"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "simulation_deform",
+      "ced_domains": [
+        "cloth",
+        "hair",
+        "fluid",
+        "destruction",
+        "simulation"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "audio",
+      "ced_domains": [
+        "audio"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "video_media",
+      "ced_domains": [
+        "media"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "events_signals",
+      "ced_domains": [
+        "event"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "gameplay_scripting",
+      "ced_domains": [
+        "script",
+        "gameplay"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "interactive_cinematic",
+      "ced_domains": [
+        "gameplay",
+        "interaction"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "ui_hud",
+      "ced_domains": [
+        "ui"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "sprite_2d",
+      "ced_domains": [
+        "sprite"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "terrain_world",
+      "ced_domains": [
+        "terrain",
+        "environment"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "procedural",
+      "ced_domains": [
+        "procedural"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "ai_navigation",
+      "ced_domains": [
+        "ai",
+        "navigation"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "input",
+      "ced_domains": [
+        "input",
+        "interaction"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "xr_mocap",
+      "ced_domains": [
+        "xr",
+        "mocap"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "data_localization",
+      "ced_domains": [
+        "metadata",
+        "localization",
+        "provenance"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "network_multiplayer",
+      "ced_domains": [
+        "network"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "performance_platform",
+      "ced_domains": [
+        "platform"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "formats_interchange",
+      "ced_domains": [
+        "format",
+        "delivery"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    },
+    {
+      "id": "plugins_custom",
+      "ced_domains": [
+        "plugin",
+        "script",
+        "shader",
+        "dialogue",
+        "subtitle"
+      ],
+      "status": "CATALOGUED_NOT_TRANSFER_VERIFIED",
+      "evidence_required": [
+        "SOURCE_EXTRACTION",
+        "NATIVE_TARGET_READBACK",
+        "BEHAVIOR_COMPARISON"
+      ]
+    }
+  ],
+  "evidence_gates": [
+    "SOURCE_IDENTIFIED",
+    "DEPENDENCIES_RESOLVED",
+    "TARGET_HANDLER_AVAILABLE",
+    "GENERATED",
+    "NATIVE_READBACK",
+    "REOPENED",
+    "BEHAVIOR_VERIFIED"
+  ],
+  "unknown_feature_policy": "PRESERVE_NATIVE_PAYLOAD_AND_REPORT_MISSING_ADAPTER"
+}

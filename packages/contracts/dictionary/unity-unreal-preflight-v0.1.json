@@ -1,0 +1,119 @@
+{
+  "version": "0.1.0",
+  "source_engine": "unity",
+  "target_engine": "unreal",
+  "status": "adapter-capabilities-unverified",
+  "note": "Recognition/structural conversion availability is NOT independent native-engine parity. Unknown generic source types must be reported. Known imported AnimationClip root/bone/muscle channels are recognized as KNOWN_PARTIAL rather than treated as novel semantics; no automatic rig/pose transfer is claimed.",
+  "tracks": {
+    "animation.track": {
+      "state": "SUPPORTED_UNVERIFIED",
+      "detail": "Unreal animation/transform track construction; skeletal, interpolation and blending parity remain unverified."
+    },
+    "camera.transform": {
+      "state": "SUPPORTED_UNVERIFIED",
+      "detail": "Camera transforms and field-of-view conversion; final framing unverified."
+    },
+    "camera.cut": {
+      "state": "SUPPORTED_UNVERIFIED",
+      "detail": "Creates Camera Cut tracks from recognized source sections."
+    },
+    "audio.track": {
+      "state": "KNOWN_PARTIAL",
+      "detail": "Audio sections only; waveform/mixing and fades not verified."
+    },
+    "event.trigger": {
+      "state": "KNOWN_PARTIAL",
+      "detail": "Signals become timed markers, not executed payloads."
+    },
+    "light.animation": {
+      "state": "KNOWN_PARTIAL",
+      "detail": "Experimental light intensity curves; physical illumination unverified."
+    },
+    "event.state": {
+      "state": "KNOWN_UNSUPPORTED",
+      "detail": "Activation/enable-state semantics not yet implemented as equivalent Unreal behavior."
+    }
+  },
+  "sections": {
+    "animation.section": "SUPPORTED_UNVERIFIED",
+    "audio.section": "KNOWN_PARTIAL",
+    "camera.cut": "SUPPORTED_UNVERIFIED",
+    "camera.transform": "SUPPORTED_UNVERIFIED",
+    "light.animation": "KNOWN_PARTIAL",
+    "event.trigger": "KNOWN_PARTIAL",
+    "event.state": "KNOWN_UNSUPPORTED"
+  },
+  "generic_native_tracks": {
+    "UnityEngine.Timeline.GroupTrack": {
+      "ced": "timeline.group",
+      "state": "KNOWN_UNSUPPORTED"
+    }
+  },
+  "generic_native_sections": {
+    "UnityEngine.Timeline.AnimationPlayableAsset": {
+      "ced": "animation.section",
+      "state": "SUPPORTED_UNVERIFIED"
+    },
+    "UnityEngine.Timeline.AudioPlayableAsset": {
+      "ced": "audio.section",
+      "state": "KNOWN_PARTIAL"
+    }
+  },
+  "curve_semantics": {
+    "transform.position": "SUPPORTED_UNVERIFIED",
+    "transform.rotation": "SUPPORTED_UNVERIFIED",
+    "camera.fov": "SUPPORTED_UNVERIFIED",
+    "light.intensity": "KNOWN_PARTIAL",
+    "animation.root_motion": {
+      "state": "KNOWN_PARTIAL",
+      "detail": "Recognized Unity animation root-translation/rotation curves; clip-level root motion, hierarchy and rig parity need independent verification."
+    },
+    "animation.bone_curve": {
+      "state": "KNOWN_PARTIAL",
+      "detail": "Recognized source humanoid muscle/bone channel; Unreal skeletal rig retargeting and sampled pose correspondence are not established."
+    },
+    "animation.offset": {
+      "state": "KNOWN_PARTIAL",
+      "detail": "Recognized source-authored track, clip or infinite animation offset metadata; exact target composition/ordering must be verified."
+    }
+  },
+  "curve_aliases": {
+    "camera.vertical_fov_degrees": "camera.fov",
+    "m_localeuleranglesraw.": "transform.rotation",
+    "m_localeulerangleshint.": "transform.rotation",
+    "field of view": "camera.fov",
+    "m_intensity": "light.intensity"
+  },
+  "canonical_curve_patterns": [
+    {
+      "pattern": "^timeline\\.animation_track\\.track_offset_mode$",
+      "ced": "animation.offset"
+    },
+    {
+      "pattern": "^transform\\.(?:track_offset|clip_offset|infinite_offset)\\.(?:position\\.[xyz]|rotation\\.[xyzw])$",
+      "ced": "animation.offset"
+    },
+    {
+      "pattern": "^transform\\.rotation\\.euler_native$",
+      "ced": "transform.rotation"
+    }
+  ],
+  "native_curve_patterns": [
+    {
+      "pattern": "^Root(?:T\\.[xyz]|Q\\.[xyzw])$",
+      "ced": "animation.root_motion"
+    },
+    {
+      "pattern": "^(?:LeftFoot|RightFoot|LeftHand|RightHand)(?:T\\.[xyz]|Q\\.[xyzw])$",
+      "ced": "animation.bone_curve"
+    },
+    {
+      "pattern": "^(?:Spine|Chest|UpperChest|Neck|Head|Left Eye|Right Eye|Jaw|Left Upper Leg|Left Lower Leg|Left Foot|Left Toes|Right Upper Leg|Right Lower Leg|Right Foot|Right Toes|Left Shoulder|Left Arm|Left Forearm|Left Hand|Right Shoulder|Right Arm|Right Forearm|Right Hand) (?:Front-Back|Left-Right|Twist Left-Right|Nod Down-Up|Tilt Left-Right|Turn Left-Right|Down-Up|In-Out|Twist In-Out|Stretch|Up-Down|Close)$",
+      "ced": "animation.bone_curve"
+    },
+    {
+      "pattern": "^(?:LeftHand|RightHand)\\.(?:Thumb|Index|Middle|Ring|Little)\\.(?:[123] Stretched|Spread)$",
+      "ced": "animation.bone_curve"
+    }
+  ]
+}

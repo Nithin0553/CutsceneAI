@@ -67,6 +67,16 @@ def _scale_error(expected: Iterable[float], actual: Iterable[float]) -> float:
     return _position_error(expected, actual)
 
 
+def _valid_vector(values: Any, length: int) -> bool:
+    """Do not turn an absent, partial or nonfinite measurement into a PASS."""
+    if not isinstance(values, (list, tuple)) or len(values) != length:
+        return False
+    try:
+        return all(math.isfinite(float(value)) for value in values)
+    except (TypeError, ValueError):
+        return False
+
+
 def root_motion_metrics(
     expected: Iterable[float],
     actual: Iterable[float],
@@ -307,50 +317,45 @@ def compare(
                     "Target binding did not provide a canonical world transform.",
                 )
             else:
-                p_error = _position_error(
-                    exp_transform.get("position_m", []),
-                    act_transform.get("position_m", []),
+                # Some saved static Sequencer transforms key location/rotation
+                # but not scale. Validate only the actual independent evidence;
+                # never assume the level's unsaved actor scale is persisted.
+                fields = (
+                    ("position_m", "position", 3, "position_m", _position_error,
+                     "Canonical world-position comparison."),
+                    ("rotation_xyzw", "rotation", 4, "rotation_deg",
+                     quaternion_angle_error_degrees,
+                     "Canonical world-orientation angular error."),
+                    ("scale_xyz", "scale", 3, "scale", _scale_error,
+                     "Canonical scale comparison."),
                 )
-                _check(
-                    checks,
-                    f"spatial.position.{name}",
-                    "SPATIAL",
-                    _status_from_bool(p_error <= tol["position_m"]),
-                    exp_transform.get("position_m"),
-                    act_transform.get("position_m"),
-                    "Canonical world-position comparison.",
-                    error=p_error,
-                )
-
-                r_error = quaternion_angle_error_degrees(
-                    exp_transform.get("rotation_xyzw", [0, 0, 0, 1]),
-                    act_transform.get("rotation_xyzw", [0, 0, 0, 1]),
-                )
-                _check(
-                    checks,
-                    f"spatial.rotation.{name}",
-                    "SPATIAL",
-                    _status_from_bool(r_error <= tol["rotation_deg"]),
-                    exp_transform.get("rotation_xyzw"),
-                    act_transform.get("rotation_xyzw"),
-                    "Canonical world-orientation angular error.",
-                    error=r_error,
-                )
-
-                s_error = _scale_error(
-                    exp_transform.get("scale_xyz", []),
-                    act_transform.get("scale_xyz", []),
-                )
-                _check(
-                    checks,
-                    f"spatial.scale.{name}",
-                    "SPATIAL",
-                    _status_from_bool(s_error <= tol["scale"]),
-                    exp_transform.get("scale_xyz"),
-                    act_transform.get("scale_xyz"),
-                    "Canonical scale comparison.",
-                    error=s_error,
-                )
+                for field, label, length, tolerance, distance, details in fields:
+                    expected_vector = exp_transform.get(field)
+                    actual_vector = act_transform.get(field)
+                    if (not _valid_vector(expected_vector, length)
+                            or not _valid_vector(actual_vector, length)):
+                        _check(
+                            checks,
+                            f"spatial.{label}.{name}",
+                            "SPATIAL",
+                            "INCOMPLETE",
+                            expected_vector,
+                            actual_vector,
+                            f"{details} A complete independent target "
+                            "measurement was not available.",
+                        )
+                        continue
+                    error = distance(expected_vector, actual_vector)
+                    _check(
+                        checks,
+                        f"spatial.{label}.{name}",
+                        "SPATIAL",
+                        _status_from_bool(error <= tol[tolerance]),
+                        expected_vector,
+                        actual_vector,
+                        details,
+                        error=error,
+                    )
 
         exp_camera = exp_binding.get("camera_state")
         if isinstance(exp_camera, Mapping):
@@ -444,6 +449,31 @@ def compare(
                         "Skeletal animation playback rate must match.",
                         error=play_rate_error,
                     )
+
+                if match is not None:
+                    for metric, threshold, domain in (
+                        ("source_offset_seconds", 0.0001, "TIMING"),
+                        ("ease_in_frames", 0.0, "ANIMATION"),
+                        ("ease_out_frames", 0.0, "ANIMATION"),
+                    ):
+                        if metric not in exp_track:
+                            continue
+                        actual_value = match.get(metric)
+                        error = (
+                            abs(float(exp_track[metric]) - float(actual_value))
+                            if actual_value is not None else math.inf
+                        )
+                        _check(
+                            checks,
+                            f"animation.{metric}.{name}",
+                            domain,
+                            "INCOMPLETE" if actual_value is None else
+                            _status_from_bool(error <= threshold),
+                            exp_track[metric],
+                            actual_value,
+                            f"Saved Unreal animation {metric} must match the Unity clip.",
+                            error=None if math.isinf(error) else error,
+                        )
 
                 if match is not None and "effective_root_delta_cm" in exp_track:
                     actual_delta = match.get("effective_root_delta_cm")
@@ -610,6 +640,41 @@ def compare(
                             "Maximum canonical transform-key angular error.",
                             error=worst_rotation,
                         )
+
+            elif kind == "light_intensity":
+                match = candidates[0] if candidates else None
+                _check(
+                    checks,
+                    f"light.intensity_track.{name}",
+                    "LIGHT",
+                    _status_from_bool(match is not None),
+                    True,
+                    match is not None,
+                    "A mapped native Unreal light-intensity curve must be present.",
+                )
+                if match is not None:
+                    source_keys = list(exp_track.get("keys", []))
+                    target_keys = list(match.get("keys", []))
+                    same_frames = (
+                        [int(k.get("frame", -1)) for k in source_keys]
+                        == [int(k.get("frame", -2)) for k in target_keys]
+                    )
+                    value_error = math.inf
+                    if same_frames and len(source_keys) == len(target_keys):
+                        value_error = _max_abs(
+                            float(a.get("value", 0.0)) - float(b.get("value", 0.0))
+                            for a, b in zip(source_keys, target_keys)
+                        )
+                    _check(
+                        checks,
+                        f"light.intensity_keys.{name}",
+                        "LIGHT",
+                        _status_from_bool(same_frames and value_error <= 1e-4),
+                        source_keys,
+                        target_keys,
+                        "Numeric light intensity track parity; photometric output remains unverified.",
+                        error=None if math.isinf(value_error) else value_error,
+                    )
 
             elif kind == "camera_lens":
                 match = candidates[0] if candidates else None

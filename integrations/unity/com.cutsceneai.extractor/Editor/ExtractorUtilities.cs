@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -119,6 +120,77 @@ namespace CutsceneAI.UnityExtractor
                 return $"{path}#{asset.name}|guid={guid}|local={localId}";
 
             return GlobalObjectId.GetGlobalObjectIdSlow(asset).ToString();
+        }
+
+        internal static List<ModelAssetReference> SourceModelAssets(GameObject gameObject)
+        {
+            // A scene character is often named for its rig/prefab, not its FBX.
+            // Record the actual rendered Mesh subasset's source, without
+            // interpreting the name or changing the Unity project.
+            var result = new List<ModelAssetReference>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            void Include(Mesh mesh, Transform renderer)
+            {
+                if (mesh == null) return; // Procedural meshes need a separate adapter.
+                var path = AssetDatabase.GetAssetPath(mesh);
+                if (string.IsNullOrEmpty(path) || !seen.Add(path)) return;
+                result.Add(new ModelAssetReference
+                {
+                    asset_path = path,
+                    guid = AssetDatabase.AssetPathToGUID(path),
+                    renderer_path = HierarchyPath(renderer),
+                    mesh_name = mesh.name,
+                });
+            }
+            foreach (var renderer in gameObject.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                Include(renderer.sharedMesh, renderer.transform);
+            foreach (var filter in gameObject.GetComponentsInChildren<MeshFilter>(true))
+                if (filter.GetComponent<MeshRenderer>() != null)
+                    Include(filter.sharedMesh, filter.transform);
+            result.Sort((a, b) => StringComparer.Ordinal.Compare(a.asset_path, b.asset_path));
+            return result;
+        }
+
+        internal static List<MaterialAssetReference> SourceMaterialAssets(GameObject gameObject)
+        {
+            var result = new List<MaterialAssetReference>();
+            foreach (var renderer in gameObject.GetComponentsInChildren<Renderer>(true))
+            {
+                if (!(renderer is MeshRenderer) && !(renderer is SkinnedMeshRenderer))
+                    continue;
+                var materials = renderer.sharedMaterials;
+                for (var index = 0; index < materials.Length; index++)
+                {
+                    var material = materials[index];
+                    if (material == null) continue;
+                    var path = AssetDatabase.GetAssetPath(material);
+                    var texturePath = string.Empty;
+                    try
+                    {
+                        var property = material.HasProperty("_BaseMap") ? "_BaseMap" : "_MainTex";
+                        if (material.HasProperty(property))
+                            texturePath = AssetDatabase.GetAssetPath(material.GetTexture(property));
+                    }
+                    catch (Exception) { /* Unsupported shader property remains unmapped. */ }
+                    result.Add(new MaterialAssetReference
+                    {
+                        asset_path = path,
+                        guid = string.IsNullOrEmpty(path) ? "" : AssetDatabase.AssetPathToGUID(path),
+                        renderer_path = HierarchyPath(renderer.transform),
+                        slot_index = index,
+                        material_name = material.name,
+                        albedo_texture_asset_path = texturePath,
+                        albedo_texture_guid = string.IsNullOrEmpty(texturePath) ? "" :
+                            AssetDatabase.AssetPathToGUID(texturePath),
+                    });
+                }
+            }
+            result.Sort((a, b) =>
+            {
+                var order = StringComparer.Ordinal.Compare(a.renderer_path, b.renderer_path);
+                return order != 0 ? order : a.slot_index.CompareTo(b.slot_index);
+            });
+            return result;
         }
 
         internal static string Sha256(string value)

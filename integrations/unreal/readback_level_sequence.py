@@ -308,7 +308,48 @@ def _transform_track(track: Any) -> dict[str, Any] | None:
                 "rotation_xyzw": canonical["rotation_xyzw"],
             }
         )
-    return {"kind": "transform", "keys": keys}
+    result = {"kind": "transform", "keys": keys}
+    # Static pose is an actual saved Sequencer key, not a transient actor pose.
+    # Preserve its authored track identity so the validator can distinguish it
+    # from a dynamic track that happens to contain one key.
+    if _track_display_name(track) == "CutSceneAI Static Scene Pose":
+        result["track_name"] = "CutSceneAI Static Scene Pose"
+    return result
+
+
+def _static_world_pose_from_keyed_track(
+    tracks: list[dict[str, Any]], actor: Any,
+) -> dict[str, Any] | None:
+    """Read 6-DOF static world pose from ONE saved, labelled frame-zero track.
+
+    It is not safe to reinterpret a local/attached or generic transform as a
+    static world pose. The generator only keys position/rotation (not scale),
+    so scale is intentionally absent and remains INCOMPLETE in validation.
+    """
+    parent_getter = getattr(actor, "get_attach_parent_actor", None)
+    if not callable(parent_getter) or parent_getter() is not None:
+        return None
+    if any(track.get("kind") == "skeletal_animation" for track in tracks):
+        return None
+    transforms = [t for t in tracks if t.get("kind") == "transform"]
+    if len(transforms) != 1:
+        return None
+    track = transforms[0]
+    if track.get("track_name") != "CutSceneAI Static Scene Pose":
+        return None
+    keys = track.get("keys", [])
+    if len(keys) != 1 or keys[0].get("frame") != 0:
+        return None
+    key = keys[0]
+    position = key.get("position_m")
+    rotation = key.get("rotation_xyzw")
+    if (not isinstance(position, list) or len(position) != 3
+            or not isinstance(rotation, list) or len(rotation) != 4):
+        return None
+    return {
+        "position_m": list(position),
+        "rotation_xyzw": list(rotation),
+    }
 
 
 def _asset_path(value: Any) -> str:
@@ -358,6 +399,7 @@ def _skeletal_track(
     actor: Any | None,
     display_rate: dict[str, int],
     root_corrections: dict[tuple[int, int], dict[str, Any]] | None = None,
+    tick_rate: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     fps = float(display_rate["numerator"]) / float(display_rate["denominator"])
@@ -365,7 +407,23 @@ def _skeletal_track(
         start_frame, end_frame = _section_range(section)
         params = _editor_property(section, "params")
         animation = _editor_property(params, "animation") if params is not None else None
+        tick_fps = (
+            float(tick_rate["numerator"]) / float(tick_rate["denominator"])
+            if tick_rate is not None else fps
+        )
+        source_offset_seconds = (
+            _frame_number_value(_editor_property(params, "start_frame_offset", 0)) / tick_fps
+            if params is not None else 0.0
+        )
+        easing_ext = getattr(unreal, "MovieSceneSectionEasingExtensions", None)
+        ease_in_getter = getattr(easing_ext, "get_ease_in_duration", None)
+        ease_out_getter = getattr(easing_ext, "get_ease_out_duration", None)
+        ease_in = int(ease_in_getter(section)) if callable(ease_in_getter) else None
+        ease_out = int(ease_out_getter(section)) if callable(ease_out_getter) else None
         item: dict[str, Any] = {
+            "source_offset_seconds": source_offset_seconds,
+            "ease_in_frames": ease_in,
+            "ease_out_frames": ease_out,
             "kind": "skeletal_animation",
             "start_frame": start_frame,
             "end_frame": end_frame,
@@ -383,8 +441,8 @@ def _skeletal_track(
             try:
                 local_delta, strategy = unreal_compat.extract_animation_root_delta_cm(
                     animation,
-                    0.0,
-                    duration_seconds * float(item["play_rate"]),
+                    source_offset_seconds,
+                    source_offset_seconds + duration_seconds * float(item["play_rate"]),
                 )
                 rotation = actor.get_actor_rotation()
                 matrix = readback_math.unreal_rpy_to_matrix(
@@ -496,6 +554,8 @@ def _lens_track(
     component: Any,
     target_aspect: float,
 ) -> dict[str, Any] | None:
+    if _track_display_name(track) != "CutSceneAI Camera Lens":
+        return None
     sections = _sections(track)
     if not sections:
         return None
@@ -525,6 +585,25 @@ def _lens_track(
             )
         keys.append({"frame": int(frame), "vertical_fov_degrees": float(vertical)})
     return {"kind": "camera_lens", "keys": keys}
+
+
+def _light_intensity_track(track: Any) -> dict[str, Any] | None:
+    """Read the native Unreal numeric intensity curve, not camera FOV."""
+    if _track_display_name(track) != "CutSceneAI Light Intensity":
+        return None
+    sections = _sections(track)
+    if len(sections) != 1:
+        raise UnrealReadbackError("Expected one light-intensity track section.")
+    channels = unreal_compat.get_section_channels(sections[0])
+    if len(channels) != 1:
+        raise UnrealReadbackError("Expected one light-intensity channel.")
+    return {
+        "kind": "light_intensity",
+        "keys": [
+            {"frame": int(frame), "value": float(value)}
+            for frame, value in sorted(_key_map(channels[0]).items())
+        ],
+    }
 
 
 def _audio_section(section: Any) -> dict[str, Any]:
@@ -672,7 +751,12 @@ def readback(
                     record["tracks"].append(item)
             elif isinstance(track, unreal.MovieSceneSkeletalAnimationTrack):
                 record["tracks"].extend(
-                    _skeletal_track(track, actor, rate, root_corrections)
+                    _skeletal_track(
+                        track, actor, rate, root_corrections,
+                        tick_rate=_frame_rate(
+                            unreal.MovieSceneSequenceExtensions.get_tick_resolution(sequence)
+                        ),
+                    )
                 )
             elif isinstance(track, unreal.MovieSceneFloatTrack):
                 component = bound_object
@@ -683,6 +767,8 @@ def readback(
                         component = None
                 if component is not None:
                     item = _lens_track(track, component, target_aspect)
+                    if item is None:
+                        item = _light_intensity_track(track)
                     if item is not None:
                         record["tracks"].append(item)
 
@@ -707,6 +793,18 @@ def readback(
         )
         if not has_transform_track and not has_skeletal_track:
             record["canonical_world_transform"] = _canonical_actor_transform(actor)
+        elif has_transform_track and not has_skeletal_track:
+            # Purely source-derived static pose tracks are saved on the sequence
+            # and can be validated independently of current editor scrubbing.
+            # Do not synthesize unkeyed scale from an unsaved level actor.
+            static_pose = _static_world_pose_from_keyed_track(
+                record["tracks"], actor
+            )
+            if static_pose is not None:
+                record["canonical_world_transform"] = static_pose
+                record["canonical_world_transform_provenance"] = (
+                    "saved_sequence_single_frame_world_transform_key"
+                )
 
         if isinstance(actor, (unreal.CameraActor, unreal.CineCameraActor)):
             record["camera_state"] = _camera_state(actor, target_aspect)

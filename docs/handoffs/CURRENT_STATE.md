@@ -1,74 +1,36 @@
-# CutsceneAI Current State
+# CutSceneAI — Current Engineering State
 
-## Product definition
+**Reviewed:** 2026-10-27 · **Scope:** Unity Timeline → Unreal Level Sequence
 
-CutsceneAI transfers an already-existing cinematic cutscene from a source game engine into a target game engine with measurable fidelity.
+This page is a short orientation handoff, not evidence of successful target playback. See the [current issue matrix](../ISSUES_AND_MILESTONES.md) and the [documentation index](../INDEX.md) for maintained details.
 
-The source cutscene is ground truth.
+## Current working milestones
 
-## Current milestone
+- **Foundation:** CED / CSIR contracts, Unity structural extraction, Unreal planning and readback, and CineTwin evaluation tools are implemented for defined subsets of cinematic behavior.
+- **Benchmark 001:** frozen research proof; automated target validation was accepted for its limited source/target setup. See [freeze record](../benchmarks/BENCHMARK_001_TARGET_FREEZE.md). Do not modify it.
+- **Benchmark 002:** source authored and captured; best-effort V5 planning accounted for 12 source tracks, with 21 native action entries and `PROP_PARENTED` marked `STATIC_CHILD_INHERITS_PARENT`. Successful V5 Unreal sequence generation and saved behavior parity are **not yet established**.
+- **Best-effort backend:** code for independent track planning, sampled transform fallback, parent-local reconstruction and source-bound evidence verification exists on experimental branch `feature/transfer-backend-best-effort-v0.1`. Python tests passing does not mean that Unreal generation passed.
+- **Dataset/learning:** source dataset registry and human-approved mapping-case memory exist experimentally. No universal transfer model has been trained or validated.
 
-Engine Milestone 2 — Unity read-only structural extractor v0.1.
+## Current task order
 
-## Initial transfer direction
+1. Validate V5 generation on a backed-up target Unreal project and unused Level Sequence path.
+2. Verify saved Level Sequence and actor hierarchy survive editor restart.
+3. Independently compare source and target evaluated character, prop and camera trajectories; preserve failures in reports.
+4. Address blockers using generic adapters, documented capability fallbacks and regression tests.
+5. Demonstrate transfer on independently authored scenes before dataset expansion or AI training.
 
-Unity → Unreal first. Reverse transfer follows after the complete deterministic proof is working.
+## Research invariants
 
-## Frozen architectural decisions
+- The source cutscene is ground truth, including rational timing and provenance.
+- Unity source and frozen benchmarks remain unchanged during conversion work.
+- Do not silently discard features or call partial runtime generation `PASS`.
+- No benchmark-specific transfer hacks.
+- Use a new staged target sequence, strict preflight, and independent saved-target readback.
+- Report both source-feature coverage and post-generation fidelity.
 
-- source project is read-only by default
-- source cutscene is authoritative ground truth
-- CED is engine-neutral
-- Unity/Unreal mappings live outside the canonical dictionary
-- CSIR preserves canonical values plus source-native escape-hatch data
-- canonical space is right-handed, +Y up, -Z forward, +X right, meters, quaternion XYZW
-- timing is rational and source-preserving; no forced 24/30/60 fps normalization
-- every transferred element ends in an explicit outcome: EXACT, CONVERTED, RETARGETED, BAKED, RECONSTRUCTED, TARGET_MAPPED, or BLOCKED
-- target generation occurs in staging before commit
-- generated target results must be read back before validation
-- deterministic transfer is preferred over AI/ML
-- AI/ML enters only when ambiguity/reconstruction cannot be solved reliably otherwise
+## Branch dependency
 
-## Foundation contracts
+Draft PRs [#49](https://github.com/Nithin0553/CutsceneAI/pull/49) → [#50](https://github.com/Nithin0553/CutsceneAI/pull/50) → [#51](https://github.com/Nithin0553/CutsceneAI/pull/51) → [#52](https://github.com/Nithin0553/CutsceneAI/pull/52) are stacked. `main` alone does not contain the latest Studio/backend work. Consult [branch audit](../BRANCH_AUDIT.md) before merging, checking out, or removing any refs.
 
-- `packages/contracts/dictionary/cutscene-elements-v0.1.json`
-- `packages/contracts/dictionary/unity-mappings-v0.1.json`
-- `packages/contracts/dictionary/unreal-mappings-v0.1.json`
-- `packages/contracts/common/coordinate-system-v0.1.schema.json`
-- `packages/contracts/common/rational-time-v0.1.schema.json`
-- `packages/contracts/common/transfer-outcome-v0.1.schema.json`
-- `packages/contracts/csir/csir-v0.1.schema.json`
-- `packages/adapters/interface.py`
-
-## First benchmark
-
-`docs/benchmarks/BENCHMARK_001.md`
-
-Benchmark 001 is a controlled 8–12 second Unity Timeline containing one character/animation, one moving prop, two cameras, one cut, camera motion/lens data, one audio clip, one event, and enough environment geometry to validate placement/framing.
-
-## Unity extractor implementation
-
-Package path: `integrations/unity/com.cutsceneai.extractor`
-
-Current structural extraction covers Timeline identity/frame rate, recursive tracks, bindings, entity transforms, Camera/Animator metadata, clip timing/blends, animation/audio assets, raw + canonical animation keys, activation/camera-cut handling, SignalEmitter markers, generic fallback, source snapshot/provenance hash, and export to `CutsceneAI/Exports/*.csir.json`.
-
-Structural extraction deliberately does not call `PlayableDirector.Evaluate()` or mutate/save source assets/scenes.
-
-## Automated checks
-
-Python CI statically verifies the Unity package baseline, editor-only assembly, required Timeline read APIs, absence of known source-mutating APIs, raw + canonical animation key preservation, and export menu presence.
-
-## Manual gate required next
-
-GitHub CI cannot compile Unity C# without a Unity runner/license. The next gate is local Unity verification:
-
-1. pull latest `main` after the extractor PR merges
-2. create/open Benchmark 001 Unity project in Unity 6000.0 with Timeline 1.8.10
-3. install local package from `integrations/unity/com.cutsceneai.extractor/package.json`
-4. confirm package compiles with zero errors
-5. select the Benchmark PlayableDirector
-6. run `Tools > CutsceneAI > Export Selected Timeline`
-7. provide the generated `.csir.json` back to CutsceneAI
-8. validate it against CSIR v0.1 and benchmark expectations
-
-Do not start Unreal generation until this exported artifact passes validation.
+For concrete instructions, start with [best-effort runbook](../architecture/BEST_EFFORT_TRANSFER_BACKEND_V0_1.md) and [repository guide](../REPOSITORY_GUIDE.md).

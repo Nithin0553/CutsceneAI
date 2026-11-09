@@ -1,0 +1,352 @@
+"""Read-only Studio persistence verification; these mocks do NOT prove Unreal fidelity."""
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+from pathlib import Path
+from types import SimpleNamespace as NS
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+SPEC = importlib.util.spec_from_file_location(
+    "studio_persistence_audit",
+    ROOT / "integrations" / "unreal" / "studio_persistence_audit.py",
+)
+AUDIT = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(AUDIT)
+
+
+class Actor:
+    def __init__(self, label: str, klass: str):
+        self.label = label
+        self.klass = klass
+
+    def get_actor_label(self):
+        return self.label
+
+    def get_class(self):
+        return NS(get_name=lambda: self.klass)
+
+    def get_attach_parent_actor(self):
+        return None
+
+
+class Asset:
+    def __init__(self, klass: str, *, expose_tracks: bool = True):
+        self.klass = klass
+        if expose_tracks:
+            self.get_bindings = lambda: [object()]
+            self.get_tracks = lambda: [object(), object()]
+
+    def get_class(self):
+        return NS(get_name=lambda: self.klass)
+
+
+def _write(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def fixture(tmp_path):
+    root = tmp_path / "runs"
+    candidate = root / "candidates" / "candidate-01"
+    job_id = "abcdef0123456789abcdef0123456789"
+    project = tmp_path / "Target.uproject"
+    project.write_text("{}", encoding="utf-8")
+    level = "/Game/Testing/L_Test"
+    seq = "/Game/Testing/LS_New"
+    asset_paths = ["/Game/Auto/Hero", "/Game/Auto/Wave"]
+    manifest = {
+        "kind": "cutsceneai.studio.automatic_setup_plan",
+        "target_folder": "/Game/Auto",
+        "imports": [{"target_asset_path": asset_paths[0], "kind": "SkeletalMesh"},
+                    {"target_asset_path": asset_paths[1], "kind": "AnimSequence"}],
+        "actors": [{"name": "Hero", "label": "CSAI_Hero", "kind": "entity.character"},
+                   {"name": "CAM", "label": "CSAI_CAM", "kind": "entity.camera"}],
+    }
+    _write(candidate / "automatic-setup.json", manifest)
+    _write(candidate / "transfer-plan.json", {"sequence_asset_path": seq})
+    setup = _write(candidate / "setup.json", {
+        "kind": "cutsceneai.studio.automatic_setup_receipt",
+        "status": "SETUP_SAVED_UNVERIFIED", "target_sequence": seq,
+        "target_namespace": "/Game/Auto",
+    })
+    generation = _write(candidate / "runtime.json", {
+        "kind": "cutsceneai.unreal.best_effort_receipt",
+        "status": "GENERATED_UNVERIFIED", "stage": "complete",
+        "generated_sequence": seq + ".LS_New",
+    })
+    job = {
+        "kind": "cutsceneai.studio.local_unreal_job",
+        "candidate_id": candidate.name,
+        "candidate_dir": str(candidate), "sequence_path": seq,
+        "expected_project": str(project), "expected_level": level,
+        "setup_receipt_file": str(setup), "receipt_file": str(generation),
+    }
+    jobfile = _write(root / "jobs" / (job_id + ".json"), job)
+    _write(root / "active-job.json", {"job_id": job_id})
+    for package, suffix in [(level, ".umap"), (seq, ".uasset"),
+                            (asset_paths[0], ".uasset"), (asset_paths[1], ".uasset")]:
+        path = tmp_path / "Content" / (package[6:] + suffix)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"saved-native-package")
+    assets = {asset_paths[0]: Asset("SkeletalMesh"),
+              asset_paths[1]: Asset("AnimSequence"),
+              seq: Asset("LevelSequence")}
+    actors = [Actor("CSAI_Hero", "SkeletalMeshActor"), Actor("CSAI_CAM", "CineCameraActor")]
+    fake = NS(
+        EditorAssetLibrary=NS(does_asset_exist=lambda p: p in assets),
+        load_asset=lambda p: assets.get(p),
+        UnrealEditorSubsystem=object(),
+        EditorActorSubsystem=object(),
+        get_editor_subsystem=lambda kind: (
+            NS(get_editor_world=lambda: NS(get_path_name=lambda: level + ".L_Test"))
+            if kind == fake.UnrealEditorSubsystem
+            else NS(get_all_level_actors=lambda: actors)
+        ),
+        Paths=NS(get_project_file_path=lambda: str(project)),
+    )
+    return root, jobfile, candidate, fake, assets, actors
+
+
+def test_reads_actual_native_classes_and_saved_packages_without_mutating(tmp_path):
+    root, _jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    report = AUDIT.audit_latest(root, unreal_api=fake)
+    assert report["status"] == "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
+    assert report["fidelity_verified"] is False
+    assert report["restart_verified"] is False
+    assert report["level_file_exists"] is True
+    assert report["assets_class_and_disk_verified"] == 2
+    assert report["sequence"]["binding_count"] == 1
+    assert report["sequence"]["root_track_count"] == 2
+    assert all(row["class_matches"] for row in report["actors"])
+    assert len(list(candidate.glob("post-reopen-audit-*.json"))) == 1
+
+
+def test_missing_saved_asset_is_failed_even_when_editor_loads_it(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    (tmp_path / "Content" / "Auto" / "Hero.uasset").unlink()
+    result = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert result["status"] == "STRUCTURAL_READBACK_FAIL"
+    assert result["assets"][0]["saved_file_exists"] is False
+
+
+def test_unknown_track_readback_is_incomplete_not_success(tmp_path):
+    _root, jobfile, candidate, fake, assets, _actors = fixture(tmp_path)
+    assets["/Game/Testing/LS_New"] = Asset("LevelSequence", expose_tracks=False)
+    result = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert result["status"] == "STRUCTURAL_READBACK_INCOMPLETE"
+
+
+def test_duplicate_actor_is_failure(tmp_path):
+    _root, jobfile, candidate, fake, _assets, actors = fixture(tmp_path)
+    actors.append(Actor("CSAI_CAM", "CineCameraActor"))
+    result = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert result["status"] == "STRUCTURAL_READBACK_FAIL"
+    assert result["actors"][1]["matches"] == 2
+
+
+def test_wrong_project_and_reused_receipt_never_trigger_editor_mutation(tmp_path):
+    root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    fake.Paths.get_project_file_path = lambda: str(tmp_path / "Wrong.uproject")
+    with pytest.raises(AUDIT.PersistenceAuditError, match="Wrong Unreal project"):
+        AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert not (candidate / "audit.json").exists()
+    fake.Paths.get_project_file_path = lambda: str(tmp_path / "Target.uproject")
+    first = AUDIT.audit_latest(root, unreal_api=fake)
+    assert first["status"] == "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
+    with pytest.raises(AUDIT.PersistenceAuditError, match="already exists"):
+        AUDIT.audit_latest(root, unreal_api=fake)
+
+
+def test_incomplete_generation_receipt_cannot_be_claimed_saved(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    receipt = candidate / "runtime.json"
+    body = json.loads(receipt.read_text(encoding="utf-8"))
+    body["status"] = "BLOCKED"
+    _write(receipt, body)
+    with pytest.raises(AUDIT.PersistenceAuditError, match="completed engine generation"):
+        AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert not (candidate / "audit.json").exists()
+
+
+def test_unreal_sequence_extensions_can_supply_readback_counts(tmp_path):
+    _root, jobfile, candidate, fake, assets, _actors = fixture(tmp_path)
+    assets["/Game/Testing/LS_New"] = Asset("LevelSequence", expose_tracks=False)
+    fake.MovieSceneSequenceExtensions = NS(
+        get_bindings=lambda sequence: [object(), object()],
+        get_tracks=lambda sequence: [object()],
+    )
+    result = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert result["status"] == "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
+    assert result["sequence"]["binding_count"] == 2
+    assert result["sequence"]["root_track_count"] == 1
+
+
+@pytest.mark.parametrize("missing", [
+    ["target_sequence"],
+    ["target_namespace"],
+    ["target_sequence", "target_namespace"],
+])
+def test_historical_receipt_fields_do_not_block_readonly_inventory(tmp_path, missing):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    setup = candidate / "setup.json"
+    data = json.loads(setup.read_text(encoding="utf-8"))
+    for name in missing:
+        data.pop(name)
+    _write(setup, data)
+    result = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert result["status"] == "STRUCTURAL_READBACK_INCOMPLETE"
+    assert result["provenance_status"] == "INCOMPLETE_LEGACY_RECEIPT"
+    assert result["provenance_missing_fields"] == [
+        "setup_receipt." + name for name in missing
+    ]
+    assert result["assets_class_and_disk_verified"] == 2
+    assert result["sequence"]["binding_count"] == 1
+
+
+@pytest.mark.parametrize("field, wrong", [
+    ("target_sequence", "/Game/Other/LS_Different"),
+    ("target_namespace", "/Game/Other/Unexpected"),
+    ("status", "PARTIAL_SETUP_MUST_INSPECT"),
+    ("kind", "foreign.setup_receipt"),
+])
+def test_explicit_setup_identity_mismatch_never_passes_or_writes(tmp_path, field, wrong):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    setup = candidate / "setup.json"
+    data = json.loads(setup.read_text(encoding="utf-8"))
+    data[field] = wrong
+    _write(setup, data)
+    with pytest.raises(AUDIT.PersistenceAuditError, match="Evidence identity mismatch: setup_receipt." + field):
+        AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert not (candidate / "audit.json").exists()
+
+
+def test_transfer_plan_identity_mismatch_fails_with_field_name(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    _write(candidate / "transfer-plan.json", {
+        "sequence_asset_path": "/Game/Other/LS_Different",
+    })
+    with pytest.raises(AUDIT.PersistenceAuditError,
+                       match="Evidence identity mismatch: transfer_plan.sequence_asset_path"):
+        AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert not (candidate / "audit.json").exists()
+
+
+def test_complete_receipt_still_reports_complete_provenance(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    result = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert result["provenance_status"] == "COMPLETE"
+    assert result["provenance_missing_fields"] == []
+    assert result["status"] == "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
+
+
+def test_native_readback_is_independently_passed_on_legacy_receipts(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    setup = candidate / "setup.json"
+    data = json.loads(setup.read_text(encoding="utf-8"))
+    data.pop("target_sequence")
+    data.pop("target_namespace")
+    _write(setup, data)
+    report_file = candidate / "audit.json"
+    report = AUDIT.audit(jobfile, report_file, unreal_api=fake)
+    assert report["status"] == "STRUCTURAL_READBACK_INCOMPLETE"
+    assert report["native_structure_status"] == "PASS"
+    assert report["assets_class_and_disk_verified"] == 2
+    assert report["actors_unique_and_class_verified"] == 2
+    assert report["provenance_status"] == "INCOMPLETE_LEGACY_RECEIPT"
+    summary = AUDIT.summarize_report(report_file)
+    assert summary["native_structure_status"] == "PASS"
+    assert summary["assets_verified"] == 2
+    assert summary["actors_verified"] == 2
+    assert summary["provenance_status"] == "INCOMPLETE_LEGACY_RECEIPT"
+
+
+def test_native_readback_failures_not_hidden_by_missing_legacy_fields(tmp_path):
+    _root, jobfile, candidate, fake, _assets, actors = fixture(tmp_path)
+    setup = candidate / "setup.json"
+    data = json.loads(setup.read_text(encoding="utf-8"))
+    data.pop("target_sequence")
+    _write(setup, data)
+    actors.append(Actor("CSAI_CAM", "CineCameraActor"))
+    report_path = candidate / "audit.json"
+    report = AUDIT.audit(jobfile, report_path, unreal_api=fake)
+    assert report["status"] == "STRUCTURAL_READBACK_FAIL"
+    assert report["native_structure_status"] == "FAIL"
+    assert report["actors_unique_and_class_verified"] == 1
+    summary = AUDIT.summarize_report(report_path)
+    assert summary["actors_verified"] == 1
+    assert any("CSAI_CAM" in msg for msg in summary["native_structure_issues"])
+
+
+def test_summarize_existing_report_is_read_only(tmp_path, capsys):
+    root, _jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    output = candidate / "audit.json"
+    AUDIT.audit_latest(root, unreal_api=fake)
+    existing = next(candidate.glob("post-reopen-audit-*.json"))
+    data_before = existing.read_bytes()
+    summary = AUDIT.summarize_latest(root)
+    assert summary["native_structure_status"] == "PASS"
+    assert summary["assets_planned"] == 2
+    assert existing.read_bytes() == data_before
+    assert summary["fidelity_verified"] is False
+    assert "Assets verified: 2/2" in capsys.readouterr().out
+    assert not output.exists()
+
+
+def test_legacy_audit_json_from_previous_version_can_be_summarized(tmp_path):
+    _root, _jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    report_path = candidate / "audit.json"
+    AUDIT.audit(_jobfile, report_path, unreal_api=fake)
+    data = json.loads(report_path.read_text(encoding="utf-8"))
+    for field in ("native_structure_status", "native_structure_issues",
+                  "actors_unique_and_class_verified", "sequence_persisted",
+                  "sequence_enumeration_complete"):
+        data.pop(field, None)
+    _write(report_path, data)
+    summary = AUDIT.summarize_report(report_path)
+    assert summary["native_structure_status"] == "PASS"
+    assert summary["actors_verified"] == 2
+    assert summary["assets_verified"] == 2
+
+
+
+def test_distinct_editor_process_proves_independent_saved_native_readback(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    job = json.loads(jobfile.read_text(encoding="utf-8"))
+    job["generation_editor_pid"] = os.getpid() + 1
+    _write(jobfile, job)
+    report_path = candidate / "audit.json"
+    report = AUDIT.audit(jobfile, report_path, unreal_api=fake)
+    assert report["restart_verified"] is True
+    assert report["native_structure_status"] == "PASS"
+    assert report["generation_editor_pid"] != report["observed_editor_pid"]
+    assert report["status"] == "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS"
+    assert AUDIT.summarize_report(report_path)["restart_verified"] is True
+
+
+def test_same_editor_process_cannot_fake_reopen_evidence(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    job = json.loads(jobfile.read_text(encoding="utf-8"))
+    job["generation_editor_pid"] = os.getpid()
+    _write(jobfile, job)
+    report = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert report["restart_verified"] is False
+    assert report["status"] == "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED"
+
+
+def test_distinct_process_does_not_override_provenance_incomplete(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    job = json.loads(jobfile.read_text(encoding="utf-8"))
+    job["generation_editor_pid"] = os.getpid() + 1
+    _write(jobfile, job)
+    setup = candidate / "setup.json"
+    setup_data = json.loads(setup.read_text(encoding="utf-8"))
+    setup_data.pop("target_sequence")
+    _write(setup, setup_data)
+    report = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
+    assert report["restart_verified"] is False
+    assert report["status"] == "STRUCTURAL_READBACK_INCOMPLETE"
