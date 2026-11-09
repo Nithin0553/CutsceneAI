@@ -148,3 +148,46 @@ def test_unmatched_and_ambiguous_slots_preserve_worldgrid():
     assert _restore(component, [source, source])[0]["status"] == "NO_UNIQUE_SOURCE_MATERIAL_MATCH"
     assert _restore(component, [dict(source, slot_name="Other")])[0]["status"] == "NO_UNIQUE_SOURCE_MATERIAL_MATCH"
     assert component.assignments == []
+
+
+def test_static_mesh_source_material_matches_unreal_static_materials():
+    """StaticMesh.materials is not its native slot property in Unreal."""
+    class StaticMesh:
+        def get_editor_property(self, name):
+            if name == "materials":
+                raise AttributeError("StaticMesh has no materials property")
+            if name == "static_materials":
+                return [SimpleNamespace(get_editor_property=lambda p: "Body"
+                                        if p == "material_slot_name" else None)]
+            raise AttributeError(name)
+
+    class StaticComponent:
+        def __init__(self):
+            self.assigned = []
+        def get_editor_property(self, name):
+            if name == "static_mesh":
+                return StaticMesh()
+            raise AttributeError(name)
+        def get_material(self, index):
+            return FakeMaterial("/Engine/EngineMaterials/WorldGridMaterial")
+        def set_material(self, index, material):
+            self.assigned.append((index, material))
+
+    component = StaticComponent()
+    target_material = FakeMaterial("/Game/CutSceneAI/AutoTransfer/Materials/M_Body")
+    source = {"slot_name": "Body",
+              "target_material": "/Game/CutSceneAI/AutoTransfer/Materials/M_Body",
+              "source_material_sha256": "a" * 64}
+    class API:
+        SkeletalMeshComponent = "SkeletalMeshComponent"
+        StaticMeshComponent = "StaticMeshComponent"
+
+    actor = SimpleNamespace(
+        get_components_by_class=lambda cls:
+        [component] if cls == "StaticMeshComponent" else [])
+    rows = studio_material_restore.restore(
+        API, actor, [source], existing_assets={source["target_material"]: target_material}
+    )
+    assert component.assigned == [(0, target_material)]
+    assert rows[0]["status"] == "SOURCE_ALBEDO_ASSIGNED_RENDER_PARITY_UNVERIFIED"
+    assert rows[0]["source_material_sha256"] == source["source_material_sha256"]
