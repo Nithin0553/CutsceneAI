@@ -35,6 +35,93 @@ KNOWN_SOURCE_COMPONENTS = frozenset({
 })
 
 
+# A source snapshot is not an Unreal adapter or a behavior-equivalence proof.
+# These exact scanner contracts already exist in Unity's
+# CutSceneAIFeatureSurfaceScanner.CaptureComponent. The old census mistakenly
+# classified all seven Benchmark002 instances as unextracted.
+_PARTIAL_SCANNER_CONTRACTS = {
+    "UnityEngine.BoxCollider": "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE",
+    "UnityEngine.SphereCollider": "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE",
+    "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData":
+        "URP_CAMERA_PROPERTIES_PARTIAL",
+    "UnityEngine.Rendering.Universal.UniversalAdditionalLightData":
+        "URP_LIGHT_PROPERTIES_PARTIAL",
+    "UnityEngine.Timeline.SignalReceiver":
+        "SIGNAL_REACTIONS_INSPECTED_NO_TARGET_EVENT_BINDING",
+}
+
+
+def _finite_xyz(value: Any, names: tuple[str, ...]) -> bool:
+    """Reject missing or non-finite serialized vectors (never execute data)."""
+    import math
+
+    return (
+        isinstance(value, dict)
+        and all(type(value.get(name)) in (int, float)
+                and math.isfinite(value[name]) for name in names)
+    )
+
+
+def _partial_source_evidence(row: Mapping[str, Any]) -> bool:
+    """Recognize only a real, typed Unity source capture.
+
+    This allows a *source-census* gate to account for a partial authoring
+    snapshot while target conversion and runtime parity stay UNVERIFIED.
+    Unknown, malformed, legacy and truncated captures remain blocked.
+    """
+    native_type = str(row.get("component_type") or "")
+    required = _PARTIAL_SCANNER_CONTRACTS.get(native_type)
+    feature = row.get("feature")
+    if not required or not isinstance(feature, dict):
+        return False
+    if feature.get("extraction") != required:
+        return False
+    if not str(row.get("component_global_id") or "").strip():
+        return False
+    if feature.get("native_properties_truncated") is True:
+        return False
+    if native_type in {"UnityEngine.BoxCollider", "UnityEngine.SphereCollider"}:
+        if not (feature.get("has_geometry") is True
+                and feature.get("shape") == ("box" if native_type.endswith("BoxCollider") else "sphere")
+                and type(feature.get("enabled")) is bool
+                and type(feature.get("is_trigger")) is bool
+                and _finite_xyz(feature.get("world_center_m"), ("x", "y", "z"))
+                and _finite_xyz(feature.get("world_rotation_xyzw"), ("x", "y", "z", "w"))):
+            return False
+        if native_type.endswith("BoxCollider"):
+            size = feature.get("world_size_m")
+            return bool(_finite_xyz(size, ("x", "y", "z"))
+                        and all(size[axis] > 0 for axis in ("x", "y", "z"))
+                        and feature.get("collider_scale_policy") == "LOSSY_SCALE_NO_SHEAR_PROOF")
+        radius = feature.get("world_radius_m")
+        return bool(type(radius) in (int, float) and _finite_xyz(
+            {"r": radius}, ("r",)) and radius > 0
+            and feature.get("collider_scale_policy") == "UNITY_SPHERE_MAX_AXIS_LOSSY_SCALE")
+    if native_type.endswith("UniversalAdditionalCameraData"):
+        return bool(
+            feature.get("has_render_post_processing") is True
+            and type(feature.get("render_post_processing")) is bool
+            or feature.get("has_render_shadows") is True
+            and type(feature.get("render_shadows")) is bool
+            or isinstance(feature.get("native_properties"), list)
+            and bool(feature["native_properties"])
+        )
+    if native_type.endswith("UniversalAdditionalLightData"):
+        return bool(
+            feature.get("has_use_pipeline_settings") is True
+            and type(feature.get("use_pipeline_settings")) is bool
+            or isinstance(feature.get("native_properties"), list)
+            and bool(feature["native_properties"])
+        )
+    if native_type == "UnityEngine.Timeline.SignalReceiver":
+        reactions = feature.get("signal_reactions")
+        count = feature.get("signal_reaction_count")
+        return (type(count) is int and 0 <= count <= 256
+                and isinstance(reactions, list) and len(reactions) == count
+                and all(isinstance(item, str) and item for item in reactions))
+    return False
+
+
 def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[str, Any]:
     if csir.get("source", {}).get("engine") != "unity":
         raise SourceSurfaceGapError("Expected a Unity source CSIR.")
@@ -104,10 +191,14 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
                      else "SOURCE_OBJECT_IDENTITY_UNVERIFIED")
         elif is_member and native_type in {"UnityEngine.Transform", "UnityEngine.RectTransform"}:
             state = "SOURCE_OBJECT_TRANSFORM_IDENTIFIED"
-        elif native_type in KNOWN_SOURCE_COMPONENTS:
-            state = "SOURCE_COMPONENT_SEMANTIC_REQUIRES_TARGET_EVIDENCE"
         elif row.get("missing_script") is True:
             state = "MISSING_SOURCE_SCRIPT"
+        elif native_type in KNOWN_SOURCE_COMPONENTS:
+            state = "SOURCE_COMPONENT_SEMANTIC_REQUIRES_TARGET_EVIDENCE"
+        elif _partial_source_evidence(row):
+            # Source authoring state exists; target functionality is NOT
+            # equivalent merely because the component has been inventoried.
+            state = "SOURCE_COMPONENT_SNAPSHOT_PARTIAL_TARGET_UNVERIFIED"
         else:
             state = "NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED"
         # Duplicate component records on the same object are not dropped;
@@ -148,6 +239,10 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
             source_asset_count += 1
         else:
             extra_asset_types[str(row.get("native_type") or "UNKNOWN_NATIVE_ASSET")] += 1
+    partial_source = [
+        row for row in cases
+        if row["state"] == "SOURCE_COMPONENT_SNAPSHOT_PARTIAL_TARGET_UNVERIFIED"
+    ]
     unresolved = sum(count for state, count in totals.items()
                      if state in {
                          "NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED",
@@ -194,12 +289,15 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
         "other_project_asset_type_counts": dict(sorted(extra_asset_types.items())),
         "registered_native_type_count": len(source_surface.get("registered_types", [])),
         "unresolved_component_count": unresolved,
+        "source_snapshot_partial_count": len(partial_source),
+        "source_snapshot_partial_findings": partial_source,
         "cutscene_completeness_verified": False,
         "parity_verified": False,
         "limitations": [
             "Only loaded Unity scenes and currently loaded assemblies are indexed.",
             "Unreferenced project assets are not automatically cutscene dependencies.",
             "Known CED component types still require native target readback and behavior comparison.",
+            "Recorded URP, collider and signal source snapshots are partial authoring evidence, not converted Unreal behavior.",
             "A script on another GameObject can still drive a source object at runtime.",
         ],
     }
