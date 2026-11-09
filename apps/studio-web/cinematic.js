@@ -247,6 +247,34 @@
   function resultRow(name,value){
     return '<div class="result-row"><span>'+name+'</span><strong>'+esc(value)+'</strong></div>';
   }
+  function failureDetails(){
+    const j=state.job||{};
+    if(!terminal(j)||generated())return '';
+    const stage=j.failure_stage||j.execution_stage||'UNKNOWN_NATIVE_STAGE';
+    const reason=j.error||j.setup_error||
+      'No native error message was recorded. Open Unreal Editor Output Log and inspect the saved job JSON.';
+    const step=j.setup_failed_step;
+    const operation=step&&typeof step==='object'?
+      [step.phase,step.name||step.kind||step.path||step.level].filter(Boolean).join(' — '):
+      typeof step==='string'?step:'';
+    const partial=j.status==='PARTIAL_SETUP_MUST_INSPECT'||
+      j.setup_status==='PARTIAL_SETUP_MUST_INSPECT';
+    const recovery=partial?
+      'Unreal may already contain imported assets or newly created actors. Do not rerun this candidate. Inspect the staging level and import receipt, then create a fresh candidate after correcting the problem.':
+      j.setup_recovery||
+      'Inspect the Unreal Editor Output Log for this job, correct the reported issue, and start a new transfer using a fresh candidate. Do not overwrite any existing sequence.';
+    return '<section class="transfer-failure" role="alert" aria-label="Native transfer error">'+
+      '<h2>Transfer stopped before sequence generation</h2>'+
+      '<p><strong>Execution stage:</strong> '+esc(stage)+'</p>'+
+      '<p><strong>Native error:</strong> '+esc(reason)+'</p>'+
+      (j.setup_status?'<p><strong>Asset setup:</strong> '+esc(j.setup_status)+'</p>':'')+
+      (operation?'<p><strong>Failed operation:</strong> '+esc(operation)+'</p>':'')+
+      '<p class="failure-recovery"><strong>What to do next:</strong> '+esc(recovery)+'</p>'+
+      '<div class="failure-actions">'+button('Copy failure details','copy-failure',false,'secondary')+'</div>'+
+      '<p class="subnote">Job '+esc(j.job_id||'unknown')+
+      (j.created_at?' · Created '+esc(j.created_at):'')+
+      ' · This is an execution failure, not a CineTwin fidelity comparison.</p></section>';
+  }
   function results(){
     const j=state.job||{},v=state.verification||{},ok=generated(),candidate=state.candidate||{};
     const gate=state.releaseReadiness||{status:'INCOMPLETE',release_ready:false,incomplete:[]};
@@ -259,9 +287,11 @@
       resultRow('Assets Imported',imports)+resultRow('Bindings Created',bindings)+
       '<div class="result-row"><span>Transfer Report</span><button class="report-link" data-action="view-report">View Report</button></div>'+
       '<p class="subnote">'+esc(j.status||'Not started')+' — '+(ok?'generation succeeded; fidelity is not certified':'no success claim')+'</p></div>'+
-      '<div class="verification"><p>Native structure: '+esc(v.persistence?.native_structure||'Not verified')+'</p>'+
-      '<p>Persistence after reopen: '+esc(v.persistence?.restart_verified ?
-        'Verified in a different Unreal process' :
+      failureDetails()+
+      '<div class="verification"><p>Native structure: '+esc(ok?(v.persistence?.native_structure||'Not verified'):
+        'Not verified — sequence generation did not finish')+'</p>'+
+      '<p>Persistence after reopen: '+esc(!ok?'Not applicable until an editable sequence has been generated and saved':
+        v.persistence?.restart_verified?'Verified in a different Unreal process':
         'Not verified — reopen the saved map in a new Unreal Editor process')+'</p>'+
       '<p>CineTwin behavioral parity: '+(state.diagnosis?'Measured — not full fidelity':'Not verified')+'</p>'+
       '<p>Visual fidelity: '+esc(v.visual?.status||'Not verified')+'</p>'+
@@ -537,6 +567,31 @@
       return;
     }
     if(name==='view-report'){state.detailsOpen=true;render();$('.research')?.scrollIntoView({behavior:'smooth'});return;}
+    if(name==='copy-failure'){
+      const j=state.job||{},step=j.setup_failed_step;
+      const operation=step&&typeof step==='object'?
+        [step.phase,step.name||step.kind||step.path||step.level].filter(Boolean).join(' — '):
+        typeof step==='string'?step:'';
+      const report=[
+        'CutSceneAI Studio — Native transfer failure',
+        'Job: '+(j.job_id||'unknown'),
+        'Candidate: '+(j.candidate_id||'unknown'),
+        'Created: '+(j.created_at||'unknown'),
+        'Status: '+(j.status||'unknown'),
+        'Generation: '+(j.generation_status||'unknown'),
+        'Stage: '+(j.failure_stage||j.execution_stage||'unknown'),
+        'Cause: '+(j.error||j.setup_error||'No error recorded'),
+        'Asset setup: '+(j.setup_status||'not recorded'),
+        operation?'Failed operation: '+operation:'',
+        j.setup_recovery?'Recovery: '+j.setup_recovery:'',
+      ].filter(Boolean).join('\n');
+      try{
+        await navigator.clipboard.writeText(report);
+        state.info='Native failure details copied. Review for sensitive local paths before sharing.';
+        state.error='';
+      }catch{state.error='Could not copy the failure details. Read the error above or inspect the saved job JSON.';}
+      render();return;
+    }
     if(name==='copy-worker'){
       try{await navigator.clipboard.writeText($('#worker-command').textContent);
         state.info='Unreal Editor companion command copied.';}

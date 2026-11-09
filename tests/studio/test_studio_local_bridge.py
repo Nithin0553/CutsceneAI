@@ -491,3 +491,64 @@ def test_source_only_studio_candidate_uses_hierarchy_enabled_mapping_copy(tmp_pa
     assert observed["hierarchy"] is True
     assert result["engine_generation_executed"] is False
     assert Path(config["mapping"]).read_bytes() == original
+
+
+
+def test_failed_job_exposes_native_stage_and_exact_safe_setup_receipt(tmp_path):
+    work = tmp_path / "work"
+    candidate = work / "candidates" / "candidate_001"
+    candidate.mkdir(parents=True)
+    job_id = "d" * 32
+    receipt = candidate / ("automatic-setup-receipt-" + job_id + ".json")
+    receipt.write_text(json.dumps({
+        "kind": "cutsceneai.studio.automatic_setup_receipt",
+        "status": "PARTIAL_SETUP_MUST_INSPECT",
+        "failed_step": {"phase": "asset_import", "path": "/Game/Studio/CharacterA"},
+        "recovery": "Do not rerun; inspect imported assets.",
+        "error": {"type": "AutomaticSetupError", "message": "FBX import failed"},
+    }))
+    job = {
+        "job_id": job_id, "candidate_id": "candidate_001",
+        "candidate_dir": str(candidate), "created_at": "2026-11-09T17:00:00Z",
+        "status": "PARTIAL_SETUP_MUST_INSPECT",
+        "generation_status": "NOT_STARTED",
+        "failure_stage": "IMPORTING_ASSETS_AND_CREATING_ACTORS",
+        "error": "FBX import failed",
+        "setup_receipt_file": str(receipt),
+        "setup_status": "PARTIAL_SETUP_MUST_INSPECT",
+    }
+    bridge.atomic_json(work / "jobs" / (job_id + ".json"), job)
+    result = bridge.job_status(job_id, work)
+    assert result["error"] == "FBX import failed"
+    assert result["failure_stage"] == "IMPORTING_ASSETS_AND_CREATING_ACTORS"
+    assert result["created_at"] == "2026-11-09T17:00:00Z"
+    assert result["candidate_id"] == "candidate_001"
+    assert result["setup_failed_step"]["phase"] == "asset_import"
+    assert result["setup_recovery"].startswith("Do not rerun")
+    assert result["setup_error"] == "FBX import failed"
+    assert "traceback" not in result
+
+    # A forged receipt path cannot read arbitrary files outside the candidate.
+    external = tmp_path / "outside.json"
+    external.write_text(receipt.read_text())
+    job["setup_receipt_file"] = str(external)
+    bridge.atomic_json(work / "jobs" / (job_id + ".json"), job)
+    blocked = bridge.job_status(job_id, work)
+    assert blocked["error"] == "FBX import failed"
+    assert "setup_failed_step" not in blocked
+    assert "setup_recovery" not in blocked
+
+
+def test_old_failed_job_keeps_original_error_without_new_stage(tmp_path):
+    work = tmp_path / "work"
+    job_id = "e" * 32
+    bridge.atomic_json(work / "jobs" / (job_id + ".json"), {
+        "job_id": job_id,
+        "status": "BLOCKED_OR_FAILED",
+        "generation_status": "NOT_STARTED",
+        "error": "Target already exists; refusing to overwrite or rerun.",
+    })
+    report = bridge.job_status(job_id, work)
+    assert report["error"].startswith("Target already exists")
+    assert report["failure_stage"] is None
+    assert "setup_failed_step" not in report

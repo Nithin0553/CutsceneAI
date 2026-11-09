@@ -486,13 +486,38 @@ def job_status(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     if not job_path.is_file():
         raise ValueError('Job not found.')
     job = load_json(job_path)
-    return {key: job.get(key) for key in (
-        'job_id', 'status', 'generation_status', 'sequence_path', 'diagnostic_file',
+    result = {key: job.get(key) for key in (
+        'job_id', 'candidate_id', 'created_at', 'status', 'generation_status',
+        'sequence_path', 'diagnostic_file',
         'receipt_file', 'error', 'fidelity_verified', 'generated_sequence', 'setup_receipt_file', 'setup_status',
         'assets_imported_count', 'actors_created_count', 'bindings_created_count',
         'visual_audit_status', 'visual_audit_error', 'closed_loop_status',
         'closed_loop_report_file', 'closed_loop_error', 'repair_iterations',
-        'repair_changes', 'repair_status', 'repair_error', 'ai_agents_enabled')}
+        'repair_changes', 'repair_status', 'repair_error', 'ai_agents_enabled',
+        'execution_stage', 'failure_stage')}
+    # Read only the exact receipt belonging to this job's candidate.
+    # Expose the actionable failed operation without publishing a traceback
+    # or allowing a forged job path to read files outside Studio's workspace.
+    candidate_id = str(job.get('candidate_id') or '')
+    candidate_root = (folder / 'candidates').resolve()
+    candidate_dir = (candidate_root / candidate_id).resolve()
+    expected = candidate_dir / ('automatic-setup-receipt-' + job_id + '.json')
+    recorded = str(job.get('setup_receipt_file') or '')
+    if (candidate_id and candidate_dir.is_relative_to(candidate_root)
+            and candidate_dir == Path(str(job.get('candidate_dir') or '')).resolve()
+            and recorded and Path(recorded).resolve() == expected.resolve()
+            and expected.is_file() and expected.stat().st_size <= 1024 * 1024):
+        try:
+            setup = load_json(expected)
+            if setup.get('kind') == 'cutsceneai.studio.automatic_setup_receipt':
+                result['setup_failed_step'] = setup.get('failed_step')
+                result['setup_recovery'] = setup.get('recovery')
+                setup_error = setup.get('error')
+                if isinstance(setup_error, dict):
+                    result['setup_error'] = setup_error.get('message')
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return result
 
 
 def diagnostic_summary(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
