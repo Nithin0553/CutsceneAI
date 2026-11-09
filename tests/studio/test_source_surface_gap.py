@@ -215,3 +215,146 @@ def test_cli_strict_rejects_missing_project_provenance_even_if_components_known(
     record = json.loads(output.read_text())
     assert record["unresolved_component_count"] == 0
     assert record["project_identity_proven"] is False
+
+
+
+def _benchmark002_partial_component_rows():
+    """Mirrors source-side CaptureComponent contracts for the reported 7 types."""
+    base = {
+        "scene_path": "Assets/Scenes/S.unity",
+        "object_path": "S/Camera",
+        "global_object_id": "object-one",
+    }
+    vector = {"x": 0.0, "y": 0.0, "z": 0.0}
+    quaternion = {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+    snapshots = [
+        ("UnityEngine.SphereCollider", {
+            "extraction": "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE",
+            "shape": "sphere", "has_geometry": True,
+            "enabled": True, "is_trigger": False,
+            "world_center_m": vector, "world_rotation_xyzw": quaternion,
+            "world_radius_m": 0.5,
+            "collider_scale_policy": "UNITY_SPHERE_MAX_AXIS_LOSSY_SCALE",
+        }),
+        ("UnityEngine.BoxCollider", {
+            "extraction": "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE",
+            "shape": "box", "has_geometry": True,
+            "enabled": True, "is_trigger": False,
+            "world_center_m": vector, "world_rotation_xyzw": quaternion,
+            "world_size_m": {"x": 2.0, "y": 1.0, "z": 1.0},
+            "collider_scale_policy": "LOSSY_SCALE_NO_SHEAR_PROOF",
+        }),
+        *[("UnityEngine.Rendering.Universal.UniversalAdditionalCameraData", {
+            "extraction": "URP_CAMERA_PROPERTIES_PARTIAL",
+            "has_render_post_processing": True, "render_post_processing": True,
+            "native_properties": [{"path": "m_RenderPostProcessing",
+                                   "native_type": "bool", "bool_value": True}],
+        }) for _ in range(3)],
+        ("UnityEngine.Rendering.Universal.UniversalAdditionalLightData", {
+            "extraction": "URP_LIGHT_PROPERTIES_PARTIAL",
+            "has_use_pipeline_settings": True,
+            "use_pipeline_settings": True,
+        }),
+        ("UnityEngine.Timeline.SignalReceiver", {
+            "extraction": "SIGNAL_REACTIONS_INSPECTED_NO_TARGET_EVENT_BINDING",
+            "signal_reaction_count": 1,
+            "signal_reactions": ["GlobalObjectId_V1-1-EXACT:OnSignal"],
+        }),
+    ]
+    return [
+        {**base, "component_type": native_type,
+         "component_global_id": "source-component-" + str(index),
+         "feature": {**feature, "native_properties_truncated": False}}
+        for index, (native_type, feature) in enumerate(snapshots)
+    ]
+
+
+def test_benchmark002_seven_captured_component_types_are_not_unextracted():
+    csir, census = _fixtures()
+    census["loaded_scene_components"] = [
+        row for row in census["loaded_scene_components"]
+        if row["component_type"] in {"UnityEngine.Transform", "UnityEngine.Camera"}
+    ] + _benchmark002_partial_component_rows()
+    result = source_surface_gap.audit(csir, census)
+    assert result["source_scope_matched"] is True
+    assert result["unresolved_component_count"] == 0
+    assert result["source_snapshot_partial_count"] == 7
+    assert result["component_counts"][
+        "SOURCE_COMPONENT_SNAPSHOT_PARTIAL_TARGET_UNVERIFIED"
+    ] == 7
+    assert all(row["target_native_verified"] is False
+               and row["behavior_verified"] is False
+               for row in result["source_snapshot_partial_findings"])
+    assert result["parity_verified"] is False
+    assert result["cutscene_completeness_verified"] is False
+
+
+def test_partial_source_capture_must_have_correct_type_and_untruncated_evidence():
+    import copy
+
+    csir, census = _fixtures()
+    census["loaded_scene_components"] = [
+        row for row in census["loaded_scene_components"]
+        if row["component_type"] in {"UnityEngine.Transform", "UnityEngine.Camera"}
+    ]
+    original = _benchmark002_partial_component_rows()[0]
+    invalids = [
+        {**original, "feature": {}},
+        {**original, "component_global_id": ""},
+        {**original, "feature": {
+            **original["feature"], "native_properties_truncated": True,
+        }},
+        {**original, "feature": {
+            **original["feature"], "native_properties_truncated": None,
+        }},
+        {**original, "feature": {
+            **original["feature"], "shape": "unknown",
+        }},
+        {**original, "feature": {
+            **original["feature"], "world_radius_m": float("nan"),
+        }},
+        {**original, "feature": {
+            **original["feature"], "world_center_m": {"x": "bad", "y": 0, "z": 0},
+        }},
+        {**original, "component_type": "Vendor.CustomCollider"},
+    ]
+    for row in invalids:
+        invalid_census = copy.deepcopy(census)
+        invalid_census["loaded_scene_components"].append(row)
+        result = source_surface_gap.audit(csir, invalid_census)
+        assert result["unresolved_component_count"] == 1
+        assert result["source_snapshot_partial_count"] == 0
+        assert result["component_counts"][
+            "NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED"
+        ] == 1
+
+
+def test_malformed_signal_and_empty_urp_evidence_do_not_get_source_credit():
+    csir, census = _fixtures()
+    census["loaded_scene_components"] = [
+        row for row in census["loaded_scene_components"]
+        if row["component_type"] in {"UnityEngine.Transform", "UnityEngine.Camera"}
+    ]
+    for native_type, feature in [
+        ("UnityEngine.Timeline.SignalReceiver", {
+            "extraction": "SIGNAL_REACTIONS_INSPECTED_NO_TARGET_EVENT_BINDING",
+            "signal_reaction_count": 3,
+            "signal_reactions": ["only-one"],
+        }),
+        ("UnityEngine.Rendering.Universal.UniversalAdditionalCameraData", {
+            "extraction": "URP_CAMERA_PROPERTIES_PARTIAL",
+        }),
+        ("UnityEngine.Rendering.Universal.UniversalAdditionalLightData", {
+            "extraction": "URP_LIGHT_PROPERTIES_PARTIAL",
+        }),
+    ]:
+        surface = dict(census)
+        surface["loaded_scene_components"] = census["loaded_scene_components"] + [{
+            "scene_path": "Assets/Scenes/S.unity", "object_path": "S/Camera",
+            "component_type": native_type,
+            "component_global_id": "component-1",
+            "feature": {**feature, "native_properties_truncated": False},
+        }]
+        result = source_surface_gap.audit(csir, surface)
+        assert result["unresolved_component_count"] == 1
+        assert result["source_snapshot_partial_count"] == 0

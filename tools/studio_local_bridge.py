@@ -323,6 +323,7 @@ def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> 
             'mapping_copy': str(mapping_copy), 'sequence_path': new_sequence,
             'source_feature_surface_state': coverage.get('source_feature_surface_state', 'NOT_COLLECTED'),
             'source_unresolved_components': (coverage.get('source_feature_surface') or {}).get('unresolved_component_count'),
+            'source_snapshot_partial_count': (coverage.get('source_feature_surface') or {}).get('source_snapshot_partial_count', 0),
             'feature_dispatch_summary': {
                 'catalog_semantics': dispatch.get('catalog_semantic_count'),
                 'catalog_families': dispatch.get('catalog_family_count'),

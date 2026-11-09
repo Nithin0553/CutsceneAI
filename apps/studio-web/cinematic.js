@@ -137,6 +137,10 @@
       '<div class="fact">Planned imports <b>'+esc(c.automatic_setup?.planned_imports??'Unknown')+'</b></div>'+
       '<div class="fact">Planned actors <b>'+esc(c.automatic_setup?.planned_actors??'Unknown')+'</b></div>'+
       '<div class="fact">Unresolved source components <b>'+esc(c.source_unresolved_components??'Not assessed')+'</b></div>'+
+      ((c?.source_snapshot_partial_count||state.censusSelection?.source_snapshot_partial_count)?
+        '<div class="fact">Source-captured partial components <b>'+
+        esc(c?.source_snapshot_partial_count||state.censusSelection?.source_snapshot_partial_count)+'</b></div>'+
+        '<p class="subnote">These source components are recorded but full Unreal behavior remains unverified.</p>':'')+
       (c.automatic_setup?.blockers||[]).map(x=>'<p class="warning">'+esc(x)+'</p>').join('')+
       (c.automatic_setup?.warnings||[]).map(x=>'<p class="subnote">'+esc(x)+'</p>').join('')+
       (c.review_flags||[]).map(x=>'<p class="subnote">'+esc(x)+'</p>').join(''):'<p>Plan not prepared.</p>')+
@@ -187,6 +191,9 @@
       card('unreal',connection()?.target_project||state.folders.unreal,true)+'</div>'+
       (['RUNNING','QUEUED'].includes(j.status)?movement():'')+
       '<h2>'+esc(label)+'</h2>'+
+      (state.censusSelection?.source_snapshot_partial_count?
+        '<p class="subnote">'+esc(state.censusSelection.source_snapshot_partial_count)+
+        ' native source snapshots recorded; collision, URP and signal behavior remains Unreal-unverified. See Detailed report.</p>':'')+
       (phase==='WAITING_FOR_EDITOR'?'<div class="editor-instructions"><p>Open your backed-up Unreal project with the selected saved level. In Unreal Python Console, run the companion command once. Studio will then continue without a second transfer click.</p>'+
         '<pre id="worker-command">'+esc(command)+'</pre>'+button('Copy Unreal companion command','copy-worker',false,'secondary')+
         '<p class="subnote">'+esc(d.next_action||'Waiting for the editor')+'</p></div>':'')+
