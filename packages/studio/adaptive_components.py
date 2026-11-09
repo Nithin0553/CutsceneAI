@@ -17,7 +17,10 @@ import feature_dispatch
 
 SOURCE_CAMERA = "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData"
 SOURCE_LIGHT = "UnityEngine.Light"
-SOURCE_COLLIDERS = {"UnityEngine.BoxCollider", "UnityEngine.SphereCollider"}
+SOURCE_COLLIDERS = {
+    "UnityEngine.BoxCollider", "UnityEngine.SphereCollider", "UnityEngine.MeshCollider"
+}
+SOURCE_LOD_GROUP = "UnityEngine.LODGroup"
 SOURCE_RECEIVER = "UnityEngine.Timeline.SignalReceiver"
 
 
@@ -183,7 +186,8 @@ def adapt(
         if not isinstance(row, dict):
             continue
         native_type = str(row.get("component_type") or "")
-        if native_type not in {SOURCE_CAMERA, SOURCE_LIGHT, SOURCE_RECEIVER, *SOURCE_COLLIDERS,
+        if native_type not in {SOURCE_CAMERA, SOURCE_LIGHT, SOURCE_RECEIVER, SOURCE_LOD_GROUP,
+                               *SOURCE_COLLIDERS,
                                "UnityEngine.Rendering.Universal.UniversalAdditionalLightData"} and not any(
                                    r["source_component_type"] == native_type for r in
                                    mapping.get("component_property_mappings", [])
@@ -301,6 +305,30 @@ def adapt(
                 desc["status"] = "SOURCE_PROPERTY_EVIDENCE_REQUIRED"
             desc["unconverted_properties"].extend([
                 "shadow_filter", "shadow_bias", "shadow_resolution", "rendering_layers",
+            ])
+        elif native_type == "UnityEngine.MeshCollider":
+            desc["status"] = (
+                "MESH_COLLIDER_SOURCE_CAPTURED_NATIVE_ADAPTER_REQUIRED"
+                if feature.get("extraction") ==
+                "MESH_COLLIDER_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED"
+                else "SOURCE_COLLISION_MESH_IDENTITY_REQUIRED"
+            )
+            desc["unconverted_properties"].extend([
+                "unreal_collision_mesh", "mesh_collision_cooking",
+                "convexity_and_trigger_behavior", "physical_material",
+                "contact_and_overlap_events", "physics_engine_parity",
+            ])
+        elif native_type == SOURCE_LOD_GROUP:
+            desc["status"] = (
+                "LOD_GROUP_SOURCE_CAPTURED_NATIVE_ADAPTER_REQUIRED"
+                if feature.get("extraction") ==
+                "LOD_GROUP_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED"
+                else "SOURCE_LOD_RENDERER_GRAPH_REQUIRED"
+            )
+            desc["unconverted_properties"].extend([
+                "unreal_static_mesh_lod_chain", "screen_size_thresholds",
+                "cross_fade_semantics", "billboard_lods",
+                "lod_material_and_renderer_binding", "rendered_lod_parity",
             ])
         elif native_type in SOURCE_COLLIDERS:
             desc["status"] = ("COLLIDER_GEOMETRY_CAPTURED_NATIVE_ADAPTER_REQUIRED"
