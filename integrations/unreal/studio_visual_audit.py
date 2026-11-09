@@ -49,6 +49,7 @@ def _components(actor: Any, api: Any, type_name: str) -> list[Any]:
 
 def inspect_scene(
     api: Any, sequence: Any, planned_actor_labels: set[str],
+    *, source_directional_light_required: bool | None = None,
 ) -> dict[str, Any]:
     """All counts are native Unreal observations; unknown API => unknown, not PASS."""
     actor_subsystem = api.get_editor_subsystem(api.EditorActorSubsystem)
@@ -226,6 +227,11 @@ def inspect_scene(
         "sequencer_track_counts": track_counts,
         "observed_sequence_class": sequence_class,
         "visual_issues": issues,
+        # The Unity CSIR captures Light.type but not complete skybox/ambient
+        # settings. Missing target environment actors are observations, not
+        # proof that the source required their exact Unreal counterparts.
+        "source_directional_light_required": source_directional_light_required,
+        "source_sky_ambient_capture_available": False,
         "source_rendering_fidelity_verified": False,
         "skeletal_pose_fidelity_verified": False,
         "audio_fidelity_verified": False,
@@ -267,8 +273,22 @@ def audit_latest(workspace: Path | None = None, api: Any | None = None) -> dict[
     if plan.get("sequence_asset_path") != job.get("sequence_path"):
         raise VisualAuditError("Target sequence does not match the prepared source plan.")
     sequence = api.load_asset(str(job["sequence_path"]))
+    source_lights = [
+        ((entity.get("metadata") or {}).get("light") or {}).get("light_type")
+        for entity in _load(Path(str(job["csir"]))).get("entities", [])
+        if entity.get("ced_type") == "entity.light"
+    ]
+    # An explicit Directional source creates a source-backed requirement.
+    # Otherwise use "unknown" unless every source light type is captured.
+    required_directional = (
+        True if "Directional" in source_lights else
+        False if source_lights and all(
+            kind in {"Directional", "Point", "Spot"} for kind in source_lights
+        ) else None
+    )
     observation = inspect_scene(
-        api, sequence, set(str(v) for v in (plan.get("bindings") or {}).values())
+        api, sequence, set(str(v) for v in (plan.get("bindings") or {}).values()),
+        source_directional_light_required=required_directional,
     )
     report = {
         "kind": "cutsceneai.studio.visual_readback_audit",
