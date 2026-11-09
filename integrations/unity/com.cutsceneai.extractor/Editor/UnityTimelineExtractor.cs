@@ -470,6 +470,11 @@ namespace CutsceneAI.UnityExtractor
                         scene_path = gameObject.scene.path ?? string.Empty,
                         hierarchy_path = ExtractorUtilities.HierarchyPath(gameObject.transform),
                         active_self = gameObject.activeSelf,
+                        scene_renderable_root = gameObject.GetComponent<MeshRenderer>() != null ||
+                            gameObject.GetComponent<SkinnedMeshRenderer>() != null ||
+                            gameObject.GetComponent<LODGroup>() != null ||
+                            PrefabUtility.IsAnyPrefabInstanceRoot(gameObject),
+                        source_lod_group_root = gameObject.GetComponent<LODGroup>() != null,
                         local_transform = ExtractorUtilities.CaptureLocalTransform(gameObject.transform),
                         world_transform = ExtractorUtilities.CaptureWorldTransform(gameObject.transform),
                         camera = CreateCameraMetadata(camera),
