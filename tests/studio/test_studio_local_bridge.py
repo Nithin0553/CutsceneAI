@@ -624,7 +624,6 @@ def test_destination_readiness_blocks_older_editor_for_source_studio(tmp_path):
 
 def test_queue_refuses_stale_worker_before_job_or_asset_mutation(tmp_path, monkeypatch):
     import sys
-    from datetime import UTC, datetime
     from types import SimpleNamespace
 
     cfg = bridge.config_check(fixture_files(tmp_path))
