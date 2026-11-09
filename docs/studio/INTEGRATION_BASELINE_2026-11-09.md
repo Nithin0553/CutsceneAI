@@ -1,6 +1,6 @@
 # CutSceneAI Studio — integration baseline (2026-11-09)
 
-**Status:** Code consolidation candidate; NOT a native fidelity certification or general release.
+**Status:** Code integration reviewed in GitHub CI; the user reported PASS for the fresh Benchmark002 Unreal reopen/transfer verification. This is NOT a claim of general source/target fidelity or product release.
 **Canonical review branch:** `feature/studio-consolidated-integration-20261109`
 **Base:** `main` at `2f4507e94b390a8b167fd58559e659318a800b52`.
 **Integrated implementation source:** `fix/studio-static-mesh-material-slots-v0.1` at `c0c52020f6af4eaaa37a3e85dae5f34982fafbb6` (PR #111), itself based on PR #110.
@@ -62,3 +62,11 @@ Refer to `docs/studio/ISSUE_93_INTEGRATED_SMOKE_TEST.md`, `docs/studio/RELEASE_A
 ## Next engineering issue once integration is accepted
 
 Target #94 and #97 using exact source/target material and asset evidence, then #96 and #98 using measured walk/wave, camera, transforms, hierarchy and pose parity. Record each defect as source evidence → failing native adapter/readback → test and staged patch → independent engine re-test, without inventing semantic equivalence for missing custom features.
+
+## November 9 user-confirmed Windows editor acceptance
+
+The user reported **"Verification passed"** after the requested fresh Benchmark002 transfer and reopen checks on the consolidated Studio branch, including source material assignments to characters and props, editable sequence persistence after reopening, and review of CineTwin comparisons. This is a *user-reported* editor acceptance checkpoint. No engine receipts, source/target time-series metrics, or exact failed/passed CineTwin domain counts were provided in this GitHub record; do not manufacture them or equate this with universal parity.
+
+Current GitHub push and PR CI for source commit `11e413ac44b120086f20cd789e561912506e1b53` passed: [push](https://github.com/Nithin0553/CutsceneAI/actions/runs/42693688035), [PR](https://github.com/Nithin0553/CutsceneAI/actions/runs/42693696719). Subsequent preservation-only documentation edits require their own CI checks.
+
+Integration Issue #93 concerns *working consolidated source, safe engine handoff and launch*, and may close after final merge plus user acceptance; #94–#101 remain open for measured fidelity, generality, autonomous repairs and release. Capture actual CineTwin measurements before making paper-quality quantitative claims.
