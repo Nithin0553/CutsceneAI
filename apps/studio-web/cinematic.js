@@ -493,6 +493,17 @@
       if(name==='projects'&&!state.discovery&&state.folders.unity)try{await scan();}catch{}
       render();return;
     }
+    if(name==='refresh-exports'){
+      if(state.busy)return;
+      state.busy=true;render();
+      try{
+        await scan();
+        state.info='Export list refreshed. Confirm your CSIR and Source Census selections.';
+        state.error='';
+      }catch(e){state.error=e.message;}
+      finally{state.busy=false;render();}
+      return;
+    }
     if(name==='account'){state.info='Account management is not implemented in this local Studio build.';render();return;}
     if(name==='best-effort'){
       if(!state.censusIssue || !state.censusSelection ||
@@ -526,6 +537,7 @@
           state.folders[kind]=choice.path;
           if(kind==='unreal')state.unrealProject='';
           state.discovery=null;state.csir='';state.level='';
+          state.censusOptions=[];state.censusPath='';state.censusSelection=null;
           await scan();state.error='';
         }
       }catch(e){state.error=e.message;}finally{state.busy=false;render();}return;
@@ -546,7 +558,17 @@
     if(n==='source-rights'){state.sourceRights=e.target.checked;render();return;}
     if(n==='allow-partial'){state.allowPartial=e.target.checked;render();return;}
     if(n==='ai-agents'){state.aiAgentsEnabled=e.target.checked;render();return;}
-    if(n==='csir'){state.csir=v;render();return;}
+    if(n==='csir'){
+      state.csir=v;state.censusOptions=[];state.censusPath='';state.censusSelection=null;
+      render();return;
+    }
+    if(n==='census'){
+      const selected=state.censusOptions.find(x=>x.path===v&&
+        x.project_identity_proven&&x.source_scope_matched&&x.state!=='INVALID');
+      state.censusSelection=selected||null;
+      state.censusPath=selected?selected.path:'';
+      state.censusIssue=false;render();return;
+    }
     if(n==='level'){state.level=v;render();return;}
     if(['unity-project','unreal-project-root','unreal-project-file'].includes(n)){
       if(n==='unity-project')state.folders.unity=v;
