@@ -24,6 +24,13 @@ MODULES = (
     ("adaptive_components", "packages/studio"),
     ("transfer_backend", "packages/studio"),
     ("prepared_transfer", "packages/studio"),
+    # The automatic asset manifest is created by the Studio host Python
+    # process, then re-verified by Unreal's long-lived Python process.
+    # A stale cached asset inspector changes its actor/import plan even when
+    # the Unity source and immutable candidate are unchanged.
+    ("studio_source_identity", "tools"),
+    ("studio_source_materials", "tools"),
+    ("studio_auto_assets", "tools"),
 )
 
 
@@ -41,9 +48,12 @@ def synchronize() -> dict[str, str]:
     # transfer_backend and prepared_transfer also depend on these core
     # module roots. Preserve their known directory order and avoid importing
     # unrelated plugins from a different checkout.
+    # sys.path.insert(0, ...) reverses this order. Keep the generic tools/
+    # directory BELOW packages/studio; tools/transfer_backend.py is a
+    # similarly named entrypoint, NOT the trusted Python planner module.
     for relative in (
-        "packages/learning", "packages/cinetwin", "integrations/unreal",
-        "packages/studio",
+        "tools", "packages/learning", "packages/cinetwin",
+        "integrations/unreal", "packages/studio",
     ):
         path = str(ROOT / relative)
         if path in sys.path:

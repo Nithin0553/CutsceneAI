@@ -338,3 +338,84 @@ def test_mp3_is_planned_directly_as_soundwave(tmp_path):
     assert any(x['kind']=='SoundWave' and x['source_file']==str(sound.resolve())
                for x in result['imports'])
     assert not any('FFmpeg' in warning for warning in result['warnings'])
+
+
+
+def test_manifest_pins_source_asset_inspector_modules(tmp_path):
+    root, files = create(tmp_path)
+    ready = auto.inspect(*files, root, "Assets/Benchmark002",
+                         "/Game/CutSceneAI/AutoTransfer/T_ABCD")
+    assert ready["ready"]
+    for key in ("inspector_code_sha256", "identity_adapter_sha256",
+                "material_adapter_sha256"):
+        assert len(ready[key]) == 64
+        assert all(char in "0123456789abcdef" for char in ready[key])
+    target = tmp_path / "manifest.json"
+    target.write_text(json.dumps(ready))
+    assert auto.verify(target, *files) == ready
+
+
+def test_manifest_reports_which_safe_source_changed(tmp_path):
+    root, files = create(tmp_path)
+    original = auto.inspect(*files, root, "Assets/Benchmark002",
+                            "/Game/CutSceneAI/AutoTransfer/T_ABCD")
+    target = tmp_path / "manifest.json"
+    target.write_text(json.dumps(original))
+    (root / "Assets/Benchmark002/Animations/Walking.fbx").write_bytes(
+        b"original-animation-file-was-modified"
+    )
+    with pytest.raises(auto.AutoAssetError,
+                       match="Source asset contents changed.*never overwrite"):
+        auto.verify(target, *files)
+
+
+def test_manifest_reports_stale_source_adapter_without_bypassing_guard(tmp_path):
+    root, files = create(tmp_path)
+    original = auto.inspect(*files, root, "Assets/Benchmark002",
+                            "/Game/CutSceneAI/AutoTransfer/T_ABCD")
+    target = tmp_path / "manifest.json"
+    corrupted = dict(original, inspector_code_sha256="f" * 64)
+    target.write_text(json.dumps(corrupted))
+    with pytest.raises(auto.AutoAssetError,
+                       match="automatic asset inspector code changed"):
+        auto.verify(target, *files)
+    assert json.loads(target.read_text()) == corrupted, "immutable manifest overwritten"
+
+
+def test_manifest_identifies_unrelated_code_or_source_planning_drift(tmp_path):
+    root, files = create(tmp_path)
+    original = auto.inspect(*files, root, "Assets/Benchmark002",
+                            "/Game/CutSceneAI/AutoTransfer/T_ABCD")
+    target = tmp_path / "manifest.json"
+    stale = dict(original, actors=[{"name": "old-world-light",
+                                   "kind": "entity.light",
+                                   "label": "CSAI_OldLight"}])
+    target.write_text(json.dumps(stale))
+    with pytest.raises(auto.AutoAssetError, match="planning changed at actors"):
+        auto.verify(target, *files)
+
+
+def test_manifest_accepts_same_assets_across_fresh_python_process(tmp_path):
+    import subprocess
+
+    root, files = create(tmp_path)
+    original = auto.inspect(*files, root, "Assets/Benchmark002",
+                            "/Game/CutSceneAI/AutoTransfer/T_ABCD")
+    target = tmp_path / "manifest.json"
+    target.write_text(json.dumps(original))
+    code = """
+import sys
+from pathlib import Path
+sys.path.insert(0, {tools!r})
+import studio_auto_assets
+studio_auto_assets.verify({manifest!r}, {csir!r}, {mapping!r}, {plan!r})
+print('MATCHED')
+""".format(
+        tools=str(Path(__file__).resolve().parents[2] / "tools"),
+        manifest=str(target), csir=str(files[0]), mapping=str(files[1]),
+        plan=str(files[2]),
+    )
+    result = subprocess.run([sys.executable, "-c", code],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "MATCHED" in result.stdout

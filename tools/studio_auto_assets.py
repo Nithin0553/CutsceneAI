@@ -419,6 +419,11 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             'source_project':str(root),'source_scope':scope,'target_folder':target_folder,
             'source_csir_sha256':digest(csir_path),'mapping_sha256':digest(mapping_path),
             'transfer_plan_sha256':digest(plan_path),
+            # Bind the prepared candidate to the exact staging adapter code.
+            # Neither Unity data nor a newer adapter may be swapped in later.
+            'inspector_code_sha256':digest(Path(__file__).resolve()),
+            'identity_adapter_sha256':digest(Path(source_identity.__file__).resolve()),
+            'material_adapter_sha256':digest(Path(studio_source_materials.__file__).resolve()),
             'actors':actors,'imports':imports,'asset_resolutions':asset_resolutions,
             'fbx_embedded_material_import_requested': import_fbx_materials,
             'deduplicated_textures':deduplicated_textures,
@@ -431,11 +436,59 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             'scope_coverage':'SUPPORTED_ASSETS_ONLY','fidelity_verified':False}
 
 
+def _mismatch_reason(expected, current):
+    """Locate the failed evidence contract without rewriting the old plan."""
+    fingerprints = (
+        ('source_csir_sha256', 'Unity CSIR source export'),
+        ('mapping_sha256', 'prepared target mapping'),
+        ('transfer_plan_sha256', 'immutable transfer plan'),
+    )
+    for field, title in fingerprints:
+        if expected.get(field) != current.get(field):
+            return title + ' changed since Studio prepared this candidate.'
+    adapters = (
+        ('inspector_code_sha256', 'automatic asset inspector'),
+        ('identity_adapter_sha256', 'Unity source identity resolver'),
+        ('material_adapter_sha256', 'source material resolver'),
+    )
+    for field, title in adapters:
+        if expected.get(field) != current.get(field):
+            return title + ' code changed between preparation and Unreal verification.'
+    before = {
+        str(row.get('target_asset_path')): row
+        for row in expected.get('imports', []) if isinstance(row, dict)
+    }
+    after = {
+        str(row.get('target_asset_path')): row
+        for row in current.get('imports', []) if isinstance(row, dict)
+    }
+    for path in sorted(set(before) | set(after)):
+        old, new = before.get(path), after.get(path)
+        if old is None or new is None:
+            return 'Required source asset resolution changed for ' + path + '.'
+        if old.get('source_file') != new.get('source_file'):
+            return 'Source asset identity changed for ' + path + '.'
+        if old.get('source_sha256') != new.get('source_sha256'):
+            return 'Source asset contents changed for ' + path + '.'
+    for field in sorted(set(expected) | set(current)):
+        if expected.get(field) != current.get(field):
+            return ('Source or native setup planning changed at ' + field +
+                    '; confirm the source project and Studio/Unreal checkout.')
+    return 'Unexpected manifest mismatch without an identifiable field.'
+
+
 def verify(manifest, csir_path, mapping_path, plan_path):
-    doc=_read(manifest)
-    if doc.get('kind')!='cutsceneai.studio.automatic_setup_plan':
+    doc = _read(manifest)
+    if doc.get('kind') != 'cutsceneai.studio.automatic_setup_plan':
         raise AutoAssetError('Unexpected setup plan.')
-    regenerated=inspect(csir_path,mapping_path,plan_path,doc['source_project'],doc['source_scope'],doc['target_folder'])
-    if doc!=regenerated:
-        raise AutoAssetError('Source assets or prepared plan changed; regenerate setup manifest.')
+    regenerated = inspect(csir_path, mapping_path, plan_path,
+                          doc['source_project'], doc['source_scope'],
+                          doc['target_folder'])
+    if doc != regenerated:
+        raise AutoAssetError(
+            _mismatch_reason(doc, regenerated) +
+            ' No Unreal changes were approved. Check the Unity source files, '
+            'restart the Unreal companion from this checkout, and prepare a NEW '
+            'candidate; never overwrite the previous candidate.'
+        )
     return doc
