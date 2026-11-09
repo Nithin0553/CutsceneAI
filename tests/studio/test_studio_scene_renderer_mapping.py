@@ -4,14 +4,14 @@ Source identity must come from the same Unity scene and a uniquely evidenced
 FBX. LOD child meshes, duplicate names, unrelated levels and primitives are
 never guessed into target actors.
 """
-from pathlib import Path
 import json
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-import studio_project_discovery as discovery
 import studio_auto_assets as auto_assets
+import studio_project_discovery as discovery
 from test_studio_auto_assets import create
 
 SCENE = "Assets/CutSceneAI/Benchmark002/Scenes/Benchmark002.unity"
