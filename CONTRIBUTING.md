@@ -5,9 +5,9 @@ CutSceneAI is research software with frozen experimental evidence and a currentl
 ## Before changing code
 
 1. Read [Repository Guide](docs/REPOSITORY_GUIDE.md), [Issues and Milestones](docs/ISSUES_AND_MILESTONES.md), and the relevant module README.
-2. Select the **correct base branch**. `main` is stable but does not yet contain draft PRs #49–#52. For changes depending on transfer-backend code, branch from `feature/transfer-backend-best-effort-v0.1`; never duplicate an earlier branch's changes in a new PR against `main`.
+2. **Audit the live issues, open PRs and branch ancestry before every fix.** For Studio development, select the current integrated development base (as of Nov 9, 2026, PR #102 on `integrate/studio-issue-93`), not the older `main` or experimental transfer-backend branch. Do not overwrite newer CED/engine code by copying older PR files. Read the [mandatory Studio triage policy](docs/studio/ISSUE_PR_TRIAGE_POLICY.md) and verify the live GitHub state each time.
 3. Use a new `feature/`, `fix/`, or `chore/` branch, scoped to one concern.
-4. Before code changes, identify the corresponding tests and affected engine boundary.
+4. Before code changes, identify the corresponding tests, affected engine boundary, existing issue/PR and the evidence that the proposed correction will address the reported problem.
 
 ## Local checks
 
@@ -42,3 +42,12 @@ CI performs Python tests, Ruff on tests, and repo-hygiene checks. Python mocks/s
 ## Research policy
 
 Failures, incomplete measurements and unsupported behaviors are valid findings. Never fabricate PASS results, assert arbitrary-cutscene support from synthetic tests, or silently replace source data to improve reported parity.
+
+## Issue and pull-request completion
+
+Before closing any issue or PR, verify its exact acceptance criteria and the
+required Python/UI **and real-editor** evidence. Merge only completed,
+nonconflicting PRs into their intended base; leave broader fidelity and
+release issues open until independently measured acceptance. Keep historical
+findings and linked receipts. Do not bulk-close active stacked PRs or delete
+branches just to reduce the issue count.
