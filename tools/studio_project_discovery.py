@@ -260,6 +260,68 @@ def _source_mapping(csir: dict, csir_bytes: bytes, project: str, level: str) -> 
     for eid, e in entities.items():
         if e.get('ced_type') == 'entity.prop' and str(e.get('parent_entity_id')) in used_ids:
             used_ids.add(eid)
+    # Timeline tracks describe changes over time, not the static scenery
+    # visible behind those tracks. The Unity exporter also captures rendered
+    # objects from the *same scene*; include only provenance-marked prefab,
+    # MeshRenderer or LODGroup roots with one exact, importable source FBX.
+    # Unsupported native primitives, multi-file LOD groups and opaque assets
+    # must remain unmapped rather than generating blank "successful" props.
+    snapshot = csir.get('source_snapshot') or {}
+    scene_path = str(snapshot.get('director_scene_path') or '')
+    if scene_path:
+        source_entities = list(entities.values())
+        # Names are currently the canonical CSIR->Unreal mapping key. Do not
+        # silently merge two different source objects with the same name.
+        name_counts = {}
+        for item in source_entities:
+            name = str(item.get('name') or '')
+            name_counts[name] = name_counts.get(name, 0) + 1
+
+        def parents_of(entity_id):
+            seen = {entity_id}
+            current = str(entities[entity_id].get('parent_entity_id') or '')
+            while current and current in entities and current not in seen:
+                yield current
+                seen.add(current)
+                current = str(entities[current].get('parent_entity_id') or '')
+
+        ordered = sorted(
+            source_entities,
+            key=lambda e: (str((e.get('metadata') or {}).get('hierarchy_path') or '').count('/'),
+                           str(e.get('entity_id') or ''))
+        )
+        for entity in ordered:
+            entity_id = str(entity.get('entity_id') or '')
+            metadata = entity.get('metadata') or {}
+            if (entity_id in used_ids or entity.get('ced_type') != 'entity.prop'
+                    or metadata.get('scene_path') != scene_path
+                    or metadata.get('scene_renderable_root') is not True
+                    or metadata.get('active_self') is False):
+                continue
+            ancestors = list(parents_of(entity_id))
+            if (any(parent in used_ids for parent in ancestors)
+                    or any((entities[parent].get('metadata') or {}).get('source_lod_group_root') is True
+                           for parent in ancestors)):
+                # In particular, never spawn LOD0 and LOD1 separately.
+                continue
+            paths = {
+                str(row.get('asset_path') or '').replace('\\', '/')
+                for row in metadata.get('source_model_assets') or []
+                if isinstance(row, dict)
+            }
+            if len(paths) != 1:
+                continue
+            source_asset = next(iter(paths))
+            parts = source_asset.split('/')
+            if (not source_asset.startswith('Assets/')
+                    or '..' in parts or '.' in parts
+                    or not source_asset.lower().endswith('.fbx')):
+                continue
+            name = str(entity.get('name') or '')
+            if not name or name_counts.get(name) != 1:
+                continue
+            used_ids.add(entity_id)
+
     selected = [entities[eid] for eid in sorted(used_ids)]
     names = [str(x.get('name') or '') for x in selected]
     if not selected or any(not x for x in names) or len(names) != len(set(names)):
