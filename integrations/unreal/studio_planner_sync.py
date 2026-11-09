@@ -24,6 +24,13 @@ MODULES = (
     ("adaptive_components", "packages/studio"),
     ("transfer_backend", "packages/studio"),
     ("prepared_transfer", "packages/studio"),
+    # The automatic asset manifest is created by the Studio host Python
+    # process, then re-verified by Unreal's long-lived Python process.
+    # A stale cached asset inspector changes its actor/import plan even when
+    # the Unity source and immutable candidate are unchanged.
+    ("studio_source_identity", "tools"),
+    ("studio_source_materials", "tools"),
+    ("studio_auto_assets", "tools"),
 )
 
 
@@ -43,7 +50,7 @@ def synchronize() -> dict[str, str]:
     # unrelated plugins from a different checkout.
     for relative in (
         "packages/learning", "packages/cinetwin", "integrations/unreal",
-        "packages/studio",
+        "packages/studio", "tools",
     ):
         path = str(ROOT / relative)
         if path in sys.path:
