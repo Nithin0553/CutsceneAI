@@ -4,8 +4,10 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const src = fs.readFileSync('apps/studio-web/cinematic.js', 'utf8');
+const css = fs.readFileSync('apps/studio-web/cinematic.css', 'utf8');
 
-function boot({editorReady = true, censusUnresolved = false, multiSources = false} = {}) {
+function boot({editorReady = true, censusUnresolved = false, multiSources = false,
+  restoredJob = ''} = {}) {
   const listeners = {}, calls = [], requests = [];
   let html = '', writes = 0;
   const app = {
@@ -28,6 +30,14 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
   let availableCensuses = true;
   const level = '/Game/CutSceneAI/L_Trial01';
   const file = unreal + '/CutSceneAI.uproject';
+  if(restoredJob) {
+    connected={unity_project:unity,target_project:file,level_path:level,
+      csir,scene_name:'Benchmark002',source_rights_confirmed:true};
+    currentJob={job_id:'a'.repeat(32),status:restoredJob==='running'?'RUNNING':
+      'GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED',
+      generation_status:restoredJob==='running'?'NOT_STARTED':'GENERATED_UNVERIFIED'};
+    done=restoredJob==='finished';
+  }
   const fake = {
     document: {querySelector(sel) {
       if (sel === '#app') return app;
@@ -273,11 +283,70 @@ async function testMissingSelectedCensusFailsClosed() {
   assert.match(x.app.innerHTML,/Selected Source Census is missing/);
 }
 
+async function testSelectionLayoutContract() {
+  // Prevent recurrence of screenshot regression: long copy and the refresh
+  // button must never share a shrinking flex row with three selectors.
+  assert.match(css,/\.projects-view \.project-choices\s*\{\s*display:\s*grid/);
+  assert.match(css,/grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css,/\.projects-view \.source-census-panel\s*\{/);
+  assert.match(css,/\.projects-view \.export-refresh-row\s*\{/);
+  assert.match(css,/@media \(max-width:\s*680px\)/);
+  const x=boot();
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('source-rights',null,true);
+  await x.click('connect');
+  const html=x.app.innerHTML;
+  assert.match(html,/class="project-choices"/);
+  assert.match(html,/class="source-census-panel"/);
+  assert.match(html,/class="export-refresh-row"/);
+  assert.match(html,/class="choice"><span>Unity CSIR Export/);
+  assert.match(html,/class="choice"><span>Unreal Destination Level/);
+  assert.match(html,/class="choice"><span>Unity Source Census/);
+  assert.match(html,/Refresh CSIR &amp; Census exports/);
+}
+
+async function testStartupAlwaysHomeWithSavedResults() {
+  const x=boot({restoredJob:'finished'});
+  await x.pause();
+  await x.pause();
+  assert.match(x.app.innerHTML,/class="landing"/);
+  assert.match(x.app.innerHTML,/Start Transfer/);
+  assert.match(x.app.innerHTML,/View Previous Transfer Report/);
+  assert.doesNotMatch(x.app.innerHTML,/Editable Sequence Generated/);
+  await x.poll();
+  assert.match(x.app.innerHTML,/class="landing"/,
+    'polling a completed job must not redirect Home to Results');
+  await x.click('results');
+  assert.match(x.app.innerHTML,/Editable Sequence Generated/);
+  await x.click('home');
+  assert.match(x.app.innerHTML,/class="landing"/);
+  await x.click('projects');
+  assert.match(x.app.innerHTML,/Reconnect for a fresh transfer/);
+}
+
+async function testStartupHomeWithRunningJobCanResume() {
+  const x=boot({restoredJob:'running'});
+  await x.pause();
+  await x.pause();
+  assert.match(x.app.innerHTML,/class="landing"/);
+  assert.match(x.app.innerHTML,/View Active Transfer/);
+  await x.click('resume-transfer');
+  assert.match(x.app.innerHTML,/class="transfer-view"/);
+  await x.click('home');
+  assert.match(x.app.innerHTML,/class="landing"/);
+}
+
 (async()=>{
+  await testSelectionLayoutContract();
+  await testStartupAlwaysHomeWithSavedResults();
+  await testStartupHomeWithRunningJob();
   await testOneClick();
   await testOfflineDoesNotExecute();
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
   await testMissingSelectedCensusFailsClosed();
-  console.log('Cinematic UI backend contract: 5 integration paths and explicit CSIR/Census selection passed.');
+  console.log('Cinematic UI backend contract: 8 scenarios including responsive selectors and Home on restart passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
