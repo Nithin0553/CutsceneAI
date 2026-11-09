@@ -240,7 +240,30 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
         elif kind not in ('entity.camera','entity.light','entity.prop'):
             blockers.append('Unsupported mapped scene actor '+name+' ('+kind+').')
             continue
-        actors.append({'name':name, 'label':str(label), 'kind':kind})
+        actor_spec = {'name':name, 'label':str(label), 'kind':kind}
+        if kind == 'entity.light':
+            # The Unity exporter already includes Light.type in CSIR. Always
+            # keep that source identity; a PointLight cannot stand in for a
+            # source DirectionalLight. Unsupported kinds must not silently
+            # acquire the wrong lighting semantics.
+            light = (entity.get('metadata') or {}).get('light') or {}
+            source_type = str(light.get('light_type') or '').strip()
+            native_classes = {
+                'Directional': 'DirectionalLight',
+                'Point': 'PointLight',
+                'Spot': 'SpotLight',
+            }
+            if source_type and source_type not in native_classes:
+                blockers.append('Unsupported Unity light type for '+name+': '+
+                                source_type+'; no Unreal light class assumed.')
+            elif source_type:
+                actor_spec['source_light_type'] = source_type
+                actor_spec['target_light_class'] = native_classes[source_type]
+            else:
+                warnings.append('Unity light '+name+
+                                ' has no captured source type; PointLight is a legacy '
+                                'placeholder, not proven source lighting parity. Re-export.')
+        actors.append(actor_spec)
         if kind == 'entity.prop':
             evidence = _resolve_model(files, name, entity, root)
             asset_resolutions.append({'source': name, 'kind': 'prop_mesh',
