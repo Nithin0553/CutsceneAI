@@ -585,7 +585,8 @@ def test_unreal_companion_handshake_rejects_old_cached_or_foreign_worker(tmp_pat
         ({'worker_source_sha256': '0' * 64}, 'cached an outdated'),
         ({'checkout_root': str(tmp_path / 'OtherCheckout')}, 'different'),
         ({'worker_source_sha256': None}, 'cached an outdated'),
-        ({'checkout_root': None}, 'different'),
+        ({'checkout_root': None}, 'valid'),
+        ({'checkout_root': '.'}, 'absolute'),
     ]:
         worker = {
             'worker_version': good['worker'],
