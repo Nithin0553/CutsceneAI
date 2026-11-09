@@ -324,3 +324,43 @@ def test_known_captured_urp_component_is_source_accounted_but_still_unverified(t
             "source_feature_surface_path": str(census_file),
             "require_complete_source_features": True,
         })
+
+
+
+def test_ui_shows_generation_readback_without_fake_editor_restart(tmp_path):
+    workspace = tmp_path / "runs"
+    job_id = "a" * 32
+    candidate = workspace / "candidates" / "candidateA"
+    candidate.mkdir(parents=True)
+    (candidate / ("generation-readback-audit-" + job_id + ".json")).write_text(
+        json.dumps({
+            "kind": "cutsceneai.studio.persistence_audit",
+            "status": "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED",
+            "native_structure_status": "PASS",
+            "assets_class_and_disk_verified": 11, "asset_count": 11,
+            "actors_unique_and_class_verified": 10, "actor_count": 10,
+            "restart_verified": False,
+        })
+    )
+    result = feat.verification(workspace, {"job_id": job_id},
+                               {"job_id": job_id, "candidate_dir": str(candidate)})
+    assert result["persistence"]["native_structure"] == "PASS"
+    assert result["persistence"]["readback_phase"] == "GENERATION_EDITOR"
+    assert result["persistence"]["restart_verified"] is False
+    assert result["fidelity_verified"] is False
+
+    # Once a real post-reopen audit exists, it takes priority over first-pass
+    # generation readback and can prove a distinct editor process.
+    (candidate / ("post-reopen-audit-" + job_id + ".json")).write_text(
+        json.dumps({
+            "kind": "cutsceneai.studio.persistence_audit",
+            "status": "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS",
+            "native_structure_status": "PASS",
+            "restart_verified": True,
+        })
+    )
+    verified = feat.verification(workspace, {"job_id": job_id},
+                                 {"job_id": job_id, "candidate_dir": str(candidate)})
+    assert verified["persistence"]["readback_phase"] == "POST_REOPEN"
+    assert verified["persistence"]["restart_verified"] is True
+    assert verified["fidelity_verified"] is False
