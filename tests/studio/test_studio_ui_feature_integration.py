@@ -364,3 +364,32 @@ def test_ui_shows_generation_readback_without_fake_editor_restart(tmp_path):
     assert verified["persistence"]["readback_phase"] == "POST_REOPEN"
     assert verified["persistence"]["restart_verified"] is True
     assert verified["fidelity_verified"] is False
+
+
+
+def test_two_matching_censuses_accept_exact_user_choice_and_reject_stale_csir(tmp_path):
+    config, original = _source_census(tmp_path)
+    alternate = original.with_name("feature-surface-unity-alternate.json")
+    alternate.write_bytes(original.read_bytes())
+    options = feat.source_surfaces(config)["options"]
+    assert {entry["path"] for entry in options} == {str(original), str(alternate)}
+
+    # The backend must retain whichever approved file the UI explicitly picked.
+    for selected in (original, alternate):
+        result = feat.validate_options(config, {
+            "source_feature_surface_path": str(selected),
+            "require_complete_source_features": True,
+        })
+        assert result["source_feature_surface_path"] == str(selected)
+
+    # After the Unity source changes, an older census cannot be silently
+    # used against a CSIR from another project.
+    csir = Path(config["csir"])
+    source = json.loads(csir.read_text())
+    source["source"]["project_fingerprint"] = "different-project"
+    csir.write_text(json.dumps(source))
+    with pytest.raises(ValueError, match="source|identity|project|cutscene"):
+        feat.validate_options(config, {
+            "source_feature_surface_path": str(original),
+            "require_complete_source_features": True,
+        })
