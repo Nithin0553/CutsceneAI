@@ -487,7 +487,8 @@ def job_status(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         raise ValueError('Job not found.')
     job = load_json(job_path)
     result = {key: job.get(key) for key in (
-        'job_id', 'status', 'generation_status', 'sequence_path', 'diagnostic_file',
+        'job_id', 'candidate_id', 'created_at', 'status', 'generation_status',
+        'sequence_path', 'diagnostic_file',
         'receipt_file', 'error', 'fidelity_verified', 'generated_sequence', 'setup_receipt_file', 'setup_status',
         'assets_imported_count', 'actors_created_count', 'bindings_created_count',
         'visual_audit_status', 'visual_audit_error', 'closed_loop_status',
