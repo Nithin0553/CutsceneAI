@@ -138,3 +138,24 @@ def test_scene_renderer_and_lod_source_provenance_is_exported() -> None:
         assert "PrefabUtility.IsAnyPrefabInstanceRoot(gameObject)" in source
     assert "AugmentStaticSceneContext(director, document);" in augmenter
     assert "AugmentParentRelationships(director, document);" in augmenter
+
+
+def test_source_census_captures_mesh_collider_and_lod_renderer_graph() -> None:
+    scanner = (EDITOR / "CutSceneAIFeatureSurfaceScanner.cs").read_text(encoding="utf-8")
+    for required in (
+        "component is MeshCollider meshCollider",
+        "meshCollider.sharedMesh",
+        "meshCollider.convex",
+        "meshCollider.cookingOptions",
+        "MESH_COLLIDER_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED",
+        "component is LODGroup lodGroup",
+        "lodGroup.GetLODs()",
+        "screenRelativeTransitionHeight",
+        "fadeTransitionWidth",
+        "renderer_global_id",
+        "mesh_asset_guid",
+        "LOD_GROUP_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED",
+    ):
+        assert required in scanner
+    assert "SetLODs(" not in scanner
+    assert "RecalculateBounds(" not in scanner
