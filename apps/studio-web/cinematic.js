@@ -10,7 +10,7 @@
     discovery:null, folders:{unity:'',unreal:''}, unrealProject:'', csir:'', level:'',
     sourceRights:false, allowPartial:false, aiAgentsEnabled:false, agentStatus:null, candidate:null, job:null, verification:null,
     diagnosis:null, feedback:null, releaseReadiness:null, running:false, detailsOpen:false, menuOpen:false,
-    censusSelection:null, censusIssue:false};
+    censusOptions:[], censusPath:'', censusSelection:null, censusIssue:false};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
   const connection = () => state.status?.connection;
   const worker = () => state.status?.unreal_worker || {};
@@ -104,15 +104,38 @@
     const csir=state.csir||(cutscenes.length===1?cutscenes[0].path:'');
     const level=state.level||r.active_level||(levels.length===1?levels[0]:'');
     const chosenU=u.folder||state.folders.unity,chosenR=r.folder||state.folders.unreal;
+    const connected=Boolean(connection());
+    const selectionChanged=connected&&(csir!==connection().csir||level!==connection().level_path);
+    const matchingCensuses=state.censusOptions.filter(x=>x.project_identity_proven &&
+      x.source_scope_matched && x.state!=='INVALID');
     let choices='';
     if(sources.length>1&&!u.folder)choices+=select('unity-project','Unity project',sources,state.folders.unity,'Choose project');
     if(unrealRoots.length>1&&!r.folder)choices+=select('unreal-project-root','Unreal project folder',unrealRoots,state.folders.unreal,'Choose Unreal project');
     if(projects.length>1)choices+=select('unreal-project-file','Unreal project file',projects,state.unrealProject,'Choose project');
-    if(chosenU)choices+='<div class="project-choices">'+select('csir','Unity Timeline',cutscenes,csir,'Choose exported timeline')+
-      select('level','Unreal Destination Level',levels,level,'Choose level')+'</div>';
-    const connected=Boolean(connection());
-    const action=connected&&terminal(state.job)?button('Reconnect for a fresh transfer '+ico('link'),'connect',state.busy||!state.sourceRights):
-      connected?button('Start Transfer '+ico('arrow'),'start',state.busy||!state.sourceRights||state.running):
+    if(chosenU)choices+='<div class="project-choices">'+
+      select('csir','Unity CSIR Export',cutscenes.map(x=>({...x,
+        name:(x.name||'Cutscene')+' — '+short(x.path)})),csir,'Select a CSIR file')+
+      select('level','Unreal Destination Level',levels,level,'Choose level')+
+      (connected?select('census','Unity Source Census',matchingCensuses.map(x=>({...x,
+        name:x.name+(x.strict_ready?' — source complete':
+          ' — '+x.unresolved_components+' findings')})),state.censusPath,
+        'Select a matching Source Census')+
+        '<p class="subnote">Choose the exact CSIR and Source Census for this transfer. They must represent the same Unity project and cutscene.</p>'+
+        (state.censusSelection?'<p class="subnote">Selected census: '+esc(short(state.censusPath))+
+          ' · '+esc(state.censusSelection.unresolved_components)+' unresolved source findings, '+
+          esc(state.censusSelection.source_snapshot_partial_count||0)+' partially captured components (Unreal fidelity unverified).</p>':
+          '<p class="warning">Select a matching Source Census before starting the transfer.</p>')+
+        (!matchingCensuses.length?'<p class="subnote">No compatible census found. In Unity run Discover Installed Feature Surface, then Refresh exports.</p>':'')+
+        (state.censusOptions.length>matchingCensuses.length?
+          '<p class="subnote">Other census files were excluded because their project or cutscene scope does not match.</p>':''):'')+
+      button('Refresh CSIR &amp; Census exports','refresh-exports',state.busy,'secondary')+
+      (selectionChanged?'<p class="warning">CSIR or destination changed. Reconnect projects before starting a new transfer.</p>':'')+
+      '</div>';
+    const action=connected&&(terminal(state.job)||selectionChanged)?
+      button('Reconnect for a fresh transfer '+ico('link'),'connect',
+        state.busy||!state.sourceRights||!d.ready||!csir||!level||(state.running&&!terminal(state.job))):
+      connected?button('Start Transfer '+ico('arrow'),'start',
+        state.busy||!state.sourceRights||state.running||!state.censusSelection):
       button('Connect Projects '+ico('link'),'connect',state.busy||!d.ready||!csir||!level||!state.sourceRights);
     return progress()+'<main class="projects-view"><h1>'+(!chosenU?'Select Unity Project':!chosenR?'Select Unreal Project':'Connect Unity &amp; Unreal')+'</h1>'+
       '<form id="project-form"><div class="engine-pair">'+card('unity',chosenU,Boolean(u.folder))+
@@ -319,6 +342,17 @@
     const sources=d.unity?.cutscenes||[],levels=d.unreal?.levels||[];
     if(!sources.some(x=>x.path===state.csir))state.csir=sources.length===1?sources[0].path:'';
     if(!levels.includes(state.level))state.level=d.unreal?.active_level||(levels.length===1?levels[0]:'');
+    // Census choices must always be audited against the connected CSIR.
+    if(connection() && state.csir===connection().csir)await loadCensuses();
+    else{state.censusOptions=[];state.censusPath='';state.censusSelection=null;}
+  }
+  async function loadCensuses(){
+    const response=await api('source-surfaces');
+    state.censusOptions=response.options||[];
+    const selected=state.censusOptions.find(x=>x.path===state.censusPath &&
+      x.project_identity_proven && x.source_scope_matched && x.state!=='INVALID');
+    state.censusSelection=selected||null;
+    if(!selected)state.censusPath='';
   }
   async function connectProjects(){
     if(!state.discovery?.ready||!state.csir||!state.level||!state.sourceRights)
@@ -327,7 +361,10 @@
       unreal_folder:state.folders.unreal,unreal_project:state.unrealProject,
       csir:state.csir,level:state.level,source_rights_confirmed:state.sourceRights});
     state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.releaseReadiness=null;state.agentStatus=null;state.running=false;
-    state.phase='CONNECTED';state.info='Projects connected successfully!';state.error='';state.censusIssue=false;state.censusSelection=null;
+    state.censusOptions=[];state.censusPath='';state.censusSelection=null;
+    state.phase='CONNECTED';state.info='Projects connected. Choose a Source Census to start a transfer.';
+    state.error='';state.censusIssue=false;
+    await loadCensuses();
   }
   async function refresh(){
     const s=await api('status');state.status=s;
@@ -356,20 +393,15 @@
   async function prepare(){
     state.phase='PREPARING';render();
     const opts={enable_fbx_embedded_material_import:true,enable_actor_visibility_fallback:false};
-    const surfaces=await api('source-surfaces');
-    const options=(surfaces.options||[]);
-    // Only source identity AND scene scope verified reports can relax strict
-    // adapter completeness. Do not interpret an unrelated Unity census as
-    // permission to transfer an arbitrary project.
-    const matches=options.filter(x=>x.project_identity_proven &&
-      x.source_scope_matched && x.state!=='INVALID');
-    state.censusSelection=matches[0]||null;
-    if(state.censusSelection){
-      opts.source_feature_surface_path=state.censusSelection.path;
-      opts.require_complete_source_features=!state.allowPartial;
-    }else if(options.length){
-      throw Error('Unity feature census does not match the current source project and cutscene scope. Re-run the Unity source census before transferring.');
+    const chosen=state.censusPath;
+    if(!chosen)throw Error('Choose a Source Census for this transfer before continuing.');
+    // Revalidate the exact explicit choice. Do not switch to another census.
+    await loadCensuses();
+    if(!state.censusSelection||state.censusSelection.path!==chosen){
+      throw Error('Selected Source Census is missing or does not match the connected CSIR. Refresh exports, select a matching census, and reconnect if the CSIR changed.');
     }
+    opts.source_feature_surface_path=chosen;
+    opts.require_complete_source_features=!state.allowPartial;
     if(!state.allowPartial && state.censusSelection &&
        !state.censusSelection.strict_ready){
       state.censusIssue=true;
@@ -408,6 +440,10 @@
   }
   async function start(){
     if(!connection()||!state.sourceRights)throw Error('Connect projects and confirm asset-copy rights.');
+    if(state.csir!==connection().csir||state.level!==connection().level_path)
+      throw Error('Selected CSIR or level changed. Reconnect projects before transferring.');
+    if(!state.censusPath||!state.censusSelection)
+      throw Error('Select a matching Source Census before starting this transfer.');
     if(state.running||state.job)throw Error('A candidate is already active; inspect it before creating another.');
     state.screen='transfer';state.running=true;
     await prepare();await refresh();
@@ -457,6 +493,17 @@
       if(name==='projects'&&!state.discovery&&state.folders.unity)try{await scan();}catch{}
       render();return;
     }
+    if(name==='refresh-exports'){
+      if(state.busy)return;
+      state.busy=true;render();
+      try{
+        await scan();
+        state.info='Export list refreshed. Confirm your CSIR and Source Census selections.';
+        state.error='';
+      }catch(e){state.error=e.message;}
+      finally{state.busy=false;render();}
+      return;
+    }
     if(name==='account'){state.info='Account management is not implemented in this local Studio build.';render();return;}
     if(name==='best-effort'){
       if(!state.censusIssue || !state.censusSelection ||
@@ -490,6 +537,7 @@
           state.folders[kind]=choice.path;
           if(kind==='unreal')state.unrealProject='';
           state.discovery=null;state.csir='';state.level='';
+          state.censusOptions=[];state.censusPath='';state.censusSelection=null;
           await scan();state.error='';
         }
       }catch(e){state.error=e.message;}finally{state.busy=false;render();}return;
@@ -510,7 +558,17 @@
     if(n==='source-rights'){state.sourceRights=e.target.checked;render();return;}
     if(n==='allow-partial'){state.allowPartial=e.target.checked;render();return;}
     if(n==='ai-agents'){state.aiAgentsEnabled=e.target.checked;render();return;}
-    if(n==='csir'){state.csir=v;render();return;}
+    if(n==='csir'){
+      state.csir=v;state.censusOptions=[];state.censusPath='';state.censusSelection=null;
+      render();return;
+    }
+    if(n==='census'){
+      const selected=state.censusOptions.find(x=>x.path===v&&
+        x.project_identity_proven&&x.source_scope_matched&&x.state!=='INVALID');
+      state.censusSelection=selected||null;
+      state.censusPath=selected?selected.path:'';
+      state.censusIssue=false;render();return;
+    }
     if(n==='level'){state.level=v;render();return;}
     if(['unity-project','unreal-project-root','unreal-project-file'].includes(n)){
       if(n==='unity-project')state.folders.unity=v;

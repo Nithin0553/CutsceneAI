@@ -8,6 +8,7 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 - [CED local discovery registry](architecture/CED_DISCOVERY_REGISTRY_V0_1.md) — opt-in, redacted, deduplicated unknown-element observations
 - [Executable CED adapter contract](architecture/CED_ADAPTER_EXECUTION.md) — source-bound handlers, native actions and verification gates
 - [Integrated Studio smoke-test and merge audit (#93)](studio/ISSUE_93_INTEGRATED_SMOKE_TEST.md) — unified source, CED, agent and release gates
+- [Select CSIR and Source Census for each Studio transfer](studio/CSIR_CENSUS_SELECTION.md) — manual export choice, identity validation and refresh
 - [Studio release acceptance](studio/RELEASE_ACCEPTANCE.md) — real-engine evidence needed before declaring ready
 - [Mandatory issue/PR triage before each fix](studio/ISSUE_PR_TRIAGE_POLICY.md) — inspect root cause, existing work, verified tests and clean closure
 

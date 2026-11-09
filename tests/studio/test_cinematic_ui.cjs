@@ -5,7 +5,7 @@ const vm = require('node:vm');
 
 const src = fs.readFileSync('apps/studio-web/cinematic.js', 'utf8');
 
-function boot({editorReady = true, censusUnresolved = false} = {}) {
+function boot({editorReady = true, censusUnresolved = false, multiSources = false} = {}) {
   const listeners = {}, calls = [], requests = [];
   let html = '', writes = 0;
   const app = {
@@ -21,6 +21,11 @@ function boot({editorReady = true, censusUnresolved = false} = {}) {
   const unity = 'D:/CutSceneAI_Unity';
   const unreal = 'D:/CutSceneAI_Unreal';
   const csir = unity + '/CutSceneAI/Exports/Benchmark002.csir.json';
+  const otherCsir = unity + '/CutSceneAI/Exports/Benchmark003.csir.json';
+  const censusA = unity + '/CutSceneAI/Exports/feature-surface-unity-A.json';
+  const censusB = unity + '/CutSceneAI/Exports/feature-surface-unity-B.json';
+  const invalidCensus = unity + '/CutSceneAI/Exports/feature-surface-unity-foreign.json';
+  let availableCensuses = true;
   const level = '/Game/CutSceneAI/L_Trial01';
   const file = unreal + '/CutSceneAI.uproject';
   const fake = {
@@ -46,24 +51,35 @@ function boot({editorReady = true, censusUnresolved = false} = {}) {
         result = {cancelled:false, path:body.kind==='unity'?unity:unreal};
       } else if (url === '/api/discover') {
         result = {ready: Boolean(body.unity_folder && body.unreal_folder),
-          unity:{folder:body.unity_folder||'',cutscenes:[{name:'Benchmark002',path:csir}]},
+          unity:{folder:body.unity_folder||'',cutscenes:[{name:'Benchmark002',path:csir},
+             ...(multiSources?[{name:'Benchmark003',path:otherCsir}]:[])]},
           unreal:{folder:body.unreal_folder||'',project:file,levels:[level],active_level:level}};
       } else if (url === '/api/connect-projects') {
         connected = {unity_project:unity,target_project:file,level_path:level,
-          csir,scene_name:'Benchmark002',source_rights_confirmed:true};
+          csir:body.csir,scene_name:'Benchmark002',source_rights_confirmed:true};
         result = connected;
       } else if (url === '/api/source-surfaces') {
-        result = {options:censusUnresolved?[{
-          name:'feature-surface-unity-Benchmark001.json',
-          path:unity+'/CutSceneAI/Exports/feature-surface-unity-Benchmark001.json',
-          project_identity_proven:true, source_scope_matched:true,
-          strict_ready:false, state:'REVIEW_REQUIRED',
-          unresolved_components:7,
-          unresolved_findings:[{
-            native_type:'UnityEngine.Playables.DirectorWrapMode',
-            object_path:'Benchmark001/Director',state:'NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED'
-          }]
-        }]:[]};
+        result = {options:availableCensuses?[
+          {name:'feature-surface-unity-A.json',path:censusA,
+            project_identity_proven:true,source_scope_matched:true,
+            strict_ready:!censusUnresolved,
+            state:censusUnresolved?'REVIEW_REQUIRED':'MATCHED_COMPLETE',
+            unresolved_components:censusUnresolved?7:0,
+            source_snapshot_partial_count:0,
+            unresolved_findings:censusUnresolved?[{
+              native_type:'UnityEngine.Playables.DirectorWrapMode',
+              object_path:'Benchmark001/Director',
+              state:'NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED'
+            }]:[]},
+          {name:'feature-surface-unity-B.json',path:censusB,
+            project_identity_proven:true,source_scope_matched:true,
+            strict_ready:true,state:'MATCHED_COMPLETE',
+            unresolved_components:0,source_snapshot_partial_count:7},
+          {name:'feature-surface-unity-foreign.json',path:invalidCensus,
+            project_identity_proven:false,source_scope_matched:false,
+            strict_ready:false,state:'SOURCE_IDENTITY_NOT_PROVEN',
+            unresolved_components:0}
+        ]:[]};
       } else if (url === '/api/prepare') {
         candidate = {candidate_id:'candidate001',action_total:29,
           automatic_setup:{available:true,ready:true,blockers:[],planned_imports:18,planned_actors:10}};
@@ -115,7 +131,9 @@ function boot({editorReady = true, censusUnresolved = false} = {}) {
     await pause();
   }
   return {app,calls,requests,click,change,poll:async()=>{poll();await pause();await pause();},
-    writes:()=>writes, pause,finish:()=>{done=true;}};
+    writes:()=>writes, pause,finish:()=>{done=true;},
+    csir,otherCsir,censusA,censusB,invalidCensus,
+    removeCensuses:()=>{availableCensuses=false;}};
 }
 
 async function testOneClick() {
@@ -126,7 +144,7 @@ async function testOneClick() {
   assert.match(x.app.innerHTML,/Select Unity Project/);
   await x.click('browse-unity');
   await x.click('browse-unreal');
-  assert.match(x.app.innerHTML,/Unity Timeline/);
+  assert.match(x.app.innerHTML,/Unity CSIR Export/);
   assert.match(x.app.innerHTML,/Enable AI agents/);
   assert.doesNotMatch(x.app.innerHTML.match(/name="ai-agents"([^>]*)>/)[1],/checked/,
     'agent mode must default to off');
@@ -139,7 +157,12 @@ async function testOneClick() {
   await x.change('source-rights',null,true);
   await x.click('connect');
   assert.ok(x.calls.includes('/api/connect-projects'));
+  assert.match(x.app.innerHTML,/Unity Source Census/);
+  assert.match(x.app.innerHTML,/Select a matching Source Census/);
   assert.match(x.app.innerHTML,/Start Transfer/);
+  assert.match(x.app.innerHTML.match(/data-action="start"([^>]*)>/)[1],/disabled/,
+    'the transfer must not start before a census is selected');
+  await x.change('census',x.censusB);
   await x.click('start');
   await x.poll();
   assert.deepEqual(x.calls.filter(v=>v==='/api/execute').length,1);
@@ -147,6 +170,9 @@ async function testOneClick() {
   assert.ok(x.calls.indexOf('/api/approve-one-click')<x.calls.indexOf('/api/execute'));
   const preparation=x.requests.find(req=>req.url==='/api/prepare');
   assert.ok(preparation);
+  assert.equal(preparation.body.source_feature_surface_path,x.censusB,
+    'forward the exact user-selected census, not the first/newest export');
+  assert.equal(preparation.body.require_complete_source_features,true);
   assert.equal(Object.hasOwn(preparation.body,'enable_ai_agents'),false,
     'normal source preparation remains deterministic');
   const approval=x.requests.find(req=>req.url==='/api/approve-one-click');
@@ -178,6 +204,7 @@ async function testOfflineDoesNotExecute() {
   await x.click('browse-unreal');
   await x.change('source-rights',null,true);
   await x.click('connect');
+  await x.change('census',x.censusA);
   await x.click('start');
   await x.poll();
   assert.equal(x.calls.filter(v=>v==='/api/execute').length,0);
@@ -193,6 +220,7 @@ async function testStrictCensusBlockAndExplicitRecovery() {
   await x.click('browse-unreal');
   await x.change('source-rights',null,true);
   await x.click('connect');
+  await x.change('census',x.censusA);
   await x.click('start');
   assert.equal(x.calls.filter(v=>v==='/api/execute').length,0,
     'strict incomplete source census cannot queue engine execution');
@@ -205,9 +233,51 @@ async function testStrictCensusBlockAndExplicitRecovery() {
     'only explicit best-effort opt-in may submit a separate candidate');
 }
 
+async function testManualCSIRAndCensus() {
+  const x=boot({multiSources:true});
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('csir',x.otherCsir);
+  await x.change('source-rights',null,true);
+  await x.click('connect');
+  assert.equal(x.requests.find(r=>r.url==='/api/connect-projects').body.csir,x.otherCsir);
+  assert.doesNotMatch(x.app.innerHTML,/value="[^"]*feature-surface-unity-foreign.json"/);
+  await x.change('census',x.censusB);
+  await x.click('refresh-exports');
+  assert.match(x.app.innerHTML,/Selected census: feature-surface-unity-B.json/);
+  await x.change('csir',x.csir);
+  assert.match(x.app.innerHTML,/Reconnect projects before starting/);
+  await x.click('start');
+  assert.equal(x.calls.filter(r=>r==='/api/prepare').length,0);
+  await x.click('connect');
+  await x.change('census',x.censusA);
+  await x.click('start');
+  assert.equal(x.requests.find(r=>r.url==='/api/prepare').body.source_feature_surface_path,x.censusA);
+}
+
+async function testMissingSelectedCensusFailsClosed() {
+  const x=boot();
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('source-rights',null,true);
+  await x.click('connect');
+  await x.change('census',x.censusB);
+  x.removeCensuses();
+  await x.click('start');
+  assert.equal(x.calls.filter(v=>v==='/api/prepare').length,0);
+  assert.equal(x.calls.filter(v=>v==='/api/execute').length,0);
+  assert.match(x.app.innerHTML,/Selected Source Census is missing/);
+}
+
 (async()=>{
   await testOneClick();
   await testOfflineDoesNotExecute();
   await testStrictCensusBlockAndExplicitRecovery();
-  console.log('Cinematic UI backend contract: 3 integration paths and optional AI checkbox checks passed.');
+  await testManualCSIRAndCensus();
+  await testMissingSelectedCensusFailsClosed();
+  console.log('Cinematic UI backend contract: 5 integration paths and explicit CSIR/Census selection passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
