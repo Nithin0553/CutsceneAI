@@ -272,6 +272,7 @@
       '<p class="failure-recovery"><strong>What to do next:</strong> '+esc(recovery)+'</p>'+
       '<div class="failure-actions">'+button('Copy failure details','copy-failure',false,'secondary')+'</div>'+
       '<p class="subnote">Job '+esc(j.job_id||'unknown')+
+      (j.created_at?' · Created '+esc(j.created_at):'')+
       ' · This is an execution failure, not a CineTwin fidelity comparison.</p></section>';
   }
   function results(){
@@ -574,6 +575,8 @@
       const report=[
         'CutSceneAI Studio — Native transfer failure',
         'Job: '+(j.job_id||'unknown'),
+        'Candidate: '+(j.candidate_id||'unknown'),
+        'Created: '+(j.created_at||'unknown'),
         'Status: '+(j.status||'unknown'),
         'Generation: '+(j.generation_status||'unknown'),
         'Stage: '+(j.failure_stage||j.execution_stage||'unknown'),
