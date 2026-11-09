@@ -144,7 +144,7 @@ async function testOneClick() {
   assert.match(x.app.innerHTML,/Select Unity Project/);
   await x.click('browse-unity');
   await x.click('browse-unreal');
-  assert.match(x.app.innerHTML,/Unity Timeline/);
+  assert.match(x.app.innerHTML,/Unity CSIR Export/);
   assert.match(x.app.innerHTML,/Enable AI agents/);
   assert.doesNotMatch(x.app.innerHTML.match(/name="ai-agents"([^>]*)>/)[1],/checked/,
     'agent mode must default to off');
@@ -157,7 +157,12 @@ async function testOneClick() {
   await x.change('source-rights',null,true);
   await x.click('connect');
   assert.ok(x.calls.includes('/api/connect-projects'));
+  assert.match(x.app.innerHTML,/Unity Source Census/);
+  assert.match(x.app.innerHTML,/Select a matching Source Census/);
   assert.match(x.app.innerHTML,/Start Transfer/);
+  assert.match(x.app.innerHTML.match(/data-action="start"([^>]*)>/)[1],/disabled/,
+    'the transfer must not start before a census is selected');
+  await x.change('census',x.censusB);
   await x.click('start');
   await x.poll();
   assert.deepEqual(x.calls.filter(v=>v==='/api/execute').length,1);
@@ -165,6 +170,9 @@ async function testOneClick() {
   assert.ok(x.calls.indexOf('/api/approve-one-click')<x.calls.indexOf('/api/execute'));
   const preparation=x.requests.find(req=>req.url==='/api/prepare');
   assert.ok(preparation);
+  assert.equal(preparation.body.source_feature_surface_path,x.censusB,
+    'forward the exact user-selected census, not the first/newest export');
+  assert.equal(preparation.body.require_complete_source_features,true);
   assert.equal(Object.hasOwn(preparation.body,'enable_ai_agents'),false,
     'normal source preparation remains deterministic');
   const approval=x.requests.find(req=>req.url==='/api/approve-one-click');
@@ -196,6 +204,7 @@ async function testOfflineDoesNotExecute() {
   await x.click('browse-unreal');
   await x.change('source-rights',null,true);
   await x.click('connect');
+  await x.change('census',x.censusA);
   await x.click('start');
   await x.poll();
   assert.equal(x.calls.filter(v=>v==='/api/execute').length,0);
@@ -211,6 +220,7 @@ async function testStrictCensusBlockAndExplicitRecovery() {
   await x.click('browse-unreal');
   await x.change('source-rights',null,true);
   await x.click('connect');
+  await x.change('census',x.censusA);
   await x.click('start');
   assert.equal(x.calls.filter(v=>v==='/api/execute').length,0,
     'strict incomplete source census cannot queue engine execution');
