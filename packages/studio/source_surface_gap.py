@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import component_capability_ledger
+
 
 class SourceSurfaceGapError(ValueError):
     pass
@@ -370,6 +372,7 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
     if not scene_objects:
         unresolved += 1
         totals["SOURCE_SCOPE_NOT_VERIFIED"] += 1
+    capability = component_capability_ledger.from_source_findings(cases)
     return {
         "kind": "cutsceneai.studio.source_feature_gap",
         "schema_version": "0.2.0",
@@ -385,6 +388,7 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
         "missing_cutscene_objects": missing_object_findings,
         "scoped_component_occurrences": len(cases),
         "component_findings": cases,
+        "component_capability_ledger": capability,
         "component_counts": dict(sorted(totals.items())),
         "source_assets_matched_by_path": source_asset_count,
         "other_project_asset_type_counts": dict(sorted(extra_asset_types.items())),
