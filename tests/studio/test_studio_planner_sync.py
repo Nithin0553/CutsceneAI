@@ -121,3 +121,35 @@ def test_source_inspector_refresh_runs_before_native_setup_mutation():
     assert sync.index('"studio_source_materials", "tools"') < sync.index(
         '"studio_auto_assets", "tools"'
     )
+
+
+
+def test_auto_asset_manifest_preflight_precedes_any_unreal_level_creation():
+    worker = WORKER.read_text(encoding="utf-8")
+    start = worker.index("def _execute(job):")
+    end = worker.index("def _update_destination_readiness():")
+    segment = worker[start:end]
+    assert segment.index("studio_planner_sync.synchronize()") < segment.index(
+        "studio_auto_assets.verify("
+    )
+    assert segment.index("job['execution_stage'] = 'VERIFYING_SOURCE_ASSET_MANIFEST'") < segment.index(
+        "studio_auto_assets.verify("
+    )
+    assert segment.index("studio_auto_assets.verify(") < segment.index(
+        "_ensure_target_level(job)"
+    )
+    assert segment.index("_ensure_target_level(job)") < segment.index(
+        "studio_auto_scene.run("
+    )
+    assert segment.index("studio_auto_scene.run(") < segment.index(
+        "build_level_sequence.build_prepared_files("
+    )
+
+
+def test_worker_heartbeat_pins_running_python_code_not_current_disk_only():
+    worker = WORKER.read_text(encoding="utf-8")
+    assert "WORKER_PROTOCOL = 'studio-editor-v0.6'" in worker
+    assert "WORKER_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()" in worker
+    assert "'worker_source_sha256': WORKER_SOURCE_SHA256" in worker
+    assert "'checkout_root': str(ROOT.resolve())" in worker
+    assert "job['failure_stage'] = job.get('execution_stage'" in worker
