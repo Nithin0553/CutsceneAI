@@ -316,7 +316,8 @@ namespace CutsceneAI.UnityExtractor
                     active_self = gameObject.activeSelf,
                     scene_renderable_root = gameObject.GetComponent<MeshRenderer>() != null ||
                         gameObject.GetComponent<SkinnedMeshRenderer>() != null ||
-                        gameObject.GetComponent<LODGroup>() != null,
+                        gameObject.GetComponent<LODGroup>() != null ||
+                            PrefabUtility.IsAnyPrefabInstanceRoot(gameObject),
                     source_lod_group_root = gameObject.GetComponent<LODGroup>() != null,
                     local_transform = ExtractorUtilities.CaptureLocalTransform(gameObject.transform),
                     world_transform = ExtractorUtilities.CaptureWorldTransform(gameObject.transform),
