@@ -94,6 +94,18 @@ def source_surfaces(config: dict[str, Any]) -> dict[str, Any]:
                 for row in report["component_findings"]
                 if row["state"] in unresolved_states
             ]
+            # The Unity scanner already records conservative authoring
+            # snapshots for some native features. Those are source-accounted,
+            # but still require target adapters and behavioral verification.
+            partial_findings = [
+                {
+                    "native_type": row["native_component"],
+                    "object_path": row["hierarchy_path"],
+                    "scene_path": row["scene_path"],
+                    "state": row["state"],
+                }
+                for row in report["source_snapshot_partial_findings"]
+            ]
             findings.extend({
                 "native_type": "UnityEngine.Transform",
                 "object_path": row["hierarchy_path"],
@@ -114,6 +126,8 @@ def source_surfaces(config: dict[str, Any]) -> dict[str, Any]:
                 "strict_ready": ready,
                 "unresolved_components": report["unresolved_component_count"],
                 "unresolved_findings": findings[:100],
+                "source_snapshot_partial_count": report["source_snapshot_partial_count"],
+                "source_snapshot_partial_findings": partial_findings[:100],
                 "findings_truncated": len(findings) > 100,
                 "scoped_components": report["scoped_component_occurrences"],
                 "project_identity_proven": report["project_identity_proven"],
