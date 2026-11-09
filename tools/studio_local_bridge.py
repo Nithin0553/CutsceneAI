@@ -137,10 +137,60 @@ def worker_connected(folder: Path = WORKSPACE) -> dict[str, Any]:
         data = load_json(marker)
         tick = datetime.fromisoformat(str(data['heartbeat']).replace('Z', '+00:00'))
         age = (datetime.now(timezone.utc) - tick).total_seconds()
-        return {'connected': 0 <= age < 8, 'project': data.get('project'), 'level': data.get('level'), 'worker_version': data.get('worker'), 'age_seconds': round(age, 1)}
+        return {'connected': 0 <= age < 8, 'project': data.get('project'),
+                'level': data.get('level'), 'worker_version': data.get('worker'),
+                'worker_source_sha256': data.get('worker_source_sha256'),
+                'checkout_root': data.get('checkout_root'),
+                'age_seconds': round(age, 1)}
     except (ValueError, KeyError, OSError):
         return {'connected': False}
 
+
+
+# v0.5 reused one heartbeat version for several different implementations.
+# That allowed an older embedded Unreal Python runtime to accept manifests
+# prepared using recently updated Studio source adapter code.
+REQUIRED_WORKER_PROTOCOL = 'studio-editor-v0.6'
+
+
+def worker_code_mismatch(worker: dict[str, Any]) -> str | None:
+    """Reject a stale Unreal runtime before it can mutate a map.
+
+    The source hash is captured once at Unreal module import (not recomputed
+    on every heartbeat). It cannot silently update after a git pull.
+    """
+    if worker.get('worker_version') != REQUIRED_WORKER_PROTOCOL:
+        return ('Unreal companion uses ' + str(worker.get('worker_version') or
+                'an unidentified version') + ', but Studio requires ' +
+                REQUIRED_WORKER_PROTOCOL + '.')
+    expected_root = ROOT.resolve()
+    reported_root = worker.get('checkout_root')
+    # Path('') resolves to the host's current working directory, which could
+    # accidentally match ROOT. An absent/nonabsolute value is never proof of
+    # the live Unreal interpreter's module origin.
+    if not isinstance(reported_root, str) or not reported_root.strip():
+        return 'Unreal companion did not report a valid repository checkout.'
+    if not Path(reported_root).is_absolute():
+        return 'Unreal companion did not report a valid absolute repository checkout.'
+    try:
+        observed_root = Path(reported_root).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return 'Unreal companion did not report a valid repository checkout.'
+    if os.path.normcase(str(observed_root)) != os.path.normcase(str(expected_root)):
+        return ('Unreal companion is running from a different CutSceneAI checkout. '
+                'Use the same repository for Studio and Unreal.')
+    expected_worker = ROOT / 'integrations' / 'unreal' / 'studio_local_editor_worker.py'
+    actual_sha = str(worker.get('worker_source_sha256') or '')
+    if actual_sha != hashlib.sha256(expected_worker.read_bytes()).hexdigest():
+        return ('Unreal companion has cached an outdated Python worker from '
+                'before the latest Studio update.')
+    return None
+
+
+def companion_upgrade_action(reason: str) -> str:
+    return (reason + ' Save the target project, completely close Unreal Editor, '
+            'restart Unreal Editor, and start the Python companion from this exact checkout. '
+            'Prepare a new transfer candidate after reconnecting.')
 
 
 def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
@@ -158,11 +208,14 @@ def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
     if not worker.get('connected'):
         return {'status': 'WAITING_FOR_UNREAL', 'ready': False,
                 'next_action': 'Open the selected Unreal level and start the editor companion.'}
-    if (worker.get('worker_version') == 'studio-editor-v0.1' or
-        (load_json(folder / 'connection.json').get('unity_project')
-         and worker.get('worker_version') != 'studio-editor-v0.5')):
+    if load_json(folder / 'connection.json').get('unity_project'):
+        stale_reason = worker_code_mismatch(worker)
+        if stale_reason:
+            return {'status': 'UPGRADE_COMPANION', 'ready': False,
+                    'next_action': companion_upgrade_action(stale_reason)}
+    elif worker.get('worker_version') == 'studio-editor-v0.1':
         return {'status': 'UPGRADE_COMPANION', 'ready': False,
-                'next_action': 'Unreal is running an older Studio companion. Save your work, restart Unreal Editor, and run the Python companion command shown below.'}
+                'next_action': 'Unreal is running an obsolete Studio companion; restart Unreal Editor.'}
     candidate = load_json(candidate_file)
     connected = load_json(folder / 'connection.json')
     if connected.get('auto_create_level') and worker.get('level') != connected['level_path']:
@@ -420,14 +473,21 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     if (os.path.normcase(str(heartbeat.get('project') or '')) != os.path.normcase(config['target_project'])
         or (not config.get('auto_create_level') and heartbeat.get('level') != config['level_path'])):
         raise ValueError('Unreal worker is connected to a different project or level.')
+    if config.get('unity_project'):
+        stale_reason = worker_code_mismatch(heartbeat)
+        if stale_reason:
+            raise ValueError('Unreal companion update required: ' +
+                             companion_upgrade_action(stale_reason))
     readiness = destination_readiness(folder)
     candidate_record = folder / 'active-candidate.json'
     auto = load_json(candidate_record).get('automatic_setup') if candidate_record.is_file() else {}
     auto = auto or {}
     automatic_requested = bool(auto.get('available')) and not readiness.get('ready')
     if automatic_requested:
-        if heartbeat.get('worker_version') != 'studio-editor-v0.5':
-            raise ValueError('Restart Unreal with the v0.5 automatic-import editor companion.')
+        stale_reason = worker_code_mismatch(heartbeat)
+        if stale_reason:
+            raise ValueError('Automatic import companion is outdated: ' +
+                             companion_upgrade_action(stale_reason))
         if not auto.get('ready'):
             raise ValueError('Automatic asset preparation blocked: ' + '; '.join(auto.get('blockers', [])))
         import studio_auto_assets

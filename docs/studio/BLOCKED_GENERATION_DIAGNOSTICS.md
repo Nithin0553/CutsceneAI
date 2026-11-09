@@ -125,3 +125,64 @@ editor Python module state.
 
 Successful import and Level Sequence generation still do **not** imply
 CineTwin or rendered-frame parity.
+
+
+## Nov 9 follow-up: old companion still accepted a newly prepared candidate
+
+A second actual job, `ad10e38a5a27436988384910204e219f`,
+created `2026-11-09T18:52:50.868355+00:00`, still showed
+`UNKNOWN_NATIVE_STAGE` and the **old generic** source-manifest error.
+The updated PR #108 verifier would instead classify a manifest mismatch
+by source hash, adapter hash, asset identity, or changed planning field.
+This is strong evidence that the Unreal process had not loaded the newly
+patched verifier, although it does not independently establish the precise
+reason the original manifest comparison differed.
+
+**Confirmed additional interface defect:** Unreal's heartbeat always
+reported `studio-editor-v0.5`, even after major updates. Studio validated
+this same constant across incompatible worker implementations. It could
+therefore submit another candidate to a stale embedded Python interpreter.
+
+The new `studio-editor-v0.6` companion reports its **worker code SHA256
+captured at Python import**, and the canonical checkout path. The Studio
+host compares both against its trusted repository and refuses the transfer
+with `UPGRADE_COMPANION` when the worker is old, came from another
+checkout, or remained loaded across a code update. Missing and relative
+checkout paths are rejected. Do not delete heartbeat or job records to
+bypass this rule.
+
+**Important preflight safety fix:** The previous worker could call
+`_ensure_target_level()` *before* `studio_auto_assets.verify()`. For an
+automatic fresh-level request, that meant an empty target level might have
+been created despite a later setup receipt saying no import/actor mutation.
+The worker now verifies the source-asset manifest before even attempting
+new-level creation, and records `VERIFYING_SOURCE_ASSET_MANIFEST` in
+new failures.
+
+### Check that the correct Unreal worker is running
+
+1. Stop Studio, save the Unreal project and **fully close Unreal Editor**.
+2. Fetch the new branch `fix/studio-worker-version-handshake-and-safe-preflight`.
+   Run Studio and the Unreal companion from the **same clone**.
+3. On Windows, a read-only inspection of the latest worker heartbeat is:
+
+```powershell
+Get-Content "$env:USERPROFILE\.cutsceneai-studio\runs\unreal-worker.json" -Raw |
+  ConvertFrom-Json |
+  Select-Object worker,checkout_root,worker_source_sha256,heartbeat
+```
+
+4. A current, live worker must say `studio-editor-v0.6`; it must also
+   report a matching checkout and a matching SHA256 (the host checks
+   both). If it says `v0.5` or lacks the new fields, do not click
+   **Start Transfer**. Restart Unreal and run the latest companion.
+5. Create one completely **fresh** candidate; never rerun the prior
+   `ad10e38a5a27436988384910204e219f` job or its candidate.
+6. If a new transfer still fails, its **Execution stage** and **Native
+   error** should expose whether the CSIR, target mapping, transfer plan,
+   source assets, or inspector code actually changed. Inspect that exact
+   mismatch; never suppress hash checks.
+
+These are code-level fixes with CI regression coverage. They still need
+real Unreal Editor validation before asserting the Benchmark002 transfer
+is complete.
