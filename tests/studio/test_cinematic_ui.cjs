@@ -233,9 +233,34 @@ async function testStrictCensusBlockAndExplicitRecovery() {
     'only explicit best-effort opt-in may submit a separate candidate');
 }
 
+async function testManualCSIRAndCensus() {
+  const x=boot({multiSources:true});
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('csir',x.otherCsir);
+  await x.change('source-rights',null,true);
+  await x.click('connect');
+  assert.equal(x.requests.find(r=>r.url==='/api/connect-projects').body.csir,x.otherCsir);
+  assert.doesNotMatch(x.app.innerHTML,/value="[^"]*feature-surface-unity-foreign.json"/);
+  await x.change('census',x.censusB);
+  await x.click('refresh-exports');
+  assert.match(x.app.innerHTML,/Selected census: feature-surface-unity-B.json/);
+  await x.change('csir',x.csir);
+  assert.match(x.app.innerHTML,/Reconnect projects before starting/);
+  await x.click('start');
+  assert.equal(x.calls.filter(r=>r==='/api/prepare').length,0);
+  await x.click('connect');
+  await x.change('census',x.censusA);
+  await x.click('start');
+  assert.equal(x.requests.find(r=>r.url==='/api/prepare').body.source_feature_surface_path,x.censusA);
+}
+
 (async()=>{
   await testOneClick();
   await testOfflineDoesNotExecute();
   await testStrictCensusBlockAndExplicitRecovery();
-  console.log('Cinematic UI backend contract: 3 integration paths and optional AI checkbox checks passed.');
+  await testManualCSIRAndCensus();
+  console.log('Cinematic UI backend contract: 4 integration paths and explicit CSIR/Census selection passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
