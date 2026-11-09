@@ -414,7 +414,7 @@ async function testRestoredUnsubmittedCandidateCanStartFreshWithoutReplay() {
   await x.change('census',x.censusB);
   const matches=x.app.innerHTML.match(/<button[^>]*data-action="start-fresh"[^>]*>/g)||[];
   assert.equal(matches.length,1,'the old approved candidate must have an explicit fresh option');
-  assert.doesNotMatch(matches[0],/\bdisabled\b,
+  assert.doesNotMatch(matches[0],/\bdisabled\b/,
     'a stale approval is not an active Unreal job');
   await x.click('start-fresh');
   await x.poll();
