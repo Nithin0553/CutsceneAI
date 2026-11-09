@@ -115,3 +115,48 @@
   .projects-view .export-refresh-row .button { width: 100%; }
   .projects-view .permissions { width: 100%; }
 }
+
+
+/* Native generation errors are first-class, actionable Results evidence.
+   Show the actual error above release parity checks; no false success. */
+.results-view .transfer-failure {
+  width: min(670px, 100%);
+  margin: 18px auto;
+  padding: 20px 23px;
+  text-align: left;
+  background: #17120f;
+  border: 1px solid #805a43;
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+.results-view .transfer-failure h2 {
+  color: #f6e6d9;
+  font-size: 19px;
+  line-height: 1.4;
+  margin: 0 0 14px;
+}
+.results-view .transfer-failure p {
+  color: #ead9cc;
+  margin: 9px 0;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.results-view .transfer-failure .failure-recovery {
+  padding-top: 13px;
+  margin-top: 14px;
+  border-top: 1px solid #5d4838;
+}
+.results-view .transfer-failure .failure-actions {
+  display: flex;
+  margin: 15px 0 6px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.results-view .transfer-failure .subnote { color: #b7a69b; font-size: 11px; }
+@media (max-width: 560px) {
+  .results-view .transfer-failure { padding: 15px; }
+  .results-view .transfer-failure .failure-actions .button { width: 100%; }
+}
