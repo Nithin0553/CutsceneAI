@@ -164,8 +164,16 @@ def worker_code_mismatch(worker: dict[str, Any]) -> str | None:
                 'an unidentified version') + ', but Studio requires ' +
                 REQUIRED_WORKER_PROTOCOL + '.')
     expected_root = ROOT.resolve()
+    reported_root = worker.get('checkout_root')
+    # Path('') resolves to the host's current working directory, which could
+    # accidentally match ROOT. An absent/nonabsolute value is never proof of
+    # the live Unreal interpreter's module origin.
+    if not isinstance(reported_root, str) or not reported_root.strip():
+        return 'Unreal companion did not report a valid repository checkout.'
+    if not Path(reported_root).is_absolute():
+        return 'Unreal companion did not report a valid absolute repository checkout.'
     try:
-        observed_root = Path(str(worker.get('checkout_root') or '')).resolve()
+        observed_root = Path(reported_root).resolve()
     except (OSError, ValueError, RuntimeError):
         return 'Unreal companion did not report a valid repository checkout.'
     if os.path.normcase(str(observed_root)) != os.path.normcase(str(expected_root)):
