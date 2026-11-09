@@ -5,7 +5,7 @@ const vm = require('node:vm');
 
 const src = fs.readFileSync('apps/studio-web/cinematic.js', 'utf8');
 
-function boot({editorReady = true, censusUnresolved = false} = {}) {
+function boot({editorReady = true, censusUnresolved = false, multiSources = false} = {}) {
   const listeners = {}, calls = [], requests = [];
   let html = '', writes = 0;
   const app = {
@@ -21,6 +21,11 @@ function boot({editorReady = true, censusUnresolved = false} = {}) {
   const unity = 'D:/CutSceneAI_Unity';
   const unreal = 'D:/CutSceneAI_Unreal';
   const csir = unity + '/CutSceneAI/Exports/Benchmark002.csir.json';
+  const otherCsir = unity + '/CutSceneAI/Exports/Benchmark003.csir.json';
+  const censusA = unity + '/CutSceneAI/Exports/feature-surface-unity-A.json';
+  const censusB = unity + '/CutSceneAI/Exports/feature-surface-unity-B.json';
+  const invalidCensus = unity + '/CutSceneAI/Exports/feature-surface-unity-foreign.json';
+  let availableCensuses = true;
   const level = '/Game/CutSceneAI/L_Trial01';
   const file = unreal + '/CutSceneAI.uproject';
   const fake = {
@@ -46,24 +51,35 @@ function boot({editorReady = true, censusUnresolved = false} = {}) {
         result = {cancelled:false, path:body.kind==='unity'?unity:unreal};
       } else if (url === '/api/discover') {
         result = {ready: Boolean(body.unity_folder && body.unreal_folder),
-          unity:{folder:body.unity_folder||'',cutscenes:[{name:'Benchmark002',path:csir}]},
+          unity:{folder:body.unity_folder||'',cutscenes:[{name:'Benchmark002',path:csir},
+             ...(multiSources?[{name:'Benchmark003',path:otherCsir}]:[])]},
           unreal:{folder:body.unreal_folder||'',project:file,levels:[level],active_level:level}};
       } else if (url === '/api/connect-projects') {
         connected = {unity_project:unity,target_project:file,level_path:level,
-          csir,scene_name:'Benchmark002',source_rights_confirmed:true};
+          csir:body.csir,scene_name:'Benchmark002',source_rights_confirmed:true};
         result = connected;
       } else if (url === '/api/source-surfaces') {
-        result = {options:censusUnresolved?[{
-          name:'feature-surface-unity-Benchmark001.json',
-          path:unity+'/CutSceneAI/Exports/feature-surface-unity-Benchmark001.json',
-          project_identity_proven:true, source_scope_matched:true,
-          strict_ready:false, state:'REVIEW_REQUIRED',
-          unresolved_components:7,
-          unresolved_findings:[{
-            native_type:'UnityEngine.Playables.DirectorWrapMode',
-            object_path:'Benchmark001/Director',state:'NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED'
-          }]
-        }]:[]};
+        result = {options:availableCensuses?[
+          {name:'feature-surface-unity-A.json',path:censusA,
+            project_identity_proven:true,source_scope_matched:true,
+            strict_ready:!censusUnresolved,
+            state:censusUnresolved?'REVIEW_REQUIRED':'MATCHED_COMPLETE',
+            unresolved_components:censusUnresolved?7:0,
+            source_snapshot_partial_count:0,
+            unresolved_findings:censusUnresolved?[{
+              native_type:'UnityEngine.Playables.DirectorWrapMode',
+              object_path:'Benchmark001/Director',
+              state:'NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED'
+            }]:[]},
+          {name:'feature-surface-unity-B.json',path:censusB,
+            project_identity_proven:true,source_scope_matched:true,
+            strict_ready:true,state:'MATCHED_COMPLETE',
+            unresolved_components:0,source_snapshot_partial_count:7},
+          {name:'feature-surface-unity-foreign.json',path:invalidCensus,
+            project_identity_proven:false,source_scope_matched:false,
+            strict_ready:false,state:'SOURCE_IDENTITY_NOT_PROVEN',
+            unresolved_components:0}
+        ]:[]};
       } else if (url === '/api/prepare') {
         candidate = {candidate_id:'candidate001',action_total:29,
           automatic_setup:{available:true,ready:true,blockers:[],planned_imports:18,planned_actors:10}};
@@ -115,7 +131,9 @@ function boot({editorReady = true, censusUnresolved = false} = {}) {
     await pause();
   }
   return {app,calls,requests,click,change,poll:async()=>{poll();await pause();await pause();},
-    writes:()=>writes, pause,finish:()=>{done=true;}};
+    writes:()=>writes, pause,finish:()=>{done=true;},
+    csir,otherCsir,censusA,censusB,invalidCensus,
+    removeCensuses:()=>{availableCensuses=false;}};
 }
 
 async function testOneClick() {
