@@ -342,7 +342,7 @@ async function testStartupHomeWithRunningJobCanResume() {
 (async()=>{
   await testSelectionLayoutContract();
   await testStartupAlwaysHomeWithSavedResults();
-  await testStartupHomeWithRunningJob();
+  await testStartupHomeWithRunningJobCanResume();
   await testOneClick();
   await testOfflineDoesNotExecute();
   await testStrictCensusBlockAndExplicitRecovery();
