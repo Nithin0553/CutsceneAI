@@ -22,9 +22,12 @@
 8. For each result report: implemented versus verified, CI outcomes,
    real-engine evidence, still-open issues, PR disposition and next steps.
 
-Current Studio integration PR is #102; PR #103 was merged into its integration
-base after the user's November 9 source census acceptance. Issue #93 and
-remaining fidelity/release issues are not thereby complete.
+Studio consolidation: PR #112 supersedes the stacked integration review
+at PR #102. PR #103 was merged into that earlier integration base, and the
+compiled Studio feature chain is preserved in #112. Issue #93 can only be
+closed after code integration plus a confirmed real-editor acceptance run;
+source-fidelity, CineTwin, learning and release issues #94–#101 require their
+own independent evidence and remain separate.
 
 Use `docs/studio/ISSUE_PR_TRIAGE_POLICY.md` as the detailed process. This
 instruction applies to future CutSceneAI Studio and repository work.
