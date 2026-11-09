@@ -42,6 +42,8 @@ KNOWN_SOURCE_COMPONENTS = frozenset({
 _PARTIAL_SCANNER_CONTRACTS = {
     "UnityEngine.BoxCollider": "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE",
     "UnityEngine.SphereCollider": "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE",
+    "UnityEngine.MeshCollider": "MESH_COLLIDER_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED",
+    "UnityEngine.LODGroup": "LOD_GROUP_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED",
     "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData":
         "URP_CAMERA_PROPERTIES_PARTIAL",
     "UnityEngine.Rendering.Universal.UniversalAdditionalLightData":
@@ -60,6 +62,95 @@ def _finite_xyz(value: Any, names: tuple[str, ...]) -> bool:
         and all(type(value.get(name)) in (int, float)
                 and math.isfinite(value[name]) for name in names)
     )
+
+
+def _source_asset_reference(path: Any, guid: Any, native_id: Any) -> bool:
+    """Validate an immutable Unity source asset identity, not a target import."""
+    import re
+
+    if not isinstance(path, str) or not path.startswith(("Assets/", "Packages/")):
+        return False
+    parts = path.split("/")
+    if not all(parts) or any(part in {".", ".."} for part in parts):
+        return False
+    return (isinstance(guid, str)
+            and re.fullmatch(r"[0-9a-fA-F]{32}", guid) is not None
+            and isinstance(native_id, str)
+            and bool(native_id.strip()))
+
+
+def _mesh_collider_source_evidence(feature: Mapping[str, Any]) -> bool:
+    """Source capture only: collision cooking, physics and contacts unverified."""
+    return (type(feature.get("enabled")) is bool
+            and type(feature.get("is_trigger")) is bool
+            and type(feature.get("mesh_collider_convex")) is bool
+            and type(feature.get("mesh_collider_cooking_options")) is int
+            and 0 <= feature["mesh_collider_cooking_options"] <= 65535
+            and _source_asset_reference(
+                feature.get("mesh_asset_path"), feature.get("mesh_asset_guid"),
+                feature.get("mesh_global_id"))
+            and isinstance(feature.get("mesh_name"), str)
+            and bool(feature["mesh_name"].strip()))
+
+
+def _lod_group_source_evidence(feature: Mapping[str, Any]) -> bool:
+    """Validate source LOD visibility graph; no Unreal LOD equivalence claim."""
+    import math
+
+    if (type(feature.get("lod_enabled")) is not bool
+            or type(feature.get("lod_animate_cross_fading")) is not bool
+            or type(feature.get("lod_last_billboard")) is not bool
+            or not isinstance(feature.get("lod_fade_mode"), str)
+            or not feature["lod_fade_mode"]
+            or type(feature.get("lod_size")) not in (int, float)
+            or not math.isfinite(feature["lod_size"])
+            or feature["lod_size"] <= 0
+            or not _finite_xyz(feature.get("lod_local_reference_point"), ("x", "y", "z"))):
+        return False
+    levels = feature.get("lod_levels")
+    if not isinstance(levels, list) or not 1 <= len(levels) <= 32:
+        return False
+    seen = set()
+    previous_height = 2.0
+    for level in levels:
+        if not isinstance(level, dict):
+            return False
+        height = level.get("screen_relative_transition_height")
+        fade = level.get("fade_transition_width")
+        if (type(height) not in (int, float) or not math.isfinite(height)
+                or not 0 <= height <= 1 or height >= previous_height
+                or type(fade) not in (int, float) or not math.isfinite(fade)
+                or not 0 <= fade <= 1):
+            return False
+        previous_height = height
+        renderers = level.get("renderers")
+        if not isinstance(renderers, list) or not 1 <= len(renderers) <= 128:
+            return False
+        for renderer in renderers:
+            if not isinstance(renderer, dict):
+                return False
+            native_id = renderer.get("renderer_global_id")
+            renderer_path = renderer.get("renderer_path")
+            if (not isinstance(native_id, str) or not native_id.strip()
+                    or native_id in seen or not isinstance(renderer_path, str)
+                    or not renderer_path.strip()
+                    or renderer.get("renderer_type") not in {
+                        "UnityEngine.MeshRenderer", "UnityEngine.SkinnedMeshRenderer"
+                    } or not _source_asset_reference(
+                        renderer.get("mesh_asset_path"), renderer.get("mesh_asset_guid"),
+                        renderer.get("mesh_global_id"))):
+                return False
+            seen.add(native_id)
+    return True
+
+
+# Source-only extraction contracts are deliberately separate from executable
+# target adapter registration, native persistence checks and CineTwin parity.
+# A verified scanner payload never silently constitutes a working UE adapter.
+_TYPED_SOURCE_EVIDENCE = {
+    "UnityEngine.MeshCollider": _mesh_collider_source_evidence,
+    "UnityEngine.LODGroup": _lod_group_source_evidence,
+}
 
 
 def _partial_source_evidence(row: Mapping[str, Any]) -> bool:
@@ -82,6 +173,9 @@ def _partial_source_evidence(row: Mapping[str, Any]) -> bool:
     # only the current scanner's explicit "not truncated" evidence qualifies.
     if feature.get("native_properties_truncated") is not False:
         return False
+    validator = _TYPED_SOURCE_EVIDENCE.get(native_type)
+    if validator is not None:
+        return validator(feature)
     if native_type in {"UnityEngine.BoxCollider", "UnityEngine.SphereCollider"}:
         if not (feature.get("has_geometry") is True
                 and feature.get("shape") == ("box" if native_type.endswith("BoxCollider") else "sphere")
@@ -299,7 +393,7 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
             "Only loaded Unity scenes and currently loaded assemblies are indexed.",
             "Unreferenced project assets are not automatically cutscene dependencies.",
             "Known CED component types still require native target readback and behavior comparison.",
-            "Recorded URP, collider and signal source snapshots are partial authoring evidence, not converted Unreal behavior.",
+            "Recorded URP, collider, LODGroup and signal source snapshots are partial authoring evidence, not converted Unreal behavior.",
             "A script on another GameObject can still drive a source object at runtime.",
         ],
     }
