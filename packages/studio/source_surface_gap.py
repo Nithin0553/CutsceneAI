@@ -78,7 +78,9 @@ def _partial_source_evidence(row: Mapping[str, Any]) -> bool:
         return False
     if not str(row.get("component_global_id") or "").strip():
         return False
-    if feature.get("native_properties_truncated") is True:
+    # Older/partial exporter payloads may omit this field entirely;
+    # only the current scanner's explicit "not truncated" evidence qualifies.
+    if feature.get("native_properties_truncated") is not False:
         return False
     if native_type in {"UnityEngine.BoxCollider", "UnityEngine.SphereCollider"}:
         if not (feature.get("has_geometry") is True
