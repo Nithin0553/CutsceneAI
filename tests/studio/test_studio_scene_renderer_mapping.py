@@ -135,3 +135,22 @@ def test_newly_mapped_static_prop_is_imported_as_unreal_static_mesh(tmp_path):
     assert any(row["kind"] == "StaticMesh" and row["source_file"] == str(rock.resolve())
                for row in stage["imports"])
     assert stage["fidelity_verified"] is False
+
+
+def test_unsupported_source_scene_renderer_has_specific_incomplete_warning(tmp_path):
+    root, paths = create(tmp_path)
+    csir = json.loads(paths[0].read_text())
+    csir["entities"].append(entity(
+        "unsupported-LOD", "ENV_TREE_NEEDS_LOD_ADAPTER", lod=True,
+        source=["Assets/Models/LOD0.fbx", "Assets/Models/LOD1.fbx"]
+    ))
+    paths[0].write_text(json.dumps(csir))
+    stage = auto_assets.inspect(
+        *paths, root, "Assets/Benchmark002",
+        "/Game/CutSceneAI/AutoTransfer/T_INCOMPLETE"
+    )
+    assert stage["ready"] is True
+    assert any("ENV_TREE_NEEDS_LOD_ADAPTER" in w
+               and "NOT mapped" in w for w in stage["warnings"])
+    assert not any(x["name"] == "ENV_TREE_NEEDS_LOD_ADAPTER"
+                   for x in stage["actors"])
