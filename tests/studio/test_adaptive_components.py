@@ -270,3 +270,46 @@ def test_invalid_component_rule_never_executes_untrusted_target_expression():
     }]
     with __import__("pytest").raises(ValueError, match="Invalid target Unreal"):
         adaptive_components.adapt(csir, target, census)
+
+
+def test_source_captured_mesh_collider_and_lod_are_not_fake_native_actions():
+    from test_source_surface_gap import _source_mesh_collider_and_lod_rows
+
+    csir, target = source(), mapping()
+    census = _census(csir)
+    # Link both source components to an exact mapped actor, not just a name.
+    scene = "Assets/Benchmark002.unity"
+    hierarchy = "Benchmark002/CAM"
+    for item in _source_mesh_collider_and_lod_rows():
+        item["scene_path"] = scene
+        item["object_path"] = hierarchy
+        census["loaded_scene_components"].append(item)
+    result = adaptive_components.adapt(csir, target, census)
+    decisions = {row["source_native_type"]: row for row in result["decisions"]}
+    mesh = decisions["UnityEngine.MeshCollider"]
+    lod = decisions["UnityEngine.LODGroup"]
+    assert mesh["status"] == "MESH_COLLIDER_SOURCE_CAPTURED_NATIVE_ADAPTER_REQUIRED"
+    assert lod["status"] == "LOD_GROUP_SOURCE_CAPTURED_NATIVE_ADAPTER_REQUIRED"
+    assert mesh["actions"] == []
+    assert lod["actions"] == []
+    assert "mesh_collision_cooking" in mesh["unconverted_properties"]
+    assert "unreal_static_mesh_lod_chain" in lod["unconverted_properties"]
+    assert result["all_source_features_converted"] is False
+    assert result["source_target_fidelity_verified"] is False
+
+
+def test_malformed_lod_source_does_not_get_capture_credit_from_planner():
+    from test_source_surface_gap import _source_mesh_collider_and_lod_rows
+
+    csir, target = source(), mapping()
+    census = _census(csir)
+    bad_lod = _source_mesh_collider_and_lod_rows()[1]
+    bad_lod["scene_path"] = "Assets/Benchmark002.unity"
+    bad_lod["object_path"] = "Benchmark002/CAM"
+    bad_lod["feature"]["lod_levels"][0]["renderers"][0]["mesh_asset_guid"] = ""
+    census["loaded_scene_components"].append(bad_lod)
+    result = adaptive_components.adapt(csir, target, census)
+    lod = next(d for d in result["decisions"]
+               if d["source_native_type"] == "UnityEngine.LODGroup")
+    assert lod["status"] == "SOURCE_LOD_RENDERER_GRAPH_REQUIRED"
+    assert lod["actions"] == []
