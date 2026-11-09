@@ -43,7 +43,7 @@ class Actors:
     def spawn_actor_from_object(self,obj,loc,rot):
         x=Actor();self.actors.append(x);return x
     def spawn_actor_from_class(self,cls,loc,rot):
-        x=Actor();self.actors.append(x);return x
+        x=Actor();x.native_class=cls;self.actors.append(x);return x
 
 
 class FakeUnreal:
@@ -61,7 +61,9 @@ class FakeUnreal:
         self.FbxImportUI=Task
         self.FBXImportType=SimpleNamespace(FBXIT_ANIMATION=1,FBXIT_SKELETAL_MESH=2,FBXIT_STATIC_MESH=3)
         self.CineCameraActor=object()
-        self.PointLight=object()
+        self.PointLight=type('PointLight', (), {})
+        self.SpotLight=type('SpotLight', (), {})
+        self.DirectionalLight=type('DirectionalLight', (), {})
         self.Actor=object()
         self.Vector=lambda *args:args
         self.Rotator=lambda *args:args
@@ -324,3 +326,83 @@ def test_material_optin_is_only_accepted_as_explicit_boolean():
         studio_ui_features.validate_options(
             {}, {"enable_fbx_embedded_material_import": "yes"}
         )
+
+
+
+@pytest.mark.parametrize(("source_type", "target_class"), [
+    ("Directional", "DirectionalLight"),
+    ("Spot", "SpotLight"),
+    ("Point", "PointLight"),
+])
+def test_source_light_type_controls_native_unreal_actor_class(
+    tmp_path, source_type, target_class,
+):
+    root, files = create(tmp_path)
+    csir = json.loads(files[0].read_text())
+    for item in csir["entities"]:
+        if item["ced_type"] == "entity.light":
+            item["metadata"] = {"light": {"light_type": source_type}}
+    files[0].write_text(json.dumps(csir))
+    stage = studio_auto_assets.inspect(
+        *files, root, "Assets/Benchmark002", "/Game/CutSceneAI/AutoTransfer/T_ABC",
+    )
+    assert stage["ready"] is True
+    light = next(row for row in stage["actors"] if row["kind"] == "entity.light")
+    assert light["source_light_type"] == source_type
+    assert light["target_light_class"] == target_class
+    manifest = tmp_path / "auto-setup.json"
+    manifest.write_text(json.dumps(stage))
+    project = tmp_path / "NewProject.uproject"
+    project.write_text("{}")
+    api = FakeUnreal(str(project))
+    receipt = scene.run(
+        str(manifest), str(tmp_path / "auto-receipt.json"),
+        csir_path=str(files[0]), mapping_path=str(files[1]),
+        plan_path=str(files[2]), expected_project=str(project),
+        expected_level="/Game/Tests/L_Test", unreal_api=api,
+    )
+    assert receipt["status"] == "SETUP_SAVED_UNVERIFIED"
+    native = next(actor for actor in api.actor_sys.actors if actor.label == light["label"])
+    assert native.native_class is getattr(api, target_class)
+    assert receipt["fidelity_verified"] is False
+
+
+def test_missing_native_light_class_blocks_before_import_or_spawn(tmp_path):
+    root, files = create(tmp_path)
+    csir = json.loads(files[0].read_text())
+    next(item for item in csir["entities"] if item["ced_type"] == "entity.light")[
+        "metadata"
+    ] = {"light": {"light_type": "Directional"}}
+    files[0].write_text(json.dumps(csir))
+    stage = studio_auto_assets.inspect(
+        *files, root, "Assets/Benchmark002", "/Game/CutSceneAI/AutoTransfer/T_ABC",
+    )
+    manifest = tmp_path / "auto-setup.json"
+    manifest.write_text(json.dumps(stage))
+    project = tmp_path / "NewProject.uproject"
+    project.write_text("{}")
+    api = FakeUnreal(str(project))
+    del api.DirectionalLight
+    with pytest.raises(scene.AutomaticSetupError, match="native light class unavailable"):
+        scene.run(
+            str(manifest), str(tmp_path / "auto-receipt.json"),
+            csir_path=str(files[0]), mapping_path=str(files[1]),
+            plan_path=str(files[2]), expected_project=str(project),
+            expected_level="/Game/Tests/L_Test", unreal_api=api,
+        )
+    assert not api.assets
+    assert not api.actor_sys.actors
+
+
+def test_unsupported_source_light_type_is_source_asset_blocker(tmp_path):
+    root, files = create(tmp_path)
+    csir = json.loads(files[0].read_text())
+    next(item for item in csir["entities"] if item["ced_type"] == "entity.light")[
+        "metadata"
+    ] = {"light": {"light_type": "Area"}}
+    files[0].write_text(json.dumps(csir))
+    stage = studio_auto_assets.inspect(
+        *files, root, "Assets/Benchmark002", "/Game/CutSceneAI/AutoTransfer/T_ABC",
+    )
+    assert stage["ready"] is False
+    assert any("Unsupported Unity light type" in v for v in stage["blockers"])

@@ -276,6 +276,26 @@ def _execute(job):
         job['closed_loop_error'] = str(exc)
         unreal.log_warning('[CutSceneAI Studio] Post-transfer assessment incomplete: ' + str(exc))
     job['fidelity_verified'] = False
+    # Read back saved native assets, bindings and hierarchy now, in the
+    # generating editor. Only a separately launched editor may later prove
+    # persistence across process restart.
+    try:
+        _save(WORKSPACE / 'jobs' / (job['job_id'] + '.json'), job)
+        import studio_generation_readback
+        proof = studio_generation_readback.capture(WORKSPACE, job, unreal_api=unreal)
+        job['generation_readback_status'] = proof.get('native_structure', 'INCOMPLETE')
+        job['generation_hierarchy_status'] = proof.get('source_hierarchy', 'INCOMPLETE')
+        errors = [x for x in (proof.get('native_structure_error'),
+                              proof.get('source_hierarchy_error')) if x]
+        if errors:
+            job['generation_readback_errors'] = errors
+            unreal.log_warning('[CutSceneAI Studio] Native readback incomplete: ' +
+                               '; '.join(errors))
+    except Exception as exc:
+        job['generation_readback_status'] = 'INCOMPLETE'
+        job['generation_readback_error'] = str(exc)
+        unreal.log_warning('[CutSceneAI Studio] Generation readback unavailable: ' +
+                           str(exc))
     return job
 
 

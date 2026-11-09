@@ -222,6 +222,13 @@ def verification(workspace: Path, active_job: dict[str, Any],
              and p.resolve().parent == candidate),
             key=lambda p: p.stat().st_mtime_ns, reverse=True,
         )
+        if not files and name == "persistence":
+            files = sorted(
+                (p for p in candidate.glob(
+                    "generation-readback-audit-" + job_id + ".json"
+                ) if p.is_file() and p.resolve().parent == candidate),
+                key=lambda p: p.stat().st_mtime_ns, reverse=True,
+            )
         if not files:
             continue
         from json import loads
@@ -230,11 +237,16 @@ def verification(workspace: Path, active_job: dict[str, Any],
             continue
         report = {
             "status": data.get("status"), "path": str(files[0]),
+            "readback_phase": ("GENERATION_EDITOR" if name == "persistence"
+                               and files[0].name.startswith("generation-readback-")
+                               else "POST_REOPEN" if name == "persistence"
+                               else "UNSPECIFIED"),
             "fidelity_verified": False, "restart_verified": False,
         }
         if name == "persistence":
             report.update({
-                "restart_verified": data.get("restart_verified") is True,
+                "restart_verified": (data.get("restart_verified") is True
+                                     and report["readback_phase"] == "POST_REOPEN"),
                 "generation_editor_pid": data.get("generation_editor_pid"),
                 "observed_editor_pid": data.get("observed_editor_pid"),
                 "native_structure": data.get("native_structure_status"),

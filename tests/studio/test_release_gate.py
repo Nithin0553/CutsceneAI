@@ -162,3 +162,68 @@ def test_generated_sequence_with_failed_save_does_not_pass_native_generation(tmp
     result = gate.assess(workspace, job["job_id"])
     assert result["checks"]["native_generation"]["status"] == "FAIL"
     assert result["status"] == "BLOCKED"
+
+
+
+def test_generation_readback_proves_native_structure_not_unreal_restart(tmp_path):
+    workspace, candidate, job = fixture(tmp_path)
+    put(candidate / ("generation-readback-audit-" + job["job_id"] + ".json"), {
+        "kind": "cutsceneai.studio.persistence_audit",
+        "status": "STRUCTURAL_READBACK_PASS_RESTART_UNVERIFIED",
+        "native_structure_status": "PASS",
+        "sequence_persisted": True,
+        "provenance_status": "COMPLETE",
+        "restart_verified": False,
+        "assets_class_and_disk_verified": 11,
+        "asset_count": 11,
+    })
+    result = gate.assess(workspace, job["job_id"])
+    assert result["checks"]["native_structure_and_save"]["status"] == "PASS"
+    assert result["checks"]["independent_editor_restart"]["status"] == "INCOMPLETE"
+    assert result["release_ready"] is False
+
+
+def test_generation_readback_failure_blocks_even_without_post_reopen(tmp_path):
+    workspace, candidate, job = fixture(tmp_path)
+    put(candidate / ("generation-readback-audit-" + job["job_id"] + ".json"), {
+        "kind": "cutsceneai.studio.persistence_audit",
+        "status": "STRUCTURAL_READBACK_FAIL",
+        "native_structure_status": "FAIL",
+        "sequence_persisted": False,
+        "provenance_status": "COMPLETE",
+        "restart_verified": False,
+    })
+    result = gate.assess(workspace, job["job_id"])
+    assert result["checks"]["native_structure_and_save"]["status"] == "FAIL"
+    assert result["status"] == "BLOCKED"
+    assert result["release_ready"] is False
+
+
+
+def test_missing_sky_with_no_source_environment_capture_remains_incomplete(tmp_path):
+    workspace, candidate, job = fixture(tmp_path)
+    put(candidate / ("visual-audit-" + job["job_id"] + "-sky.json"), {
+        "kind": "cutsceneai.studio.visual_readback_audit",
+        "visual_issues": ["NO_SKYLIGHT_OR_SKY_ATMOSPHERE_FOUND",
+                          "NO_DIRECTIONAL_LIGHT_FOUND"],
+        "source_directional_light_required": None,
+        "source_sky_ambient_capture_available": False,
+    })
+    result = gate.assess(workspace, job["job_id"])
+    assert result["checks"]["native_visual_prerequisites"]["status"] == "INCOMPLETE"
+    assert "native_visual_prerequisites" in result["incomplete"]
+    assert result["release_ready"] is False
+
+
+def test_missing_source_required_directional_light_is_a_confirmed_native_failure(
+    tmp_path,
+):
+    workspace, candidate, job = fixture(tmp_path)
+    put(candidate / ("visual-audit-" + job["job_id"] + "-light.json"), {
+        "kind": "cutsceneai.studio.visual_readback_audit",
+        "visual_issues": ["NO_DIRECTIONAL_LIGHT_FOUND"],
+        "source_directional_light_required": True,
+    })
+    result = gate.assess(workspace, job["job_id"])
+    assert result["checks"]["native_visual_prerequisites"]["status"] == "FAIL"
+    assert result["status"] == "BLOCKED"

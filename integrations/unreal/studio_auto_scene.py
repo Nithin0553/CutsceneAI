@@ -124,6 +124,16 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
             raise AutomaticSetupError('Automatic setup target namespace already exists; choose a fresh candidate: '+manifest['target_folder'])
         if api.EditorAssetLibrary.does_asset_exist(sequence):
             raise AutomaticSetupError('Level Sequence path already occupied: '+sequence)
+        # Resolve all source-backed light classes before importing an asset or
+        # spawning any actor. Unknown types are never mapped to PointLight.
+        light_classes = {'PointLight', 'SpotLight', 'DirectionalLight'}
+        for row in manifest['actors']:
+            if row['kind'] != 'entity.light':
+                continue
+            target_class = row.get('target_light_class') or 'PointLight'
+            if target_class not in light_classes or not hasattr(api, target_class):
+                raise AutomaticSetupError('Required Unreal native light class unavailable: '+
+                                          str(target_class))
         ed=api.get_editor_subsystem(api.EditorActorSubsystem)
         current={}
         for actor in ed.get_all_level_actors():
@@ -210,9 +220,9 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 mutation=True
                 actor=ed.spawn_actor_from_object(obj,zero,rotation)
             else:
-                cls={'entity.camera':api.CineCameraActor,
-                     'entity.light':api.PointLight,
-                     'entity.prop':api.Actor}[kind]
+                cls = (getattr(api, row.get('target_light_class') or 'PointLight')
+                       if kind == 'entity.light' else
+                       api.CineCameraActor if kind == 'entity.camera' else api.Actor)
                 operation['status']='SPAWN_STARTED'
                 receipt['failed_step']={'phase':'actor_spawn','name':row['name'],
                                         'label':row['label']}
