@@ -137,9 +137,9 @@
       '<div class="fact">Planned imports <b>'+esc(c.automatic_setup?.planned_imports??'Unknown')+'</b></div>'+
       '<div class="fact">Planned actors <b>'+esc(c.automatic_setup?.planned_actors??'Unknown')+'</b></div>'+
       '<div class="fact">Unresolved source components <b>'+esc(c.source_unresolved_components??'Not assessed')+'</b></div>'+
-      (state.censusSelection?.source_snapshot_partial_count?
+      ((c?.source_snapshot_partial_count||state.censusSelection?.source_snapshot_partial_count)?
         '<div class="fact">Source-captured partial components <b>'+
-        esc(state.censusSelection.source_snapshot_partial_count)+'</b></div>'+
+        esc(c?.source_snapshot_partial_count||state.censusSelection?.source_snapshot_partial_count)+'</b></div>'+
         '<p class="subnote">These source components are recorded but full Unreal behavior remains unverified.</p>':'')+
       (c.automatic_setup?.blockers||[]).map(x=>'<p class="warning">'+esc(x)+'</p>').join('')+
       (c.automatic_setup?.warnings||[]).map(x=>'<p class="subnote">'+esc(x)+'</p>').join('')+
