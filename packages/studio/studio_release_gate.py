@@ -115,10 +115,15 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
         generated_sequence=job.get("generated_sequence"),
     )
 
-    persistence = _latest(
+    reopen_audit = _latest(
         candidate, "post-reopen-audit-" + job_id + ".json",
         "cutsceneai.studio.persistence_audit", job,
     )
+    generation_audit = _latest(
+        candidate, "generation-readback-audit-" + job_id + ".json",
+        "cutsceneai.studio.persistence_audit", job,
+    )
+    persistence = reopen_audit or generation_audit
     if persistence is None:
         record("native_structure_and_save", "INCOMPLETE",
                "Run the native Unreal persistence audit after generation.")
@@ -140,8 +145,9 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
         # Current audit runs in the open editor. Its explicit restart_verified
         # flag is false until a *distinct process* is independently observed.
         record("independent_editor_restart",
-               "PASS" if persistence.get("restart_verified") is True else "INCOMPLETE",
-               "A same-session snapshot cannot certify reopen persistence.")
+               "PASS" if reopen_audit is not None
+               and reopen_audit.get("restart_verified") is True else "INCOMPLETE",
+               "A same-editor generation snapshot cannot certify reopen persistence.")
 
     hierarchy = _latest(
         candidate, "hierarchy-audit-" + job_id + "-*.json",
