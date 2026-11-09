@@ -273,10 +273,17 @@ def audit_latest(workspace: Path | None = None, api: Any | None = None) -> dict[
     if plan.get("sequence_asset_path") != job.get("sequence_path"):
         raise VisualAuditError("Target sequence does not match the prepared source plan.")
     sequence = api.load_asset(str(job["sequence_path"]))
+    # Still record native target observations if a legacy job lacks a
+    # source capture; unavailable Unity lighting data means UNKNOWN, not PASS.
+    source_path = Path(str(job.get("csir") or ""))
+    try:
+        source_data = _load(source_path) if source_path.is_file() else {}
+    except (OSError, ValueError, TypeError):
+        source_data = {}
     source_lights = [
         ((entity.get("metadata") or {}).get("light") or {}).get("light_type")
-        for entity in _load(Path(str(job["csir"]))).get("entities", [])
-        if entity.get("ced_type") == "entity.light"
+        for entity in source_data.get("entities", [])
+        if isinstance(entity, dict) and entity.get("ced_type") == "entity.light"
     ]
     # An explicit Directional source creates a source-backed requirement.
     # Otherwise use "unknown" unless every source light type is captured.
