@@ -173,10 +173,28 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
                "Native character materials, camera tracks and environment have not been audited.")
     else:
         issues = list(visual.get("visual_issues") or [])
-        record("native_visual_prerequisites",
-               "FAIL" if issues else "PASS",
-               "Target scene prerequisites, not Unity/Unreal rendered-frame equivalence.",
+        environmental_observations = {
+            "NO_SKYLIGHT_OR_SKY_ATMOSPHERE_FOUND",
+            "NO_DIRECTIONAL_LIGHT_FOUND",
+        }
+        native_faults = [code for code in issues
+                         if code not in environmental_observations]
+        directional_required_missing = (
+            "NO_DIRECTIONAL_LIGHT_FOUND" in issues
+            and visual.get("source_directional_light_required") is True
+        )
+        # Unity CSIR does not capture all ambient sky/render-pipeline
+        # semantics. An absent Unreal SkyLight by itself cannot prove an
+        # actual source-to-target transfer defect; it remains INCOMPLETE.
+        status = ("FAIL" if native_faults or directional_required_missing
+                  else "INCOMPLETE" if issues else "PASS")
+        record("native_visual_prerequisites", status,
+               "Native faults fail; unmatched source/target environment "
+               "observations require source sky/ambient and rendered-frame evidence.",
                findings=issues,
+               native_faults=native_faults,
+               source_directional_light_required=visual.get(
+                   "source_directional_light_required"),
                character_default_slots=visual.get("character_material_slots_engine_default"))
 
     feedback = _latest(
