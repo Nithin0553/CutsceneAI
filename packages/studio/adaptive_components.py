@@ -14,6 +14,7 @@ from collections import Counter
 from typing import Any, Mapping
 
 import feature_dispatch
+import source_surface_gap
 
 SOURCE_CAMERA = "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData"
 SOURCE_LIGHT = "UnityEngine.Light"
@@ -309,8 +310,7 @@ def adapt(
         elif native_type == "UnityEngine.MeshCollider":
             desc["status"] = (
                 "MESH_COLLIDER_SOURCE_CAPTURED_NATIVE_ADAPTER_REQUIRED"
-                if feature.get("extraction") ==
-                "MESH_COLLIDER_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED"
+                if source_surface_gap.source_capture_valid(row)
                 else "SOURCE_COLLISION_MESH_IDENTITY_REQUIRED"
             )
             desc["unconverted_properties"].extend([
@@ -321,8 +321,7 @@ def adapt(
         elif native_type == SOURCE_LOD_GROUP:
             desc["status"] = (
                 "LOD_GROUP_SOURCE_CAPTURED_NATIVE_ADAPTER_REQUIRED"
-                if feature.get("extraction") ==
-                "LOD_GROUP_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED"
+                if source_surface_gap.source_capture_valid(row)
                 else "SOURCE_LOD_RENDERER_GRAPH_REQUIRED"
             )
             desc["unconverted_properties"].extend([
