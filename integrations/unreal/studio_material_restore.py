@@ -33,9 +33,18 @@ def _slots(component):
             break
     if mesh is None:
         return []
-    try:
-        raw = mesh.get_editor_property("materials")
-    except Exception:
+    # SkeletalMesh exposes "materials", while StaticMesh exposes
+    # "static_materials" (the inherited "materials" property is protected).
+    # Probe both without changing the mesh or its original material slots.
+    raw = None
+    for property_name in ("materials", "static_materials"):
+        try:
+            raw = mesh.get_editor_property(property_name)
+        except Exception:
+            continue
+        if raw is not None:
+            break
+    if raw is None:
         return []
     slots = []
     for index, item in enumerate(raw):
