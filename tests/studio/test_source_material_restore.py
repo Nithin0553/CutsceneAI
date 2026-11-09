@@ -205,12 +205,12 @@ def _two_actors_with_same_slot(tmp_path):
         folder.mkdir()
         guid = f"{index + 1:032x}"
         png = folder / "Body.png"
-        png.write_bytes(b"\\x89PNG\\r\\n\\x1a\\n" + bytes([index + 1]) * 16)
-        png.with_name(png.name + ".meta").write_text("guid: " + guid + "\\n")
+        png.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes([index + 1]) * 16)
+        png.with_name(png.name + ".meta").write_text("guid: " + guid + "\n")
         material = folder / "Body.mat"
         material.write_text(
-            "    - _BaseMap:\\n"
-            f"        m_Texture: {{fileID: 2800000, guid: {guid}, type: 3}}\\n"
+            "    - _BaseMap:\n"
+            f"        m_Texture: {{fileID: 2800000, guid: {guid}, type: 3}}\n"
         )
         entity["metadata"] = {"source_material_assets": [{
             "asset_path": material.relative_to(project).as_posix(),
