@@ -9,7 +9,7 @@ const css = fs.readFileSync('apps/studio-web/cinematic.css', 'utf8');
 function boot({editorReady = true, censusUnresolved = false, multiSources = false,
   restoredJob = ''} = {}) {
   const listeners = {}, calls = [], requests = [];
-  let html = '', writes = 0;
+  let html = '', writes = 0, copied = '';
   const app = {
     get innerHTML() {return html;},
     set innerHTML(value) {html=value;writes++;},
@@ -33,9 +33,19 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
   if(restoredJob) {
     connected={unity_project:unity,target_project:file,level_path:level,
       csir,scene_name:'Benchmark002',source_rights_confirmed:true};
-    currentJob={job_id:'a'.repeat(32),status:restoredJob==='running'?'RUNNING':
-      'GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED',
-      generation_status:restoredJob==='running'?'NOT_STARTED':'GENERATED_UNVERIFIED'};
+    currentJob={job_id:'a'.repeat(32),candidate_id:'candidate001',
+      created_at:'2026-11-09T17:00:00Z',
+      status:restoredJob==='running'?'RUNNING':restoredJob==='failed'?
+      'PARTIAL_SETUP_MUST_INSPECT':'GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED',
+      generation_status:restoredJob==='finished'?'GENERATED_UNVERIFIED':'NOT_STARTED',
+      ...(restoredJob==='failed'?{
+        error:'FBX import failed: unsupported & unresolved texture <invalid>',
+        setup_error:'FBX import failed',
+        failure_stage:'IMPORTING_ASSETS_AND_CREATING_ACTORS',
+        setup_status:'PARTIAL_SETUP_MUST_INSPECT',
+        setup_failed_step:{phase:'asset_import',name:'CharacterA.fbx'},
+        setup_recovery:'Do not rerun this candidate; inspect staged assets.'
+      }:{})};
     done=restoredJob==='finished';
   }
   const fake = {
@@ -43,7 +53,7 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
       if (sel === '#app') return app;
       return null;
     }, visibilityState: 'visible'},
-    navigator: {clipboard: {writeText: async () => {}}},
+    navigator: {clipboard: {writeText: async value => {copied=String(value);}}},
     setInterval(fn) { poll = fn; },
     fetch: async (url, opts = {}) => {
       calls.push(url);
@@ -141,7 +151,7 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
     await pause();
   }
   return {app,calls,requests,click,change,poll:async()=>{poll();await pause();await pause();},
-    writes:()=>writes, pause,finish:()=>{done=true;},
+    writes:()=>writes, copied:()=>copied, pause,finish:()=>{done=true;},
     csir,otherCsir,censusA,censusB,invalidCensus,
     removeCensuses:()=>{availableCensuses=false;}};
 }
@@ -339,14 +349,41 @@ async function testStartupHomeWithRunningJobCanResume() {
   assert.match(x.app.innerHTML,/class="landing"/);
 }
 
+async function testBlockedGenerationShowsActualNativeFailureAndRecovery() {
+  const x=boot({restoredJob:'failed'});
+  await x.pause();
+  await x.pause();
+  assert.match(x.app.innerHTML,/class="landing"/);
+  await x.click('results');
+  const markup=x.app.innerHTML;
+  assert.match(markup,/Transfer stopped before sequence generation/);
+  assert.match(markup,/IMPORTING_ASSETS_AND_CREATING_ACTORS/);
+  assert.match(markup,/PARTIAL_SETUP_MUST_INSPECT/);
+  assert.match(markup,/asset_import/);
+  assert.match(markup,/CharacterA\.fbx/);
+  assert.match(markup,/Do not rerun this candidate/);
+  assert.match(markup,/2026-11-09T17:00:00Z/);
+  assert.match(markup,/unsupported &amp; unresolved texture &lt;invalid&gt;/,
+    'Unreal exception text must be escaped, not injected as HTML');
+  assert.match(markup,/Not applicable until an editable sequence has been generated/);
+  assert.doesNotMatch(markup,/reopen the saved map in a new Unreal Editor process/);
+  await x.click('copy-failure');
+  assert.match(x.copied(),/Job: a{32}/);
+  assert.match(x.copied(),/Status: PARTIAL_SETUP_MUST_INSPECT/);
+  assert.match(x.copied(),/Stage: IMPORTING_ASSETS_AND_CREATING_ACTORS/);
+  assert.match(x.copied(),/FBX import failed/);
+  assert.match(x.copied(),/Candidate: candidate001/);
+}
+
 (async()=>{
   await testSelectionLayoutContract();
   await testStartupAlwaysHomeWithSavedResults();
   await testStartupHomeWithRunningJobCanResume();
+  await testBlockedGenerationShowsActualNativeFailureAndRecovery();
   await testOneClick();
   await testOfflineDoesNotExecute();
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
   await testMissingSelectedCensusFailsClosed();
-  console.log('Cinematic UI backend contract: 8 scenarios including responsive selectors and Home on restart passed.');
+  console.log('Cinematic UI backend contract: 9 scenarios including native generation failure disclosure, responsive selectors and Home on restart passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
