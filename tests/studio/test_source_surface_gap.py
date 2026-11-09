@@ -358,3 +358,123 @@ def test_malformed_signal_and_empty_urp_evidence_do_not_get_source_credit():
         result = source_surface_gap.audit(csir, surface)
         assert result["unresolved_component_count"] == 1
         assert result["source_snapshot_partial_count"] == 0
+
+
+def _source_mesh_collider_and_lod_rows():
+    guid = "a" * 32
+    mesh = {
+        "extraction": "MESH_COLLIDER_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED",
+        "enabled": True, "is_trigger": False, "mesh_collider_convex": False,
+        "mesh_collider_cooking_options": 30, "mesh_name": "RockMesh",
+        "mesh_asset_path": "Assets/Models/Rock_04.fbx",
+        "mesh_asset_guid": guid, "mesh_global_id": "GlobalObjectId-RockMesh",
+        "native_properties_truncated": False,
+    }
+    lod = {
+        "extraction": "LOD_GROUP_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED",
+        "lod_enabled": True, "lod_fade_mode": "CrossFade",
+        "lod_animate_cross_fading": False, "lod_last_billboard": False,
+        "lod_size": 3.5,
+        "lod_local_reference_point": {"x": 0, "y": 0, "z": 0},
+        "lod_levels": [
+            {
+                "screen_relative_transition_height": 0.7,
+                "fade_transition_width": 0.2,
+                "renderers": [
+                    {
+                        "renderer_global_id": "renderer-LOD0",
+                        "renderer_path": "S/Camera/Tree_05_LOD0",
+                        "renderer_type": "UnityEngine.MeshRenderer",
+                        "mesh_asset_path": "Assets/Models/Tree_05.fbx",
+                        "mesh_asset_guid": "b" * 32,
+                        "mesh_global_id": "mesh-LOD0",
+                    },
+                ],
+            },
+            {
+                "screen_relative_transition_height": 0.3,
+                "fade_transition_width": 0.15,
+                "renderers": [
+                    {
+                        "renderer_global_id": "renderer-LOD1",
+                        "renderer_path": "S/Camera/Tree_05_LOD1",
+                        "renderer_type": "UnityEngine.MeshRenderer",
+                        "mesh_asset_path": "Assets/Models/Tree_05.fbx",
+                        "mesh_asset_guid": "b" * 32,
+                        "mesh_global_id": "mesh-LOD1",
+                    },
+                ],
+            },
+        ],
+        "native_properties_truncated": False,
+    }
+    def row(native_type, features, index):
+        return {
+            "scene_path": "Assets/Scenes/S.unity",
+            "object_path": "S/Camera",
+            "component_type": native_type,
+            "component_global_id": f"component-{index}",
+            "feature": features,
+        }
+    return [row("UnityEngine.MeshCollider", mesh, 1),
+            row("UnityEngine.LODGroup", lod, 2)]
+
+
+def test_mesh_collider_and_lod_source_capture_is_partial_not_conversion():
+    csir, census = _fixtures()
+    census["loaded_scene_components"] = [
+        row for row in census["loaded_scene_components"]
+        if row["component_type"] != "MyGame.CustomFX"
+    ] + _source_mesh_collider_and_lod_rows()
+    result = source_surface_gap.audit(csir, census)
+    assert result["unresolved_component_count"] == 0
+    assert result["source_snapshot_partial_count"] == 2
+    assert result["component_counts"][
+        "SOURCE_COMPONENT_SNAPSHOT_PARTIAL_TARGET_UNVERIFIED"
+    ] == 2
+    assert all(not item["target_native_verified"] and not item["behavior_verified"]
+               for item in result["source_snapshot_partial_findings"])
+    assert result["parity_verified"] is False
+    assert result["cutscene_completeness_verified"] is False
+
+
+def test_mesh_collider_and_lod_falsified_evidence_fail_closed():
+    import copy
+
+    csir, surface = _fixtures()
+    surface["loaded_scene_components"] = [
+        row for row in surface["loaded_scene_components"]
+        if row["component_type"] != "MyGame.CustomFX"
+    ]
+    mesh, lod = _source_mesh_collider_and_lod_rows()
+    invalids = [
+        {**mesh, "feature": {**mesh["feature"], "mesh_asset_guid": ""}},
+        {**mesh, "feature": {**mesh["feature"], "mesh_collider_convex": "false"}},
+        {**mesh, "feature": {**mesh["feature"], "mesh_asset_path": "Assets/../Outside.fbx"}},
+        {**mesh, "feature": {**mesh["feature"], "native_properties_truncated": True}},
+        {**lod, "feature": {**lod["feature"], "lod_levels": []}},
+        {**lod, "feature": {**lod["feature"], "lod_size": float("nan")}},
+        {**lod, "feature": {**lod["feature"], "lod_levels": [
+            {**lod["feature"]["lod_levels"][0], "screen_relative_transition_height": 1.4},
+        ]}},
+        {**lod, "feature": {**lod["feature"], "lod_levels": [
+            lod["feature"]["lod_levels"][0],
+            {**lod["feature"]["lod_levels"][1],
+             "screen_relative_transition_height": 0.9},
+        ]}},
+        {**lod, "feature": {**lod["feature"], "lod_levels": [
+            {**lod["feature"]["lod_levels"][0], "renderers": [
+                {**lod["feature"]["lod_levels"][0]["renderers"][0],
+                 "renderer_global_id": ""},
+            ]},
+        ]}},
+    ]
+    for invalid in invalids:
+        census = copy.deepcopy(surface)
+        census["loaded_scene_components"].append(invalid)
+        output = source_surface_gap.audit(csir, census)
+        assert output["unresolved_component_count"] == 1
+        assert output["source_snapshot_partial_count"] == 0
+        assert output["component_counts"][
+            "NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED"
+        ] == 1
