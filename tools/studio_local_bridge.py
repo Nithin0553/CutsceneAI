@@ -717,6 +717,21 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
             if path == '/api/autopilot':
                 import studio_autopilot
                 return self.reply(200, studio_autopilot.status(folder))
+            if path == '/api/agent-conversation':
+                import studio_agent_feedback
+                active = folder / 'active-job.json'
+                if not active.is_file():
+                    return self.reply(200, {
+                        'available': False, 'messages': [], 'agent_status': 'NO_TRANSFER',
+                    })
+                job_id = str(load_json(active).get('job_id') or '')
+                if len(job_id) != 32 or any(c not in '0123456789abcdef' for c in job_id):
+                    return self.reply(409, {'error': 'Active transfer identity invalid.'})
+                job = load_json(folder / 'jobs' / (job_id + '.json'))
+                try:
+                    return self.reply(200, studio_agent_feedback.conversation(folder, job))
+                except (ValueError, OSError, KeyError, TypeError) as exc:
+                    return self.reply(409, {'error': 'Agent conversation unavailable: ' + str(exc)})
             if path == '/api/capabilities':
                 import studio_ui_features
                 return self.reply(200, studio_ui_features.capabilities())
@@ -863,6 +878,17 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         atomic_json(folder / 'connection.json', result)
                         for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json', 'destination-readiness.json', 'one-click-approval.json'):
                             (folder / name).unlink(missing_ok=True)
+                    elif route == '/api/agent-feedback':
+                        import studio_agent_feedback
+                        active = folder / 'active-job.json'
+                        if not active.is_file():
+                            raise ValueError('Complete a transfer before requesting a correction.')
+                        job_id = str(load_json(active).get('job_id') or '')
+                        if len(job_id) != 32 or any(c not in '0123456789abcdef' for c in job_id):
+                            raise ValueError('Active job identity is invalid.')
+                        job = load_json(folder / 'jobs' / (job_id + '.json'))
+                        result = studio_agent_feedback.submit(
+                            folder, job, data.get('message'))
                     elif route == '/api/autopilot/start':
                         import studio_autopilot
                         result = studio_autopilot.begin(
