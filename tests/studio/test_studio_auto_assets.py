@@ -47,6 +47,45 @@ def create(tmp, *, ambiguous=False, missing_audio=False):
     return root,paths
 
 
+def create_retarget_case(tmp):
+    root, files = create(tmp)
+    csir = json.loads(files[0].read_text())
+    source_mesh = 'Assets/Benchmark002/Characters/Ch31_nonPBR.fbx'
+    csir['entities'][0]['metadata'] = {'source_model_assets': [{'asset_path': source_mesh}]}
+    for asset, filename in zip((csir['assets'][0], csir['assets'][2]), ('Walking.fbx', 'Breathing Idle.fbx')):
+        asset['metadata'] = {'asset_path': 'Assets/Benchmark002/Animations/' + filename}
+    files[0].write_text(json.dumps(csir))
+    mapping = json.loads(files[1].read_text())
+    mapping['skeletal_retarget_profiles'] = {'a': {
+        'source_fbx_sha256': auto.digest(root / source_mesh),
+        'source_mesh_path': '/Game/Approved/UnityPreview',
+        'target_mesh_path': '/Game/Approved/Mannequin',
+        'retargeter_path': '/Game/Approved/Retargeter',
+    }}
+    files[1].write_text(json.dumps(mapping))
+    return root, files
+
+
+def test_native_ik_planner_preserves_final_paths_and_requires_current_fbx(tmp_path):
+    root, files = create_retarget_case(tmp_path)
+    namespace = '/Game/CutSceneAI/AutoTransfer/T_TEST'
+    plan = json.loads(files[2].read_text())
+    plan['actions'].append(dict(plan['actions'][0], start_frame=60))
+    files[2].write_text(json.dumps(plan))
+    result = auto.inspect(*files, root, 'Assets', namespace)
+    assert result['ready']
+    assert result['skeletal_retarget_profiles']['Ch31_nonPBR']['source_entity_id'] == 'a'
+    animations = [r for r in result['imports'] if r.get('source_animation_path')]
+    assert len(animations) == 2
+    for row in animations:
+        assert row['source_animation_path'].startswith(namespace + '/RetargetSource/')
+        assert row['source_animation_path'].split('/')[-1] == row['target_asset_path'].split('/')[-1]
+    (root / 'Assets/Benchmark002/Characters/Ch31_nonPBR.fbx').write_bytes(b'edited mesh')
+    result = auto.inspect(*files, root, 'Assets', namespace)
+    assert not result['ready']
+    assert any('source FBX no longer matches' in reason for reason in result['blockers'])
+
+
 def test_resolves_real_source_files_with_source_track_bindings(tmp_path):
     root,files=create(tmp_path)
     result=auto.inspect(*files,root,'Assets/Benchmark002','/Game/CutSceneAI/AutoTransfer/T_ABCD')

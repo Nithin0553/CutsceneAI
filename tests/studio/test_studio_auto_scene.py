@@ -11,7 +11,7 @@ sys.path.insert(0,str(ROOT/'integrations'/'unreal'))
 sys.path.insert(0,str(ROOT/'tools'))
 import studio_auto_assets
 import studio_auto_scene as scene
-from test_studio_auto_assets import create
+from test_studio_auto_assets import create, create_retarget_case
 
 
 class Asset:
@@ -23,6 +23,9 @@ class Asset:
         if name=='skeleton': return self.skeleton
         raise ValueError(name)
     def get_path_name(self): return self.path
+
+    def get_bone_parent(self, name):
+        return 'None' if name == 'pelvis' else 'pelvis'
 
 
 class Task:
@@ -36,12 +39,17 @@ class Actor:
     def get_actor_label(self): return self.label
     def set_actor_label(self,label,mark_dirty=False): self.label=label
 
+    def get_editor_property(self, name):
+        if name == 'skeletal_mesh_component':
+            return SimpleNamespace(get_skeletal_mesh_asset=lambda: self.spawned_asset)
+        raise ValueError(name)
+
 
 class Actors:
     def __init__(self): self.actors=[]
     def get_all_level_actors(self): return self.actors
     def spawn_actor_from_object(self,obj,loc,rot):
-        x=Actor();self.actors.append(x);return x
+        x=Actor();x.spawned_asset=obj;self.actors.append(x);return x
     def spawn_actor_from_class(self,cls,loc,rot):
         x=Actor();x.native_class=cls;self.actors.append(x);return x
 
@@ -88,6 +96,89 @@ class FakeUnreal:
                 asset.skeleton=skeleton
             if cls=='AnimSequence': asset.skeleton=opt.props['skeleton']
             self.assets[path]=asset
+
+
+@pytest.mark.parametrize('pose_matches', [True, False])
+def test_ik_retarget_checks_calibrated_source_and_preserves_approved_assets(tmp_path, pose_matches):
+    root, files = create_retarget_case(tmp_path)
+    manifest = tmp_path / 'setup.json'
+    stage = studio_auto_assets.inspect(*files, root, 'Assets', '/Game/CutSceneAI/AutoTransfer/T_IK')
+    assert stage['ready']
+    manifest.write_text(json.dumps(stage))
+    project = tmp_path / 'Project.uproject'
+    fake = FakeUnreal(str(project))
+    profile = stage['skeletal_retarget_profiles']['Ch31_nonPBR']
+    source_mesh = Asset('SkeletalMesh', profile['source_mesh_path'])
+    source_mesh.skeleton = Asset('Skeleton', '/Game/Approved/UnitySkeleton')
+    target_mesh = Asset('SkeletalMesh', profile['target_mesh_path'])
+    target_mesh.skeleton = Asset('Skeleton', '/Game/Approved/TargetSkeleton')
+    retargeter = Asset('IKRetargeter', profile['retargeter_path'])
+    fake.assets.update({item.path: item for item in (source_mesh, target_mesh, retargeter)})
+    fake.RetargetSourceOrTarget = SimpleNamespace(SOURCE='source', TARGET='target')
+    controller = SimpleNamespace(get_ik_rig=lambda role: object(),
+                                 get_preview_mesh=lambda role: source_mesh if role == 'source' else target_mesh)
+    fake.IKRetargeterController = SimpleNamespace(get_controller=lambda _: controller)
+    fake.AnimPoseExtensions = SimpleNamespace(get_reference_pose=lambda skeleton: skeleton,
+                                             get_bone_names=lambda _: ['pelvis', 'spine'],
+                                             get_bone_pose=lambda skel, bone: (
+                                                 bone if pose_matches or skel is source_mesh.skeleton else 'different'
+                                             ))
+    fake.EditorAssetLibrary.find_asset_data = lambda path: fake.assets[path]
+    saved = []
+    fake.EditorAssetLibrary.save_loaded_asset = lambda asset: saved.append(asset.path) is None
+
+    def duplicate(clips, source, target, settings, **options):
+        clip, = clips
+        assert clip.path.startswith('/Game/CutSceneAI/AutoTransfer/T_IK/RetargetSource/')
+        assert source.skeleton is clip.skeleton and source is not source_mesh
+        assert target is target_mesh and settings is retargeter
+        assert options['use_source_path'] is False
+        assert options['include_referenced_assets'] is False
+        assert options['overwrite_existing_files'] is False
+        path = options['target_path'] + '/' + clip.path.rsplit('/', 1)[-1]
+        result = Asset('AnimSequence', path)
+        result.skeleton = target_mesh.skeleton
+        fake.assets[path] = result
+        return [SimpleNamespace(get_asset=lambda: result)]
+
+    fake.IKRetargetBatchOperation = SimpleNamespace(duplicate_and_retarget=duplicate)
+    options = {'csir_path': files[0], 'mapping_path': files[1], 'plan_path': files[2],
+               'expected_project': project, 'expected_level': '/Game/Tests/L_Test', 'unreal_api': fake}
+    output = tmp_path / 'retargeted.json'
+    if not pose_matches:
+        with pytest.raises(scene.studio_ik_retarget.RetargetError, match='reference hierarchy or local pose differs'):
+            scene.run(manifest, output, **options)
+        failed = json.loads(output.read_text())
+        assert failed['failed_step']['phase'] == 'retarget_source_reference_pose'
+        assert not fake.actor_sys.actors and not saved
+        return
+    receipt = scene.run(manifest, output, **options)
+    native, = receipt['retargeted_rigs']
+    assert native['status'] == 'PASS'
+    assert native['observed_mesh'] == profile['target_mesh_path']
+    assert set(saved) == set(native['clip_skeletons'])
+    assert set(native['clip_skeletons'].values()) == {target_mesh.skeleton.path}
+    assert source_mesh.skeleton.path == '/Game/Approved/UnitySkeleton'
+    assert fake.assets[profile['retargeter_path']] is retargeter
+
+
+def test_retarget_readback_checks_repeated_clip_on_the_owning_binding():
+    actor = Asset('SkeletalMeshActor', '/Game/Stage.Stage:PersistentLevel.Target')
+    other = Asset('SkeletalMeshActor', '/Game/Stage.Stage:PersistentLevel.Other')
+    clip = Asset('AnimSequence', '/Game/Stage/AS_Clip.AS_Clip')
+    section = SimpleNamespace(get_editor_property=lambda _: SimpleNamespace(get_editor_property=lambda _: clip))
+    track = Asset('MovieSceneSkeletalAnimationTrack', '')
+    track.get_sections = lambda: [section, section]
+    binding = SimpleNamespace(get_tracks=lambda: [track])
+    world = SimpleNamespace(get_editor_world=object)
+    extensions = SimpleNamespace(get_bindings=lambda _: [binding], locate_bound_objects=lambda *_: [actor])
+    fake = SimpleNamespace(MovieSceneSequenceExtensions=extensions, UnrealEditorSubsystem=object(),
+                           get_editor_subsystem=lambda _: world)
+    expected = ['/Game/Stage/AS_Clip'] * 2
+    inspect = scene.studio_ik_retarget.inspect_sections
+    assert inspect(fake, object(), actor, expected)['status'] == 'PASS'
+    assert inspect(fake, object(), actor, expected[:1])['status'] == 'FAIL'
+    assert inspect(fake, object(), other, expected)['status'] == 'FAIL'
 
 
 def test_auto_setup_imports_and_spawns_without_prior_unreal_actors(tmp_path):
