@@ -11,7 +11,7 @@
     sourceRights:false, allowPartial:false, aiAgentsEnabled:false, agentStatus:null, candidate:null, job:null, verification:null,
     diagnosis:null, feedback:null, releaseReadiness:null, running:false, detailsOpen:false, menuOpen:false,
     censusOptions:[], censusPath:'', censusSelection:null, censusIssue:false,
-    unitySnapshotRequestId:'', unitySnapshotStatus:null};
+    unitySnapshotRequestId:'', unitySnapshotStatus:null, learningStatus:null};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
   const connection = () => state.status?.connection;
   const worker = () => state.status?.unreal_worker || {};
@@ -167,7 +167,12 @@
       '<div class="ai-agents-option"><label><input type="checkbox" name="ai-agents" '+
       (state.aiAgentsEnabled?'checked':'')+
       ' /> Enable AI agents</label>'+
-      '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local agent dependencies and an API key; usage may incur model charges.</p></div></div>':'')+
+      '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local agent dependencies and an API key; usage may incur model charges.</p>'+
+      (state.learningStatus?'<p class="subnote">Continual learning: '+
+       esc(state.learningStatus.completed_trials_recorded)+' trial records · '+
+       esc(state.learningStatus.verified_mapping_cases)+' approved mapping cases · '+
+       esc((state.learningStatus.suggestions||[]).length)+' source-relevant proposals. No model weights are automatically updated.</p>':'')+
+       '</div></div>':'')+
       (Object.values(d.errors||{})).map(v=>'<p class="warning">'+esc(v)+'</p>').join('')+
       '<div class="center-actions">'+(chosenU?action:'')+'</div></form>'+
       (activeJob?'<p class="subnote">An Unreal job is already queued or running. View its progress before starting another transfer.</p>':
@@ -420,6 +425,7 @@
   }
   async function refresh(){
     const s=await api('status');state.status=s;
+    try{state.learningStatus=await api('learning');}catch{state.learningStatus=null;}
     if(!state.running)state.candidate=s.candidate||null;
     if(s.active_job)state.job=await api('jobs/'+s.active_job);
     if(state.aiAgentsEnabled||state.job?.ai_agents_enabled){
