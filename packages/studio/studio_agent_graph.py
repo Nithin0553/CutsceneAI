@@ -11,6 +11,8 @@ import hashlib
 import json
 import math
 import os
+import re
+import sys
 import uuid
 from pathlib import Path
 from typing import Any, Callable, TypedDict
@@ -119,6 +121,56 @@ def _ced_policy() -> dict[str, Any]:
             for name in names if isinstance(categories.get(name), list)
         },
     }
+
+
+def _approved_precedents(workspace: Path, job: dict[str, Any]) -> list[dict[str, Any]]:
+    """Give the reasoning model *redacted* verified CED mapping precedents.
+
+    Case lookup has no engine mutation permission. Candidate paths, source
+    asset bytes and executable parameters never enter the LLM summary.
+    """
+    store = workspace / "learning" / "approved-cases"
+    if not store.is_dir() or store.is_symlink():
+        return []
+    package = str(Path(__file__).resolve().parents[1] / "learning")
+    if package not in sys.path:
+        sys.path.insert(0, package)
+    try:
+        from case_memory import list_cases, read_json, suggest
+        source = read_json(Path(str(job["csir"])))
+        fingerprint = str(source.get("source", {}).get("project_fingerprint") or "")
+        proposals = suggest(
+            source, list_cases(store),
+            exclude_project_fingerprint=fingerprint,
+            limit=3,
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+
+    def identifier(value: Any) -> str:
+        text = str(value or "")
+        return text if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,95}", text) else ""
+
+    precedents = []
+    for item in proposals:
+        labels = []
+        for raw in item.get("candidate_resolutions", [])[:6]:
+            if not isinstance(raw, dict):
+                continue
+            entry = {key: identifier(raw.get(key)) for key in
+                     ("ced", "resolver", "outcome")}
+            if all(entry.values()):
+                labels.append(entry)
+        if labels:
+            precedents.append({
+                "case_id": item.get("case_id"),
+                "similarity": item.get("similarity"),
+                "ced_mapping_labels": labels,
+                "proposal_only": True,
+                "can_execute_tools": False,
+                "full_fidelity_verified": False,
+            })
+    return precedents
 
 
 def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
@@ -232,6 +284,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             ),
             "remaining_repairs": MAX_REPAIRS - state.get("iterations", 0),
             "issues": state["issues"][:30],
+            "verified_ced_precedents": _approved_precedents(workspace, job),
         }
         try:
             suggestion = choose(summary)
