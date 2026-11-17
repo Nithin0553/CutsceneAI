@@ -70,6 +70,19 @@ def test_smoke_test_uses_at_most_selected_sample_count() -> None:
     assert resolved["full_sample_count"] == 3
 
 
+def test_skeletal_bone_maps_are_unique_and_bound_to_a_source_rig() -> None:
+    mapping = _mapping()
+    mapping["skeletal_bone_maps"] = {"actor1": {"source_bone": "pelvis"}}
+    request = observer.prepare_observation(_sampling_plan(), mapping)
+    assert request["skeletal_bone_maps"] == mapping["skeletal_bone_maps"]
+    mapping["skeletal_bone_maps"]["actor1"]["duplicate"] = "pelvis"
+    with pytest.raises(observer.TargetPlanError, match="distinct bones"):
+        observer.prepare_observation(_sampling_plan(), mapping)
+    mapping["skeletal_bone_maps"] = {"cam1": {"invalid": "pelvis"}}
+    with pytest.raises(observer.TargetPlanError, match="mapped source rigs"):
+        observer.prepare_observation(_sampling_plan(), mapping)
+
+
 def test_missing_skeletal_mapping_is_a_hard_blocker() -> None:
     mapping = _mapping()
     del mapping["entities"]["Actor"]
@@ -121,7 +134,7 @@ def test_unreal_observer_contract_guards_actual_evaluation_and_no_writes() -> No
     assert "get_bone_transform" in source
     assert "unreal_position_cm_to_canonical_m" in source
     assert "unmapped_source_entities" in source
-    assert "NOT_IMPLEMENTED_REQUIRES_BONE_MAPPING" in source
+    assert '"skeletal_bone_maps": request["skeletal_bone_maps"]' in source
     assert "save_loaded_asset" not in source
     assert "set_actor_location(" not in source
     assert "set_actor_rotation(" not in source

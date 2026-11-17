@@ -6,6 +6,7 @@ from typing import Any
 
 LENGTH_TOLERANCE_M = 0.0001
 ORIENTATION_TOLERANCE_DEG = 0.05
+RAY_TOLERANCE_M = 0.002
 
 
 def compare(shape: str, source: dict[str, Any], observed: dict[str, Any]) -> dict[str, Any]:
@@ -36,3 +37,26 @@ def compare(shape: str, source: dict[str, Any], observed: dict[str, Any]) -> dic
         "tolerances": {"length_m": LENGTH_TOLERANCE_M, "orientation_degrees": ORIENTATION_TOLERANCE_DEG},
         "behavior_verified": False,
     }
+
+
+def compare_rays(source: list[dict[str, Any]], target: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compare native hit/miss and distance for the same world-space rays."""
+    result = {
+        "status": "INCOMPLETE", "scope": "static_collider_raycast",
+        "distance_tolerance_m": RAY_TOLERANCE_M, "rays": [],
+    }
+    if len(source) != 4 or len(target) != len(source):
+        return result
+    for index, (expected, actual) in enumerate(zip(source, target)):
+        distance_error = None
+        match = expected["hit"] == actual["hit"]
+        if match and expected["hit"]:
+            distance_error = abs(expected["distance_m"] - actual["distance_m"])
+            match = math.isfinite(distance_error) and distance_error <= RAY_TOLERANCE_M
+        result["rays"].append({
+            "index": index, "source_hit": expected["hit"], "target_hit": actual["hit"],
+            "source_distance_m": expected["distance_m"], "target_distance_m": actual["distance_m"],
+            "distance_error_m": distance_error, "matches": match,
+        })
+    result["status"] = "PASS" if all(ray["matches"] for ray in result["rays"]) else "FAIL"
+    return result

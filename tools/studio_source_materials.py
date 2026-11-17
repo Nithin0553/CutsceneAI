@@ -14,6 +14,72 @@ _TEXTURE = re.compile(
     r"(?m)^\s*-\s+(_BaseMap|_MainTex):[^\n]*\n"
     r"\s*m_Texture:\s*\{[^\n}]*\bguid:\s*([0-9a-fA-F]{32})\b"
 )
+_CONSTANT_SHADERS = {
+    "Standard": "Resources/unity_builtin_extra",
+    "Universal Render Pipeline/Lit":
+        "Packages/com.unity.render-pipelines.universal/Shaders/Lit.shader",
+}
+
+
+def _unit_values(values, count, maximum=1.0):
+    return (isinstance(values, list) and len(values) == count
+            and all(type(value) in (int, float) and 0 <= value <= maximum for value in values))
+
+
+def constant_surface_candidates(material_records, target_folder, digest):
+    """Validate native Unity snapshots for uniquely attributable material slots."""
+    by_slot = {}
+    diagnostics = []
+    for source_file, record in material_records:
+        surface = record.get("surface")
+        if not isinstance(surface, dict) or not surface.get("status"):
+            continue
+        slot = record.get("material_name")
+        if not isinstance(slot, str) or not slot or type(record.get("slot_index")) is not int:
+            diagnostics.append("MISSING_SOURCE_MATERIAL_SLOT_IDENTITY")
+            continue
+        by_slot.setdefault(slot, []).append((source_file, record))
+
+    planned = []
+    for slot, records in sorted(by_slot.items()):
+        if len(records) != 1:
+            diagnostics.append(slot + " has ambiguous source renderer assignments.")
+            continue
+        source_file, record = records[0]
+        surface = record["surface"]
+        if surface["status"] != "CAPTURED_CONSTANT_METALLIC":
+            diagnostics.append(slot + " " + str(surface["status"]))
+            continue
+        actual_sha = digest(source_file)
+        shader_name = surface.get("shader_name")
+        source_guid = record.get("guid")
+        if (surface.get("version") != "1.0.0" or not isinstance(shader_name, str)
+                or shader_name not in _CONSTANT_SHADERS
+                or surface.get("shader_asset_path") != _CONSTANT_SHADERS[shader_name]
+                or surface.get("material_sha256") != actual_sha
+                or not isinstance(source_guid, str) or not re.fullmatch(r"[0-9a-fA-F]{32}", source_guid)
+                or record["slot_index"] < 0
+                or not isinstance(record.get("renderer_path"), str) or not record["renderer_path"]
+                or not _unit_values(surface.get("base_color_linear"), 4)
+                or not _unit_values(surface.get("emission_linear"), 3, maximum=65504)
+                or not _unit_values([surface.get(k) for k in ("metallic", "roughness", "opacity_mask_clip")], 3)
+                or surface.get("blend") not in ("opaque", "masked")
+                or type(surface.get("two_sided")) is not bool):
+            diagnostics.append(slot + " PBR_SOURCE_SNAPSHOT_INVALID_OR_STALE")
+            continue
+        sanitized = re.sub(r"[^A-Za-z0-9_]", "_", slot)[:64]
+        planned.append({
+            "slot_name": slot, "slot_index": record["slot_index"],
+            "source_renderer_path": record["renderer_path"], "source_material": str(source_file),
+            "source_material_guid": source_guid.lower(), "source_material_sha256": actual_sha,
+            "target_material": target_folder + "/Materials/CSAI_PBR_" + sanitized + "_" + actual_sha[:16],
+            "pbr": {name: surface[name] for name in (
+                "base_color_linear", "emission_linear", "metallic", "roughness",
+                "blend", "opacity_mask_clip", "two_sided")},
+            "strategy": "UNITY_CONSTANT_METALLIC_MATERIAL",
+            "fidelity_verified": False,
+        })
+    return planned, diagnostics
 
 
 def candidates(source_materials, imports, target_folder, digest):

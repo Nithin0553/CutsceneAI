@@ -1,9 +1,8 @@
 """CineTwin source-vs-target measured behavior comparison (pure Python).
 
-Only compare observations with compatible semantics: canonical world actor
-transforms for explicitly mapped entities. Native skeletal bone names/orientations,
-camera optics, lights, render frames, audio and events are NOT compared here.
-Never claim a cutscene passes based solely on these partial measurements.
+Compare canonical world actor transforms and hierarchy-matched joint positions.
+Bone orientation bases, optics, lighting, frames, audio and events require
+separate native evidence.
 """
 from __future__ import annotations
 
@@ -118,6 +117,67 @@ def _pose_motion_cm(
               for name, point in current.items()),
         )
     return {"bone_count": len(initial), "maximum_bone_displacement_from_start_cm": round(maximum_cm, 4)}
+
+
+def _joint_positions(samples_source, samples_target, source_rig, target_rig,
+                     explicit_map, tolerance_cm):
+    """Compare measured world positions for an unambiguous projected bone hierarchy."""
+    result = {"scope": "world_joint_positions", "status": "INCOMPLETE",
+              "position_tolerance_cm": tolerance_cm}
+    source_bones = source_rig["bones"]
+    target_bones = target_rig["native_target_bones"]
+    native = {item["bone_name"]: item.get("parent_bone_name") or None for item in target_bones}
+    pairs = explicit_map if explicit_map is not None else {
+        row["bone_id"]: row.get("native_bone_name") or row.get("hierarchy_path", "").rsplit("/", 1)[-1]
+        for row in source_bones
+    }
+    if not isinstance(pairs, dict) or set(pairs) != {row["bone_id"] for row in source_bones}:
+        return {**result, "reason": "INCOMPLETE_SOURCE_BONE_MAP"}
+    if (len(native) != len(target_bones)
+            or any(not isinstance(name, str) or name not in native for name in pairs.values())
+            or len(set(pairs.values())) != len(pairs)):
+        return {**result, "reason": "MISSING_OR_AMBIGUOUS_TARGET_BONES"}
+
+    matched_targets = set(pairs.values())
+    for bone in source_bones:
+        name = pairs[bone["bone_id"]]
+        parent = native[name]
+        visited = {name}
+        while parent is not None and parent not in matched_targets:
+            if parent in visited or parent not in native:
+                return {**result, "reason": "INVALID_TARGET_BONE_ANCESTRY"}
+            visited.add(parent)
+            parent = native[parent]
+        expected_parent = pairs.get(bone.get("parent_bone_id"))
+        if parent in visited or parent != expected_parent:
+            return {**result, "reason": "BONE_PARENT_CORRESPONDENCE_MISMATCH"}
+
+    rig_id = source_rig["entity_id"]
+    results = {bone: {"source_bone_id": bone, "target_bone_name": native_name,
+                      "max_error_cm": 0.0, "worst_time_seconds": None}
+               for bone, native_name in pairs.items()}
+    for left, right in zip(samples_source, samples_target):
+        source_pose = next(row for row in left["skeletal_poses"] if row["entity_id"] == rig_id)
+        target_pose = next(row for row in right["skeletal_poses"] if row["entity_id"] == rig_id)
+        src_samples = {row["bone_id"]: row for row in source_pose["bones"]}
+        dst_samples = {row["bone_name"]: row for row in target_pose["bones"]}
+        if not matched_targets.issubset(dst_samples) or not pairs.keys() <= src_samples.keys():
+            return {**result, "reason": "MAPPED_BONE_SAMPLES_MISSING"}
+        for bone, target_name in pairs.items():
+            a = _position(src_samples[bone]["world_transform"], "source joint world position")
+            b = _vector(dst_samples[target_name]["world_position_m"], 3, "target joint world position")
+            error = _distance_m(a, b) * 100
+            observed = results[bone]
+            if observed["worst_time_seconds"] is None or error > observed["max_error_cm"]:
+                observed.update(max_error_cm=error, worst_time_seconds=left["time_seconds"])
+    maximum = max(observed["max_error_cm"] for observed in results.values())
+    return {
+        **result, "status": "PASS" if maximum <= tolerance_cm else "FAIL",
+        "paired_bones": len(results), "sample_count": len(samples_source),
+        "maximum_error_cm": maximum, "bones": list(results.values()),
+        "mapping": "explicit" if explicit_map is not None else "unique_native_names",
+        "joint_orientation_basis": "UNVERIFIED",
+    }
 
 
 def _check_identity(
@@ -312,8 +372,13 @@ def compare(
     if not rig_ids <= set(bound):
         raise BehavioralComparisonError("Target observation omitted mapped skeletal rigs.")
     target_native_rigs = target.get("native_rigs", [])
-    if {rig.get("entity_id") for rig in target_native_rigs} != rig_ids:
+    native_rigs = {rig.get("entity_id"): rig for rig in target_native_rigs}
+    if set(native_rigs) != rig_ids or len(native_rigs) != len(target_native_rigs):
         raise BehavioralComparisonError("Target native rig definitions are incomplete.")
+    source_rigs = {rig["entity_id"]: rig for rig in source.get("rigs", [])}
+    bone_maps = target.get("skeletal_bone_maps", {})
+    if not isinstance(bone_maps, dict) or set(bone_maps) - rig_ids:
+        raise BehavioralComparisonError("An observed bone map identifies an unknown source rig.")
     rig_diagnostics = []
     for eid in sorted(rig_ids):
         src_motion = _pose_motion_cm(source_samples, eid, target=False)
@@ -324,11 +389,18 @@ def compare(
             and tgt_motion["maximum_bone_displacement_from_start_cm"] < 0.1
         ):
             flags.append("SOURCE_BONES_MOVE_BUT_TARGET_BONES_STATIC")
+        joints = _joint_positions(
+            source_samples, target_samples, source_rigs[eid], native_rigs[eid],
+            bone_maps.get(eid), position_limit,
+        )
+        if joints["status"] == "FAIL":
+            flags.append("SKELETAL_WORLD_JOINT_POSITION_MISMATCH")
         rig_diagnostics.append({
             "entity_id": eid, "source_name": by_id[eid].get("name", ""),
             "source": src_motion, "target": tgt_motion,
             "flags": flags,
-            "comparison_policy": "MOTION_PRESENCE_ONLY_NO_BONE_RETARGET_MAP",
+            "joint_positions": joints,
+            "comparison_policy": "MATCHED_JOINT_POSITIONS_AND_MOTION_PRESENCE",
         })
     # A large absolute difference can be a fixed world-space placement
     # offset, while a moving source actor and stationary Unreal actor can
@@ -392,7 +464,7 @@ def compare(
             "NO_AUTOMATIC_ROOT_MOTION_REPAIR"
         ),
         "unverified_domains": [
-            "skeletal_pose_correspondence",
+            "skeletal_joint_orientation_and_bind_pose",
             "camera_optics",
             "light_appearance",
             "audio_output",
@@ -402,9 +474,8 @@ def compare(
             "semantic_entity_coverage",
         ],
         "notes": [
-            "Only mapped actor world transforms have directly comparable semantics.",
-            "Native source and target bones are not paired; pose diagnostics measure "
-            "presence of motion only and cannot establish pose accuracy.",
+            "Mapped actor transforms and hierarchy-matched joint positions have comparable semantics.",
+            "Joint rotation and bind-pose fidelity require separately calibrated native bone bases.",
             "An apparently static actor may contain skeletal root motion; examine "
             "bone motion diagnostics before diagnosing a missing translation.",
             "Source and target observation methods may not evaluate external script "

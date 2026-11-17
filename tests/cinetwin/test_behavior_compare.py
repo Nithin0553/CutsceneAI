@@ -139,6 +139,48 @@ def test_matched_canonical_actor_observations_are_zero_error() -> None:
     assert result["evaluation"]["sampling_times"] == 5
     assert result["evaluation"]["unmapped_entity_count"] == 1
     assert result["rig_motion_diagnostics"][0]["source"]["bone_count"] == 1
+    joints = result["rig_motion_diagnostics"][0]["joint_positions"]
+    assert joints["status"] == "INCOMPLETE"
+    assert joints["reason"] == "MISSING_OR_AMBIGUOUS_TARGET_BONES"
+
+
+def test_explicit_joint_map_measures_the_worst_native_sample() -> None:
+    plan, source, target = _fixtures()
+    target["skeletal_bone_maps"] = {"character": {"hips": "pelvis"}}
+    diagnostic = compare(plan, source, target)["rig_motion_diagnostics"][0]
+    assert diagnostic["joint_positions"]["status"] == "PASS"
+    assert diagnostic["joint_positions"]["sample_count"] == len(plan["samples"])
+    assert diagnostic["joint_positions"]["joint_orientation_basis"] == "UNVERIFIED"
+
+    frame = target["samples"][2]
+    frame["skeletal_poses"][0]["bones"][0]["world_position_m"][1] = 0.035
+    result = compare(plan, source, target)
+    diagnostic = result["rig_motion_diagnostics"][0]
+    assert result["evaluation"]["status"] == "DIFFERENCES_DETECTED"
+    assert "SKELETAL_WORLD_JOINT_POSITION_MISMATCH" in diagnostic["flags"]
+    assert diagnostic["joint_positions"]["status"] == "FAIL"
+    bone, = diagnostic["joint_positions"]["bones"]
+    assert bone["max_error_cm"] == pytest.approx(3.5)
+    assert bone["worst_time_seconds"] == frame["time_seconds"]
+
+
+def test_unique_native_joint_name_and_unmapped_native_parent() -> None:
+    plan, source, target = _fixtures()
+    source["rigs"][0]["bones"][0]["native_bone_name"] = "pelvis"
+    target["native_rigs"][0]["native_target_bones"] = [
+        {"bone_name": "helper", "parent_bone_name": None},
+        {"bone_name": "pelvis", "parent_bone_name": "helper"},
+    ]
+    for frame in target["samples"]:
+        bones = frame["skeletal_poses"][0]["bones"]
+        bones.append(dict(bones[0], bone_name="helper"))
+    joints = compare(plan, source, target)["rig_motion_diagnostics"][0]["joint_positions"]
+    assert joints["status"] == "PASS"
+    assert joints["mapping"] == "unique_native_names"
+    target["native_rigs"][0]["native_target_bones"][0]["parent_bone_name"] = "pelvis"
+    joints = compare(plan, source, target)["rig_motion_diagnostics"][0]["joint_positions"]
+    assert joints["status"] == "INCOMPLETE"
+    assert joints["reason"] == "BONE_PARENT_CORRESPONDENCE_MISMATCH"
 
 
 def test_world_position_and_relative_trajectory_differences_are_measured() -> None:

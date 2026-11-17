@@ -154,12 +154,19 @@ def main() -> int:
                 f"diagnosis={item['motion_diagnostic']}"
             )
         for rig in report["rig_motion_diagnostics"]:
+            joints = rig["joint_positions"]
+            detail = (
+                f"{joints['maximum_error_cm']:.3f} cm peak across "
+                f"{joints['paired_bones']} joints and {joints['sample_count']} samples"
+                if joints["status"] in ("PASS", "FAIL") else joints["reason"]
+            )
             print(
                 f"  RIG {rig['source_name']}: "
                 f"source_bone_motion="
                 f"{rig['source']['maximum_bone_displacement_from_start_cm']:.3f} cm, "
                 f"target_bone_motion="
-                f"{rig['target']['maximum_bone_displacement_from_start_cm']:.3f} cm"
+                f"{rig['target']['maximum_bone_displacement_from_start_cm']:.3f} cm, "
+                f"joint_positions={joints['status']} ({detail})"
             )
         print(
             "[CineTwin] Cutscene fidelity NOT established: other semantic "

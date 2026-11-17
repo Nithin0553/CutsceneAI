@@ -16,6 +16,56 @@ LOSSES = (
     "Unity physics layers and query filtering", "contacts, triggers and callbacks",
     "physics materials and simulation", "runtime enablement and motion",
 )
+ACTIVE_MODE = "world_static_blocking"
+ACTIVE_LOSSES = (
+    "Nondefault Unity layers and per-pair runtime filtering", "contact solver, callbacks and triggers",
+    "physics material and simulated state", "runtime enablement and motion",
+)
+
+
+def _ray_point(row):
+    if not isinstance(row, dict):
+        return None
+    values = [row.get(axis) for axis in "xyz"]
+    if not all(type(value) in (float, int) and abs(value) <= 1e7 for value in values):
+        return None
+    x, y, z = values
+    return list(csir_plan.canonical_position_to_unreal_cm((x, y, -z)))
+
+
+def _interaction(source):
+    record = source.get("collider_interaction")
+    if not isinstance(record, dict) or record.get("version") != "1.0.0":
+        return "disabled", "COLLIDER_INTERACTION_CAPTURE_REQUIRED", []
+    if not source["enabled"] or source["is_trigger"]:
+        return "disabled", "SOURCE_COLLIDER_DISABLED_OR_TRIGGER", []
+    if (any(type(record.get(field)) is not int or record[field] != 0
+            for field in ("layer", "include_layers", "exclude_layers"))
+            or record.get("default_layer_contacts") is not True
+            or record.get("has_authored_physics_material") is not False
+            or type(record.get("owner_collider_count")) is not int
+            or record["owner_collider_count"] != 1):
+        return "disabled", "SOURCE_COLLISION_FILTER_OR_MATERIAL_UNSUPPORTED", []
+    rays = record.get("rays")
+    if not isinstance(rays, list) or len(rays) != 4:
+        return ACTIVE_MODE, None, []
+    probes = []
+    for ray in rays:
+        if not isinstance(ray, dict) or type(ray.get("hit")) is not bool:
+            return ACTIVE_MODE, None, []
+        start, end = _ray_point(ray.get("start_m")), _ray_point(ray.get("end_m"))
+        distance = ray.get("distance_m")
+        if (start is None or end is None or start == end
+                or type(distance) not in (float, int)
+                or not 0 <= distance <= math.dist(start, end) / 100 + 1e-5
+                or (not ray["hit"] and distance != 0)):
+            return ACTIVE_MODE, None, []
+        probes.append({"start_cm": start, "end_cm": end,
+                       "hit": ray["hit"], "distance_m": distance if ray["hit"] else None})
+    # A native source capture with only misses does not establish a valid body.
+    if [probe["hit"] for probe in probes] != [True, True, True, False]:
+        probes = []
+    return ACTIVE_MODE, None, probes
 
 
 def _require_static_scope(csir, entity_id):
@@ -69,6 +119,7 @@ def _convert(csir, mapping, row, target, *, target_class) -> dict[str, Any]:
     label_digest = hashlib.sha256(
         (mapping["sequence_asset_path"] + "\0" + row["component_global_id"]).encode("utf-8")
     ).hexdigest()[:20].upper()
+    mode, limitation, probes = _interaction(source)
     return {
         "kind": ACTION_KIND, "target_class": target_class,
         "entity_name": target["name"], "actor_label": target["actor_label"],
@@ -77,9 +128,11 @@ def _convert(csir, mapping, row, target, *, target_class) -> dict[str, Any]:
         "rotation_rpy_degrees": list(csir_plan.canonical_quat_to_unreal_rotator(quat)),
         "source_geometry": source_geometry, **native_geometry,
         "source_collider_enabled": source["enabled"], "source_is_trigger": source["is_trigger"],
+        "collision_mode": mode, "interaction_limitation": limitation,
+        "source_collider_probes": probes,
         "source_semantic": "physics.collider", "source_behavior_strategy": STRATEGY,
         "fidelity_status": "STATIC_COLLIDER_GEOMETRY_AND_BEHAVIOR_UNVERIFIED",
-        "semantic_losses": list(LOSSES),
+        "semantic_losses": list(ACTIVE_LOSSES if mode == ACTIVE_MODE else LOSSES),
     }
 
 
@@ -90,7 +143,7 @@ def install(registry: feature_dispatch.HandlerRegistry) -> None:
         ("capsule", "CapsuleCollider", "TriggerCapsule"),
     ):
         registry.register_component(feature_dispatch.ComponentAdapter(
-            adapter_id="unity_static_" + shape + "_collider", version="1.0.0",
+            adapter_id="unity_static_" + shape + "_collider", version="1.1.0",
             source_type="UnityEngine." + component, source_assembly="UnityEngine.PhysicsModule",
             semantic="physics.collider",
             source_versions=("2022.3", "6000.0", "6000.1", "6000.2", "6000.3"),
@@ -100,7 +153,7 @@ def install(registry: feature_dispatch.HandlerRegistry) -> None:
                              "collider_owner_static", "collider_has_body", "collider_owner_active"),
             dependency_fields=(),
             preflight="Fresh staging map, unique generated volume label and native shape API.",
-            readback="Native volume class, root shape, world pose, dimensions and disabled collision.",
-            behavior="Contact, callback and time-varying physics require a separate measured adapter.",
+            readback="Native volume shape, dimensions, world pose and collision mode.",
+            behavior="Compare native hit, miss and distance for eligible static blockers.",
             unsupported_properties=LOSSES, planner=partial(_convert, target_class=target_class),
         ))

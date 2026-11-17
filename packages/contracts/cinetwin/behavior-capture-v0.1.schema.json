@@ -249,6 +249,10 @@
                   "type": "string",
                   "minLength": 1
                 },
+                "native_bone_name": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "parent_bone_id": {
                   "type": [
                     "string",

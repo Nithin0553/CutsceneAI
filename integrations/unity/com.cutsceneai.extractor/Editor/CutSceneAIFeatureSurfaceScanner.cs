@@ -72,6 +72,7 @@ namespace CutsceneAI.UnityExtractor
             public bool collider_owner_static;
             public bool collider_has_body;
             public bool collider_owner_active;
+            public ColliderInteraction collider_interaction;
             // Source-native MeshCollider evidence: mesh identity is retained
             // rather than substituting a bounding-box collision shape.
             public bool mesh_collider_convex;
@@ -97,6 +98,28 @@ namespace CutsceneAI.UnityExtractor
             public bool has_behaviour_enabled;
             public bool behaviour_enabled;
             public bool game_object_active;
+        }
+
+        [Serializable]
+        private sealed class ColliderInteraction
+        {
+            public string version = "1.0.0";
+            public int layer;
+            public int include_layers;
+            public int exclude_layers;
+            public bool default_layer_contacts;
+            public bool has_authored_physics_material;
+            public int owner_collider_count;
+            public List<ColliderRay> rays = new List<ColliderRay>();
+        }
+
+        [Serializable]
+        private sealed class ColliderRay
+        {
+            public Vec3 start_m;
+            public Vec3 end_m;
+            public bool hit;
+            public float distance_m;
         }
 
         [Serializable]
@@ -412,6 +435,45 @@ namespace CutsceneAI.UnityExtractor
             feature.collider_owner_active = collider.gameObject.activeInHierarchy;
             feature.collider_has_body =
                 collider.attachedRigidbody != null || collider.attachedArticulationBody != null;
+            var interaction = new ColliderInteraction
+            {
+                layer = collider.gameObject.layer,
+                include_layers = collider.includeLayers.value,
+                exclude_layers = collider.excludeLayers.value,
+                default_layer_contacts = !Physics.GetIgnoreLayerCollision(0, 0),
+                has_authored_physics_material = collider.sharedMaterial != null,
+                owner_collider_count = collider.GetComponents<Collider>().Length,
+            };
+            feature.collider_interaction = interaction;
+            if (!feature.collider_owner_active || !collider.enabled ||
+                !feature.collider_owner_static || feature.collider_has_body || collider.isTrigger)
+                return;
+
+            // Cast against the native collider as loaded. No scene activation,
+            // physics simulation, transform edits or global query setting changes.
+            var bounds = collider.bounds;
+            var reach = Mathf.Max(0.05f, bounds.extents.magnitude * 2f);
+            if (!(bounds.extents.sqrMagnitude > 0f) || float.IsInfinity(reach))
+                return;
+            foreach (var axis in new[] { Vector3.right, Vector3.up, Vector3.forward })
+                interaction.rays.Add(CaptureColliderRay(collider, bounds.center, axis, reach));
+            interaction.rays.Add(CaptureColliderRay(collider,
+                bounds.center + Vector3.up * (bounds.extents.y + reach), Vector3.right, reach));
+        }
+
+        private static ColliderRay CaptureColliderRay(Collider collider, Vector3 center,
+            Vector3 axis, float reach)
+        {
+            Vector3 start = center - axis * reach;
+            Vector3 end = center + axis * reach;
+            bool hit = collider.Raycast(new Ray(start, axis), out var measured, reach * 2f);
+            return new ColliderRay
+            {
+                start_m = new Vec3(start),
+                end_m = new Vec3(end),
+                hit = hit,
+                distance_m = hit ? measured.distance : 0f,
+            };
         }
 
         private static ComponentFeature CaptureComponent(Component component)

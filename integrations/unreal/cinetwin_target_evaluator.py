@@ -251,9 +251,10 @@ def run(
                 "full_temporal_coverage": (
                     len(observations) == request["full_sample_count"]
                 ),
-                "pose_semantic_comparison": "NOT_IMPLEMENTED_REQUIRES_BONE_MAPPING",
+                "pose_semantic_comparison": "PENDING_MEASURED_BONE_CORRESPONDENCE",
             },
             "native_rigs": rigs,
+            "skeletal_bone_maps": request["skeletal_bone_maps"],
             "samples": observations,
             "provenance": {
                 "method": "sequencer_jump_force_evaluation",

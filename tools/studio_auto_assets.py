@@ -20,6 +20,27 @@ class AutoAssetError(ValueError):
     pass
 
 
+def _retarget_profiles(mapping, entities, bindings):
+    configured = mapping.get('skeletal_retarget_profiles', {})
+    if not isinstance(configured, dict):
+        raise AutoAssetError('Skeletal retarget profiles must be keyed by Unity source entity ID.')
+    path_fields = ('source_mesh_path', 'target_mesh_path', 'retargeter_path')
+    characters = {row.get('entity_id'): name for name, row in entities.items()
+                  if name in bindings and row.get('ced_type') == 'entity.character'}
+    profiles = {}
+    for source_id, profile in configured.items():
+        if source_id not in characters or not isinstance(profile, dict):
+            raise AutoAssetError('Retarget profile does not identify a mapped Unity character: ' + source_id)
+        if (set(profile) != {*path_fields, 'source_fbx_sha256'}
+                or any(not isinstance(profile[key], str) for key in profile)
+                or any(not re.fullmatch(r'/Game(?:/[A-Za-z0-9_]+)+', profile[key]) for key in path_fields)
+                or not re.fullmatch('[0-9a-f]{64}', profile['source_fbx_sha256'])
+                or len({profile[key].casefold() for key in path_fields}) != len(path_fields)):
+            raise AutoAssetError('Invalid approved IK Retargeter profile for ' + source_id)
+        profiles[characters[source_id]] = {**profile, 'source_entity_id': source_id}
+    return profiles
+
+
 def digest(path):
     """Stream content hashes; large FBX files must not be buffered in RAM."""
     state = hashlib.sha256()
@@ -174,7 +195,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     skipped_optional_textures = []
     deduplicated_textures = []
     used_target = {}
-    def add_import(source, dest, kind, *, character=None):
+    def add_import(source, dest, kind, *, character=None, source_animation_path=None):
         if not dest.startswith('/Game/') or '..' in dest.split('/'):
             blockers.append('Unsafe target path: '+dest)
             return
@@ -199,9 +220,11 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
         sha256 = digest(source)
         if dest in used_target:
             previous = used_target[dest]
-            # Unity/FBX packages often contain a second copy of the *same*
-            # PNG. Deduplicate only identical texture bytes; never merge
-            # animations or actor-specific meshes on name/content alone.
+            if (kind == previous['kind'] == 'AnimSequence'
+                    and previous['character'] == character
+                    and previous['source_file'] == str(source) and previous['sha256'] == sha256):
+                return  # Multiple Timeline sections can use this exact same character clip.
+            # Unity/FBX packages often contain a second copy of the same PNG.
             if kind == 'Texture2D' and previous['kind'] == kind and previous['sha256'] == sha256:
                 deduplicated_textures.append({
                     'source_file': str(source), 'source_sha256': sha256,
@@ -214,9 +237,13 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             return
         used_target[dest] = {'source_file': str(source), 'sha256': sha256,
                              'kind': kind, 'character': character}
-        imports.append({'source_file':str(source),'source_sha256':sha256,
-                        'target_asset_path':dest,'kind':kind,'character':character})
+        row = {'source_file':str(source),'source_sha256':sha256,
+               'target_asset_path':dest,'kind':kind,'character':character}
+        if source_animation_path:
+            row['source_animation_path'] = source_animation_path
+        imports.append(row)
     bindings = plan.get('bindings') or {}
+    retarget_profiles = _retarget_profiles(mapping, entities, bindings)
     if not bindings:
         blockers.append('No mapped source actors in the transfer plan.')
     for name, label in sorted(bindings.items()):
@@ -235,6 +262,10 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
                 blockers.append('Character '+name+' cannot resolve uniquely ('+evidence['strategy']+
                                 '); candidate FBX files: '+str(len(evidence['candidates'])))
                 continue
+            profile = retarget_profiles.get(name)
+            if profile and (not evidence['strategy'].startswith(('UNITY_ASSET_PATH', 'UNITY_META_GUID'))
+                            or digest(found) != profile['source_fbx_sha256']):
+                blockers.append('Approved retarget profile source FBX no longer matches ' + name + '.')
             dest = target_folder+'/Characters/CSAI_'+re.sub('[^A-Za-z0-9_]','_',name)
             add_import(found,dest,'SkeletalMesh',character=name)
         elif kind not in ('entity.camera','entity.light','entity.prop'):
@@ -318,7 +349,17 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
                 blockers.append('Animation '+name+' cannot resolve uniquely ('+evidence['strategy']+
                                 '); candidate FBX files: '+str(len(evidence['candidates'])))
                 continue
-            add_import(match,path,'AnimSequence',character=character)
+            source_animation_path = None
+            if character in retarget_profiles:
+                if (not evidence['strategy'].startswith(('UNITY_ASSET_PATH', 'UNITY_META_GUID'))
+                        or not re.fullmatch(r'/Game(?:/[A-Za-z0-9_]+)+', path)):
+                    blockers.append('IK retargeting needs an exact Unity FBX clip reference and a valid target path: ' + name)
+                    continue
+                # Preserve the asset basename for Unreal's native duplication.
+                destination_key = hashlib.sha256(path.casefold().encode('utf-8')).hexdigest()[:16]
+                source_animation_path = target_folder + '/RetargetSource/A_' + destination_key + '/' + path.rsplit('/', 1)[-1]
+            add_import(match,path,'AnimSequence',character=character,
+                       source_animation_path=source_animation_path)
         elif kind == 'audio':
             references = [a for a in assets.values() if str(a.get('name')) == name]
             evidence = source_identity.resolve(files, name, {'.wav', '.mp3'}, project_root=root,
@@ -367,11 +408,14 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     # tutorial/editor assets and turns invalid placeholders into false warnings.
     material_files = set()
     material_files_by_actor = defaultdict(set)
+    source_material_slots = defaultdict(list)
     texture_files = set()
     for name in sorted(bindings):
         entity = entities.get(name)
         if entity is None or entity.get('ced_type') not in ('entity.character', 'entity.prop'):
             continue
+        if name in retarget_profiles:
+            continue  # The approved target mesh supplies its own visual materials.
         for record in _material_records(entity):
             path = record.get('asset_path')
             if path:
@@ -381,6 +425,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
                     # Keep source material identity tied to the exact CSIR
                     # renderer actor. Slot names are not globally unique.
                     material_files_by_actor[name].add(material)
+                    source_material_slots[name].append((material, record))
                 elif Path(str(path)).suffix.lower() == '.mat':
                     warnings.append('Renderer material '+str(path)+' is unresolved ('+strategy+').')
             texture_path = record.get('albedo_texture_asset_path')
@@ -426,6 +471,12 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
         )
         actor_material_candidates[actor_name] = candidates_for_actor
         warnings.extend(actor_name + ': ' + message for message in diagnostics)
+    actor_pbr_candidates = {}
+    for actor_name, records in sorted(source_material_slots.items()):
+        pbr, diagnostics = studio_source_materials.constant_surface_candidates(records, target_folder, digest)
+        if pbr:
+            actor_pbr_candidates[actor_name] = pbr
+        warnings.extend(actor_name + ': ' + message for message in diagnostics)
     planned_labels = [str(row['label']) for row in actors]
     duplicated_labels = sorted({label for label in planned_labels
                                 if planned_labels.count(label) > 1})
@@ -439,6 +490,10 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
         )
     if any(item['kind'] in ('SkeletalMesh','AnimSequence') for item in imports):
         warnings.append('Resolved FBX source identities; target skeletons, materials and animation motion remain unverified until Unreal readback.')
+    for name in sorted(retarget_profiles):
+        if not any(item.get('source_animation_path') and item['character'] == name for item in imports):
+            blockers.append('Approved retarget profile has no source-backed mapped animation for ' + name + '.')
+        warnings.append(name + ': IK retargeting uses materials from the approved Unreal target mesh.')
     import_fbx_materials = mapping.get('enable_fbx_embedded_material_import') is True
     if import_fbx_materials:
         warnings.append(
@@ -458,10 +513,12 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             'identity_adapter_sha256':digest(Path(source_identity.__file__).resolve()),
             'material_adapter_sha256':digest(Path(studio_source_materials.__file__).resolve()),
             'actors':actors,'imports':imports,'asset_resolutions':asset_resolutions,
+            'skeletal_retarget_profiles': retarget_profiles,
             'fbx_embedded_material_import_requested': import_fbx_materials,
             'deduplicated_textures':deduplicated_textures,
             'source_albedo_material_candidates': material_candidates,
             'source_albedo_actor_candidates': actor_material_candidates,
+            'source_pbr_actor_candidates': actor_pbr_candidates,
             'unmapped_source_entities':unmapped_entities,
             'source_entity_count':len(csir.get('entities', [])),
             'source_asset_count':len(csir.get('assets', [])),

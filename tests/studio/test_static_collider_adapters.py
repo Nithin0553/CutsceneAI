@@ -146,6 +146,22 @@ class Shape:
     def get_collision_enabled(self):
         return self.mode
 
+    def set_collision_object_type(self, value):
+        self.object_type = value
+
+    def get_collision_object_type(self):
+        return self.object_type
+
+    def set_collision_response_to_all_channels(self, response):
+        self.default_response = response
+        self.responses = {}
+
+    def set_collision_response_to_channel(self, channel, response):
+        self.responses[channel] = response
+
+    def get_collision_response_to_channel(self, channel):
+        return self.responses.get(channel, self.default_response)
+
 
 class BoxComponent(Shape):
     def set_box_extent(self, extent, _update):
@@ -250,7 +266,12 @@ class Editor:
 def api():
     return SimpleNamespace(
         Vector=_vec, Rotator=SimpleNamespace, EditorActorSubsystem=Editor,
-        CollisionEnabled=SimpleNamespace(NO_COLLISION="disabled"),
+        CollisionEnabled=SimpleNamespace(NO_COLLISION="disabled", QUERY_AND_PHYSICS="active"),
+        CollisionResponseType=SimpleNamespace(ECR_BLOCK="block", ECR_IGNORE="ignore"),
+        CollisionChannel=SimpleNamespace(ECC_WORLD_STATIC=1, ECC_WORLD_DYNAMIC=2,
+                                       ECC_PHYSICS_BODY=3, ECC_CAMERA=4),
+        ObjectTypeQuery=SimpleNamespace(OBJECT_TYPE_QUERY1="world-static"),
+        DrawDebugTrace=SimpleNamespace(NONE="none"),
         TriggerBox=TriggerBox, TriggerSphere=TriggerSphere, TriggerCapsule=TriggerCapsule,
         BoxComponent=BoxComponent, SphereComponent=SphereComponent, CapsuleComponent=CapsuleComponent,
     )
@@ -298,3 +319,80 @@ def test_preflight_rejects_occupied_label_without_scene_writes(tmp_path, api):
     with pytest.raises(studio_collider_shapes.ColliderStagingError, match="occupied"):
         studio_collider_shapes.stage(api, editor, actions, [])
     assert editor.actors == [existing]
+
+
+def _active_inputs(tmp_path):
+    paths, inputs = _inputs(tmp_path, ["box"])
+    collider = inputs[2]["loaded_scene_components"][-1]["feature"]
+    collider["collider_interaction"] = {
+        "version": "1.0.0", "layer": 0, "include_layers": 0, "exclude_layers": 0,
+        "default_layer_contacts": True, "has_authored_physics_material": False,
+        "owner_collider_count": 1,
+        "rays": [
+            {"start_m": {"x": -8, "y": 2, "z": 3}, "end_m": {"x": 6, "y": 2, "z": 3},
+             "hit": True, "distance_m": 5.0},
+            {"start_m": {"x": -1, "y": -5, "z": 3}, "end_m": {"x": -1, "y": 9, "z": 3},
+             "hit": True, "distance_m": 6.0},
+            {"start_m": {"x": -1, "y": 2, "z": -4}, "end_m": {"x": -1, "y": 2, "z": 10},
+             "hit": True, "distance_m": 4.0},
+            {"start_m": {"x": -8, "y": 10, "z": 3}, "end_m": {"x": 6, "y": 10, "z": 3},
+             "hit": False, "distance_m": 0.0},
+        ],
+    }
+    return paths, inputs, collider
+
+
+def test_authorized_static_blocker_and_independent_ray_comparison(tmp_path, api):
+    paths, inputs, _ = _active_inputs(tmp_path)
+    plan, _, _ = _plan(paths, inputs)
+    actions = studio_collider_shapes.from_plan(plan)
+    assert actions[0]["collision_mode"] == "world_static_blocking"
+    assert actions[0]["source_collider_probes"][0]["start_cm"] == [300.0, -800.0, 200.0]
+    editor = Editor()
+    owner = TriggerBox(_vec(0, 0, 0), SimpleNamespace(roll=0, pitch=0, yaw=0))
+    owner.label = "WallUE"
+    editor.actors.append(owner)
+    with pytest.raises(studio_collider_shapes.ColliderStagingError, match="freshly staged"):
+        studio_collider_shapes.stage(api, editor, actions, [])
+    assert owner.collision
+    studio_collider_shapes.stage(api, editor, actions, [], owned_actors={owner.label: owner})
+    assert not owner.collision
+    volume = editor.actors[1]
+    assert volume.collision and volume.root_component.mode == "active"
+
+    class Raycaster:
+        distances = (500.0, 600.0, 400.0, None)
+
+        def __init__(self):
+            self.index = 0
+
+        def line_trace_single_for_objects(self, actor, start, end, types, complex_, ignored, debug, self_):
+            assert actor == volume and start != end and types == ["world-static"]
+            assert not complex_ and owner in ignored and debug == "none" and not self_
+            distance = self.distances[self.index]
+            self.index += 1
+            return None if distance is None else SimpleNamespace(
+                hit_actor=volume, hit_component=volume.root_component, distance=distance,
+            )
+
+    api.SystemLibrary = Raycaster()
+    record, = studio_collider_shapes.inspect(api, actions, editor.actors, measure_queries=True)
+    assert record["status"] == "PASS" and record["query_comparison"]["status"] == "PASS"
+    assert not record["behavior_verified"]
+    api.SystemLibrary = Raycaster()
+    api.SystemLibrary.distances = (550.0, 600.0, 400.0, None)
+    record, = studio_collider_shapes.inspect(api, actions, editor.actors, measure_queries=True)
+    assert record["status"] == "PASS" and record["query_comparison"]["status"] == "FAIL"
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("layer", 2), ("default_layer_contacts", False), ("include_layers", 2),
+    ("has_authored_physics_material", True), ("owner_collider_count", 2),
+])
+def test_unmapped_contact_intent_stays_visible(tmp_path, field, value):
+    paths, inputs, collider = _active_inputs(tmp_path)
+    collider["collider_interaction"][field] = value
+    plan, _, _ = _plan(paths, inputs)
+    action, = studio_collider_shapes.from_plan(plan)
+    assert action["collision_mode"] == "disabled"
+    assert action["interaction_limitation"] == "SOURCE_COLLISION_FILTER_OR_MATERIAL_UNSUPPORTED"

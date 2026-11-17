@@ -158,7 +158,15 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         raise PersistenceAuditError("Expected a prepared transfer plan object.")
     plan_sha = hashlib.sha256(plan_bytes).hexdigest()
     provenance_missing = _verify_identity(job, setup, manifest, plan)
-    requires_plan_proof = any(
+    retarget_profiles = manifest.get('skeletal_retarget_profiles') or {}
+    pbr = manifest.get("source_pbr_actor_candidates") or {}
+    manifest_sha = _sha(candidate_dir / "automatic-setup.json")
+    recorded_manifest_sha = setup.get('source_manifest_sha256')
+    if recorded_manifest_sha is not None and recorded_manifest_sha != manifest_sha:
+        raise PersistenceAuditError('Evidence identity mismatch: setup receipt source manifest SHA-256.')
+    if (retarget_profiles or pbr) and recorded_manifest_sha is None:
+        provenance_missing.append('setup_receipt.source_manifest_sha256')
+    requires_plan_proof = retarget_profiles or pbr or any(
         action.get("source_component_id") and action.get("adapter_name")
         for action in plan.get("actions", [])
     )
@@ -246,12 +254,59 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
     if colliders:
         from studio_collider_shapes import inspect
 
-        component_rows.extend(inspect(api, colliders, actor_list))
+        component_rows.extend(inspect(api, colliders, actor_list, measure_queries=True))
+    retarget_rows = []
+    if retarget_profiles:
+        from studio_ik_retarget import inspect as inspect_retarget, inspect_sections
+
+        for item in manifest['actors']:
+            profile = retarget_profiles.get(item['name'])
+            if not profile:
+                continue
+            matches = by_label.get(item['label'], [])
+            if len(matches) != 1 or _asset_class(matches[0]) != 'SkeletalMeshActor':
+                continue  # The actor readback reports the missing or incompatible actor.
+            clips = [row for row in manifest['imports']
+                     if row.get('source_animation_path') and row['character'] == item['name']]
+            retarget = inspect_retarget(api, profile, [row['target_asset_path'] for row in clips], matches[0])
+            if sequence is not None:
+                expected_clips = [action['unreal_asset_path'] for action in plan['actions']
+                                  if action['kind'] == 'skeletal_animation' and action.get('entity_name') == item['name']]
+                sections = inspect_sections(api, sequence, matches[0], expected_clips)
+                retarget['sequence_sections'] = sections
+                if retarget['status'] == 'PASS':
+                    retarget['status'] = sections['status']
+            assets_exist = _package_file(project, profile['target_mesh_path'], '.uasset').is_file()
+            sources_exist = all(_package_file(project, row['source_animation_path'], '.uasset').is_file()
+                                for row in clips)
+            if not assets_exist or not sources_exist:
+                retarget['status'] = 'FAIL'
+                retarget['reason'] = 'APPROVED_TARGET_MESH_OR_STAGED_SOURCE_CLIP_PACKAGE_MISSING'
+            retarget_rows.append(dict(retarget, actor_label=item['label']))
+    surface_rows = []
+    if pbr:
+        from studio_material_restore import inspect_constant_surfaces
+
+        for item in manifest["actors"]:
+            matches = by_label.get(item["label"], [])
+            if len(matches) != 1:
+                continue  # The ordinary actor readback reports the missing actor.
+            surfaces = inspect_constant_surfaces(api, matches[0], pbr.get(item["name"], []))
+            for surface in surfaces:
+                if not _package_file(project, surface["target_material"], ".uasset").is_file():
+                    surface["status"] = "FAIL"
+                    surface["reason"] = "SAVED_MATERIAL_PACKAGE_MISSING"
+                surface_rows.append(dict(surface, actor_label=item["label"]))
     component_fail = any(row["status"] == "FAIL" for row in component_rows)
     component_incomplete = any(row["status"] == "INCOMPLETE" for row in component_rows)
+    material_fail = any(row["status"] == "FAIL" for row in surface_rows)
+    material_incomplete = any(row["status"] == "INCOMPLETE" for row in surface_rows)
+    retarget_fail = any(row['status'] == 'FAIL' for row in retarget_rows)
+    retarget_incomplete = any(row['status'] == 'INCOMPLETE' for row in retarget_rows)
     native_status = (
-        "FAIL" if not (level_disk and sequence_ok and all_assets and all_actors) or component_fail
-        else "INCOMPLETE" if not enumerable or component_incomplete
+        "FAIL" if not (level_disk and sequence_ok and all_assets and all_actors)
+        or component_fail or material_fail or retarget_fail
+        else "INCOMPLETE" if not enumerable or component_incomplete or material_incomplete or retarget_incomplete
         else "PASS"
     )
     # Native persistence and historical source provenance are separate claims:
@@ -267,6 +322,13 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         and generated_pid != current_pid
         and native_status == "PASS" and not provenance_missing
     )
+    for row in component_rows:
+        comparison = row.get("query_comparison")
+        if comparison:
+            comparison["independent_process_verified"] = independent_process
+            comparison["scope_verified"] = (
+                independent_process and row["status"] == "PASS" and comparison["status"] == "PASS"
+            )
     if native_status == "FAIL":
         status = "STRUCTURAL_READBACK_FAIL"
     elif native_status == "INCOMPLETE" or provenance_missing:
@@ -283,6 +345,14 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
     native_issues.extend(
         "ACTOR_LABEL_OR_CLASS_MISMATCH: " + row["label"]
         for row in actor_rows if not row["class_matches"]
+    )
+    native_issues.extend(
+        "MATERIAL_PARAMETER_READBACK_" + row["status"] + ": " + row["target_material"]
+        for row in surface_rows if row["status"] != "PASS"
+    )
+    native_issues.extend(
+        'RETARGET_MESH_OR_ANIMATION_READBACK_MISMATCH: ' + row['actor_label']
+        for row in retarget_rows if row['status'] != 'PASS'
     )
     if not level_disk:
         native_issues.append("SAVED_LEVEL_PACKAGE_MISSING")
@@ -308,13 +378,15 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         "level_file_exists": level_disk, "sequence": sequence_rows,
         "assets": rows, "actors": actor_rows,
         "registered_components": component_rows,
+        "material_parameters": surface_rows,
+        "retargeted_rigs": retarget_rows,
         "asset_count": len(rows), "assets_class_and_disk_verified": len(found),
         "actor_count": len(actor_rows),
         "actors_unique_and_class_verified": actors_verified,
         "native_structure_status": native_status,
         "native_structure_issues": native_issues,
         "sequence_persisted": sequence_ok, "sequence_enumeration_complete": enumerable,
-        "source_manifest_sha256": _sha(candidate_dir / "automatic-setup.json"),
+        "source_manifest_sha256": manifest_sha,
         "transfer_plan_sha256": plan_sha,
         "setup_receipt_sha256": _sha(setup_file),
         "generation_receipt_sha256": _sha(runtime_file),

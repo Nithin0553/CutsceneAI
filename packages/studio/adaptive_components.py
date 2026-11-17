@@ -333,10 +333,14 @@ def adapt(
                 reserved.add(token)
                 desc["actions"].append(action["kind"])
                 desc["status"] = (
-                    "NATIVE_COLLIDER_GEOMETRY_PLANNED_PARTIAL_UNVERIFIED"
-                    if action["kind"] == collider_shape_adapter.ACTION_KIND
-                    else "NATIVE_PROPERTY_PLANNED_PARTIAL_UNVERIFIED"
+                    "NATIVE_PROPERTY_PLANNED_PARTIAL_UNVERIFIED"
                 )
+                if action["kind"] == collider_shape_adapter.ACTION_KIND:
+                    desc["collision_mode"] = action["collision_mode"]
+                    desc["interaction_limitation"] = action["interaction_limitation"]
+                    desc["status"] = ("NATIVE_COLLIDER_BLOCKING_PLANNED_UNVERIFIED"
+                                      if action["collision_mode"] == collider_shape_adapter.ACTIVE_MODE
+                                      else "NATIVE_COLLIDER_GEOMETRY_PLANNED_PARTIAL_UNVERIFIED")
                 actions.append(action)
             except feature_dispatch.ComponentEvidenceError as exc:
                 desc["status"] = str(exc)

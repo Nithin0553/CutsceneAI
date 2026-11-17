@@ -1,8 +1,8 @@
 """Opt-in automatic Unreal setup from an immutable, source-verified Unity plan.
 
 Handles supported skeletal FBX, animation FBX, WAV/MP3 and PNG, plus source
-characters/cameras/lights/transform props. A receipt records partial mutations.
-Does not claim materials, retargeting, audio sync or cross-engine fidelity.
+characters/cameras/lights/transform props. Approved IK Retargeters can stage
+native animation variants. A receipt records partial mutations.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ if str(ROOT/'tools') not in sys.path:
     sys.path.insert(0,str(ROOT/'tools'))
 import studio_auto_assets as assets_plan
 import studio_collider_shapes
+import studio_ik_retarget
 import studio_material_restore
 
 
@@ -85,12 +86,13 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
              'asset_operations':[],'actor_operations':[],'failed_step':None,
              'level_saved':False,'changes_possible':False,'fidelity_verified':False,
               'material_restoration':[],
-             'unsupported':['Unity .mat materials/shader graphs are not reconstructed; FBX embedded materials are optional and partial',
+             'unsupported':['Custom shader graphs, textured PBR and translucent materials need separate adapters',
                             'Unity particle/VFX/constraints/scripts and signal payloads are not reconstructed',
                             'Imported animation bone correspondence and audio playback are not verified']}
     mutation=False
     try:
         manifest=assets_plan.verify(manifest_path,csir_path,mapping_path,plan_path)
+        receipt['source_manifest_sha256']=assets_plan.digest(manifest_path)
         if not manifest['ready']:
             raise AutomaticSetupError('Source cannot be automatically staged: '+'; '.join(manifest['blockers'][:8]))
         if _project(api)!=os.path.normcase(os.path.abspath(str(expected_project))) or _level(api)!=expected_level:
@@ -100,6 +102,8 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 raise AutomaticSetupError('Unreal Python import capability unavailable: '+required)
         data=json.loads(Path(plan_path).read_text(encoding='utf-8-sig'))
         collider_actions = studio_collider_shapes.from_plan(data)
+        pbr_candidates = manifest.get('source_pbr_actor_candidates') or {}
+        studio_material_restore.preflight_constant_surfaces(api, pbr_candidates)
         sequence=data['sequence_asset_path']
         receipt['target_namespace']=manifest['target_folder']
         receipt['fbx_embedded_material_import_requested'] = (
@@ -116,7 +120,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
         planned_labels=[str(row['label']) for row in manifest['actors']]
         if len(planned_labels)!=len(set(planned_labels)):
             raise AutomaticSetupError('Automatic setup has duplicate planned actor labels; no changes made.')
-        planned_paths=[str(row['target_asset_path']) for row in manifest['imports']]
+        planned_paths=[str(row['target_asset_path']).casefold() for row in manifest['imports']]
         if len(planned_paths)!=len(set(planned_paths)):
             raise AutomaticSetupError('Automatic setup has duplicate target import paths; no changes made.')
         # Even unplanned assets in a reused staging namespace are dangerous.
@@ -153,6 +157,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
         for row in manifest['imports']:
             if api.EditorAssetLibrary.does_asset_exist(row['target_asset_path']):
                 raise AutomaticSetupError('Automatic setup refuses existing target asset: '+row['target_asset_path'])
+        retargeting = studio_ik_retarget.prepare(api, manifest)
         # Unreal Engine 5.8 supports importing MP3 and WAV directly into
         # SoundWave assets. Let the native importer validate the file and
         # verify the resulting Unreal asset class after import.
@@ -167,16 +172,19 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 if row['kind']!=kind:
                     continue
                 source=row['source_file']
+                character=row.get('character')
+                approved=retargeting.get(character)
+                import_path=row.get('source_animation_path', row['target_asset_path'])
                 skeleton=None
                 if kind=='AnimSequence':
-                    mesh=meshes.get(row.get('character'))
+                    mesh=meshes.get(character)
                     if mesh is None:
                         raise AutomaticSetupError('No newly imported character mesh for animation '+row['source_file'])
                     skeleton=mesh.get_editor_property('skeleton')
                     if skeleton is None:
                         raise AutomaticSetupError('Imported mesh has no skeleton: '+row.get('character',''))
                 task=_task(
-                    api,source,row['target_asset_path'],kind,skeleton,
+                    api,source,import_path,kind,skeleton,
                     embedded_materials=(
                         manifest.get('fbx_embedded_material_import_requested') is True
                     ),
@@ -184,28 +192,40 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 operation=asset_ops[row['target_asset_path']]
                 operation['status']='IMPORT_STARTED'
                 receipt['failed_step']={'phase':'asset_import','kind':kind,
-                                        'path':row['target_asset_path']}
+                                        'path':import_path}
                 mutation=True
                 api.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
-                result=api.load_asset(row['target_asset_path'])
+                result=api.load_asset(import_path)
                 if _klass(result)!=kind:
-                    raise AutomaticSetupError('Import did not create '+kind+' at '+row['target_asset_path'])
+                    raise AutomaticSetupError('Import did not create '+kind+' at '+import_path)
                 if kind=='SkeletalMesh':
-                    meshes[row.get('character')]=result
+                    meshes[character]=result
+                    if approved:
+                        receipt['failed_step']['phase']='retarget_source_reference_pose'
+                        studio_ik_retarget.check_source(api, result, approved['source'])
                 if kind=='StaticMesh':
                     props[row['target_asset_path']]=result
-                if kind=='AnimSequence' and str(result.get_editor_property('skeleton').get_path_name())!=str(skeleton.get_path_name()):
-                    raise AutomaticSetupError('Animation imported onto wrong skeleton: '+row['target_asset_path'])
+                if kind=='AnimSequence':
+                    imported_skeleton = result.get_editor_property('skeleton')
+                    if imported_skeleton is None or str(imported_skeleton.get_path_name()) != str(skeleton.get_path_name()):
+                        raise AutomaticSetupError('Animation imported onto wrong skeleton: '+import_path)
+                    if approved:
+                        receipt['failed_step']={'phase':'ik_retarget','path':row['target_asset_path'],
+                                                'source_animation_path':import_path}
+                        studio_ik_retarget.duplicate_clip(api, row, meshes[character], approved)
+                        operation['source_animation_path']=import_path
                 operation['status']='NATIVE_CLASS_CHECKED'
                 receipt['assets_imported'].append({'kind':kind,'path':row['target_asset_path']})
                 receipt['failed_step']=None
         zero=api.Vector(0.0,0.0,0.0)
         rotation=api.Rotator(0.0,0.0,0.0)
+        created_by_label={}
         for row in manifest['actors']:
             operation=actor_ops[row['name']]
             kind=row['kind']
             if kind=='entity.character':
-                obj=meshes.get(row['name'])
+                approved=retargeting.get(row['name'])
+                obj=approved['target'] if approved else meshes.get(row['name'])
                 if obj is None:
                     raise AutomaticSetupError('Missing source character: '+row['name'])
                 operation['status']='SPAWN_STARTED'
@@ -238,7 +258,22 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 raise AutomaticSetupError('Unreal renamed actor unexpectedly: '+row['name'])
             operation['status']='ACTOR_LABEL_CHECKED'
             receipt['actors_created'].append({'name':row['name'],'label':row['label'],'kind':kind})
+            created_by_label[row['label']]=actor
             receipt['failed_step']=None
+        if retargeting:
+            receipt['retargeted_rigs'] = []
+            for row in manifest['actors']:
+                profile = manifest['skeletal_retarget_profiles'].get(row['name'])
+                if not profile:
+                    continue
+                receipt['failed_step']={'phase':'retarget_native_readback','name':row['name']}
+                paths = [item['target_asset_path'] for item in manifest['imports']
+                         if item.get('source_animation_path') and item['character'] == row['name']]
+                observation = studio_ik_retarget.inspect(api, profile, paths, created_by_label[row['label']])
+                receipt['retargeted_rigs'].append(dict(observation, actor=row['label']))
+                if observation['status'] != 'PASS':
+                    raise AutomaticSetupError('Retargeted actor or animation failed native readback: ' + row['name'])
+                receipt['failed_step']=None
         actor_materials = manifest.get('source_albedo_actor_candidates')
         if actor_materials is not None and not isinstance(actor_materials, dict):
             raise AutomaticSetupError('Invalid actor-scoped source material manifest.')
@@ -266,11 +301,25 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                         api, created, candidates, existing_assets=material_cache)
                 )
                 receipt['failed_step']=None
+        if pbr_candidates:
+            material_cache={}
+            receipt['constant_materials']=[]
+            for row in manifest['actors']:
+                candidates=pbr_candidates.get(row['name'], [])
+                if not candidates:
+                    continue
+                receipt['failed_step']={'phase':'constant_material_staging','name':row['name']}
+                receipt['constant_materials'].extend(
+                    dict(item, actor=row['name']) for item in studio_material_restore.stage_constant_surfaces(
+                        api, created_by_label[row['label']], candidates, material_cache)
+                )
+                receipt['failed_step']=None
         if collider_actions:
             receipt['failed_step'] = {'phase': 'native_collider_staging'}
             receipt['component_operations'] = []
             mutation = True
-            studio_collider_shapes.stage(api, ed, collider_actions, receipt['component_operations'])
+            studio_collider_shapes.stage(api, ed, collider_actions, receipt['component_operations'],
+                                         owned_actors=created_by_label)
         receipt['failed_step']={'phase':'level_save','level':expected_level}
         _save_level(api,expected_level)
         receipt['level_saved']=True
