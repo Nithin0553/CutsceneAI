@@ -13,6 +13,7 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 - [Diagnose blocked Unreal generation](studio/BLOCKED_GENERATION_DIAGNOSTICS.md) — native exception, failed stage, partial import recovery and read-only job inspection
 - [Studio release acceptance](studio/RELEASE_ACCEPTANCE.md) — real-engine evidence needed before declaring ready
 - [Mandatory issue/PR triage before each fix](studio/ISSUE_PR_TRIAGE_POLICY.md) — inspect root cause, existing work, verified tests and clean closure
+- [Agentic Studio architecture and Unity source bridge](studio/AGENTIC_STUDIO_ARCHITECTURE.md) — opt-in CSIR/census extraction, CED-guided planning, verified continual-learning boundaries
 
 
 | Question | Read |
