@@ -204,24 +204,31 @@ def test_integrated_unity_scope_and_executable_ced_adapter_share_one_planner(
     """Integration regression for non-overlapping PR #90 and #92 source gates."""
     source, mapping = sample()
     mapping["enable_actor_visibility_fallback"] = True
+    source["source"].update(project_fingerprint="activation-project", engine_version="6000.3")
+    entity = source["entities"][0]
+    entity["native_ref"] = "source-hero"
+    entity["metadata"].update(scene_path="Assets/Stage.unity", hierarchy_path="Hero")
+    census = {
+        "kind": "cutsceneai.engine.feature_surface", "schema_version": "0.2.0",
+        **source["source"], "loaded_scene_components": [{
+            "scene_path": "Assets/Stage.unity", "object_path": "Hero",
+            "global_object_id": "source-hero", "component_global_id": "hero-transform",
+            "component_type": "UnityEngine.Transform",
+        }],
+    }
     source_file = tmp_path / "source.csir.json"
     mapping_file = tmp_path / "mapping.json"
     census_file = tmp_path / "feature-census.json"
     source_file.write_text(json.dumps(source), encoding="utf-8")
-    census_file.write_text(json.dumps({"kind": "synthetic-test-census"}), encoding="utf-8")
+    census_file.write_text(json.dumps(census), encoding="utf-8")
     mapping["source_feature_surface_path"] = str(census_file)
     mapping_file.write_text(json.dumps(mapping), encoding="utf-8")
-    state = {
-        "unresolved_component_count": 0,
-        "project_identity_proven": True,
-        "source_scope_matched": True,
-    }
     observed = []
-    monkeypatch.setattr(transfer_backend.source_surface_gap, "audit_files",
-                        lambda *args: dict(state))
-    def accepted_source_components(csir, mapping, census):
+    adapt = transfer_backend.adaptive_components.adapt
+
+    def accepted_source_components(*args, **kwargs):
         observed.append("census_adapt")
-        return {"actions": []}
+        return adapt(*args, **kwargs)
     monkeypatch.setattr(transfer_backend.adaptive_components, "adapt",
                         accepted_source_components)
 
@@ -238,7 +245,8 @@ def test_integrated_unity_scope_and_executable_ced_adapter_share_one_planner(
 
     # A partial census cannot be used to smuggle the CED-backed native action
     # into an ostensibly strict candidate, even with an installed handler.
-    state["source_scope_matched"] = False
+    census["loaded_scene_components"].clear()
+    census_file.write_text(json.dumps(census), encoding="utf-8")
     with pytest.raises(transfer_backend.TransferBackendError,
                        match="Unity source feature census is incomplete"):
         transfer_backend.compose_files(source_file, mapping_file)

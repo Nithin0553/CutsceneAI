@@ -40,6 +40,7 @@ def _identity_map(csir: Mapping[str, Any], mapping: Mapping[str, Any]) -> dict[t
                 index[key] = {"ambiguous": True}
             else:
                 index[key] = {"name": name, "entity_id": str(entity.get("entity_id")),
+                              "native_ref": str(entity.get("native_ref") or ""),
                               "entity_ced": str(entity.get("ced_type") or ""),
                               "actor_label": str(target["actor_label"])}
     return index
@@ -57,6 +58,52 @@ def _native_bool(feature: dict[str, Any], member: str) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+LIGHT_SHADOW_LOSSES = (
+    "shadow_filter", "shadow_bias", "shadow_resolution", "rendering_layers",
+)
+
+
+def _light_shadow_action(_csir, _mapping, row, target) -> dict[str, Any]:
+    if target.get("entity_ced") != "entity.light":
+        raise feature_dispatch.ComponentEvidenceError("SOURCE_LIGHT_MAPPED_TO_NONLIGHT_ACTOR")
+    shadows = _native_bool(_flags(row), "cast_shadows")
+    if shadows is None:
+        raise feature_dispatch.ComponentEvidenceError("SOURCE_PROPERTY_EVIDENCE_REQUIRED")
+    return {
+        "kind": "property_bool",
+        "entity_name": target["name"],
+        "actor_label": target["actor_label"],
+        "track_name": "CutSceneAI Unity Light Shadow Enable",
+        "target_scope": "component",
+        "target_class": "LightComponent",
+        "target_property_name": "cast_shadows",
+        "target_property_path": "cast_shadows",
+        "source_semantic": "light.shadow",
+        "source_component_type": SOURCE_LIGHT,
+        "source_component_id": str(row.get("component_global_id") or ""),
+        "source_behavior_strategy": "ced_light_shadow_cast_property",
+        "keys": [{"frame": 0, "value": shadows}],
+        "fidelity_status": "NATIVE_PROPERTY_READBACK_AND_RENDER_PARITY_UNVERIFIED",
+        "semantic_losses": [
+            "URP shadow filtering, cascades and pipeline settings are not equivalent to Unreal.",
+        ],
+    }
+
+
+def install_adapters(registry: feature_dispatch.HandlerRegistry) -> None:
+    registry.register_component(feature_dispatch.ComponentAdapter(
+        adapter_id="unity_light_shadow", version="1.0.0",
+        source_type=SOURCE_LIGHT, source_assembly="UnityEngine.CoreModule",
+        semantic="light.shadow", source_versions=("2022.3", "6000.0", "6000.1", "6000.2", "6000.3"),
+        target_versions=("5.4", "5.5", "5.6", "5.7", "5.8"),
+        target_classes=("LightComponent",), action_kind="property_bool",
+        strategy="ced_light_shadow_cast_property",
+        required_fields=("has_cast_shadows", "cast_shadows"), dependency_fields=(),
+        preflight="Unique mapped LightComponent with Boolean cast_shadows and Boolean Sequencer channels.",
+        readback="Read the saved cast_shadows channel and its owning light binding in Unreal.",
+        behavior="Compare evaluated shadow enable and controlled matched-time rendered shadows.",
+        unsupported_properties=LIGHT_SHADOW_LOSSES, planner=_light_shadow_action,
+    ))
 
 _NATIVE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SOURCE_MEMBER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]]*$")
@@ -165,6 +212,9 @@ def adapt(
     csir: Mapping[str, Any],
     mapping: Mapping[str, Any],
     census: Mapping[str, Any],
+    *,
+    handlers: feature_dispatch.HandlerRegistry | None = None,
+    source_audit: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return source-attributed property actions and inspectable remaining gaps.
 
@@ -179,6 +229,20 @@ def adapt(
     known = _identity_map(csir, mapping)
     rules = _explicit_property_rules(mapping)
     ced = feature_dispatch.catalog()
+    findings = {row["census_index"]: row for row in source_audit["component_findings"]} \
+        if source_audit is not None else {}
+    proven_scope = (
+        source_audit is not None and source_audit["project_identity_proven"]
+        and source_audit["source_scope_matched"] and bool(source_audit["source_engine_version"])
+    )
+    name_counts = Counter(str(entity.get("name") or "") for entity in csir.get("entities", []))
+    label_counts = Counter(row["actor_label"] for row in (mapping.get("entities") or {}).values()
+                           if isinstance(row, dict) and row.get("actor_label"))
+    tracked_types = {
+        SOURCE_CAMERA, SOURCE_LIGHT, SOURCE_RECEIVER, SOURCE_LOD_GROUP, *SOURCE_COLLIDERS,
+        "UnityEngine.Rendering.Universal.UniversalAdditionalLightData",
+        *(rule["source_component_type"] for rule in rules),
+    }
     actions: list[dict[str, Any]] = []
     decisions: list[dict[str, Any]] = []
     reserved: set[tuple[str, str]] = set()
@@ -187,19 +251,15 @@ def adapt(
         if not isinstance(row, dict):
             continue
         native_type = str(row.get("component_type") or "")
-        if native_type not in {SOURCE_CAMERA, SOURCE_LIGHT, SOURCE_RECEIVER, SOURCE_LOD_GROUP,
-                               *SOURCE_COLLIDERS,
-                               "UnityEngine.Rendering.Universal.UniversalAdditionalLightData"} and not any(
-                                   r["source_component_type"] == native_type for r in
-                                   mapping.get("component_property_mappings", [])
-                                   if isinstance(r, dict)
-                               ):
+        spec = handlers.component_for(native_type) if handlers is not None else None
+        if spec is None and native_type not in tracked_types:
             continue
         scene = str(row.get("scene_path") or "")
         path = str(row.get("object_path") or "")
         feature = _flags(row)
         target = known.get((scene, path))
         desc = {
+            "census_index": idx,
             "source_location": f"loaded_scene_components[{idx}]",
             "source_component_id": str(row.get("component_global_id") or ""),
             "source_native_type": native_type,
@@ -210,6 +270,14 @@ def adapt(
             "unconverted_properties": [],
         }
         expected += 1
+        if source_audit is not None:
+            finding = findings.get(idx)
+            if (not source_audit["project_identity_proven"] or finding is None
+                    or finding["state"] in source_surface_gap.IDENTITY_FAILURES
+                    or row.get("missing_script") is True):
+                desc["status"] = "EXACT_SOURCE_COMPONENT_IDENTITY_REQUIRED"
+                decisions.append(desc)
+                continue
         if target is None or target.get("ambiguous"):
             desc["status"] = "EXACT_TARGET_OBJECT_MAPPING_REQUIRED"
             decisions.append(desc)
@@ -227,7 +295,33 @@ def adapt(
         if unresolved_paths:
             desc["unconverted_properties"].extend(unresolved_paths)
             desc["status"] = "SOURCE_NATIVE_PROPERTY_NOT_CAPTURED"
-        if native_type == SOURCE_CAMERA:
+        # Older census exports may lack an assembly for the already-supported
+        # light shadow property. They retain the original typed-property route.
+        if spec is not None and (native_type != SOURCE_LIGHT or row.get("component_assembly")):
+            desc["adapter_id"] = spec.adapter_id
+            desc["adapter_version"] = spec.version
+            desc["unconverted_properties"].extend(spec.unsupported_properties)
+            try:
+                if (not proven_scope or findings[idx]["source_entity_id"] != target["entity_id"]
+                        or name_counts[target["name"]] != 1
+                        or label_counts[target["actor_label"]] != 1):
+                    raise feature_dispatch.ComponentEvidenceError(
+                        "EXACT_SOURCE_AND_TARGET_SCOPE_REQUIRED"
+                    )
+                action = handlers.plan_component(
+                    spec, csir=csir, mapping=mapping, row=row, target=target,
+                    location=desc["source_location"],
+                )
+                token = (target["actor_label"], action["target_property_path"])
+                if token in reserved:
+                    raise feature_dispatch.ComponentEvidenceError("DUPLICATE_TARGET_COMPONENT_PROPERTY")
+                reserved.add(token)
+                desc["actions"].append(action["kind"])
+                desc["status"] = "NATIVE_PROPERTY_PLANNED_PARTIAL_UNVERIFIED"
+                actions.append(action)
+            except feature_dispatch.ComponentEvidenceError as exc:
+                desc["status"] = str(exc)
+        elif native_type == SOURCE_CAMERA:
             if target.get("entity_ced") != "entity.camera":
                 desc["status"] = "SOURCE_CAMERA_MAPPED_TO_NONCAMERA_ACTOR"
                 decisions.append(desc)
@@ -280,33 +374,12 @@ def adapt(
                     desc["status"] = "DUPLICATE_TARGET_COMPONENT_PROPERTY"
                 else:
                     reserved.add(token)
-                    action = {
-                        "kind": "property_bool",
-                        "entity_name": target["name"],
-                        "actor_label": target["actor_label"],
-                        "track_name": "CutSceneAI Unity Light Shadow Enable",
-                        "target_scope": "component",
-                        "target_class": "LightComponent",
-                        "target_property_name": "cast_shadows",
-                        "target_property_path": "cast_shadows",
-                        "source_semantic": "light.shadow",
-                        "source_component_type": native_type,
-                        "source_component_id": desc["source_component_id"],
-                        "source_behavior_strategy": "ced_light_shadow_cast_property",
-                        "keys": [{"frame": 0, "value": shadows}],
-                        "fidelity_status": "NATIVE_PROPERTY_READBACK_AND_RENDER_PARITY_UNVERIFIED",
-                        "semantic_losses": [
-                            "URP shadow filtering, cascades and pipeline settings are not equivalent to Unreal.",
-                        ],
-                    }
-                    actions.append(action)
+                    actions.append(_light_shadow_action(csir, mapping, row, target))
                     desc["actions"].append("property_bool")
                     desc["status"] = "NATIVE_PROPERTY_PLANNED_PARTIAL_UNVERIFIED"
             else:
                 desc["status"] = "SOURCE_PROPERTY_EVIDENCE_REQUIRED"
-            desc["unconverted_properties"].extend([
-                "shadow_filter", "shadow_bias", "shadow_resolution", "rendering_layers",
-            ])
+            desc["unconverted_properties"].extend(LIGHT_SHADOW_LOSSES)
         elif native_type == "UnityEngine.MeshCollider":
             desc["status"] = (
                 "MESH_COLLIDER_SOURCE_CAPTURED_NATIVE_ADAPTER_REQUIRED"
@@ -355,6 +428,9 @@ def adapt(
     # printed alongside the plan. Native handlers must declare the actual
     # source concept and be registered to a builder action kind.
     for action in actions:
+        if action.get("adapter_name"):
+            action["ced_resolution"] = "INSTALLED_COMPONENT_ADAPTER_UNVERIFIED"
+            continue
         semantic = str(action["source_semantic"])
         if semantic in ced["_domain_for"]:
             recipe = feature_dispatch.recipe(semantic, features=ced)
@@ -394,5 +470,6 @@ def adapt(
         "status_counts": dict(sorted(counts.items())),
         "all_source_features_converted": False,
         "source_target_fidelity_verified": False,
+        "installed_component_adapters": handlers.component_capabilities() if handlers else [],
         "strategy": "native_first_with_evidence_gated_partial_fallback",
     }

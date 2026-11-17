@@ -549,6 +549,74 @@ def _binding_owner_label(sequence: Any, binding: Any) -> str:
     return _binding_name(binding)
 
 
+def read_registered_scalar_components(
+    sequence: Any, actions: list[dict[str, Any]], *, api: Any = None,
+) -> list[dict[str, Any]]:
+    """Check saved native bindings, property paths and keys for registered adapters."""
+    api = unreal if api is None else api
+    results = []
+    for action in actions:
+        result = {
+            "source_component_id": action["source_component_id"],
+            "adapter_name": action["adapter_name"],
+            "actor_label": action["actor_label"],
+            "target_property_path": action["target_property_path"],
+            "expected_keys": action["keys"],
+            "observed_keys": None,
+            "status": "INCOMPLETE",
+            "behavior_verified": False,
+        }
+        results.append(result)
+        try:
+            sequence_api = api.MovieSceneSequenceExtensions
+            property_api = api.MovieScenePropertyTrackExtensions
+            world = api.get_editor_subsystem(api.UnrealEditorSubsystem).get_editor_world()
+            native_class = getattr(api, action["target_class"])
+            boolean = action["kind"] == "property_bool"
+            track_class = api.MovieSceneBoolTrack if boolean else api.MovieSceneFloatTrack
+            tracks = []
+            for binding in sequence_api.get_bindings(sequence):
+                objects = list(sequence_api.locate_bound_objects(sequence, binding, world))
+                if len(objects) != 1 or not isinstance(objects[0], native_class):
+                    continue
+                obj = objects[0]
+                actor = obj.get_owner() if action["target_scope"] == "component" else obj
+                if actor is None or str(actor.get_actor_label()) != action["actor_label"]:
+                    continue
+                tracks.extend(track for track in binding.get_tracks()
+                              if isinstance(track, track_class)
+                              and str(property_api.get_property_path(track))
+                              == action["target_property_path"])
+            if len(tracks) != 1:
+                result["status"] = "FAIL"
+                result["reason"] = "EXPECTED_ONE_NATIVE_PROPERTY_TRACK"
+                continue
+            sections = tracks[0].get_sections()
+            channels = (api.MovieSceneSectionExtensions.get_all_channels(sections[0])
+                        if len(sections) == 1 else [])
+            if len(channels) != 1:
+                result["status"] = "FAIL"
+                result["reason"] = "EXPECTED_ONE_NATIVE_PROPERTY_CHANNEL"
+                continue
+            measured = [
+                {"frame": _frame_time_value(key.get_time(api.MovieSceneTimeUnit.DISPLAY_RATE)),
+                 "value": key.get_value()}
+                for key in channels[0].get_keys()
+            ]
+            result["observed_keys"] = measured
+            matches = len(measured) == len(action["keys"]) and all(
+                got["frame"] == want["frame"]
+                and (type(got["value"]) is bool and got["value"] == want["value"] if boolean
+                     else type(got["value"]) in (int, float)
+                     and math.isclose(got["value"], want["value"], rel_tol=1e-6, abs_tol=1e-6))
+                for got, want in zip(measured, action["keys"])
+            )
+            result["status"] = "PASS" if matches else "FAIL"
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            result["reason"] = str(exc)
+    return results
+
+
 def _lens_track(
     track: Any,
     component: Any,

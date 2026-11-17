@@ -218,9 +218,21 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
     all_actors = len(actor_rows) == len(manifest["actors"]) and all(r["class_matches"] for r in actor_rows)
     sequence_ok = sequence_class == "LevelSequence" and sequence_disk
     enumerable = sequence_rows["binding_count"] is not None and sequence_rows["root_track_count"] is not None
+    scalar_actions = [
+        a for a in plan.get("actions", [])
+        if a.get("source_component_id") and a.get("adapter_name")
+        and a.get("kind") in {"property_bool", "property_float"}
+    ]
+    component_rows = []
+    if scalar_actions and sequence is not None:
+        from readback_level_sequence import read_registered_scalar_components
+
+        component_rows = read_registered_scalar_components(sequence, scalar_actions, api=api)
+    component_fail = any(row["status"] == "FAIL" for row in component_rows)
+    component_incomplete = any(row["status"] == "INCOMPLETE" for row in component_rows)
     native_status = (
-        "FAIL" if not (level_disk and sequence_ok and all_assets and all_actors)
-        else "INCOMPLETE" if not enumerable
+        "FAIL" if not (level_disk and sequence_ok and all_assets and all_actors) or component_fail
+        else "INCOMPLETE" if not enumerable or component_incomplete
         else "PASS"
     )
     # Native persistence and historical source provenance are separate claims:
@@ -259,6 +271,10 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         native_issues.append("SAVED_SEQUENCE_PACKAGE_OR_CLASS_MISMATCH")
     if not enumerable:
         native_issues.append("SEQUENCE_BINDING_OR_TRACK_READBACK_UNAVAILABLE")
+    native_issues.extend(
+        "REGISTERED_COMPONENT_READBACK_" + row["status"] + ": " + row["source_component_id"]
+        for row in component_rows if row["status"] != "PASS"
+    )
     report = {
         "kind": "cutsceneai.studio.persistence_audit", "schema_version": "0.1.0",
         "status": status, "fidelity_verified": False,
@@ -272,6 +288,7 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         "expected_level": expected_level, "observed_level": observed_level,
         "level_file_exists": level_disk, "sequence": sequence_rows,
         "assets": rows, "actors": actor_rows,
+        "registered_components": component_rows,
         "asset_count": len(rows), "assets_class_and_disk_verified": len(found),
         "actor_count": len(actor_rows),
         "actors_unique_and_class_verified": actors_verified,

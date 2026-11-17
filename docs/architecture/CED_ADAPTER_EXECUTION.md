@@ -46,6 +46,41 @@ require source evidence and target readback. The local discovery registry
 records unknowns for developer review without changing CED or installing
 handlers automatically.
 
+## Native component adapters
+
+The installed `HandlerRegistry` also accepts `ComponentAdapter` declarations
+for native Unity census occurrences. A declaration binds an exact component
+type and assembly to one versioned implementation. It declares supported
+Unity and Unreal version families, the target class and action kind, required
+source fields and dependencies, the conversion strategy, preflight, readback
+and behavior requirements, and unsupported properties. Studio exposes this
+data in the prepared candidate's adaptive component summary.
+
+Register the implementation from the installed planner via
+`adaptive_components.install_adapters`. The census cannot install modules or
+pick an Unreal command. A planner receives the audited occurrence and its
+unique mapped entity. Validate domain-specific field types and dependencies
+inside the planner. Return one declared action, or raise
+`ComponentEvidenceError` with a specific reason so unrelated features can
+continue. Add tests for valid source evidence and malformed, incompatible,
+unmapped or ambiguous occurrences. Adding a native action kind also requires
+an allowlisted native handler, runtime preflight, and independent readback.
+
+The initial registered adapter handles Unity `Light` shadow enable through
+the existing editable Sequencer Boolean property track. A fresh census must
+match the CSIR project's identity, engine version, scene scope and native
+GameObject ID. Duplicate component IDs invalidate both occurrences.
+`coverage-report.json` has the `component_transfer_ledger` keyed by census
+index. It records planning without awarding native or behavior credit. After
+opening the saved sequence in a different Unreal process, the existing Studio
+persistence audit checks the owning native binding, property path and saved
+channel keys for registered scalar actions. Capture rendered shadows at
+matching times before claiming visual equivalence.
+
+Previously saved source documents can be reused. Prepare a new candidate
+after updating Studio because the worker recomputes the immutable plan and
+coverage report with the installed registry.
+
 ## Current boundary
 
 This is an executable extension framework, not a universal converter for the

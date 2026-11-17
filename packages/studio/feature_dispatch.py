@@ -16,6 +16,7 @@ import re
 from collections import Counter
 from collections.abc import Callable, Mapping
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,7 @@ BUILDER_ACTIONS = frozenset({
     "skeletal_world_root_lock", "actor_visibility", "property_float",
     "property_bool",
 })
+COMPONENT_ACTIONS = frozenset({"property_bool", "property_float"})
 # Each association is a source-track/Sequencer building *candidate*, not
 # a guaranteed semantic equivalent (event -> marker is deliberately lossy).
 EXPLICIT_ACTIONS = {
@@ -106,6 +108,54 @@ _SOURCE_LOCATION = re.compile(
 
 class FeatureDispatchError(ValueError):
     pass
+
+
+class ComponentEvidenceError(ValueError):
+    """An installed adapter cannot use this particular source occurrence."""
+
+
+@dataclass(frozen=True)
+class ComponentAdapter:
+    adapter_id: str
+    version: str
+    source_type: str
+    source_assembly: str
+    semantic: str
+    source_versions: tuple[str, ...]
+    target_versions: tuple[str, ...]
+    target_classes: tuple[str, ...]
+    action_kind: str
+    strategy: str
+    required_fields: tuple[str, ...]
+    dependency_fields: tuple[str, ...]
+    preflight: str
+    readback: str
+    behavior: str
+    unsupported_properties: tuple[str, ...]
+    planner: Callable[..., dict[str, Any]]
+
+    def describe(self) -> dict[str, Any]:
+        """Data-only capabilities for reports and agent discovery."""
+        return {
+            "adapter_id": self.adapter_id, "version": self.version,
+            "source_type": self.source_type, "source_assembly": self.source_assembly,
+            "semantic": self.semantic, "source_unity_versions": list(self.source_versions),
+            "target_unreal_versions": list(self.target_versions),
+            "target_classes": list(self.target_classes), "action_kind": self.action_kind,
+            "strategy": self.strategy, "required_fields": list(self.required_fields),
+            "dependency_fields": list(self.dependency_fields),
+            "permission": "existing_guarded_studio_transfer",
+            "preflight": self.preflight,
+            "failure_policy": "report_without_substitution",
+            "readback": self.readback, "behavior": self.behavior,
+            "unsupported_properties": list(self.unsupported_properties),
+        }
+
+
+def engine_version_family(version: str) -> str:
+    """Read major.minor from Unity and Unreal version strings with build suffixes."""
+    match = re.match(r"^(\d+\.\d+)(?:[.a-zA-Z+\-]|$)", version)
+    return match[1] if match else ""
 
 
 def _sha(path: Path) -> str:
@@ -321,6 +371,91 @@ class HandlerRegistry:
     def __init__(self, features: Mapping[str, Any] | None = None):
         self.features = features if features is not None else catalog()
         self.handlers: dict[str, dict[str, Any]] = {}
+        self._components: dict[str, ComponentAdapter] = {}
+
+    def register_component(self, spec: ComponentAdapter) -> None:
+        """Register trusted code for an exact native census class."""
+        if spec.source_type in self._components or any(
+            other.adapter_id == spec.adapter_id for other in self._components.values()
+        ):
+            raise FeatureDispatchError("Duplicate installed component adapter: " + spec.adapter_id)
+        if (not spec.adapter_id or not spec.version or not spec.source_type
+                or not spec.source_assembly or not spec.strategy or not callable(spec.planner)
+                or not spec.preflight or not spec.readback or not spec.behavior):
+            raise FeatureDispatchError("Component adapter metadata and evidence policies are required.")
+        if not re.fullmatch(r"[a-z][a-z0-9_]*\.[a-z0-9_]+", spec.semantic):
+            raise FeatureDispatchError("Component adapter requires a namespaced CED semantic.")
+        if spec.action_kind not in COMPONENT_ACTIONS:
+            raise FeatureDispatchError("Component adapter requires an installed native component action.")
+        if (not spec.target_classes
+                or not all(_NATIVE_IDENTIFIER.fullmatch(name) for name in spec.target_classes)
+                or not spec.source_versions or not spec.target_versions
+                or not all(re.fullmatch(r"\d+\.\d+", version)
+                           for version in (*spec.source_versions, *spec.target_versions))):
+            raise FeatureDispatchError("Component adapter class and engine compatibility must be explicit.")
+        self._components[spec.source_type] = spec
+
+    def component_for(self, source_type: str) -> ComponentAdapter | None:
+        return self._components.get(source_type)
+
+    def component_capabilities(self) -> list[dict[str, Any]]:
+        return [spec.describe() for _, spec in sorted(self._components.items())]
+
+    def plan_component(
+        self, spec: ComponentAdapter, *, csir: Mapping[str, Any],
+        mapping: Mapping[str, Any], row: Mapping[str, Any], target: Mapping[str, Any],
+        location: str,
+    ) -> dict[str, Any]:
+        """Compile a source-audited occurrence into one allowlisted native action."""
+        if self.component_for(str(row.get("component_type") or "")) is not spec:
+            raise FeatureDispatchError("Source component adapter is not installed.")
+        if row.get("component_assembly") != spec.source_assembly:
+            raise ComponentEvidenceError("SOURCE_COMPONENT_ASSEMBLY_UNSUPPORTED")
+        if engine_version_family(str(csir["source"].get("engine_version") or "")) not in (
+            spec.source_versions
+        ):
+            raise ComponentEvidenceError("SOURCE_ENGINE_VERSION_UNSUPPORTED")
+        source_id = row.get("component_global_id")
+        if (not isinstance(source_id, str) or not source_id.strip()
+                or not target.get("native_ref")
+                or row.get("global_object_id") != target["native_ref"]):
+            raise ComponentEvidenceError("EXACT_SOURCE_COMPONENT_IDENTITY_REQUIRED")
+        values = row.get("feature")
+        if not isinstance(values, Mapping) or any(values.get(field) is None
+                                                   for field in spec.required_fields):
+            raise ComponentEvidenceError("REQUIRED_SOURCE_COMPONENT_FIELDS_MISSING")
+        if any(not values.get(field) for field in spec.dependency_fields):
+            raise ComponentEvidenceError("REQUIRED_SOURCE_COMPONENT_DEPENDENCY_MISSING")
+        action = spec.planner(deepcopy(csir), deepcopy(mapping), deepcopy(row), deepcopy(target))
+        if (not isinstance(action, dict) or action.get("kind") != spec.action_kind
+                or action.get("target_class") not in spec.target_classes
+                or action.get("source_behavior_strategy") != spec.strategy
+                or action.get("entity_name") != target["name"]
+                or action.get("actor_label") != target["actor_label"]):
+            raise FeatureDispatchError("Component adapter emitted an undeclared native action.")
+        if spec.action_kind in {"property_float", "property_bool"}:
+            _validate_scalar_adapter_action(action, mapping, spec.semantic)
+        fidelity = action.get("fidelity_status")
+        if (not isinstance(fidelity, str) or not fidelity.endswith("_UNVERIFIED")
+                or action.get("target_readback_verified") is True
+                or action.get("behavior_fidelity_verified") is True):
+            raise FeatureDispatchError("Component adapter cannot claim native or behavioral proof.")
+        result = {
+            **action, "source_component_type": spec.source_type,
+            "source_component_id": source_id, "source_entity_id": target["entity_id"],
+            "source_object_id": target["native_ref"],
+            "source_ced": spec.semantic, "source_location": location,
+            "adapter_name": spec.adapter_id, "adapter_version": spec.version,
+            "target_engine_versions": list(spec.target_versions),
+            "required_evidence_gates": ["SOURCE", "PLAN", "NATIVE_READBACK", "BEHAVIOR"],
+            "target_readback_verified": False, "behavior_fidelity_verified": False,
+            "release_eligible": False,
+        }
+        try:
+            json.dumps(result, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise FeatureDispatchError("Component adapter emitted invalid JSON.") from exc
+        return result
 
     def register(self, semantic: str, handler: Callable[..., Any], *,
                  name: str, version: str,

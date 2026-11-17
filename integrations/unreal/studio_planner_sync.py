@@ -17,6 +17,7 @@ from types import ModuleType
 ROOT = Path(__file__).resolve().parents[2]
 MODULES = (
     ("csir_plan", "integrations/unreal"),
+    ("component_capability_ledger", "packages/studio"),
     ("source_surface_gap", "packages/studio"),
     ("feature_dispatch", "packages/studio"),
     ("scalar_property_adapter", "packages/studio"),

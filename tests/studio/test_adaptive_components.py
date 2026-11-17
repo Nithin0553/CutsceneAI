@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 for folder in ("integrations/unreal", "packages/cinetwin", "packages/studio"):
     sys.path.insert(0, str(ROOT / folder))
@@ -313,3 +315,76 @@ def test_malformed_lod_source_does_not_get_capture_credit_from_planner():
                if d["source_native_type"] == "UnityEngine.LODGroup")
     assert lod["status"] == "SOURCE_LOD_RENDERER_GRAPH_REQUIRED"
     assert lod["actions"] == []
+
+
+def _native_light_inputs(tmp_path):
+    csir, mapped = source(), mapping()
+    scene = "Assets/Stages/Interior.unity"
+    path = "Set/Practical"
+    csir["entities"].append({
+        "entity_id": "light-id", "name": "Practical", "ced_type": "entity.light",
+        "native_ref": "unity-object-id", "metadata": {"scene_path": scene, "hierarchy_path": path},
+    })
+    mapped["entities"]["Practical"] = {"actor_label": "StageLight"}
+    cp, mp, sp = (tmp_path / "source.json", tmp_path / "mapping.json", tmp_path / "census.json")
+    mapped["source_feature_surface_path"] = str(sp)
+    base = {"scene_path": scene, "object_path": path, "global_object_id": "unity-object-id"}
+    rows = [
+        {**base, "component_type": "UnityEngine.Transform", "component_global_id": "tr-id"},
+        {**base, "component_type": "UnityEngine.Light", "component_global_id": "light-component-id",
+         "component_assembly": "UnityEngine.CoreModule", "feature": {
+             "has_cast_shadows": True, "cast_shadows": False}},
+    ]
+    census = {
+        "kind": "cutsceneai.engine.feature_surface", "schema_version": "0.2.0",
+        **{name: csir["source"][name]
+           for name in ("engine", "engine_version", "project_fingerprint")},
+        "loaded_scene_components": rows,
+    }
+    return (cp, mp, sp), (csir, mapped, census)
+
+
+def test_installed_component_runs_through_prepared_studio_plan(tmp_path):
+    paths, inputs = _native_light_inputs(tmp_path)
+    for path, value in zip(paths, inputs):
+        path.write_text(json.dumps(value))
+    plan, report, _ = transfer_backend.compose_files(*paths[:2])
+    action, = [row for row in plan["actions"] if row.get("source_component_id")]
+    assert action["adapter_name"] == "unity_light_shadow"
+    assert action["source_location"] == "loaded_scene_components[1]"
+    assert action["source_object_id"] == "unity-object-id"
+    assert action["keys"] == [{"frame": 0, "value": False}]
+    actions = report["component_transfer_ledger"]["records"]
+    assert not actions[0]["target_action_planned"]
+    assert actions[1]["target_action_planned"]
+    assert actions[1]["next_required_gate"] == "VERIFY_NATIVE_READBACK"
+    assert not actions[1]["native_target_verified"]
+    assert not actions[1]["release_eligible"]
+
+
+@pytest.mark.parametrize(("invalid", "status"), [
+    ("object", "EXACT_SOURCE_COMPONENT_IDENTITY_REQUIRED"),
+    ("duplicate", "EXACT_SOURCE_COMPONENT_IDENTITY_REQUIRED"),
+    ("assembly", "SOURCE_COMPONENT_ASSEMBLY_UNSUPPORTED"),
+    ("engine", "SOURCE_ENGINE_VERSION_UNSUPPORTED"),
+    ("actor", "EXACT_SOURCE_AND_TARGET_SCOPE_REQUIRED"),
+])
+def test_best_effort_never_executes_ineligible_component(tmp_path, invalid, status):
+    paths, (csir, mapped, census) = _native_light_inputs(tmp_path)
+    mapped["require_complete_source_features"] = False
+    light = census["loaded_scene_components"][1]
+    if invalid == "object":
+        light["global_object_id"] = "different-object"
+    elif invalid == "duplicate":
+        census["loaded_scene_components"].append(dict(light))
+    elif invalid == "assembly":
+        light["component_assembly"] = "OtherAssembly"
+    elif invalid == "engine":
+        census["engine_version"] = csir["source"]["engine_version"] = "2020.3.49f1"
+    elif invalid == "actor":
+        mapped["entities"]["Another"] = dict(mapped["entities"]["Practical"])
+    for path, value in zip(paths, (csir, mapped, census)):
+        path.write_text(json.dumps(value))
+    plan, report, _ = transfer_backend.compose_files(*paths[:2])
+    assert not [row for row in plan["actions"] if row.get("source_component_id")]
+    assert {row["status"] for row in report["adaptive_components"]["decisions"]} == {status}

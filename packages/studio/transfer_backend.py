@@ -27,6 +27,7 @@ import feature_dispatch
 import visual_activation
 import source_surface_gap
 import adaptive_components
+import component_capability_ledger
 import scalar_property_adapter
 
 NATIVE_GAPS = {
@@ -304,6 +305,7 @@ def _installed_ced_handlers() -> feature_dispatch.HandlerRegistry:
         name="unity_activation_visual_fallback", version="1.0.0",
         source_kinds=("tracks",), builder_actions=("actor_visibility",),
     )
+    adaptive_components.install_adapters(registry)
     return registry
 
 
@@ -840,12 +842,18 @@ def compose_files(
     surface_relative = mapping.get("source_feature_surface_path")
     surface_file = None
     source_surface = None
+    surface_digest = None
     if surface_relative:
         surface_file = Path(str(surface_relative))
         if not surface_file.is_absolute():
             surface_file = (mapping_file.parent / surface_file).resolve()
         try:
-            source_surface = source_surface_gap.audit_files(csir_file, surface_file)
+            surface_bytes = surface_file.read_bytes()
+            surface_data = json.loads(surface_bytes.decode("utf-8-sig"))
+            source_surface = source_surface_gap.audit(csir, surface_data)
+            surface_digest = hashlib.sha256(surface_bytes).hexdigest()
+            source_surface["source_csir_sha256"] = _sha(csir_file)
+            source_surface["source_surface_sha256"] = surface_digest
         except (OSError, ValueError, KeyError) as exc:
             raise TransferBackendError(
                 "Unable to prove source feature census against Unity CSIR: " + str(exc)
@@ -868,8 +876,13 @@ def compose_files(
     # the count of known CED concepts.
     adaptive = None
     if source_surface is not None:
-        surface_data = _load(surface_file)
-        adaptive = adaptive_components.adapt(csir, mapping, surface_data)
+        handlers = _installed_ced_handlers()
+        try:
+            adaptive = adaptive_components.adapt(
+                csir, mapping, surface_data, handlers=handlers, source_audit=source_surface,
+            )
+        except feature_dispatch.FeatureDispatchError as exc:
+            raise TransferBackendError(str(exc)) from exc
         new_actions = adaptive["actions"]
         all_targets = {
             (str(a.get("actor_label", "")), str(a.get("target_property_path", "")))
@@ -891,8 +904,9 @@ def compose_files(
         report["actions"] = dict(Counter(a["kind"] for a in plan["actions"]))
         # Recompute the feature ledger against the actual source-augmented plan.
         # Census-only components are stored separately with their native IDs.
-        report["feature_dispatch"] = feature_dispatch.audit(
-            csir, plan, handlers=_installed_ced_handlers()
+        report["feature_dispatch"] = feature_dispatch.audit(csir, plan, handlers=handlers)
+        report["component_transfer_ledger"] = component_capability_ledger.with_transfer_plan(
+            source_surface["component_capability_ledger"], adaptive["decisions"],
         )
     report["adaptive_components"] = adaptive
     report["source_feature_surface"] = source_surface
@@ -914,6 +928,6 @@ def compose_files(
         evidence["source_capture_sha256"] = _sha(Path(capture_path))
         evidence["source_capture_path"] = str(Path(capture_path).resolve())
     if surface_file is not None:
-        evidence["source_feature_surface_sha256"] = _sha(surface_file)
+        evidence["source_feature_surface_sha256"] = surface_digest
         evidence["source_feature_surface_path"] = str(surface_file.resolve())
     return plan, report, evidence
