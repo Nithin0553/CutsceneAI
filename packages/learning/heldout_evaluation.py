@@ -187,9 +187,31 @@ def export_training(cases: list[dict[str, Any]], manifest: dict, output_dir: Pat
     folder.mkdir(parents=True)
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     train = set(manifest["splits"]["train"]["case_ids"])
-    count = case_memory.export_training_jsonl(
-        [c for c in verified if c["case_id"] in train], folder / "train.jsonl"
-    )
+    # Train a mapping-policy selector, not an engine executor. Even validated
+    # case_memory mapping labels may contain private paths or operation
+    # parameters: keep only reviewed semantic IDs in this training export.
+    training = [c for c in verified if c["case_id"] in train]
+    with (folder / "train.jsonl").open("x", encoding="utf-8") as output:
+        for case in training:
+            row = {
+                "task": "suggest_ced_transfer_mapping",
+                "input": {
+                    "source_engine": case["source"]["engine"],
+                    "target_engine": case["target"]["engine"],
+                    "source_features": case["features"],
+                    "source_capabilities": case["source"]["capabilities"],
+                    "target_capabilities": case["target"]["capabilities"],
+                },
+                "target": [
+                    dict(zip(LABEL_FIELDS, item))
+                    for item in sorted(_reference_labels(case))
+                ],
+                "group_id": case["source"]["project_fingerprint"],
+                "case_id": case["case_id"],
+                "scope": "mapping_policy_only_no_executable_parameters",
+            }
+            output.write(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n")
+    count = len(training)
     if count != len(train):
         raise EvaluationError("Training export count does not match the frozen split.")
     return {
