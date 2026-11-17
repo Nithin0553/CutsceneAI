@@ -28,6 +28,23 @@ def engine_version() -> str:
     return "unknown"
 
 
+def validate_component_versions(actions: list[dict[str, Any]]) -> None:
+    """Enforce installed adapter compatibility against the running editor."""
+    scoped = [action for action in actions if "target_engine_versions" in action]
+    if not scoped:
+        return
+    from feature_dispatch import engine_version_family
+
+    actual = engine_version()
+    family = engine_version_family(actual)
+    for action in scoped:
+        if family not in action["target_engine_versions"]:
+            raise UnrealCompatibilityError(
+                f"Component adapter {action['adapter_name']} does not support Unreal {actual}. "
+                f"Declared versions: {', '.join(action['target_engine_versions'])}."
+            )
+
+
 def section_channel_strategy() -> str:
     """Describe the best channel API visible in the current Unreal runtime."""
     extensions = getattr(unreal, "MovieSceneSectionExtensions", None)

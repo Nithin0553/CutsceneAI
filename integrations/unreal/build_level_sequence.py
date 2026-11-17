@@ -94,6 +94,7 @@ def _preflight(plan: dict[str, Any]) -> None:
     """Probe target capabilities and mappings before mutating actors or creating assets."""
     required_actions = {str(action["kind"]) for action in plan.get("actions", [])}
     try:
+        unreal_compat.validate_component_versions(plan["actions"])
         unreal_compat.validate_runtime_capabilities(required_actions)
     except unreal_compat.UnrealCompatibilityError as exc:
         raise UnrealBuildError(str(exc)) from exc

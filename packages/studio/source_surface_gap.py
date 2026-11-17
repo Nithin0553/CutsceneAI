@@ -22,6 +22,12 @@ class SourceSurfaceGapError(ValueError):
     pass
 
 
+IDENTITY_FAILURES = frozenset({
+    "SOURCE_OBJECT_IDENTITY_MISMATCH", "SOURCE_OBJECT_IDENTITY_UNVERIFIED",
+    "DUPLICATE_SOURCE_ENTITY_PATH", "DUPLICATE_SOURCE_COMPONENT_IDENTITY",
+})
+
+
 # These are only component classes whose source properties have *some*
 # existing dedicated CSIR representation. Their full behavior is NOT proven.
 KNOWN_SOURCE_COMPONENTS = frozenset({
@@ -226,6 +232,8 @@ def source_capture_valid(row: Mapping[str, Any]) -> bool:
 
 
 def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(source_surface, Mapping):
+        raise SourceSurfaceGapError("Expected a captured engine feature surface object.")
     if csir.get("source", {}).get("engine") != "unity":
         raise SourceSurfaceGapError("Expected a Unity source CSIR.")
     if source_surface.get("kind") != "cutsceneai.engine.feature_surface":
@@ -262,11 +270,19 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
                     "duplicate": False,
                 }
     cases = []
-    seen = set()
     matched_objects = set()
     matched_transforms = set()
     totals = Counter()
-    for row in source_surface.get("loaded_scene_components", []):
+    rows = source_surface.get("loaded_scene_components", [])
+    if not isinstance(rows, list):
+        raise SourceSurfaceGapError("Unity census component occurrences must be a list.")
+    component_ids = Counter(
+        str(row["component_global_id"]) for row in rows
+        if isinstance(row, dict) and row.get("component_global_id")
+        and row.get("scene_path") in scoped_scenes
+    )
+    seen_without_id = set()
+    for census_index, row in enumerate(rows):
         if not isinstance(row, dict):
             continue
         scene = str(row.get("scene_path") or "")
@@ -304,21 +320,23 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
             state = "SOURCE_COMPONENT_SNAPSHOT_PARTIAL_TARGET_UNVERIFIED"
         else:
             state = "NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED"
-        # Duplicate component records on the same object are not dropped;
-        # a component's global ID is the identity when supplied.
-        key = (scene, hierarchy, native_type, global_id)
-        if key in seen:
+        # Global IDs identify one native component throughout the project.
+        # Disqualify both occurrences, even if the duplicate was elsewhere
+        # in the chosen scene or reported under another component class.
+        if global_id and component_ids[global_id] > 1:
             state = "DUPLICATE_SOURCE_COMPONENT_IDENTITY"
-        seen.add(key)
-        if is_member and state not in {
-            "DUPLICATE_SOURCE_ENTITY_PATH", "SOURCE_OBJECT_IDENTITY_MISMATCH",
-            "SOURCE_OBJECT_IDENTITY_UNVERIFIED", "DUPLICATE_SOURCE_COMPONENT_IDENTITY",
-        }:
+        elif not global_id:
+            key = (scene, hierarchy, native_type)
+            if key in seen_without_id:
+                state = "DUPLICATE_SOURCE_COMPONENT_IDENTITY"
+            seen_without_id.add(key)
+        if is_member and state not in IDENTITY_FAILURES:
             matched_objects.add((scene, hierarchy))
         if is_member and state == "SOURCE_OBJECT_TRANSFORM_IDENTIFIED":
             matched_transforms.add((scene, hierarchy))
         totals[state] += 1
         cases.append({
+            "census_index": census_index,
             "scene_path": scene,
             "hierarchy_path": hierarchy,
             "source_entity_id": source_entity["entity_id"] if is_member else None,
@@ -347,13 +365,9 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
         if row["state"] == "SOURCE_COMPONENT_SNAPSHOT_PARTIAL_TARGET_UNVERIFIED"
     ]
     unresolved = sum(count for state, count in totals.items()
-                     if state in {
+                     if state in IDENTITY_FAILURES | {
                          "NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED",
                          "MISSING_SOURCE_SCRIPT",
-                         "DUPLICATE_SOURCE_COMPONENT_IDENTITY",
-                         "DUPLICATE_SOURCE_ENTITY_PATH",
-                         "SOURCE_OBJECT_IDENTITY_MISMATCH",
-                         "SOURCE_OBJECT_IDENTITY_UNVERIFIED",
                      })
     # One matching component cannot prove that every extracted GameObject was
     # scanned. Require a matching Transform for each source object; a Camera or

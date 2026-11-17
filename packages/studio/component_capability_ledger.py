@@ -58,6 +58,7 @@ def from_source_findings(cases: list[dict[str, Any]]) -> dict[str, Any]:
             next_gate = "IMPLEMENT_TYPED_SOURCE_EXTRACTION"
         ledger.append({
             "source_occurrence_index": position,
+            "census_index": item.get("census_index"),
             "source_scene": scene,
             "source_hierarchy_path": path,
             "source_entity_id": item.get("source_entity_id"),
@@ -81,3 +82,25 @@ def from_source_findings(cases: list[dict[str, Any]]) -> dict[str, Any]:
         "behavior_verified": False,
         "no_full_fidelity_claim": True,
     }
+
+
+def with_transfer_plan(
+    source_ledger: Mapping[str, Any], decisions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Join immutable source accounting with the planner's per-occurrence decisions."""
+    by_index = {row["census_index"]: row for row in decisions}
+    records = []
+    for source in source_ledger["records"]:
+        decision = by_index.get(source["census_index"])
+        record = dict(source)
+        if decision is not None:
+            record.update({
+                "target_decision": decision["status"],
+                "target_adapter": decision.get("adapter_id"),
+                "target_action_planned": bool(decision["actions"]),
+            })
+            if decision["actions"]:
+                record["next_required_gate"] = "VERIFY_NATIVE_READBACK"
+        record["release_eligible"] = False
+        records.append(record)
+    return {**source_ledger, "records": records}

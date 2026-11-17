@@ -391,6 +391,7 @@ def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> 
                 'new_native_actions': (coverage.get('adaptive_components') or {}).get('action_count', 0),
                 'status_counts': (coverage.get('adaptive_components') or {}).get('status_counts', {}),
                 'decisions': (coverage.get('adaptive_components') or {}).get('decisions', []),
+                'installed_adapters': (coverage.get('adaptive_components') or {}).get('installed_component_adapters', []),
                 'fidelity_verified': False,
             },
             'prepared_options': overrides,

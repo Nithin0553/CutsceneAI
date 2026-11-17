@@ -144,6 +144,9 @@ def _execute(job):
     # or spawning any actor. A missing/circular module must not leave behind
     # a saved but unusable automatic setup.
     import build_level_sequence
+    import unreal_compat
+    checked_plan = _load(candidate_dir / 'transfer-plan.json')
+    unreal_compat.validate_component_versions(checked_plan['actions'])
     if job.get('automatic_setup'):
         # Essential source-content and adapter verification MUST precede
         # _ensure_target_level, which can create an empty Unreal map.
