@@ -10,7 +10,8 @@
     discovery:null, folders:{unity:'',unreal:''}, unrealProject:'', csir:'', level:'',
     sourceRights:false, allowPartial:false, aiAgentsEnabled:false, agentStatus:null, candidate:null, job:null, verification:null,
     diagnosis:null, feedback:null, releaseReadiness:null, running:false, detailsOpen:false, menuOpen:false,
-    censusOptions:[], censusPath:'', censusSelection:null, censusIssue:false};
+    censusOptions:[], censusPath:'', censusSelection:null, censusIssue:false,
+    unitySnapshotRequestId:'', unitySnapshotStatus:null, learningStatus:null};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
   const connection = () => state.status?.connection;
   const worker = () => state.status?.unreal_worker || {};
@@ -139,7 +140,10 @@
           '<p class="subnote">Other census files were excluded because their project or cutscene scope does not match.</p>':'')+
         '</section>':'')+
       '<div class="export-refresh-row">'+
+      button('Analyze selected Timeline in Unity','analyze-unity',state.busy||Boolean(state.unitySnapshotRequestId),'secondary')+
       button('Refresh CSIR &amp; Census exports','refresh-exports',state.busy,'secondary')+
+      (state.unitySnapshotStatus?'<p class="subnote" role="status">Unity source analysis: '+
+        esc(state.unitySnapshotStatus)+'</p>':'')+
       (selectionChanged?'<p class="warning" role="status">CSIR or destination changed. Reconnect projects before starting a new transfer.</p>':'')+
       '</div></div>';
     const action=activeJob?
@@ -163,7 +167,12 @@
       '<div class="ai-agents-option"><label><input type="checkbox" name="ai-agents" '+
       (state.aiAgentsEnabled?'checked':'')+
       ' /> Enable AI agents</label>'+
-      '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local agent dependencies and an API key; usage may incur model charges.</p></div></div>':'')+
+      '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local agent dependencies and an API key; usage may incur model charges.</p>'+
+      (state.learningStatus?'<p class="subnote">Continual learning: '+
+       esc(state.learningStatus.completed_trials_recorded)+' trial records · '+
+       esc(state.learningStatus.verified_mapping_cases)+' approved mapping cases · '+
+       esc((state.learningStatus.suggestions||[]).length)+' source-relevant proposals. No model weights are automatically updated.</p>':'')+
+       '</div></div>':'')+
       (Object.values(d.errors||{})).map(v=>'<p class="warning">'+esc(v)+'</p>').join('')+
       '<div class="center-actions">'+(chosenU?action:'')+'</div></form>'+
       (activeJob?'<p class="subnote">An Unreal job is already queued or running. View its progress before starting another transfer.</p>':
@@ -416,6 +425,7 @@
   }
   async function refresh(){
     const s=await api('status');state.status=s;
+    try{state.learningStatus=await api('learning');}catch{state.learningStatus=null;}
     if(!state.running)state.candidate=s.candidate||null;
     if(s.active_job)state.job=await api('jobs/'+s.active_job);
     if(state.aiAgentsEnabled||state.job?.ai_agents_enabled){
@@ -549,6 +559,25 @@
     polling=true;
     try{
       await refresh();
+      if(state.unitySnapshotRequestId){
+        try{
+          const receipt=await api('unity-source',{action:'status',
+            unity_folder:state.folders.unity,request_id:state.unitySnapshotRequestId});
+          state.unitySnapshotStatus=receipt.status;
+          if(receipt.status==='SUCCEEDED'){
+            state.unitySnapshotRequestId='';
+            await scan();
+            state.info='Unity exported a CSIR and source census. Select the new source snapshot and connect.';
+            state.error='';
+          }else if(receipt.status==='BLOCKED'){
+            state.unitySnapshotRequestId='';
+            state.error=receipt.reason||'Unity Editor could not export the selected Timeline.';
+          }
+        }catch(e){
+          state.unitySnapshotRequestId='';
+          state.error='Unity source receipt rejected: '+e.message;
+        }
+      }
       if(state.running&&state.phase!=='BLOCKED'&&!state.job&&state.candidate)await advance();
       if(state.running&&terminal(state.job)&&state.screen==='transfer')state.screen='results';
       render();
@@ -562,6 +591,20 @@
       state.screen=name;state.menuOpen=false;
       if(name==='projects'&&!state.discovery&&state.folders.unity)try{await scan();}catch{}
       render();return;
+    }
+    if(name==='analyze-unity'){
+      if(state.busy||state.unitySnapshotRequestId)return;
+      state.busy=true;render();
+      try{
+        const requested=await api('unity-source',{action:'request',
+          unity_folder:state.folders.unity});
+        state.unitySnapshotRequestId=requested.request_id;
+        state.unitySnapshotStatus=requested.status;
+        state.info=requested.instruction;
+        state.error='';
+      }catch(e){state.error=e.message;}
+      finally{state.busy=false;render();}
+      return;
     }
     if(name==='refresh-exports'){
       if(state.busy)return;
@@ -639,6 +682,7 @@
           state.folders[kind]=choice.path;
           if(kind==='unreal')state.unrealProject='';
           state.discovery=null;state.csir='';state.level='';
+          state.unitySnapshotRequestId='';state.unitySnapshotStatus=null;
           state.censusOptions=[];state.censusPath='';state.censusSelection=null;
           await scan();state.error='';
         }

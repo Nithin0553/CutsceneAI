@@ -62,6 +62,16 @@ def advance(workspace: Path, *, reasoner=None) -> dict[str, Any]:
         if not path.is_file():
             return {"status": "INVALID_JOB", "enabled": False}
         job = _load(path)
+        # Completed conversions are retained as unreviewed local diagnostics
+        # whether or not the user enabled an LLM for this transfer.
+        if job.get("status") not in {"QUEUED", "RUNNING"}:
+            from studio_continual_learning import record_terminal
+            try:
+                record_terminal(workspace, job)
+            except (OSError, ValueError, KeyError, TypeError):
+                # Native generation is never reclassified as success/failure
+                # because independent learning evidence was unavailable.
+                pass
         if job.get("ai_agents_enabled") is not True:
             return {"status": "DISABLED", "enabled": False}
         if job.get("status") in {"QUEUED", "RUNNING"}:

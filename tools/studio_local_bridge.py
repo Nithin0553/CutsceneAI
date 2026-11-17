@@ -778,6 +778,14 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                     return self.reply(200, {'available': True, **result})
                 except (ValueError, KeyError, OSError) as exc:
                     return self.reply(409, {'error': 'Invalid release evidence: ' + str(exc)})
+            if path == '/api/learning':
+                import studio_continual_learning
+                config_file = folder / 'connection.json'
+                source = Path(load_json(config_file)['csir']) if config_file.is_file() else None
+                try:
+                    return self.reply(200, studio_continual_learning.report(folder, source))
+                except (ValueError, OSError, KeyError) as exc:
+                    return self.reply(409, {'error': 'Learning evidence unavailable: ' + str(exc)})
             if path == '/api/agents':
                 import studio_agent_coordinator
                 return self.reply(200, studio_agent_coordinator.status(folder))
@@ -835,6 +843,20 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         atomic_json(folder / 'connection.json', result)
                         for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json', 'destination-readiness.json', 'one-click-approval.json'):
                             (folder / name).unlink(missing_ok=True)
+                    elif route == '/api/unity-source':
+                        import studio_unity_bridge
+                        selected = str(data.get('unity_folder') or '')
+                        roots = studio_project_discovery.project_roots(selected, 'unity')
+                        if len(roots) != 1:
+                            raise ValueError('Choose exactly one real Unity project before source analysis.')
+                        operation = str(data.get('action') or '')
+                        if operation == 'request':
+                            result = studio_unity_bridge.request_snapshot(roots[0])
+                        elif operation == 'status':
+                            result = studio_unity_bridge.snapshot_status(
+                                roots[0], str(data.get('request_id') or ''))
+                        else:
+                            raise ValueError('Unsupported Unity source analysis action.')
                     elif route == '/api/prepare':
                         result = prepare(folder, data)
                     elif route == '/api/approve-one-click':
