@@ -358,6 +358,11 @@ namespace CutsceneAI.UnityExtractor
         [MenuItem("Tools/CutsceneAI/Discover Installed Feature Surface", priority = 91)]
         private static void Discover()
         {
+            ExportCensus();
+        }
+
+        internal static string ExportCensus()
+        {
             var data = new Census
             {
                 engine_version = Application.unityVersion,
@@ -452,6 +457,7 @@ namespace CutsceneAI.UnityExtractor
                 " components=" + data.loaded_scene_components.Count +
                 " assets=" + data.imported_assets.Count +
                 " | conversion fidelity NOT VERIFIED");
+            return output;
         }
     }
 }

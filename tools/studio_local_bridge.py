@@ -835,6 +835,20 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         atomic_json(folder / 'connection.json', result)
                         for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json', 'destination-readiness.json', 'one-click-approval.json'):
                             (folder / name).unlink(missing_ok=True)
+                    elif route == '/api/unity-source':
+                        import studio_unity_bridge
+                        selected = str(data.get('unity_folder') or '')
+                        roots = studio_project_discovery.project_roots(selected, 'unity')
+                        if len(roots) != 1:
+                            raise ValueError('Choose exactly one real Unity project before source analysis.')
+                        operation = str(data.get('action') or '')
+                        if operation == 'request':
+                            result = studio_unity_bridge.request_snapshot(roots[0])
+                        elif operation == 'status':
+                            result = studio_unity_bridge.snapshot_status(
+                                roots[0], str(data.get('request_id') or ''))
+                        else:
+                            raise ValueError('Unsupported Unity source analysis action.')
                     elif route == '/api/prepare':
                         result = prepare(folder, data)
                     elif route == '/api/approve-one-click':
