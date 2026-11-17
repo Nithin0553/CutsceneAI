@@ -100,3 +100,49 @@ def test_untrusted_comment_pointer_cannot_redirect_to_other_job(completed):
     }))
     with pytest.raises(studio_agent_feedback.FeedbackError, match="pointer"):
         studio_agent_feedback.active_feedback(candidate, job)
+
+
+def test_new_natural_language_feedback_reopens_diagnosis_without_unsafe_repair(completed):
+    import studio_agent_graph
+
+    workspace, job, candidate = completed
+    job["automatic_setup"] = True
+    (candidate / "automatic-setup.json").write_text(json.dumps({
+        "source_albedo_material_candidates": [{"slot_name": "Body"}],
+    }))
+    (candidate / ("closed-loop-evaluation-" + job["job_id"] + ".json")).write_text(
+        json.dumps({
+            "kind": "cutsceneai.studio.closed_loop_evaluation",
+            "issues": [{"category": "VISUAL_NATIVE_READBACK",
+                        "code": "RENDER_MATERIALS_MISSING_OR_ENGINE_DEFAULT"}],
+        })
+    )
+    (candidate / ("visual-audit-" + job["job_id"] + "-001.json")).write_text(
+        json.dumps({
+            "kind": "cutsceneai.studio.visual_readback_audit",
+            "character_material_slots_engine_default": 2,
+        })
+    )
+    initial = studio_agent_graph.run_once(
+        workspace, job,
+        lambda _: {"strategy": "report_only", "reason": "Pending review"},
+    )
+    assert initial["status"] == "UNRESOLVED_NO_SAFE_STRATEGY"
+    reply = studio_agent_feedback.submit(
+        workspace, job, "The actor is facing the wrong direction.",
+    )
+    summaries = []
+
+    def unsafe_request(summary):
+        summaries.append(summary)
+        return {"strategy": "restore_source_albedo",
+                "reason": "Try material repair despite a pose correction"}
+
+    state = studio_agent_graph.run_once(workspace, job, unsafe_request)
+    assert state["feedback_id"] == reply["feedback_id"]
+    assert state["status"] == "REJECTED_UNSUPPORTED_STRATEGY"
+    assert state["iterations"] == 0
+    assert summaries[0]["user_feedback"] == "The actor is facing the wrong direction."
+    assert summaries[0]["user_feedback_is_unverified"] is True
+    assert summaries[0]["safe_strategies"] == ["report_only"]
+    assert not list(candidate.glob("agent-request-*.json"))
