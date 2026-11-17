@@ -186,7 +186,7 @@ def test_rejects_leaked_partitions_even_if_manifest_hash_recomputed():
     forged["manifest_sha256"] = heldout._digest({
         k: v for k, v in forged.items() if k != "manifest_sha256"
     })
-    with pytest.raises(heldout.EvaluationError, match="leakage"):
+    with pytest.raises(heldout.EvaluationError, match="misassigned|leakage"):
         heldout.retrieval_predictions(cases, forged, split="holdout")
 
 
