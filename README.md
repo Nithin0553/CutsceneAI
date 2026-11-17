@@ -13,8 +13,8 @@ CutSceneAI currently targets **Unity Timeline → Unreal Engine Level Sequence**
 | Native Unity → Unreal conversion planner and source coverage ledger | Implemented |
 | CineTwin world-transform and parent-local best-effort fallback | Implemented in Python; Unreal acceptance pending |
 | Unreal Sequencer builder, runtime preflight, saved readback | Implemented for supported elements; project-specific runtime checks required |
-| Asset discovery and suggestions | Read-only candidates; no universal automatic import |
-| Dataset registry and verified case retrieval | Experimental, on development branches |
+| Source-backed asset staging | Implemented for selected supported assets and provenance; no universal automatic import |
+| Dataset registry and approved-case memory | Experimental infrastructure integrated; transfer improvement on unseen projects not established |
 | End-to-end generalization, skeletal retargeting, visual/audio/event equivalence | Not established |
 
 **Research integrity:** A green Python test suite proves code contracts, not cutscene fidelity. Results are only accepted after target asset creation, persistence/readback, and independently observed source–target comparison.
@@ -86,8 +86,6 @@ The Unreal generation procedure and safety gates are documented in [Best-Effort 
 ## Documentation
 
 - [CED preflight and unknown-element reporting](docs/architecture/CED_FIRST_PREFLIGHT_V0_1.md)
-
-
 - [Documentation Index](docs/INDEX.md) — start here for architecture, workflow and benchmarks.
 - [Project Status and Issues](docs/ISSUES_AND_MILESTONES.md) — twenty tracked conversion gaps and acceptance criteria.
 - [Development Guide](CONTRIBUTING.md) — isolated branches, test requirements, artifact policy.
@@ -96,9 +94,13 @@ The Unreal generation procedure and safety gates are documented in [Best-Effort 
 
 ## Development and branch policy
 
-`main` is the stable research baseline and is intentionally **behind** the unmerged experimental transfer branch. The currently active draft PR chain is [#49](https://github.com/Nithin0553/CutsceneAI/pull/49) → [#50](https://github.com/Nithin0553/CutsceneAI/pull/50) → [#51](https://github.com/Nithin0553/CutsceneAI/pull/51) → [#52](https://github.com/Nithin0553/CutsceneAI/pull/52). Review and merge these in dependency order; do not cherry-pick or merge this documentation cleanup blindly into `main`.
+`main` contains the consolidated Studio transfer stack from [merged PR #112](https://github.com/Nithin0553/CutsceneAI/pull/112) (November 9, 2026). Its integration smoke test and automated checks were accepted for the supported scope, **not** universal cutscene fidelity or release certification.
 
-No original benchmark scenes, frozen source artifacts or Unreal assets should be changed as part of repository housekeeping.
+Active follow-on work is [PR #113](https://github.com/Nithin0553/CutsceneAI/pull/113) (source-backed static-scene mapping), followed by stacked [PR #114](https://github.com/Nithin0553/CutsceneAI/pull/114) (typed source-component capture). Both remain draft and need actual Unity/Unreal runtime verification before merging. Legacy [PR #6](https://github.com/Nithin0553/CutsceneAI/pull/6) and [PR #90](https://github.com/Nithin0553/CutsceneAI/pull/90) have divergent commit history and require individual review.
+
+Historical stacked draft PRs whose exact heads were ancestors of #112 have been closed as superseded; their commits, discussion, and remote branches were not deleted. Outstanding fidelity and release research remain in [issues #94–#101](https://github.com/Nithin0553/CutsceneAI/issues). See [Current Engineering State](docs/handoffs/CURRENT_STATE.md), [Branch Audit](docs/BRANCH_AUDIT.md), and [Release Acceptance](docs/studio/RELEASE_ACCEPTANCE.md).
+
+No original benchmark scenes, frozen source artifacts, Unreal assets, or historical experiment evidence should be changed as part of repository housekeeping.
 
 ## License
 

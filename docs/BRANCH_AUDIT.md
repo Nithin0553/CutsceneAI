@@ -1,37 +1,37 @@
 # GitHub Branch Audit
 
-**Audit snapshot:** 2026-10-27. This is a **review list**, not authorization to delete active work. Git branch cleanup is independent of code-file cleanup: deleting an already-merged branch removes its remote name, not the commits incorporated into `main`.
+**Audit snapshot:** 2026-11-17 · **Repository:** `Nithin0553/CutsceneAI`
 
-## Inventory
+This document records review and safe cleanup decisions. It is **not** authorization to delete arbitrary branches or experiment artifacts.
 
-| Category | Count | Treatment |
-| --- | ---: | --- |
-| Default branch `main` | 1 | **Protect / keep** |
-| Merged historical PR head branches | 47 | **Candidates for deletion after owner/reliance check** |
-| Open and unmerged PR heads | 5 | **Keep** until resolved |
-| Older foundation aliases with no PR as their head | 5 | **Review** identical commits and any consumers before deletion |
-| This isolated cleanup branch | 1 | Keep until review and merge |
-| **Total remote branches at audit** | **59** | No remote branch deleted during this audit |
+## Live inventory at review
 
-The five open unmerged heads are:
+- `main`: consolidated Studio baseline at `5ea7a20401cc7cf6f7ae674973ea7811ffde2909` (merged [PR #112](https://github.com/Nithin0553/CutsceneAI/pull/112)).
+- **88 remote branch refs** were visible to the GitHub connector at the snapshot. No remote branches were deleted in this cleanup.
+- **4 open PRs after triage:** [#6](https://github.com/Nithin0553/CutsceneAI/pull/6), [#90](https://github.com/Nithin0553/CutsceneAI/pull/90), [#113](https://github.com/Nithin0553/CutsceneAI/pull/113), [#114](https://github.com/Nithin0553/CutsceneAI/pull/114).
+- **8 open substantive issues:** #94–#101; all still require independent acceptance evidence.
 
-- [#6](https://github.com/Nithin0553/CutsceneAI/pull/6) — `feature/unreal-benchmark001-import-v0.1` (legacy PR; decide whether superseded, never silently close).
-- [#49](https://github.com/Nithin0553/CutsceneAI/pull/49) — `feature/benchmark002-parity-corrections-v0.1`.
-- [#50](https://github.com/Nithin0553/CutsceneAI/pull/50) — `feature/continual-mapping-learning-v0.1` (base: #49 branch).
-- [#51](https://github.com/Nithin0553/CutsceneAI/pull/51) — `feature/studio-dataset-framework-v0.1` (base: #50 branch).
-- [#52](https://github.com/Nithin0553/CutsceneAI/pull/52) — `feature/transfer-backend-best-effort-v0.1` (base: #51 branch).
+## PR cleanup performed on November 17
 
-## Foundation aliases for manual review
+The exact heads of **25 historical open draft PRs** were verified as ancestors of the final PR #112 integration head `b0d1e522ce31f3ec7635a3d096cbccf1a8277b54`. These were closed as **superseded, not individually merged**:
 
-`foundation/v0.1-ci`, `foundation/v0.1-clean`, `foundation/v0.1-final`, `foundation/v0.1-pr`, and `foundation/v0.1-review` pointed to the **same commit** (`21881b02` prefix) when audited. Their distinct names can matter to local worktrees or automation; none is deleted automatically.
+`#49–#52, #75–#79, #81–#83, #87–#89, #91–#92, #104–#111`.
 
-## Proposed safe remote cleanup
+Their PR comments explain the disposition. Their branches, commits and discussion history remain accessible; incomplete scientific scope is still tracked in #94–#101.
 
-1. Merge and validate this documentation PR into its feature base **only after review**.
-2. Review PR #6 and decide whether its content is present on `main` or superseded; close only with a written explanation.
-3. Review and merge draft PRs **#49 → #50 → #51 → #52** in dependency order after accepted editor experiments and branch CI.
-4. On GitHub's **Branches** page, filter to *merged* branches, inspect references, and delete only historical merged heads with no external dependencies.
-5. Check local worktrees: `git worktree list`; keep an archive tag or immutable SHA where an experiment depends on a branch tip.
-6. Run `git fetch --prune` in local clones after approved remote deletions.
+## Refs to retain pending explicit audit
 
-Do **not** run `git push origin --delete` on every branch except `main`; that would destroy navigation to unmerged research and ongoing experiment work. Automated deletion is deliberately excluded from this hygiene PR. The GitHub connector for this session does not expose a safe remote-ref deletion operation.
+- `main` — canonical code; never delete.
+- `backup/main-before-studio-consolidation-20261109` — retained rollback reference for the large squash integration.
+- `fix/studio-unbound-scene-renderers-v0.1` — active draft PR #113, pending Unity/Unreal acceptance.
+- `feature/source-component-capability-contract-v0.1` — active draft PR #114, stacked on #113; contains source-capture changes not yet native adapters.
+- `feature/unreal-benchmark001-import-v0.1` — open legacy PR #6; its exact head has divergent commits from integration and must be evaluated individually.
+- `fix/studio-source-census-and-mapping` — open legacy PR #90; its exact head also has diverged commits that need individual review.
+
+Do not delete other remote refs just because their related draft PR was administratively closed. Confirm that source experiments, local worktrees and any unpublished code do not depend on them. The previously recorded five foundation aliases need SHA and consumer re-verification before removal.
+
+## Remote branch deletion gate
+
+The connected GitHub actions support branch inspection and PR closure but **do not expose remote-ref deletion**. No direct branch deletion was attempted. Before later pruning candidates, record exact tip SHAs, verify needed commits are retained, inspect active worktrees and dependencies, preserve research rollback refs, and delete only the explicitly approved redundant remote names. Avoid `git push origin --delete` against all branches indiscriminately.
+
+When approved remote deletions have been completed in GitHub, local clones can run `git fetch --prune` to discard stale remote-tracking references.

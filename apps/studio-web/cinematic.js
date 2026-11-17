@@ -5,12 +5,17 @@
   const $ = q => document.querySelector(q);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const short = v => String(v || '').split(/[\\/]/).pop();
+  // The standard product has exactly one user-facing Transfer workflow.
+  // Existing manual research workflows remain available only via ?manual=1.
+  const simpleMode = !(typeof location === 'object' && /(?:[?&])manual=1(?:&|$)/.test(location.search || ''));
   const norm = v => String(v || '').replaceAll('\\','/').toLowerCase();
   const state = {screen:'home', phase:'IDLE', busy:false, info:'', error:'', status:null,
     discovery:null, folders:{unity:'',unreal:''}, unrealProject:'', csir:'', level:'',
     sourceRights:false, allowPartial:false, aiAgentsEnabled:false, agentStatus:null, candidate:null, job:null, verification:null,
     diagnosis:null, feedback:null, releaseReadiness:null, running:false, detailsOpen:false, menuOpen:false,
-    censusOptions:[], censusPath:'', censusSelection:null, censusIssue:false};
+    censusOptions:[], censusPath:'', censusSelection:null, censusIssue:false,
+    unitySnapshotRequestId:'', unitySnapshotStatus:null, learningStatus:null,
+    autopilot:null, agentConversation:null, feedbackDraft:''};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
   const connection = () => state.status?.connection;
   const worker = () => state.status?.unreal_worker || {};
@@ -101,6 +106,81 @@
         return '<option value="'+esc(value)+'" '+(value===picked?'selected':'')+'>'+esc(title)+'</option>';
       }).join('')+'</select></label>';
   }
+  function quickProjects(){
+    const run=state.autopilot||{status:'IDLE'},working=[
+      'WAITING_FOR_UNITY','CONNECTING','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING'
+    ].includes(run.status),complete=run.status==='GENERATED_UNVERIFIED';
+    const targetOptions=state.discovery?.unreal?.project_options||[];
+    const valid=Boolean(state.folders.unity&&state.folders.unreal&&
+      (targetOptions.length<=1||state.unrealProject||state.discovery?.unreal?.project)&&
+      state.sourceRights);
+    return '<main class="projects-view simple-studio"><h1>Connect your projects</h1>'+
+      '<p class="simple-intro">Choose the Unity project containing your cutscene and the target Unreal project. CutSceneAI handles the rest.</p>'+
+      '<div class="engine-pair">'+card('unity',state.folders.unity,Boolean(state.folders.unity))+
+      line(Boolean(state.folders.unity&&state.folders.unreal))+
+      card('unreal',state.folders.unreal,Boolean(state.folders.unreal))+'</div>'+
+      '<div class="simple-connections">'+
+      '<div>'+button(state.folders.unity?'Change Unity Project':'Connect Unity','browse-unity',state.busy,'secondary')+'</div>'+
+      '<div>'+button(state.folders.unreal?'Change Unreal Project':'Connect Unreal','browse-unreal',state.busy,'secondary')+'</div></div>'+
+      (targetOptions.length>1?select('unreal-project-file','Unreal project file',targetOptions,
+        state.unrealProject,'Choose your Unreal project'):'')+
+      '<label class="simple-permission"><input type="checkbox" name="source-rights" '+
+      (state.sourceRights?'checked':'')+' /> I have permission to transfer assets from this Unity project</label>'+
+      (run.active?'<p class="simple-status" role="status">'+esc(run.message||run.status)+'</p>':'')+
+      (run.status==='BLOCKED'?'<p class="warning" role="alert">'+esc(run.error||run.message)+'</p>':'')+
+      '<div class="center-actions">'+
+      (working?button('View Transfer','quick-transfer',false,'secondary'):
+        complete?button('Open Transferred Cutscene','quick-results'):
+        button('Transfer '+ico('arrow'),'autopilot-start',state.busy||!valid))+
+      '</div>'+
+      '<p class="subnote">Keep Unity and Unreal Editors open with the CutSceneAI companions enabled. Studio never overwrites the existing cutscene. If several Timelines are loaded, select the one to transfer in Unity.</p>'+
+      '</main>';
+  }
+
+  function quickTransfer(){
+    const run=state.autopilot||{};
+    const finished=['GENERATED_UNVERIFIED','BLOCKED'].includes(run.status);
+    return '<main class="transfer-view simple-studio">'+
+      '<h1>AI Transfer</h1><p class="simple-intro">'+esc(run.message||'Connecting to your engines…')+'</p>'+
+      '<div class="transfer-progress"><div class="indeterminate '+(!finished?'working':'')+
+      '" role="progressbar" aria-label="Transfer status" aria-valuetext="'+esc(run.status||'STARTING')+'"><i></i></div>'+
+      '<span>'+esc(run.status||'STARTING')+'</span></div>'+
+      (run.error?'<p class="warning" role="alert">'+esc(run.error)+'</p>':'')+
+      (run.status==='BLOCKED'?'<p class="subnote">The agent stopped safely. The original projects were not overwritten. Resolve the reported editor or source dependency before starting a fresh transfer.</p>':'')+
+      '<div class="center-actions">'+
+      (run.status==='GENERATED_UNVERIFIED'?button('Review Cutscene','quick-results'):
+        run.status==='BLOCKED'?button('Back to Projects','projects',false,'secondary'):'')+
+      '</div></main>';
+  }
+
+  function quickResults(){
+    const run=state.autopilot||{},j=state.job||{},dialog=state.agentConversation||{};
+    const messages=(dialog.messages||[]).slice(-12).map(item=>
+      '<div class="simple-chat-user"><strong>You</strong><p>'+esc(item.message)+'</p></div>').join('');
+    const reply=dialog.reply||{};
+    return '<main class="results-view simple-studio">'+
+      '<h1>Cutscene transfer</h1>'+
+      '<p class="simple-intro">'+esc(run.status==='GENERATED_UNVERIFIED'?
+        'An editable Unreal Level Sequence was generated. Review the result and tell the AI agent what should change.':
+        run.message||'Your transfer has not completed.')+'</p>'+
+      (j.generated_sequence?'<p class="subnote">Generated sequence: '+esc(j.generated_sequence)+'</p>':'')+
+      '<p class="subnote">Conversion and AI corrections are limited to supported and independently checked native operations. Unverified or unsupported behavior is never silently called correct.</p>'+
+      (run.status==='GENERATED_UNVERIFIED'?'<section class="simple-chat" aria-label="Talk to the AI agent">'+
+        '<h2>Tell the AI what to correct</h2>'+
+        '<p class="subnote">For example: “The character is facing the wrong direction” or “The wall texture is missing.”</p>'+
+        messages+
+        (reply.feedback_id?'<div class="simple-chat-agent"><strong>CutSceneAI Agent — '+
+          esc(reply.status||'REVIEWING')+'</strong><p>'+esc(reply.reasoning||reply.failure||
+            'Reviewing your comment against the native transfer evidence.')+'</p></div>':'')+
+        '<label for="user-feedback">What needs to change?</label>'+
+        '<textarea id="user-feedback" name="user-feedback" rows="3" maxlength="1200" placeholder="Describe what looks wrong…">'+
+          esc(state.feedbackDraft)+'</textarea>'+
+        button('Send to AI Agent','send-feedback',state.busy||!state.feedbackDraft.trim())+
+        '</section>':'')+
+      '<div class="center-actions">'+button('New Transfer','projects',false,'secondary')+'</div>'+
+      '</main>';
+  }
+
   function projectForm(){
     const d=state.discovery||{},u=d.unity||{},r=d.unreal||{};
     const cutscenes=u.cutscenes||[],levels=r.levels||[],sources=d.unity_projects||[],
@@ -139,7 +219,10 @@
           '<p class="subnote">Other census files were excluded because their project or cutscene scope does not match.</p>':'')+
         '</section>':'')+
       '<div class="export-refresh-row">'+
+      button('Analyze selected Timeline in Unity','analyze-unity',state.busy||Boolean(state.unitySnapshotRequestId),'secondary')+
       button('Refresh CSIR &amp; Census exports','refresh-exports',state.busy,'secondary')+
+      (state.unitySnapshotStatus?'<p class="subnote" role="status">Unity source analysis: '+
+        esc(state.unitySnapshotStatus)+'</p>':'')+
       (selectionChanged?'<p class="warning" role="status">CSIR or destination changed. Reconnect projects before starting a new transfer.</p>':'')+
       '</div></div>';
     const action=activeJob?
@@ -163,7 +246,12 @@
       '<div class="ai-agents-option"><label><input type="checkbox" name="ai-agents" '+
       (state.aiAgentsEnabled?'checked':'')+
       ' /> Enable AI agents</label>'+
-      '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local agent dependencies and an API key; usage may incur model charges.</p></div></div>':'')+
+      '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local agent dependencies and an API key; usage may incur model charges.</p>'+
+      (state.learningStatus?'<p class="subnote">Continual learning: '+
+       esc(state.learningStatus.completed_trials_recorded)+' trial records · '+
+       esc(state.learningStatus.verified_mapping_cases)+' approved mapping cases · '+
+       esc((state.learningStatus.suggestions||[]).length)+' source-relevant proposals. No model weights are automatically updated.</p>':'')+
+       '</div></div>':'')+
       (Object.values(d.errors||{})).map(v=>'<p class="warning">'+esc(v)+'</p>').join('')+
       '<div class="center-actions">'+(chosenU?action:'')+'</div></form>'+
       (activeJob?'<p class="subnote">An Unreal job is already queued or running. View its progress before starting another transfer.</p>':
@@ -357,8 +445,10 @@
     for(let i=original.length-1;i>=incoming.length;i--)parent.removeChild(original[i]);
   }
   function render(){
-    const contents=state.screen==='home'?home():state.screen==='projects'?projectForm():
-      state.screen==='transfer'?transfer():state.screen==='results'?results():about();
+    const contents=state.screen==='home'?home():state.screen==='projects'?
+      (simpleMode?quickProjects():projectForm()):
+      state.screen==='transfer'?(simpleMode?quickTransfer():transfer()):
+      state.screen==='results'?(simpleMode?quickResults():results()):about();
     const markup=header()+'<div class="page '+state.screen+'">'+contents+'</div>'+toast();
     if(markup===lastMarkup)return;
     const app=$('#app');
@@ -416,6 +506,15 @@
   }
   async function refresh(){
     const s=await api('status');state.status=s;
+    if(simpleMode){
+      try{state.autopilot=await api('autopilot');}
+      catch(e){state.autopilot={status:'UNAVAILABLE',message:e.message};}
+      if(state.autopilot?.status==='GENERATED_UNVERIFIED'){
+        try{state.agentConversation=await api('agent-conversation');}catch{}
+      }
+    }else{
+      try{state.learningStatus=await api('learning');}catch{state.learningStatus=null;}
+    }
     if(!state.running)state.candidate=s.candidate||null;
     if(s.active_job)state.job=await api('jobs/'+s.active_job);
     if(state.aiAgentsEnabled||state.job?.ai_agents_enabled){
@@ -549,19 +648,85 @@
     polling=true;
     try{
       await refresh();
+      if(state.unitySnapshotRequestId){
+        try{
+          const receipt=await api('unity-source',{action:'status',
+            unity_folder:state.folders.unity,request_id:state.unitySnapshotRequestId});
+          state.unitySnapshotStatus=receipt.status;
+          if(receipt.status==='SUCCEEDED'){
+            state.unitySnapshotRequestId='';
+            await scan();
+            state.info='Unity exported a CSIR and source census. Select the new source snapshot and connect.';
+            state.error='';
+          }else if(receipt.status==='BLOCKED'){
+            state.unitySnapshotRequestId='';
+            state.error=receipt.reason||'Unity Editor could not export the selected Timeline.';
+          }
+        }catch(e){
+          state.unitySnapshotRequestId='';
+          state.error='Unity source receipt rejected: '+e.message;
+        }
+      }
       if(state.running&&state.phase!=='BLOCKED'&&!state.job&&state.candidate)await advance();
       if(state.running&&terminal(state.job)&&state.screen==='transfer')state.screen='results';
+      if(simpleMode&&state.screen==='transfer'&&state.autopilot?.status==='GENERATED_UNVERIFIED')
+        state.screen='results';
       render();
     }catch(e){state.error=e.message;state.phase='BLOCKED';state.running=false;render();}
     finally{polling=false;}
   }
   async function action(name){
+    if(name==='quick-transfer'){state.screen='transfer';render();return;}
+    if(name==='quick-results'){state.screen='results';render();return;}
+    if(name==='autopilot-start'){
+      if(state.busy)return;
+      state.busy=true;render();
+      try{
+        state.autopilot=await api('autopilot/start',{
+          unity_folder:state.folders.unity,unreal_folder:state.folders.unreal,
+          unreal_project:state.unrealProject,
+          source_rights_confirmed:state.sourceRights,
+        });
+        state.screen='transfer';state.error='';state.info='';
+      }catch(e){state.error=e.message;}
+      finally{state.busy=false;render();}
+      return;
+    }
+    if(name==='send-feedback'){
+      if(state.busy||!state.feedbackDraft.trim())return;
+      state.busy=true;render();
+      try{
+        const response=await api('agent-feedback',{message:state.feedbackDraft});
+        state.feedbackDraft='';
+        state.info=response.status==='QUEUED_FOR_AGENT'?
+          'The AI received your correction and is checking permitted repair options.':
+          response.status;
+        state.error='';
+        state.agentConversation=await api('agent-conversation');
+      }catch(e){state.error=e.message;}
+      finally{state.busy=false;render();}
+      return;
+    }
     if(name==='clear'){state.info='';state.error='';render();return;}
     if(name==='menu'){state.menuOpen=!state.menuOpen;render();return;}
     if(['home','projects','results','about'].includes(name)){
       state.screen=name;state.menuOpen=false;
       if(name==='projects'&&!state.discovery&&state.folders.unity)try{await scan();}catch{}
       render();return;
+    }
+    if(name==='analyze-unity'){
+      if(state.busy||state.unitySnapshotRequestId)return;
+      state.busy=true;render();
+      try{
+        const requested=await api('unity-source',{action:'request',
+          unity_folder:state.folders.unity});
+        state.unitySnapshotRequestId=requested.request_id;
+        state.unitySnapshotStatus=requested.status;
+        state.info=requested.instruction;
+        state.error='';
+      }catch(e){state.error=e.message;}
+      finally{state.busy=false;render();}
+      return;
     }
     if(name==='refresh-exports'){
       if(state.busy)return;
@@ -639,6 +804,7 @@
           state.folders[kind]=choice.path;
           if(kind==='unreal')state.unrealProject='';
           state.discovery=null;state.csir='';state.level='';
+          state.unitySnapshotRequestId='';state.unitySnapshotStatus=null;
           state.censusOptions=[];state.censusPath='';state.censusSelection=null;
           await scan();state.error='';
         }
@@ -662,6 +828,7 @@
   $('#app').addEventListener('change',async e=>{
     const n=e.target?.name,v=e.target?.value;
     if(n==='source-rights'){state.sourceRights=e.target.checked;render();return;}
+    if(n==='user-feedback'){state.feedbackDraft=String(v||'').slice(0,1200);render();return;}
     if(n==='allow-partial'){state.allowPartial=e.target.checked;render();return;}
     if(n==='ai-agents'){state.aiAgentsEnabled=e.target.checked;render();return;}
     if(n==='csir'){
