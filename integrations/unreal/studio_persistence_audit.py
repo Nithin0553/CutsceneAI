@@ -246,7 +246,7 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
     if colliders:
         from studio_collider_shapes import inspect
 
-        component_rows.extend(inspect(api, colliders, actor_list))
+        component_rows.extend(inspect(api, colliders, actor_list, measure_queries=True))
     component_fail = any(row["status"] == "FAIL" for row in component_rows)
     component_incomplete = any(row["status"] == "INCOMPLETE" for row in component_rows)
     native_status = (
@@ -267,6 +267,13 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         and generated_pid != current_pid
         and native_status == "PASS" and not provenance_missing
     )
+    for row in component_rows:
+        comparison = row.get("query_comparison")
+        if comparison:
+            comparison["independent_process_verified"] = independent_process
+            comparison["scope_verified"] = (
+                independent_process and row["status"] == "PASS" and comparison["status"] == "PASS"
+            )
     if native_status == "FAIL":
         status = "STRUCTURAL_READBACK_FAIL"
     elif native_status == "INCOMPLETE" or provenance_missing:

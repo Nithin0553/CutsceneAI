@@ -201,6 +201,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 receipt['failed_step']=None
         zero=api.Vector(0.0,0.0,0.0)
         rotation=api.Rotator(0.0,0.0,0.0)
+        created_by_label={}
         for row in manifest['actors']:
             operation=actor_ops[row['name']]
             kind=row['kind']
@@ -238,6 +239,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 raise AutomaticSetupError('Unreal renamed actor unexpectedly: '+row['name'])
             operation['status']='ACTOR_LABEL_CHECKED'
             receipt['actors_created'].append({'name':row['name'],'label':row['label'],'kind':kind})
+            created_by_label[row['label']]=actor
             receipt['failed_step']=None
         actor_materials = manifest.get('source_albedo_actor_candidates')
         if actor_materials is not None and not isinstance(actor_materials, dict):
@@ -270,7 +272,8 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
             receipt['failed_step'] = {'phase': 'native_collider_staging'}
             receipt['component_operations'] = []
             mutation = True
-            studio_collider_shapes.stage(api, ed, collider_actions, receipt['component_operations'])
+            studio_collider_shapes.stage(api, ed, collider_actions, receipt['component_operations'],
+                                         owned_actors=created_by_label)
         receipt['failed_step']={'phase':'level_save','level':expected_level}
         _save_level(api,expected_level)
         receipt['level_saved']=True

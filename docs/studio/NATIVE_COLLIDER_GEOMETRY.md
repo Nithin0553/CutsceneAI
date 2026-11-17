@@ -25,12 +25,17 @@ uniform positive scale. Captures made before the orthogonal-transform and
 owner-state fields were added remain readable for the source audit, and need
 re-export for shape planning.
 
-The target volume is a world-space authoring snapshot. It uses the
-`NoCollision` profile with actor collision and overlap events disabled.
-Source enabled and trigger flags stay in the receipts. Runtime contact,
-layer filtering, triggers, physics materials, dynamic motion, and MeshCollider
-cooking have separate evidence requirements. PR #114 supplies MeshCollider
-and LODGroup source capture.
+An enabled, non-trigger collider on the Unity Default layer can become an
+active native blocker when the census records Default-to-Default contact,
+no layer overrides, no authored physical material, and one collider on that
+owner. The Unreal volume blocks WorldStatic, WorldDynamic, and PhysicsBody
+channels using query and physics collision. Studio disables default collision
+on the matching newly staged renderer to avoid a duplicate shape.
+
+Other compatible shapes retain their world-space authoring geometry with
+`NoCollision`. The plan records the source enabled and trigger flags and
+the reason for an inactive volume. Runtime contacts and callbacks, dynamic
+motion, other layer roles, and MeshCollider cooking need their own adapters.
 
 ## Real-editor acceptance
 
@@ -54,7 +59,9 @@ and LODGroup source capture.
    readback for observed geometry, class, unit scale, and collision state.
    The geometry comparison permits 0.0001 m of center or dimension error
    and 0.05 degrees of box or capsule orientation error. Keep the generating
-   and observing editor process IDs and immutable reports.
+   and observing editor process IDs and immutable reports. A supported
+   static blocker also records the comparison of three native hits and one
+   miss against the reopened collider. The distance tolerance is 2 mm.
 5. Repeat with a different project containing a rotated parent, an offset
    sphere, and capsules in different directions, plus a light shadow
    property in the same transfer. Include a Timeline-bound or sheared
@@ -62,9 +69,9 @@ and LODGroup source capture.
    Change one capsule dimension in a copy of the output and confirm that
    fresh readback reports the resulting error.
 
-The measured scope is static geometry. Physics interaction and callback
-parity need independently sampled results from actual interactions in
-the two engines before these use cases can advance beyond geometry.
+For contact tests, use a separate disposable scene with a dynamic body
+on the supported layer in both editors. Compare measured contact times
+and trajectories before claiming solver or callback parity.
 
 Unity documents the source capsule axes and dimensions.
 [Capsule direction](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/CapsuleCollider-direction.html)
