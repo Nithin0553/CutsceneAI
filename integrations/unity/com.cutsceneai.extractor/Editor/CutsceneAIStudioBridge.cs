@@ -92,6 +92,40 @@ namespace CutsceneAI.UnityExtractor
             return full.Substring(root.Length).Replace('\\', '/');
         }
 
+        private static PlayableDirector ResolveSourceDirector()
+        {
+            var selected = Selection.activeGameObject;
+            var selectedDirector = selected == null ? null : selected.GetComponent<PlayableDirector>();
+            if (selectedDirector != null)
+            {
+                if (!(selectedDirector.playableAsset is TimelineAsset) ||
+                    !selectedDirector.gameObject.scene.isLoaded ||
+                    string.IsNullOrEmpty(selectedDirector.gameObject.scene.path))
+                    throw new InvalidOperationException(
+                        "Selected director is not a Timeline in a saved, loaded Unity scene.");
+                return selectedDirector;
+            }
+
+            PlayableDirector only = null;
+            foreach (var director in Resources.FindObjectsOfTypeAll<PlayableDirector>())
+            {
+                if (director == null || !(director.playableAsset is TimelineAsset) ||
+                    !director.gameObject.scene.isLoaded ||
+                    string.IsNullOrEmpty(director.gameObject.scene.path))
+                    continue;
+                if (only != null)
+                    throw new InvalidOperationException(
+                        "Multiple saved Timelines are loaded. Select the intended PlayableDirector " +
+                        "in Unity before pressing Transfer; no cutscene was guessed.");
+                only = director;
+            }
+            if (only == null)
+                throw new InvalidOperationException(
+                    "No playable Timeline found in a saved loaded Unity scene. " +
+                    "Open the cutscene scene in Unity Editor before pressing Transfer.");
+            return only;
+        }
+
         private static void Poll()
         {
             if (!EditorPrefs.GetBool(Preference, false) ||
@@ -131,13 +165,10 @@ namespace CutsceneAI.UnityExtractor
                         request.request_id != requestId || request.action != Action)
                         throw new InvalidOperationException("Unsupported source bridge request.");
 
-                    var selected = Selection.activeGameObject;
-                    var director = selected == null ? null : selected.GetComponent<PlayableDirector>();
-                    if (director == null || !(director.playableAsset is TimelineAsset) ||
-                        string.IsNullOrEmpty(director.gameObject.scene.path))
-                        throw new InvalidOperationException(
-                            "Select a saved scene GameObject containing a PlayableDirector with a TimelineAsset.");
-
+                    // The normal Studio flow should not require manually
+                    // exporting or selecting a Timeline when there is exactly
+                    // one eligible PlayableDirector in the loaded saved scenes.
+                    var director = ResolveSourceDirector();
                     var export = UnityTimelineExtractor.Export(director);
                     UnityTimelineOffsetAugmenter.Augment(export, director);
                     var evidence = Path.Combine(bridge, "evidence");
