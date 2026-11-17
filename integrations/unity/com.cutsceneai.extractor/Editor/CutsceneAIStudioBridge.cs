@@ -9,6 +9,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Playables;
 using UnityEngine.Timeline;
+using CutSceneAI.CineTwin;
 
 namespace CutsceneAI.UnityExtractor
 {
@@ -18,6 +19,7 @@ namespace CutsceneAI.UnityExtractor
         private const string Preference = "CutsceneAI.StudioBridge.SourceReadOnlyEnabled";
         private const string Kind = "cutsceneai.unity.source_bridge";
         private const string Action = "EXPORT_SELECTED_TIMELINE_AND_CENSUS";
+        private const string CaptureAction = "CAPTURE_SELECTED_TIMELINE_BEHAVIOR";
         private const string EnableMenu = "Tools/CutsceneAI/Studio Bridge/Enable Source Bridge";
         private const string DisableMenu = "Tools/CutsceneAI/Studio Bridge/Disable Source Bridge";
         private static double _nextPoll;
@@ -29,6 +31,10 @@ namespace CutsceneAI.UnityExtractor
             public string schema_version;
             public string request_id;
             public string action;
+            public string source_request_id;
+            public string source_csir_sha256;
+            public string plan_path;
+            public string plan_sha256;
         }
 
         [Serializable]
@@ -43,6 +49,9 @@ namespace CutsceneAI.UnityExtractor
             public string csir_sha256;
             public string census_path;
             public string census_sha256;
+            public string capture_path;
+            public string capture_sha256;
+            public string plan_sha256;
         }
 
         static CutsceneAIStudioBridge()
@@ -129,8 +138,7 @@ namespace CutsceneAI.UnityExtractor
         private static void Poll()
         {
             if (!EditorPrefs.GetBool(Preference, false) ||
-                EditorApplication.isCompiling || EditorApplication.isUpdating ||
-                EditorApplication.isPlayingOrWillChangePlaymode)
+                EditorApplication.isCompiling || EditorApplication.isUpdating)
                 return;
             if (EditorApplication.timeSinceStartup < _nextPoll)
                 return;
@@ -162,30 +170,82 @@ namespace CutsceneAI.UnityExtractor
                         throw new InvalidOperationException("Request is oversized.");
                     var request = JsonUtility.FromJson<Request>(File.ReadAllText(paths[i]));
                     if (request == null || request.kind != Kind || request.schema_version != "1" ||
-                        request.request_id != requestId || request.action != Action)
+                        request.request_id != requestId ||
+                        (request.action != Action && request.action != CaptureAction))
                         throw new InvalidOperationException("Unsupported source bridge request.");
 
-                    // The normal Studio flow should not require manually
-                    // exporting or selecting a Timeline when there is exactly
-                    // one eligible PlayableDirector in the loaded saved scenes.
-                    var director = ResolveSourceDirector();
-                    var export = UnityTimelineExtractor.Export(director);
-                    UnityTimelineOffsetAugmenter.Augment(export, director);
+                    // Structural exports must originate from the saved Edit Mode
+                    // scene. A behavior request waits for an *already running*
+                    // Play Mode; Studio never starts user scripts by silently
+                    // entering Play Mode or saves the runtime-modified scene.
+                    if (request.action == Action && EditorApplication.isPlayingOrWillChangePlaymode)
+                    {
+                        processed--;
+                        continue;
+                    }
+                    if (request.action == CaptureAction && !EditorApplication.isPlaying)
+                    {
+                        processed--;
+                        continue;
+                    }
                     var evidence = Path.Combine(bridge, "evidence");
                     Directory.CreateDirectory(evidence);
-                    var snapshot = Path.Combine(evidence, requestId + ".csir.json");
-                    // CreateNew prevents stale or maliciously pre-existing snapshots being overwritten.
-                    using (var input = File.OpenRead(export))
-                    using (var output = new FileStream(snapshot, FileMode.CreateNew, FileAccess.Write))
-                        input.CopyTo(output);
-                    var census = CutSceneAIFeatureSurfaceScanner.ExportCensus();
-                    receipt.csir_path = RelativeToRoot(snapshot);
-                    receipt.csir_sha256 = Sha256(snapshot);
-                    receipt.census_path = RelativeToRoot(census);
-                    receipt.census_sha256 = Sha256(census);
-                    receipt.status = "SUCCEEDED";
-                    Debug.Log("[CutSceneAI] Source bridge recorded CSIR + census: " + requestId +
-                              ". Fidelity remains unverified.");
+                    if (request.action == Action)
+                    {
+                        var director = ResolveSourceDirector();
+                        var export = UnityTimelineExtractor.Export(director);
+                        UnityTimelineOffsetAugmenter.Augment(export, director);
+                        var snapshot = Path.Combine(evidence, requestId + ".csir.json");
+                        using (var input = File.OpenRead(export))
+                        using (var output = new FileStream(snapshot, FileMode.CreateNew, FileAccess.Write))
+                            input.CopyTo(output);
+                        var census = CutSceneAIFeatureSurfaceScanner.ExportCensus();
+                        receipt.csir_path = RelativeToRoot(snapshot);
+                        receipt.csir_sha256 = Sha256(snapshot);
+                        receipt.census_path = RelativeToRoot(census);
+                        receipt.census_sha256 = Sha256(census);
+                        receipt.status = "SUCCEEDED";
+                        Debug.Log("[CutSceneAI] Source bridge recorded CSIR + census: " + requestId +
+                                  ". Fidelity remains unverified.");
+                    }
+                    else
+                    {
+                        receipt.plan_sha256 = request.plan_sha256;
+                        if (string.IsNullOrEmpty(request.source_request_id) ||
+                            !Regex.IsMatch(request.source_request_id, "^[0-9a-f]{32}$"))
+                            throw new InvalidOperationException("Invalid source snapshot identity.");
+                        var sourceReceiptPath = Path.Combine(
+                            receipts, request.source_request_id + ".json");
+                        if (!File.Exists(sourceReceiptPath))
+                            throw new InvalidOperationException("Source snapshot receipt is missing.");
+                        var original = JsonUtility.FromJson<Receipt>(File.ReadAllText(sourceReceiptPath));
+                        if (original == null || original.kind != Kind ||
+                            original.request_id != request.source_request_id ||
+                            original.status != "SUCCEEDED" ||
+                            original.csir_sha256 != request.source_csir_sha256)
+                            throw new InvalidOperationException("Source snapshot receipt has changed.");
+                        var snapshotRel = "CutSceneAI/StudioBridge/evidence/" +
+                            request.source_request_id + ".csir.json";
+                        if (original.csir_path != snapshotRel ||
+                            Sha256(Path.Combine(evidence,
+                                request.source_request_id + ".csir.json")) != original.csir_sha256)
+                            throw new InvalidOperationException("Source CSIR hash no longer matches.");
+
+                        var expectedPlan = "CutSceneAI/StudioBridge/evidence/" +
+                            requestId + ".cinetwin.sampling-plan.json";
+                        var plan = Path.Combine(evidence, requestId + ".cinetwin.sampling-plan.json");
+                        if (request.plan_path != expectedPlan || !File.Exists(plan) ||
+                            Sha256(plan) != request.plan_sha256)
+                            throw new InvalidOperationException("CineTwin plan hash or location mismatch.");
+                        var director = ResolveSourceDirector();
+                        var output = Path.Combine(evidence, requestId + ".cinetwin.behavior.json");
+                        CineTwinBehaviorCapture.CaptureForStudio(director, plan, output);
+                        receipt.capture_path = RelativeToRoot(output);
+                        receipt.capture_sha256 = Sha256(output);
+                        receipt.status = "SUCCEEDED";
+                        Debug.Log("[CutSceneAI] Unity Play Mode CineTwin evidence saved: " +
+                                  requestId + ". Native Unreal comparison remains pending.");
+                    }
                 }
                 catch (Exception ex)
                 {
