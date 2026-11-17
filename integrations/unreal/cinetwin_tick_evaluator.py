@@ -11,6 +11,7 @@ use a handful of source-authored times before attempting a full recording.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +43,7 @@ class _TickSession:
         times: list[float],
         ticks_per_sample: int,
         capture_motion_layers: bool,
+        on_complete: Any = None,
     ) -> None:
         if ticks_per_sample < 2 or ticks_per_sample > 10:
             raise TickObservationError("Use 2 to 10 real editor ticks per timestamp.")
@@ -51,6 +53,7 @@ class _TickSession:
         self.output_path = Path(output_path)
         self.ticks_per_sample = ticks_per_sample
         self.capture_motion_layers = capture_motion_layers
+        self.on_complete = on_complete
         self.samples: list[dict[str, Any]] = []
         self.index = 0
         self.wait_ticks = ticks_per_sample
@@ -219,6 +222,7 @@ class _TickSession:
                 "engine": "unreal",
                 "engine_version": unreal.SystemLibrary.get_engine_version(),
                 "sequence_asset_path": self.sequence.get_path_name(),
+                "editor_pid": os.getpid(),
             },
             "coverage": {
                 "sample_count": len(self.samples),
@@ -250,7 +254,9 @@ class _TickSession:
             },
         }
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        self.output_path.write_text(json.dumps(capture, indent=2), encoding="utf-8")
+        with self.output_path.open("x", encoding="utf-8") as stream:
+            json.dump(capture, stream, indent=2, allow_nan=False)
+            stream.write("\n")
         unreal.log(
             "[CineTwin] Tick-synchronized observations SAVED: "
             f"{self.output_path} (samples={len(self.samples)}, "
@@ -275,6 +281,8 @@ class _TickSession:
             )
         for warning in warnings:
             unreal.log_warning("[CineTwin] " + warning)
+        if self.on_complete is not None:
+            self.on_complete(capture)
 
     def _tick(self, _delta_time: float) -> None:
         global _ACTIVE
@@ -308,6 +316,7 @@ def start(
     probe_times: tuple[float, ...] | None = (0.0, 0.75, 1.5, 2.25, 3.0),
     ticks_per_sample: int = 3,
     capture_motion_layers: bool = False,
+    on_complete: Any = None,
 ) -> dict[str, Any]:
     """Start a background-in-editor sampling session. No blocking Python loop.
 
@@ -326,7 +335,7 @@ def start(
     times = choose_times(plan, probe_times)
     session = _TickSession(
         plan, mapping, sequence_path, output_path, times, ticks_per_sample,
-        capture_motion_layers
+        capture_motion_layers, on_complete,
     )
     _ACTIVE = session
     try:

@@ -11,14 +11,15 @@ engine worker and release evidence checks. Review the stacks in dependency order
 | `feature/studio-native-component-adapters-v0.1` | Source identity and engine version gates, installed component registry, light shadow action, structural channel readback | [#94](https://github.com/Nithin0553/CutsceneAI/issues/94), [#95](https://github.com/Nithin0553/CutsceneAI/issues/95), [#97](https://github.com/Nithin0553/CutsceneAI/issues/97) |
 | `feature/studio-static-collider-adapters-v0.1` | Box, sphere and capsule extraction, native volume staging and independent geometry comparison | [#95](https://github.com/Nithin0553/CutsceneAI/issues/95), [#98](https://github.com/Nithin0553/CutsceneAI/issues/98) |
 | `feature/studio-custom-component-evidence-v0.1` | Custom serialized snapshots, package version constraints, registered test adapter, bounded LangGraph diagnostics | [#94](https://github.com/Nithin0553/CutsceneAI/issues/94), [#95](https://github.com/Nithin0553/CutsceneAI/issues/95), [#99](https://github.com/Nithin0553/CutsceneAI/issues/99) |
+| `feature/studio-native-behavior-acceptance-v0.1` | Static blocking queries, constant PBR, approved IK Retargeter, matched-time joint measurements, post-reopen validation | [#96](https://github.com/Nithin0553/CutsceneAI/issues/96), [#97](https://github.com/Nithin0553/CutsceneAI/issues/97), [#98](https://github.com/Nithin0553/CutsceneAI/issues/98), [#101](https://github.com/Nithin0553/CutsceneAI/issues/101) |
 
 ## Verification and outstanding work
 
 | Adapter family | Result on this stack | Outstanding acceptance |
 | --- | --- | --- |
-| Skeletal rigs and animation | Existing routes are the baseline | Compatible-rig import validation, retargeting, layer / root-motion ownership, Benchmark002 regressions and held-out pose measurements. [#96](https://github.com/Nithin0553/CutsceneAI/issues/96) |
-| Physics | Box, sphere, and capsule geometry can enter automatic native staging. The generated volumes use disabled collision. | Real-editor save and reopen, MeshCollider cooking, active collision, rigidbodies, triggers, constraints, and simulation baking |
-| Materials and rendering | Native Boolean shadow-enable track and structural track checks | Evaluated shadow and image measurements, PBR and shader adapters, animation and transparency |
+| Skeletal rigs and animation | Approved IK Retargeter staging, exact target skeleton readback and timed joint-position comparison | Real-editor retargeting, joint orientations and bind bases, layers and root-motion ownership, Benchmark002 regressions and held-out rigs. [#96](https://github.com/Nithin0553/CutsceneAI/issues/96) |
+| Physics | Native blocking with independent hit/miss and distance checks for eligible static primitives | Real-editor collision trials, MeshCollider cooking, rigidbodies, triggers, constraints, and simulation baking |
+| Materials and rendering | Native shadow-enable tracks and static parameter/slot readback for untextured Standard and URP Lit materials | Evaluated shadow and image measurements, textured and custom shaders, animation and transparency |
 | Procedural effects | Pending | Particle and cache extraction, Niagara mapping, time-matched VFX observations |
 | Custom components and packages | Read-only typed authoring capture, package inventory and synthetic registration test | Compile and transfer from a real test package, add supported Playable semantics and target middleware adapters |
 | Other native behaviors | Existing camera, light, audio, hierarchy and event paths are the baseline | Complex cameras and environment, native LOD, events and timed UI |
@@ -58,7 +59,7 @@ On the Windows test machine, start Studio with
 `powershell -ExecutionPolicy Bypass -File .\tools\start_studio.ps1`.
 Install the matching Unity extractor and reload the Unreal worker from the
 same checkout. Use separate backed-up target maps and freshly prepared
-candidates. Follow [the collider acceptance procedure](../studio/NATIVE_COLLIDER_GEOMETRY.md)
+candidates. Follow [the native acceptance procedure](../studio/NATIVE_ADAPTER_ACCEPTANCE.md)
 and [the release checks](../studio/RELEASE_ACCEPTANCE.md) to collect independent
 save/reopen and behavior evidence. Extension instructions are in
 [Executable CED adapters](../architecture/CED_ADAPTER_EXECUTION.md).
