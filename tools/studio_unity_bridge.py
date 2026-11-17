@@ -9,11 +9,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 import uuid
 from pathlib import Path
 
 BRIDGE_KIND = "cutsceneai.unity.source_bridge"
 ACTION = "EXPORT_SELECTED_TIMELINE_AND_CENSUS"
+CAPTURE_ACTION = "CAPTURE_SELECTED_TIMELINE_BEHAVIOR"
+MAX_CINETWIN_SAMPLES = 3000
 ID_RE = re.compile(r"[0-9a-f]{32}\Z")
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -152,4 +155,133 @@ def snapshot_status(project_root: str | Path, request_id: str) -> dict:
         "census_sha256": receipt["census_sha256"],
         "fidelity_verified": False,
         "next_action": "Refresh exports, choose the new CSIR and census, then prepare the transfer.",
+    }
+
+
+
+def _sampling():
+    """Load the single canonical CineTwin sampling/validation implementation."""
+    location = str(Path(__file__).resolve().parents[1] / "packages" / "cinetwin")
+    if location not in sys.path:
+        sys.path.insert(0, location)
+    from sampling_plan import SamplingPlanError, plan_file, validate_capture
+    return SamplingPlanError, plan_file, validate_capture
+
+
+def request_behavior_capture(project_root: str | Path, source_request_id: str) -> dict:
+    """Queue measured Unity Play Mode source capture from an exact verified CSIR.
+
+    Studio never enters Play Mode, evaluates timelines, runs Unity scripts,
+    changes scenes or substitutes simulated observations. The opt-in Unity
+    companion processes the request only while the source is already playing.
+    """
+    root = _root(project_root)
+    original = snapshot_status(root, _safe_ticket(source_request_id))
+    if original["status"] != "SUCCEEDED":
+        raise UnityBridgeError("An exact completed Unity snapshot is required for CineTwin.")
+    bridge = _bridge(root)
+    evidence = bridge / "evidence"
+    evidence.mkdir(parents=True, exist_ok=True)
+    ticket = uuid.uuid4().hex
+    plan = evidence / (ticket + ".cinetwin.sampling-plan.json")
+    # Exclusive reservation ensures no pre-existing or symlinked file can
+    # quietly be reused as source sampling instructions.
+    with plan.open("x", encoding="utf-8"):
+        pass
+    error_type, plan_file, _ = _sampling()
+    try:
+        prepared = plan_file(original["csir_path"], plan)
+        if (len(prepared["samples"]) > MAX_CINETWIN_SAMPLES
+                or len(prepared["samples"]) < 2):
+            raise UnityBridgeError(
+                "Source Timeline has too many CineTwin samples for automatic "
+                "Play Mode observation; a bounded capture must be prepared separately."
+            )
+        plan_sha = hashlib.sha256(plan.read_bytes()).hexdigest()
+        record = {
+            "kind": BRIDGE_KIND, "schema_version": "1",
+            "request_id": ticket, "action": CAPTURE_ACTION,
+            "source_request_id": source_request_id,
+            "source_csir_sha256": original["csir_sha256"],
+            "plan_path": "CutSceneAI/StudioBridge/evidence/" + plan.name,
+            "plan_sha256": plan_sha,
+        }
+        requests = bridge / "requests"
+        requests.mkdir(parents=True, exist_ok=True)
+        with (requests / (ticket + ".json")).open("x", encoding="utf-8") as stream:
+            json.dump(record, stream, sort_keys=True)
+            stream.write("\n")
+    except (OSError, ValueError, KeyError, TypeError, error_type) as exc:
+        plan.unlink(missing_ok=True)
+        raise UnityBridgeError("Cannot prepare source CineTwin capture: " + str(exc)) from exc
+    return {
+        "request_id": ticket,
+        "status": "WAITING_FOR_UNITY_PLAY_MODE",
+        "instruction": (
+            "CineTwin requires source Play Mode. Enter Play Mode in the selected "
+            "Unity Editor. The enabled Studio Bridge will capture the verified "
+            "Timeline automatically without a file picker; Studio will resume."
+        ),
+        "sample_count": len(prepared["samples"]),
+        "fidelity_verified": False,
+    }
+
+
+def behavior_capture_status(project_root: str | Path, capture_request_id: str) -> dict:
+    """Validate the source-attested CineTwin capture, never invent measured poses."""
+    root = _root(project_root)
+    bridge = _bridge(root)
+    ticket = _safe_ticket(capture_request_id)
+    request = _load(bridge / "requests" / (ticket + ".json"), limit=4096)
+    if (request.get("kind") != BRIDGE_KIND or request.get("schema_version") != "1"
+            or request.get("request_id") != ticket or request.get("action") != CAPTURE_ACTION):
+        raise UnityBridgeError("CineTwin capture request identity mismatch.")
+    original = snapshot_status(root, _safe_ticket(request.get("source_request_id")))
+    if (original["status"] != "SUCCEEDED"
+            or request.get("source_csir_sha256") != original["csir_sha256"]):
+        raise UnityBridgeError("CineTwin capture no longer matches its Unity source.")
+    expected_plan = "CutSceneAI/StudioBridge/evidence/" + ticket + ".cinetwin.sampling-plan.json"
+    if request.get("plan_path") != expected_plan:
+        raise UnityBridgeError("Unexpected source CineTwin plan path.")
+    plan_path = _evidence(root, expected_plan, request.get("plan_sha256"), ".cinetwin.sampling-plan.json")
+    receipt_path = bridge / "receipts" / (ticket + ".json")
+    if not receipt_path.exists():
+        return {
+            "request_id": ticket, "status": "WAITING_FOR_UNITY_PLAY_MODE",
+            "message": "Enter Play Mode in Unity to collect source CineTwin samples.",
+        }
+    receipt = _load(receipt_path)
+    if (receipt.get("kind") != BRIDGE_KIND or receipt.get("schema_version") != "1"
+            or receipt.get("request_id") != ticket
+            or receipt.get("plan_sha256") != request.get("plan_sha256")):
+        raise UnityBridgeError("CineTwin receipt or sampling plan identity mismatch.")
+    if receipt.get("status") == "BLOCKED":
+        return {
+            "request_id": ticket, "status": "BLOCKED",
+            "reason": str(receipt.get("reason") or "Native Unity CineTwin capture blocked.")[:500],
+        }
+    if receipt.get("status") != "SUCCEEDED":
+        raise UnityBridgeError("Unexpected Unity CineTwin receipt status.")
+    target_path = "CutSceneAI/StudioBridge/evidence/" + ticket + ".cinetwin.behavior.json"
+    if receipt.get("capture_path") != target_path:
+        raise UnityBridgeError("Unexpected source CineTwin capture path.")
+    capture_path = _evidence(root, target_path, receipt.get("capture_sha256"), ".cinetwin.behavior.json")
+    plan = _load(Path(plan_path), limit=8 * 1024 * 1024)
+    capture = _load(Path(capture_path), limit=128 * 1024 * 1024)
+    _, _, validate_capture = _sampling()
+    try:
+        validation = validate_capture(plan, capture)
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise UnityBridgeError("Invalid native CineTwin sample evidence.") from exc
+    if validation["failures"]:
+        raise UnityBridgeError(
+            "Native Unity CineTwin capture failed validation: " +
+            "; ".join(validation["failures"][:3])
+        )
+    return {
+        "request_id": ticket, "status": "SUCCEEDED",
+        "capture_path": capture_path, "capture_sha256": receipt["capture_sha256"],
+        "plan_sha256": receipt["plan_sha256"],
+        "source_capture_validated": True,
+        "fidelity_verified": False,
     }
