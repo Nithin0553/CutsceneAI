@@ -12,7 +12,7 @@ using UnityEngine.Timeline;
 
 namespace CutSceneAI.CineTwin
 {
-    internal static class CineTwinBehaviorCapture
+    public static class CineTwinBehaviorCapture
     {
         private const string MenuPath =
             "Tools/CutsceneAI/CineTwin/Capture Selected Timeline Behavior (Play Mode)";
@@ -170,7 +170,7 @@ namespace CutSceneAI.CineTwin
         // Play Mode evaluator, GUID checks and source entity/rig resolution.
         // The Editor bridge owns the signed sampling plan, request/receipt IDs
         // and exclusive destination. No synthetic fallback observations.
-        internal static void CaptureForStudio(
+        public static void CaptureForStudio(
             PlayableDirector director, string planPath, string outputPath)
         {
             if (!EditorApplication.isPlaying || director == null ||
