@@ -251,3 +251,10 @@ def test_studio_unity_companion_never_silently_starts_scripts_or_saves_scene():
     assert "EditorApplication.isPlayingOrWillChangePlaymode" in text
     assert "SaveScene(" not in text
     assert "SaveAssets(" not in text
+    bridge_asmdef = source.parent / "CutsceneAI.UnityExtractor.Editor.asmdef"
+    assembly = json.loads(bridge_asmdef.read_text())
+    assert "CutSceneAI.CineTwin.Capture.Editor" in assembly["references"]
+    capture_code = (source.parents[1] / "CineTwin/Editor/CineTwinBehaviorCapture.cs").read_text()
+    assert "public static class CineTwinBehaviorCapture" in capture_code
+    assert "public static void CaptureForStudio(" in capture_code
+    assert "FileMode.CreateNew" in capture_code
