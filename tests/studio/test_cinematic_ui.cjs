@@ -7,7 +7,7 @@ const src = fs.readFileSync('apps/studio-web/cinematic.js', 'utf8');
 const css = fs.readFileSync('apps/studio-web/cinematic.css', 'utf8');
 
 function boot({editorReady = true, censusUnresolved = false, multiSources = false,
-  restoredJob = '', restoredPending = false} = {}) {
+  restoredJob = '', restoredPending = false, simple = false} = {}) {
   const listeners = {}, calls = [], requests = [];
   let html = '', writes = 0, copied = '';
   const app = {
@@ -21,6 +21,8 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
   let currentJob = null;
   let approval = null;
   let done = false;
+  let autopilot={active:false,status:'IDLE',message:''};
+  const feedback=[];
   const unity = 'D:/CutSceneAI_Unity';
   const unreal = 'D:/CutSceneAI_Unreal';
   const csir = unity + '/CutSceneAI/Exports/Benchmark002.csir.json';
@@ -56,6 +58,7 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
     done=restoredJob==='finished';
   }
   const fake = {
+    location: {search:simple?'':'?manual=1'},
     document: {querySelector(sel) {
       if (sel === '#app') return app;
       return null;
@@ -75,6 +78,22 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
           destination_readiness: candidate && editorReady ?
             {status: 'READY', ready:true, candidate_id:candidate.candidate_id} :
             {status: 'WAITING_FOR_UNREAL', ready:false, next_action:'Open Unreal Editor'}};
+      } else if (url === '/api/autopilot') {
+        result=autopilot;
+      } else if (url === '/api/autopilot/start') {
+        assert.equal(body.source_rights_confirmed,true);
+        autopilot={active:true,status:'WAITING_FOR_UNITY',
+          message:'Analyzing Unity cutscene…',agent_enabled:true};
+        result=autopilot;
+      } else if (url === '/api/agent-feedback') {
+        feedback.push(body.message);
+        result={status:'QUEUED_FOR_AGENT',feedback_id:'b'.repeat(32)};
+      } else if (url === '/api/agent-conversation') {
+        result={available:true,messages:feedback.map((message,i)=>({
+          feedback_id:String(i).padStart(32,'b'),message,
+          created_at:'2026-11-17T10:00:00Z'})),
+          reply:feedback.length?{feedback_id:'b'.repeat(32),status:'UNRESOLVED_NO_SAFE_STRATEGY',
+            reasoning:'The agent cannot safely apply this correction yet.'}:{},agent_status:'NEW'};
       } else if (url === '/api/pick-folder') {
         result = {cancelled:false, path:body.kind==='unity'?unity:unreal};
       } else if (url === '/api/discover') {
@@ -166,7 +185,13 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
   return {app,calls,requests,click,change,poll:async()=>{poll();await pause();await pause();},
     writes:()=>writes, copied:()=>copied, pause,finish:()=>{done=true;},
     csir,otherCsir,censusA,censusB,invalidCensus,
-    removeCensuses:()=>{availableCensuses=false;}};
+    removeCensuses:()=>{availableCensuses=false;},
+    completeAutopilot:()=>{autopilot={active:true,status:'GENERATED_UNVERIFIED',
+      message:'Editable sequence generated',agent_enabled:true};
+      currentJob={job_id:'a'.repeat(32),candidate_id:'candidate001',
+        generation_status:'GENERATED_UNVERIFIED',
+        status:'GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED',
+        generated_sequence:'/Game/Example/LS_Transferred'};done=true;}};
 }
 
 async function testOneClick() {
@@ -460,7 +485,40 @@ async function testRunningJobShowsResumeInsteadOfDisabledStart() {
   assert.equal(x.calls.filter(v=>v==='/api/prepare').length,0);
 }
 
+
+async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
+  const x=boot({simple:true});
+  await x.pause();
+  await x.click('projects');
+  assert.match(x.app.innerHTML,/Connect your projects/);
+  assert.match(x.app.innerHTML,/Connect Unity/);
+  assert.match(x.app.innerHTML,/Connect Unreal/);
+  assert.doesNotMatch(x.app.innerHTML,/Unity CSIR Export|Unity Source Census|Enable AI agents/,
+    'CSIR, census and agent controls are internal implementation details');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('source-rights',null,true);
+  assert.match(x.app.innerHTML,/data-action="autopilot-start"/);
+  await x.click('autopilot-start');
+  assert.equal(x.requests.filter(r=>r.url==='/api/autopilot/start').length,1);
+  assert.equal(x.requests.filter(r=>r.url==='/api/prepare').length,0,
+    'browser never orchestrates the manual conversion stages');
+  assert.match(x.app.innerHTML,/AI Transfer/);
+  await x.poll();
+  x.completeAutopilot();
+  await x.poll();
+  assert.match(x.app.innerHTML,/Tell the AI what to correct/);
+  assert.doesNotMatch(x.app.innerHTML,/Verified Release Transfer/);
+  await x.change('user-feedback','The character is facing the wrong direction.');
+  await x.click('send-feedback');
+  assert.deepEqual(x.requests.filter(x=>x.url==='/api/agent-feedback')
+    .map(x=>x.body.message),['The character is facing the wrong direction.']);
+  assert.match(x.app.innerHTML,/The AI received your correction/);
+  assert.match(x.app.innerHTML,/The character is facing the wrong direction/);
+}
+
 (async()=>{
+  await testSimpleOneClickFlowAndNaturalLanguageCorrections();
   await testSelectionLayoutContract();
   await testStartupAlwaysHomeWithSavedResults();
   await testStartupHomeWithRunningJobCanResume();
