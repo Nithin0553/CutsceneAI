@@ -132,7 +132,7 @@ def _pick_level(record: dict, service: Any, workspace: Path) -> str:
 
 def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
     """Advance one durable stage without user clicks; safe to poll repeatedly."""
-    with _LOCK:
+    with service.lock, _LOCK:
         file = workspace / ACTIVE
         if not file.is_file():
             return status(workspace)
