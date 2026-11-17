@@ -11,10 +11,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 from studio_unity_bridge import (
     BRIDGE_KIND,
+    CAPTURE_ACTION,
     UnityBridgeError,
+    behavior_capture_status,
+    request_behavior_capture,
     request_snapshot,
     snapshot_status,
 )
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests" / "cinetwin"))
+from test_sampling_plan import _capture, _csir
 
 
 @pytest.fixture
@@ -139,3 +145,109 @@ def test_matching_byte_hashes_cannot_hide_wrong_source_identity(project):
     )
     with pytest.raises(UnityBridgeError, match="identity"):
         snapshot_status(project, ticket)
+
+
+
+def _valid_native_snapshot(project):
+    ticket = request_snapshot(project)["request_id"]
+    evidence = project / "CutSceneAI" / "StudioBridge" / "evidence"
+    evidence.mkdir(exist_ok=True)
+    csir = evidence / (ticket + ".csir.json")
+    source = _csir()
+    source["schema_version"] = "0.1.0"
+    csir.write_text(json.dumps(source))
+    census = evidence / "fresh-census.json"
+    census.write_text(json.dumps({
+        "kind": "cutsceneai.engine.feature_surface", "engine": "unity",
+        "project_fingerprint": source["source"]["project_fingerprint"],
+    }))
+    _receipt(
+        project, ticket,
+        csir_path="CutSceneAI/StudioBridge/evidence/" + ticket + ".csir.json",
+        csir_sha256=hashlib.sha256(csir.read_bytes()).hexdigest(),
+        census_path="CutSceneAI/StudioBridge/evidence/fresh-census.json",
+        census_sha256=hashlib.sha256(census.read_bytes()).hexdigest(),
+    )
+    return ticket
+
+
+def test_one_click_prepares_source_bound_plan_without_faking_unity_play_mode(project):
+    ticket = _valid_native_snapshot(project)
+    request = request_behavior_capture(project, ticket)
+    assert request["status"] == "WAITING_FOR_UNITY_PLAY_MODE"
+    assert request["sample_count"] > 50
+    bridge = project / "CutSceneAI" / "StudioBridge"
+    raw = json.loads((bridge / "requests" / (request["request_id"] + ".json")).read_text())
+    assert raw["action"] == CAPTURE_ACTION
+    assert raw["source_request_id"] == ticket
+    assert raw["source_csir_sha256"] == snapshot_status(project, ticket)["csir_sha256"]
+    assert raw["plan_sha256"] == hashlib.sha256(
+        (project / raw["plan_path"]).read_bytes()
+    ).hexdigest()
+    assert behavior_capture_status(project, request["request_id"])["status"] == "WAITING_FOR_UNITY_PLAY_MODE"
+    assert not list(bridge.glob("evidence/*.cinetwin.behavior.json"))
+
+
+def test_real_native_capture_receipt_is_checked_against_source_and_plan(project):
+    ticket = _valid_native_snapshot(project)
+    request = request_behavior_capture(project, ticket)
+    bridge = project / "CutSceneAI" / "StudioBridge"
+    raw = json.loads((bridge / "requests" / (request["request_id"] + ".json")).read_text())
+    plan = json.loads((project / raw["plan_path"]).read_text())
+    capture = _capture(plan)
+    path = bridge / "evidence" / (request["request_id"] + ".cinetwin.behavior.json")
+    path.write_text(json.dumps(capture))
+    _receipt(
+        project, request["request_id"], plan_sha256=raw["plan_sha256"],
+        capture_path="CutSceneAI/StudioBridge/evidence/" + path.name,
+        capture_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+    )
+    received = behavior_capture_status(project, request["request_id"])
+    assert received["status"] == "SUCCEEDED"
+    assert received["source_capture_validated"] is True
+    assert received["capture_path"] == str(path.resolve())
+    assert received["fidelity_verified"] is False
+
+    # Hash checks are on bytes at time of use, not a stale receipt label.
+    capture["samples"].pop()
+    path.write_text(json.dumps(capture))
+    with pytest.raises(UnityBridgeError, match="changed"):
+        behavior_capture_status(project, request["request_id"])
+
+
+def test_forged_capture_path_and_wrong_cutscene_are_rejected(project):
+    ticket = _valid_native_snapshot(project)
+    request = request_behavior_capture(project, ticket)
+    bridge = project / "CutSceneAI" / "StudioBridge"
+    raw = json.loads((bridge / "requests" / (request["request_id"] + ".json")).read_text())
+    plan = json.loads((project / raw["plan_path"]).read_text())
+    capture = _capture(plan)
+    capture["cutscene_id"] = "other-timeline"
+    path = bridge / "evidence" / (request["request_id"] + ".cinetwin.behavior.json")
+    path.write_text(json.dumps(capture))
+    native_receipt = _receipt(
+        project, request["request_id"], plan_sha256=raw["plan_sha256"],
+        capture_path="CutSceneAI/StudioBridge/evidence/" + path.name,
+        capture_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+    )
+    with pytest.raises(UnityBridgeError, match="validation"):
+        behavior_capture_status(project, request["request_id"])
+
+    receipt = json.loads(native_receipt.read_text())
+    receipt["capture_path"] = "../external.cinetwin.behavior.json"
+    native_receipt.write_text(json.dumps(receipt))
+    with pytest.raises(UnityBridgeError, match="path"):
+        behavior_capture_status(project, request["request_id"])
+
+
+def test_studio_unity_companion_never_silently_starts_scripts_or_saves_scene():
+    source = (Path(__file__).resolve().parents[2] /
+              "integrations/unity/com.cutsceneai.extractor/Editor/CutsceneAIStudioBridge.cs")
+    text = source.read_text()
+    assert "CAPTURE_SELECTED_TIMELINE_BEHAVIOR" in text
+    assert "CineTwinBehaviorCapture.CaptureForStudio" in text
+    assert "EditorApplication.isPlaying" in text
+    assert "EditorApplication.EnterPlaymode" not in text
+    assert "EditorApplication.isPlayingOrWillChangePlaymode" in text
+    assert "SaveScene(" not in text
+    assert "SaveAssets(" not in text
