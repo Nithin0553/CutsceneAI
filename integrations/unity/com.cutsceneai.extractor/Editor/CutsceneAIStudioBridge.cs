@@ -110,7 +110,8 @@ namespace CutsceneAI.UnityExtractor
             var paths = Directory.GetFiles(requests, "*.json");
             Array.Sort(paths, StringComparer.Ordinal);
             // Bound work per Editor update to keep editor interaction responsive.
-            for (var i = 0; i < paths.Length && i < 6; i++)
+            var processed = 0;
+            for (var i = 0; i < paths.Length && processed < 6; i++)
             {
                 var requestId = Path.GetFileNameWithoutExtension(paths[i]);
                 if (!Regex.IsMatch(requestId, "^[0-9a-f]{32}$"))
@@ -118,6 +119,8 @@ namespace CutsceneAI.UnityExtractor
                 var target = Path.Combine(receipts, requestId + ".json");
                 if (File.Exists(target))
                     continue;
+                // Completed requests must not starve newer requests forever.
+                processed++;
                 var receipt = new Receipt { request_id = requestId, status = "BLOCKED" };
                 try
                 {
