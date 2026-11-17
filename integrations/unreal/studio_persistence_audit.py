@@ -247,11 +247,29 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         from studio_collider_shapes import inspect
 
         component_rows.extend(inspect(api, colliders, actor_list, measure_queries=True))
+    surface_rows = []
+    pbr = manifest.get("source_pbr_actor_candidates") or {}
+    if pbr:
+        from studio_material_restore import inspect_constant_surfaces
+
+        for item in manifest["actors"]:
+            matches = by_label.get(item["label"], [])
+            if len(matches) != 1:
+                continue  # The ordinary actor readback reports the missing actor.
+            surfaces = inspect_constant_surfaces(api, matches[0], pbr.get(item["name"], []))
+            for surface in surfaces:
+                if not _package_file(project, surface["target_material"], ".uasset").is_file():
+                    surface["status"] = "FAIL"
+                    surface["reason"] = "SAVED_MATERIAL_PACKAGE_MISSING"
+                surface_rows.append(dict(surface, actor_label=item["label"]))
     component_fail = any(row["status"] == "FAIL" for row in component_rows)
     component_incomplete = any(row["status"] == "INCOMPLETE" for row in component_rows)
+    material_fail = any(row["status"] == "FAIL" for row in surface_rows)
+    material_incomplete = any(row["status"] == "INCOMPLETE" for row in surface_rows)
     native_status = (
-        "FAIL" if not (level_disk and sequence_ok and all_assets and all_actors) or component_fail
-        else "INCOMPLETE" if not enumerable or component_incomplete
+        "FAIL" if not (level_disk and sequence_ok and all_assets and all_actors)
+        or component_fail or material_fail
+        else "INCOMPLETE" if not enumerable or component_incomplete or material_incomplete
         else "PASS"
     )
     # Native persistence and historical source provenance are separate claims:
@@ -291,6 +309,10 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         "ACTOR_LABEL_OR_CLASS_MISMATCH: " + row["label"]
         for row in actor_rows if not row["class_matches"]
     )
+    native_issues.extend(
+        "MATERIAL_PARAMETER_READBACK_" + row["status"] + ": " + row["target_material"]
+        for row in surface_rows if row["status"] != "PASS"
+    )
     if not level_disk:
         native_issues.append("SAVED_LEVEL_PACKAGE_MISSING")
     if not sequence_ok:
@@ -315,6 +337,7 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         "level_file_exists": level_disk, "sequence": sequence_rows,
         "assets": rows, "actors": actor_rows,
         "registered_components": component_rows,
+        "material_parameters": surface_rows,
         "asset_count": len(rows), "assets_class_and_disk_verified": len(found),
         "actor_count": len(actor_rows),
         "actors_unique_and_class_verified": actors_verified,

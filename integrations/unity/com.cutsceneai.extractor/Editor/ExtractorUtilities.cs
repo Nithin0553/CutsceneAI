@@ -154,6 +154,7 @@ namespace CutsceneAI.UnityExtractor
         internal static List<MaterialAssetReference> SourceMaterialAssets(GameObject gameObject)
         {
             var result = new List<MaterialAssetReference>();
+            var surfaces = new Dictionary<Material, MaterialSurfaceSnapshot>();
             foreach (var renderer in gameObject.GetComponentsInChildren<Renderer>(true))
             {
                 if (!(renderer is MeshRenderer) && !(renderer is SkinnedMeshRenderer))
@@ -172,6 +173,11 @@ namespace CutsceneAI.UnityExtractor
                             texturePath = AssetDatabase.GetAssetPath(material.GetTexture(property));
                     }
                     catch (Exception) { /* Unsupported shader property remains unmapped. */ }
+                    if (!surfaces.TryGetValue(material, out var surface))
+                    {
+                        surface = CaptureMaterialSurface(material, path);
+                        surfaces.Add(material, surface);
+                    }
                     result.Add(new MaterialAssetReference
                     {
                         asset_path = path,
@@ -182,6 +188,7 @@ namespace CutsceneAI.UnityExtractor
                         albedo_texture_asset_path = texturePath,
                         albedo_texture_guid = string.IsNullOrEmpty(texturePath) ? "" :
                             AssetDatabase.AssetPathToGUID(texturePath),
+                        surface = surface,
                     });
                 }
             }
@@ -190,6 +197,79 @@ namespace CutsceneAI.UnityExtractor
                 var order = StringComparer.Ordinal.Compare(a.renderer_path, b.renderer_path);
                 return order != 0 ? order : a.slot_index.CompareTo(b.slot_index);
             });
+            return result;
+        }
+
+        private static MaterialSurfaceSnapshot CaptureMaterialSurface(Material material, string path)
+        {
+            var shader = material.shader;
+            var result = new MaterialSurfaceSnapshot
+            {
+                shader_name = shader == null ? "" : shader.name,
+                shader_asset_path = shader == null ? "" : AssetDatabase.GetAssetPath(shader),
+                status = "UNSUPPORTED_SHADER",
+            };
+            bool urp = result.shader_name == "Universal Render Pipeline/Lit" &&
+                result.shader_asset_path == "Packages/com.unity.render-pipelines.universal/Shaders/Lit.shader";
+            bool standard = result.shader_name == "Standard" &&
+                result.shader_asset_path == "Resources/unity_builtin_extra";
+            if (!urp && !standard)
+                return result;
+            result.status = "MATERIAL_SOURCE_OR_COLOR_SPACE_UNSUPPORTED";
+            if (QualitySettings.activeColorSpace != ColorSpace.Linear ||
+                string.IsNullOrEmpty(path) || !path.StartsWith("Assets/", StringComparison.Ordinal) ||
+                !path.EndsWith(".mat", StringComparison.OrdinalIgnoreCase))
+                return result;
+
+            result.status = "MATERIAL_FEATURES_OUTSIDE_CONSTANT_METALLIC_SCOPE";
+            if (urp && material.GetFloat("_WorkflowMode") != 1f)
+                return result;
+            // Constant material only. Actual texture dependencies and altered
+            // shading options need corresponding target adapters of their own.
+            foreach (string property in new[] {
+                "_BaseMap", "_MainTex", "_BumpMap", "_MetallicGlossMap", "_SpecGlossMap",
+                "_ParallaxMap", "_OcclusionMap", "_EmissionMap", "_DetailMask",
+                "_DetailAlbedoMap", "_DetailNormalMap", "_ClearCoatMap",
+            })
+                if (material.HasProperty(property) && material.GetTexture(property) != null)
+                    return result;
+            foreach (string property in new[] {"_SpecularHighlights", "_EnvironmentReflections"})
+                if (material.HasProperty(property) && material.GetFloat(property) != 1f)
+                    return result;
+            float mode = material.GetFloat(urp ? "_Surface" : "_Mode");
+            if ((urp && mode != 0f) || (standard && mode != 0f && mode != 1f))
+                return result;
+            float cull = urp ? material.GetFloat("_Cull") : 2f;
+            if (cull != 0f && cull != 2f)
+                return result;
+            bool masked = urp ? material.GetFloat("_AlphaClip") == 1f : mode == 1f;
+            Color baseColor = material.GetColor(urp ? "_BaseColor" : "_Color").linear;
+            Color emission = material.IsKeywordEnabled("_EMISSION")
+                ? material.GetColor("_EmissionColor").linear : Color.black;
+            result.base_color_linear = new double[] {baseColor.r, baseColor.g, baseColor.b, baseColor.a};
+            result.emission_linear = new double[] {emission.r, emission.g, emission.b};
+            result.metallic = material.GetFloat("_Metallic");
+            result.roughness = 1.0 - material.GetFloat(urp ? "_Smoothness" : "_Glossiness");
+            result.blend = masked ? "masked" : "opaque";
+            result.opacity_mask_clip = masked ? material.GetFloat("_Cutoff") : 0.0;
+            result.two_sided = cull == 0f;
+            try
+            {
+                string project = Directory.GetParent(Application.dataPath).FullName;
+                using var stream = File.OpenRead(Path.Combine(project, path));
+                using var sha = SHA256.Create();
+                result.material_sha256 = BitConverter.ToString(sha.ComputeHash(stream))
+                    .Replace("-", "").ToLowerInvariant();
+                result.status = "CAPTURED_CONSTANT_METALLIC";
+            }
+            catch (IOException)
+            {
+                result.status = "MATERIAL_SOURCE_BYTES_UNAVAILABLE";
+            }
+            catch (UnauthorizedAccessException)
+            {
+                result.status = "MATERIAL_SOURCE_BYTES_UNAVAILABLE";
+            }
             return result;
         }
 

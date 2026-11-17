@@ -275,3 +275,141 @@ def test_native_setup_receives_only_the_matching_actor_source_material(tmp_path,
         assert paths == [sources[expected_labels[label]]]
     assert {x["actor"] for x in result["material_restoration"]} == set(sources)
     assert result["fidelity_verified"] is False
+
+
+def _constant_surface_plan(tmp_path):
+    project, docs = create(tmp_path)
+    material = project / "Assets/Benchmark002/Characters/Body.mat"
+    material.write_text("Material: Constant metallic fixture", encoding="utf-8")
+    guid = "b" * 32
+    material.with_suffix(".mat.meta").write_text(f"guid: {guid}\n", encoding="utf-8")
+    document = json.loads(docs[0].read_text())
+    source = {
+        "asset_path": material.relative_to(project).as_posix(), "guid": guid,
+        "renderer_path": "Character/Body", "slot_index": 0, "material_name": "Body",
+        "surface": {
+            "version": "1.0.0", "status": "CAPTURED_CONSTANT_METALLIC",
+            "shader_name": "Universal Render Pipeline/Lit",
+            "shader_asset_path": "Packages/com.unity.render-pipelines.universal/Shaders/Lit.shader",
+            "material_sha256": studio_auto_assets.digest(material),
+            "base_color_linear": [0.14, 0.32, 0.52, 0.65], "emission_linear": [0.1, 0.0, 0.2],
+            "metallic": 0.37, "roughness": 0.42, "blend": "masked",
+            "opacity_mask_clip": 0.3, "two_sided": True,
+        },
+    }
+    document["entities"][0]["metadata"] = {"source_material_assets": [source]}
+    docs[0].write_text(json.dumps(document))
+    folder = "/Game/CutSceneAI/AutoTransfer/T_CONSTANT"
+    manifest = studio_auto_assets.inspect(*docs, project, "Assets/Benchmark002", folder)
+    return project, docs, material, manifest
+
+
+def test_constant_pbr_slot_preserves_shader_and_material_provenance(tmp_path):
+    project, docs, material, manifest = _constant_surface_plan(tmp_path)
+    item, = manifest["source_pbr_actor_candidates"]["Ch31_nonPBR"]
+    assert item["source_material_guid"] == "b" * 32
+    assert item["slot_index"] == 0
+    assert item["pbr"]["roughness"] == 0.42
+    assert item["pbr"]["blend"] == "masked"
+    assert manifest["source_albedo_material_candidates"] == []
+    material.write_text("Material: independently edited fixture", encoding="utf-8")
+    stale = studio_auto_assets.inspect(*docs, project, "Assets/Benchmark002", manifest["target_folder"])
+    assert stale["source_pbr_actor_candidates"] == {}
+    assert any("PBR_SOURCE_SNAPSHOT_INVALID_OR_STALE" in message for message in stale["warnings"])
+
+
+def test_custom_shader_with_lit_name_does_not_select_constant_adapter(tmp_path):
+    project, docs, _material, manifest = _constant_surface_plan(tmp_path)
+    data = json.loads(docs[0].read_text())
+    data["entities"][0]["metadata"]["source_material_assets"][0]["surface"][
+        "shader_asset_path"
+    ] = "Assets/Custom/Lit.shader"
+    docs[0].write_text(json.dumps(data))
+    unsupported = studio_auto_assets.inspect(*docs, project, "Assets/Benchmark002",
+                                             manifest["target_folder"])
+    assert unsupported["source_pbr_actor_candidates"] == {}
+    assert any("PBR_SOURCE_SNAPSHOT_INVALID_OR_STALE" in x for x in unsupported["warnings"])
+
+
+def test_constant_pbr_requires_captured_material_guid(tmp_path):
+    project, docs, _material, manifest = _constant_surface_plan(tmp_path)
+    data = json.loads(docs[0].read_text())
+    del data["entities"][0]["metadata"]["source_material_assets"][0]["guid"]
+    docs[0].write_text(json.dumps(data))
+    unsupported = studio_auto_assets.inspect(*docs, project, "Assets/Benchmark002",
+                                             manifest["target_folder"])
+    assert unsupported["source_pbr_actor_candidates"] == {}
+    assert any("PBR_SOURCE_SNAPSHOT_INVALID_OR_STALE" in x for x in unsupported["warnings"])
+
+
+def test_generated_constant_opaque_and_masked_materials_read_back_native_values(tmp_path):
+    _, _, _, manifest = _constant_surface_plan(tmp_path)
+    masked, = manifest["source_pbr_actor_candidates"]["Ch31_nonPBR"]
+    opaque = dict(masked, target_material=masked["target_material"] + "_Opaque",
+                  pbr=dict(masked["pbr"], blend="opaque", opacity_mask_clip=0.0))
+
+    class Data(dict):
+        def set_editor_property(self, key, value):
+            self[key] = value
+
+        def get_editor_property(self, key):
+            return self[key]
+
+    class Material(Data):
+        def get_class(self):
+            return SimpleNamespace(get_name=lambda: "Material")
+
+        def get_path_name(self):
+            return self["path"]
+
+    class Component(FakeComponent):
+        def set_material(self, index, material):
+            self.material = material
+
+    for item, expected_edges in [(opaque, 4), (masked, 5)]:
+        connections = {}
+        nodes = []
+
+        def make_expression(*_, captured_nodes=nodes):
+            node = Data()
+            captured_nodes.append(node)
+            return node
+
+        def attach(node, out, name, captured_edges=connections):
+            captured_edges[name] = (node, out)
+            return True
+
+        def value(_material, name, captured_nodes=nodes):
+            return next(node["default_value"] for node in captured_nodes if node["parameter_name"] == name)
+
+        library = SimpleNamespace(
+            create_material_expression=make_expression, connect_material_property=attach,
+            recompile_material=lambda _: None, get_material_default_scalar_parameter_value=value,
+            get_material_default_vector_parameter_value=value,
+        )
+        api = SimpleNamespace(
+            SkeletalMeshComponent="skeletal", Material=Material, MaterialFactoryNew=object,
+            MaterialExpressionVectorParameter=object, MaterialExpressionScalarParameter=object,
+            MaterialEditingLibrary=library, BlendMode=SimpleNamespace(BLEND_MASKED=1, BLEND_OPAQUE=0),
+            MaterialProperty=SimpleNamespace(**{name: name for name in (
+                "MP_BASE_COLOR", "MP_EMISSIVE_COLOR", "MP_METALLIC", "MP_ROUGHNESS", "MP_OPACITY_MASK",
+            )}),
+            LinearColor=lambda r, g, b, a: SimpleNamespace(r=r, g=g, b=b, a=a),
+            AssetToolsHelpers=SimpleNamespace(get_asset_tools=lambda: SimpleNamespace(
+                create_asset=lambda asset_name, folder, *_: Material(
+                    path=f"{folder}/{asset_name}.{asset_name}"))),
+            EditorAssetLibrary=SimpleNamespace(does_asset_exist=lambda _: False,
+                                               save_loaded_asset=lambda _: True),
+        )
+        component = Component(None)
+        actor = SimpleNamespace(get_components_by_class=lambda _, created=component: [created])
+        studio_material_restore.preflight_constant_surfaces(api, {"actor": [item]})
+        assigned, = studio_material_restore.stage_constant_surfaces(api, actor, [item], {})
+        assert assigned["status"] == "PBR_ASSIGNED_RENDER_PARITY_UNVERIFIED"
+        assert len(connections) == expected_edges
+        report, = studio_material_restore.inspect_constant_surfaces(api, actor, [item])
+        assert report["status"] == "PASS"
+        assert report["render_parity_verified"] is False
+        connections["MP_ROUGHNESS"][0]["default_value"] = 0.8
+        report, = studio_material_restore.inspect_constant_surfaces(api, actor, [item])
+        assert report["status"] == "FAIL"

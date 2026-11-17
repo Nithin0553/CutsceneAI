@@ -85,7 +85,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
              'asset_operations':[],'actor_operations':[],'failed_step':None,
              'level_saved':False,'changes_possible':False,'fidelity_verified':False,
               'material_restoration':[],
-             'unsupported':['Unity .mat materials/shader graphs are not reconstructed; FBX embedded materials are optional and partial',
+             'unsupported':['Custom shader graphs, textured PBR and translucent materials need separate adapters',
                             'Unity particle/VFX/constraints/scripts and signal payloads are not reconstructed',
                             'Imported animation bone correspondence and audio playback are not verified']}
     mutation=False
@@ -100,6 +100,8 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 raise AutomaticSetupError('Unreal Python import capability unavailable: '+required)
         data=json.loads(Path(plan_path).read_text(encoding='utf-8-sig'))
         collider_actions = studio_collider_shapes.from_plan(data)
+        pbr_candidates = manifest.get('source_pbr_actor_candidates') or {}
+        studio_material_restore.preflight_constant_surfaces(api, pbr_candidates)
         sequence=data['sequence_asset_path']
         receipt['target_namespace']=manifest['target_folder']
         receipt['fbx_embedded_material_import_requested'] = (
@@ -266,6 +268,19 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                 receipt['material_restoration'].extend(
                     dict(item, actor=row['name']) for item in studio_material_restore.restore(
                         api, created, candidates, existing_assets=material_cache)
+                )
+                receipt['failed_step']=None
+        if pbr_candidates:
+            material_cache={}
+            receipt['constant_materials']=[]
+            for row in manifest['actors']:
+                candidates=pbr_candidates.get(row['name'], [])
+                if not candidates:
+                    continue
+                receipt['failed_step']={'phase':'constant_material_staging','name':row['name']}
+                receipt['constant_materials'].extend(
+                    dict(item, actor=row['name']) for item in studio_material_restore.stage_constant_surfaces(
+                        api, created_by_label[row['label']], candidates, material_cache)
                 )
                 receipt['failed_step']=None
         if collider_actions:

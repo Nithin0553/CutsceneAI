@@ -367,6 +367,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     # tutorial/editor assets and turns invalid placeholders into false warnings.
     material_files = set()
     material_files_by_actor = defaultdict(set)
+    source_material_slots = defaultdict(list)
     texture_files = set()
     for name in sorted(bindings):
         entity = entities.get(name)
@@ -381,6 +382,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
                     # Keep source material identity tied to the exact CSIR
                     # renderer actor. Slot names are not globally unique.
                     material_files_by_actor[name].add(material)
+                    source_material_slots[name].append((material, record))
                 elif Path(str(path)).suffix.lower() == '.mat':
                     warnings.append('Renderer material '+str(path)+' is unresolved ('+strategy+').')
             texture_path = record.get('albedo_texture_asset_path')
@@ -426,6 +428,12 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
         )
         actor_material_candidates[actor_name] = candidates_for_actor
         warnings.extend(actor_name + ': ' + message for message in diagnostics)
+    actor_pbr_candidates = {}
+    for actor_name, records in sorted(source_material_slots.items()):
+        pbr, diagnostics = studio_source_materials.constant_surface_candidates(records, target_folder, digest)
+        if pbr:
+            actor_pbr_candidates[actor_name] = pbr
+        warnings.extend(actor_name + ': ' + message for message in diagnostics)
     planned_labels = [str(row['label']) for row in actors]
     duplicated_labels = sorted({label for label in planned_labels
                                 if planned_labels.count(label) > 1})
@@ -462,6 +470,7 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
             'deduplicated_textures':deduplicated_textures,
             'source_albedo_material_candidates': material_candidates,
             'source_albedo_actor_candidates': actor_material_candidates,
+            'source_pbr_actor_candidates': actor_pbr_candidates,
             'unmapped_source_entities':unmapped_entities,
             'source_entity_count':len(csir.get('entities', [])),
             'source_asset_count':len(csir.get('assets', [])),

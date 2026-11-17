@@ -149,6 +149,24 @@ namespace CutsceneAI.UnityExtractor
         public string material_name;
         public string albedo_texture_asset_path;
         public string albedo_texture_guid;
+        public MaterialSurfaceSnapshot surface;
+    }
+
+    [Serializable]
+    internal sealed class MaterialSurfaceSnapshot
+    {
+        public string version = "1.0.0";
+        public string status;
+        public string shader_name;
+        public string shader_asset_path;
+        public string material_sha256;
+        public double[] base_color_linear;
+        public double[] emission_linear;
+        public double metallic;
+        public double roughness;
+        public string blend;
+        public double opacity_mask_clip;
+        public bool two_sided;
     }
 
     [Serializable]
