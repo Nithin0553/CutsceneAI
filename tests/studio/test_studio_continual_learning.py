@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
-from studio_continual_learning import (  # noqa: E402
+from studio_continual_learning import (
     LearningLedgerError,
     record_terminal,
     report,
@@ -69,7 +69,7 @@ def test_bad_job_identity_is_rejected(run):
 
 
 def test_report_defaults_to_no_verified_cases(run):
-    work, job = run
+    work, _job = run
     info = report(work)
     assert info["proposal_only"] is True
     assert info["model_weights_updated"] is False
