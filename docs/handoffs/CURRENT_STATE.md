@@ -1,36 +1,35 @@
 # CutSceneAI — Current Engineering State
 
-**Reviewed:** 2026-10-27 · **Scope:** Unity Timeline → Unreal Level Sequence
+**Reviewed:** 2026-11-17 · **Primary repository:** `Nithin0553/CutsceneAI` · **Target:** Unity Timeline → Unreal Level Sequence
 
-This page is a short orientation handoff, not evidence of successful target playback. See the [current issue matrix](../ISSUES_AND_MILESTONES.md) and the [documentation index](../INDEX.md) for maintained details.
+This is the current orientation handoff. It is not certification of arbitrary source-to-target fidelity. Preserve historical benchmarks and their original evidence.
 
-## Current working milestones
+## Canonical baseline
 
-- **Foundation:** CED / CSIR contracts, Unity structural extraction, Unreal planning and readback, and CineTwin evaluation tools are implemented for defined subsets of cinematic behavior.
-- **Benchmark 001:** frozen research proof; automated target validation was accepted for its limited source/target setup. See [freeze record](../benchmarks/BENCHMARK_001_TARGET_FREEZE.md). Do not modify it.
-- **Benchmark 002:** source authored and captured; best-effort V5 planning accounted for 12 source tracks, with 21 native action entries and `PROP_PARENTED` marked `STATIC_CHILD_INHERITS_PARENT`. Successful V5 Unreal sequence generation and saved behavior parity are **not yet established**.
-- **Best-effort backend:** code for independent track planning, sampled transform fallback, parent-local reconstruction and source-bound evidence verification exists on experimental branch `feature/transfer-backend-best-effort-v0.1`. Python tests passing does not mean that Unreal generation passed.
-- **Dataset/learning:** source dataset registry and human-approved mapping-case memory exist experimentally. No universal transfer model has been trained or validated.
+- **Default branch:** `main`, at reviewed integration commit `5ea7a20401cc7cf6f7ae674973ea7811ffde2909` from [PR #112](https://github.com/Nithin0553/CutsceneAI/pull/112) (2026-11-09). The former `main` is preserved at `backup/main-before-studio-consolidation-20261109`.
+- **Code:** Unity source CSIR and feature-surface extraction; CED/source-evidence contracts; adaptive mapping and best-effort planning; source-backed supported asset staging; Unreal scene/Level Sequence generation; editor preflight, native readback, persistence and CineTwin comparison tools; dark Studio UI with opt-in guarded LangGraph diagnosis; experimental dataset and approved-case memory.
+- **CI:** [main run 42695836610](https://github.com/Nithin0553/CutsceneAI/actions/runs/42695836610) succeeded on the integration SHA. The GitHub issue records 746 Python tests passed, 7 engine skips, 13 Studio UI scenarios, Ruff and hygiene success. Engine skips are not real-editor passes.
+- **User-reported runtime:** a fresh Benchmark002 transfer produced an editable target sequence and passed user-reported saved/reopened editor inspection. No independently retrieved time-aligned CineTwin metrics support overall pose, camera, shader, audio or event parity.
+- **Benchmark001:** frozen historical proof; do not modify the original freeze. **Benchmark002:** active experimental source; prior measured actor travel/orientation mismatches and missing scenery mean complete fidelity is not established.
+- **Learning:** candidate-memory and orchestration infrastructure exist, but a universal AI cinematic model has not been trained or validated on held-out projects.
 
-## Current task order
+## Next engineering step
 
-1. Validate V5 generation on a backed-up target Unreal project and unused Level Sequence path.
-2. Verify saved Level Sequence and actor hierarchy survive editor restart.
-3. Independently compare source and target evaluated character, prop and camera trajectories; preserve failures in reports.
-4. Address blockers using generic adapters, documented capability fallbacks and regression tests.
-5. Demonstrate transfer on independently authored scenes before dataset expansion or AI training.
+1. Review [PR #113](https://github.com/Nithin0553/CutsceneAI/pull/113): support scene-renderable FBX scenery even without active Timeline tracks, with exact source identity, negative cases and no arbitrary asset substitution. Verify in Unity 6.3, then run fresh Unreal import, Level Sequence, saved/reopened readback and source-to-target composition checks.
+2. Review stacked [PR #114](https://github.com/Nithin0553/CutsceneAI/pull/114): extensible component evidence capture for `LODGroup`, `MeshCollider` and unknown components. It captures source semantics but does **not** yet implement native Unreal collision/LOD adapters.
+3. Continue issues [#94–#101](https://github.com/Nithin0553/CutsceneAI/issues) for source coverage, executable CED adapters, motion/hierarchy, camera/render/audio/event fidelity, independent CineTwin, bounded AI repairs, verified learning, and release acceptance. Do not mark unmeasured domains as PASS.
+4. Preserve historical unmerged PRs [#6](https://github.com/Nithin0553/CutsceneAI/pull/6) and [#90](https://github.com/Nithin0553/CutsceneAI/pull/90) until their divergent changes are evaluated against `main`; never blindly merge old integration branches.
+
+## Repository cleanup note (2026-11-17)
+
+Twenty-five original stacked draft PRs were closed as superseded after verifying their exact head commits are ancestors of PR #112's integrated head. Their PR records and remote branch refs were retained. Eight active issues (#94–#101) remain open. GitHub branch deletion is a separate operation and requires reviewing local worktree/research dependencies before remote removal. See [Branch Audit](../BRANCH_AUDIT.md).
 
 ## Research invariants
 
-- The source cutscene is ground truth, including rational timing and provenance.
-- Unity source and frozen benchmarks remain unchanged during conversion work.
-- Do not silently discard features or call partial runtime generation `PASS`.
-- No benchmark-specific transfer hacks.
-- Use a new staged target sequence, strict preflight, and independent saved-target readback.
-- Report both source-feature coverage and post-generation fidelity.
+- Source identity and rational timing are authoritative; source-derived copies and target runs have immutable fingerprints.
+- Do not alter frozen benchmarks, source assets, existing Unreal projects, or previous experiment receipts as part of cleanup.
+- `GENERATED_UNVERIFIED`, saved readback, source/target behavior comparison, and release readiness are different gates.
+- Never fabricate unknown plugin behavior, rigs, shaders, physics, audio or event equivalence.
+- Run a fresh test in a new staged target, then independently reopen and compare behavior before closing fidelity issues.
 
-## Branch dependency
-
-Draft PRs [#49](https://github.com/Nithin0553/CutsceneAI/pull/49) → [#50](https://github.com/Nithin0553/CutsceneAI/pull/50) → [#51](https://github.com/Nithin0553/CutsceneAI/pull/51) → [#52](https://github.com/Nithin0553/CutsceneAI/pull/52) are stacked. `main` alone does not contain the latest Studio/backend work. Consult [branch audit](../BRANCH_AUDIT.md) before merging, checking out, or removing any refs.
-
-For concrete instructions, start with [best-effort runbook](../architecture/BEST_EFFORT_TRANSFER_BACKEND_V0_1.md) and [repository guide](../REPOSITORY_GUIDE.md).
+Read the [Documentation Index](../INDEX.md), [Issue/PR Triage Policy](../studio/ISSUE_PR_TRIAGE_POLICY.md), and [Studio Release Acceptance](../studio/RELEASE_ACCEPTANCE.md) before starting new conversion work.

@@ -54,7 +54,7 @@ Use externally named experiment directories such as `B:\Research\CutsceneAI\Tran
 3. Check mapped actor labels and source hierarchy before any actor mutation.
 4. Treat `GENERATED_UNVERIFIED` as an intermediate state; require target readback and measured CineTwin fidelity results to claim acceptance.
 5. Do not change frozen Benchmark 001 or 002 original source materials during cleanup.
-6. Keep the stacked experimental PRs separate until reviewed and merged in order.
+6. `main` contains the consolidated Studio baseline from merged PR #112. Review and test follow-on draft PRs #113 → #114 in dependency order; preserve divergent legacy PRs #6 and #90 until separately assessed. Do not delete research branches or close unresolved fidelity issues merely because a newer integration exists.
 
 ## Naming conventions
 
