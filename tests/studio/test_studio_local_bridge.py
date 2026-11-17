@@ -658,3 +658,31 @@ def test_queue_refuses_stale_worker_before_job_or_asset_mutation(tmp_path, monke
     with pytest.raises(ValueError, match='cached an outdated Python worker'):
         bridge.queue_trial(candidate, work)
     assert not (work / 'active-job.json').exists()
+
+
+def test_unity_source_bridge_is_explicit_and_token_guarded(service):
+    base, tmp = service
+    project = tmp / 'RealUnityProject'
+    (project / 'Assets').mkdir(parents=True)
+    (project / 'ProjectSettings').mkdir()
+    token = call(base + '/api/status')[1]['token']
+    payload = {'action': 'request', 'unity_folder': str(project)}
+    code, blocked = call(base + '/api/unity-source', payload)
+    assert code == 403 and 'token' in blocked['error'].lower()
+    code, request = call(base + '/api/unity-source', payload, token)
+    assert code == 200 and request['status'] == 'WAITING_FOR_UNITY'
+    request_id = request['request_id']
+    assert (project / 'CutSceneAI' / 'StudioBridge' / 'requests' /
+            (request_id + '.json')).is_file()
+    code, result = call(base + '/api/unity-source', {
+        **payload, 'action': 'status', 'request_id': request_id,
+    }, token)
+    assert code == 200 and result['status'] == 'WAITING_FOR_UNITY'
+    code, result = call(base + '/api/unity-source', {
+        **payload, 'action': 'status', 'request_id': '../escape',
+    }, token)
+    assert code == 422 and 'identity' in result['error'].lower()
+    code, result = call(base + '/api/unity-source', {
+        **payload, 'action': 'dangerously_run_any_editor_script',
+    }, token)
+    assert code == 422 and 'unsupported' in result['error'].lower()
