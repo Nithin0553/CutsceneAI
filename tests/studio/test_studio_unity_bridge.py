@@ -52,8 +52,15 @@ def test_valid_receipt_checks_evidence_bytes_and_provenance(project):
     evidence.mkdir()
     csir = evidence / (ticket + ".csir.json")
     census = evidence / "census.json"
-    csir.write_text('{"source":{"engine":"unity"}}')
-    census.write_text('{"source":"unity"}')
+    csir.write_text(json.dumps({
+        "schema_version": "0.1.0",
+        "source": {"engine": "unity", "project_fingerprint": "project_123"},
+    }))
+    census.write_text(json.dumps({
+        "kind": "cutsceneai.engine.feature_surface",
+        "engine": "unity",
+        "project_fingerprint": "project_123",
+    }))
     fields = {
         "csir_path": f"CutSceneAI/StudioBridge/evidence/{ticket}.csir.json",
         "census_path": "CutSceneAI/StudioBridge/evidence/census.json",
@@ -106,3 +113,29 @@ def test_bridge_rejects_symlinked_request_root(project, tmp_path):
         pytest.skip("symlink creation not available")
     with pytest.raises(UnityBridgeError, match="Unsafe"):
         request_snapshot(project)
+
+
+def test_matching_byte_hashes_cannot_hide_wrong_source_identity(project):
+    ticket = request_snapshot(project)["request_id"]
+    evidence = project / "CutSceneAI" / "StudioBridge" / "evidence"
+    evidence.mkdir()
+    csir = evidence / (ticket + ".csir.json")
+    census = evidence / "census.json"
+    csir.write_text(json.dumps({
+        "schema_version": "0.1.0",
+        "source": {"engine": "unity", "project_fingerprint": "project_one"},
+    }))
+    census.write_text(json.dumps({
+        "kind": "cutsceneai.engine.feature_surface",
+        "engine": "unity",
+        "project_fingerprint": "project_two",
+    }))
+    _receipt(
+        project, ticket,
+        csir_path=f"CutSceneAI/StudioBridge/evidence/{ticket}.csir.json",
+        csir_sha256=hashlib.sha256(csir.read_bytes()).hexdigest(),
+        census_path="CutSceneAI/StudioBridge/evidence/census.json",
+        census_sha256=hashlib.sha256(census.read_bytes()).hexdigest(),
+    )
+    with pytest.raises(UnityBridgeError, match="identity"):
+        snapshot_status(project, ticket)
