@@ -342,6 +342,26 @@ def inspect(csir_path, mapping_path, plan_path, source_project, source_scope, ta
     ]
     if unmapped_entities:
         warnings.append(str(len(unmapped_entities)) + ' source entities have no independent target actor binding; inspect CED coverage before claiming full scene transfer.')
+    # Separate visible, source-rendered objects from auxiliary Transform parents.
+    # A "generated" Level Sequence must not hide missing scenery under a
+    # generic count of unbound source entities.
+    missing_renderers = [
+        e for e in csir.get('entities', [])
+        if (e.get('metadata') or {}).get('scene_renderable_root') is True
+        and (e.get('metadata') or {}).get('active_self') is not False
+        and e.get('ced_type') == 'entity.prop'
+        and e.get('name') not in bindings
+    ]
+    if missing_renderers:
+        examples = ', '.join(str(e.get('name') or e.get('entity_id'))
+                             for e in missing_renderers[:6])
+        warnings.append(
+            str(len(missing_renderers)) +
+            ' visible scene renderer root(s) are NOT mapped into Unreal actors: ' +
+            examples + '. Verify source FBX identity and distinct names; '
+            'non-FBX primitives, multi-file LOD groups and unsupported meshes '
+            'require separate source-backed adapters.'
+        )
     # Import only textures identified by a mapped renderer's source material
     # or an explicit CSIR asset. Scanning all project PNGs imports unrelated
     # tutorial/editor assets and turns invalid placeholders into false warnings.
