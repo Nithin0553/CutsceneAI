@@ -52,7 +52,8 @@ def test_saved_binding_and_exact_boolean_key_are_required(
             locate_bound_objects=lambda *_: [LightComponent(label)],
         ),
         MovieScenePropertyTrackExtensions=SimpleNamespace(
-            get_property_path=lambda _: "cast_shadows",
+            get_property_path=lambda _: "CastShadows",
+            get_property_name=lambda _: "CastShadows",
         ),
         MovieSceneSectionExtensions=SimpleNamespace(get_all_channels=lambda section: [section]),
         MovieSceneTimeUnit=SimpleNamespace(DISPLAY_RATE="display"),
@@ -65,6 +66,7 @@ def test_saved_binding_and_exact_boolean_key_are_required(
         "kind": "property_bool", "target_class": "LightComponent",
         "source_component_id": "source-light", "adapter_name": "unity_light_shadow",
         "actor_label": "StageLight", "target_scope": "component",
+        "target_property_name": "cast_shadows", "native_property_name": "CastShadows",
         "target_property_path": "cast_shadows", "keys": [{"frame": 0, "value": True}],
     }], api=api)
     assert row["status"] == status

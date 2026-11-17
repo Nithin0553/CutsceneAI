@@ -802,6 +802,16 @@ def _target_scalar_object(actor: unreal.Actor, action: dict[str, Any]) -> Any:
     return candidate
 
 
+def _set_scalar_property_path(track: Any, action: dict[str, Any]) -> None:
+    # The Python editor property alias and the Sequencer UProperty binding
+    # can differ. CastShadows is the reflected name on ULightComponentBase.
+    native_name = action.get("native_property_name")
+    track.set_property_name_and_path(
+        str(native_name or action["target_property_name"]),
+        str(native_name or action["target_property_path"]),
+    )
+
+
 def _add_property_float(
     sequence: unreal.LevelSequence, actor: unreal.Actor, action: dict[str, Any],
 ) -> None:
@@ -809,10 +819,7 @@ def _add_property_float(
     binding = unreal.MovieSceneSequenceExtensions.add_possessable(sequence, target)
     track = binding.add_track(unreal.MovieSceneFloatTrack)
     track.set_display_name("CutSceneAI Scalar: " + str(action["source_semantic"]))
-    track.set_property_name_and_path(
-        str(action["target_property_name"]),
-        str(action["target_property_path"]),
-    )
+    _set_scalar_property_path(track, action)
     section = track.add_section()
     section.set_range(0, sequence.get_playback_end())
     channels = unreal_compat.get_section_channels(section)
@@ -837,9 +844,7 @@ def _add_property_bool(
     binding = unreal.MovieSceneSequenceExtensions.add_possessable(sequence, target)
     track = binding.add_track(unreal.MovieSceneBoolTrack)
     track.set_display_name("CutSceneAI Boolean: " + str(action["source_semantic"]))
-    track.set_property_name_and_path(
-        str(action["target_property_name"]), str(action["target_property_path"])
-    )
+    _set_scalar_property_path(track, action)
     section = track.add_section()
     section.set_range(0, sequence.get_playback_end())
     channels = unreal_compat.get_section_channels(section)
@@ -1181,7 +1186,10 @@ def build_prepared_files(
         expected_plan, expected_report, expected_evidence = transfer_backend.compose_files(
             csir_path, mapping_path, capture_path=capture_path
         )
-        submitted_plan = csir_plan.load_json(plan_path)
+        plan_bytes = Path(plan_path).read_bytes()
+        submitted_plan = json.loads(plan_bytes.decode("utf-8-sig"))
+        if not isinstance(submitted_plan, dict):
+            raise UnrealBuildError("Expected a prepared transfer plan object.")
         submitted_report = csir_plan.load_json(report_path)
         # Compare to the JSON encoding that wrote the prepared files.
         # Native planner vectors may be tuples; JSON round-trips into lists.
@@ -1207,6 +1215,7 @@ def build_prepared_files(
         receipt["source_track_count"] = submitted_report["source_track_count"]
         receipt["track_outcomes"] = submitted_report["outcomes"]
         receipt["planned_actions"] = submitted_report["actions"]
+        receipt["transfer_plan_sha256"] = hashlib.sha256(plan_bytes).hexdigest()
         receipt["stage"] = "unreal_capability_and_generation"
         # Once the Unreal builder begins, modifications are possible even
         # when actor rollback subsequently succeeds. Never claim otherwise.

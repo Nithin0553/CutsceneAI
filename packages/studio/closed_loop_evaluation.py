@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import math
+import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +17,45 @@ class EvidenceError(ValueError):
     """Untrusted or incompatible evidence, never a transfer PASS."""
 
 
+def redact_component_catalog(entries: Any) -> list[dict[str, Any]]:
+    """Expose only adapter identifiers, counts and proof limits to the model."""
+    if not isinstance(entries, list):
+        return []
+    result = []
+    for item in entries[:32]:
+        if not isinstance(item, dict):
+            continue
+        identity = {name: item.get(name) for name in ("adapter_id", "version", "semantic")}
+        if not all(isinstance(value, str) and re.fullmatch(r"[\w.:-]{1,96}", value, re.ASCII)
+                   for value in identity.values()):
+            continue
+        count = item.get("planned_occurrences")
+        result.append({
+            **identity, "planned_occurrences": max(0, count) if type(count) is int else 0,
+            "behavior_verified": False, "can_request_repair": False,
+        })
+    return result
+
+
+def _component_catalog(coverage: dict[str, Any] | None) -> list[dict[str, Any]]:
+    adaptive = (coverage or {}).get("adaptive_components") or {}
+    planned = Counter(
+        item.get("adapter_id") for item in adaptive.get("decisions", [])
+        if item.get("actions") and isinstance(item.get("adapter_id"), str)
+    )
+    return redact_component_catalog([
+        {**item, "planned_occurrences": planned[item["adapter_id"]]}
+        for item in adaptive.get("installed_component_adapters", [])
+    ])
+
+
 def evaluate(
     diagnostic: dict[str, Any] | None,
     visual: dict[str, Any] | None,
     *,
     max_motion_error_cm: float = 2.0,
     repair_iterations: int = 0,
+    coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Propose only existing CED-driven strategy domains, never guess fixes."""
     if isinstance(repair_iterations, bool) or not isinstance(repair_iterations, int) or not 0 <= repair_iterations <= 2:
@@ -101,6 +136,7 @@ def evaluate(
         "cinetwin_measured": measured,
         "issue_count": len(issues),
         "issues": issues,
+        "component_adapter_catalog": _component_catalog(coverage),
         "automatic_repair_executed": repair_iterations > 0,
         "repair_iterations_executed": repair_iterations,
         "fidelity_verified": False,

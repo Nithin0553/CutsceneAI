@@ -7,6 +7,7 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 - [CED-first pre-conversion discovery](architecture/CED_FIRST_PREFLIGHT_V0_1.md)
 - [CED local discovery registry](architecture/CED_DISCOVERY_REGISTRY_V0_1.md) — opt-in, redacted, deduplicated unknown-element observations
 - [Executable CED adapter contract](architecture/CED_ADAPTER_EXECUTION.md) — source-bound handlers, native actions and verification gates
+- [Native component adapter handoff](handoffs/COMPONENT_ADAPTER_DEVELOPMENT.md) — implementation branches and remaining editor evidence
 - [Integrated Studio smoke-test and merge audit (#93)](studio/ISSUE_93_INTEGRATED_SMOKE_TEST.md) — unified source, CED, agent and release gates
 - [Select CSIR and Source Census for each Studio transfer](studio/CSIR_CENSUS_SELECTION.md) — manual export choice, identity validation and refresh
 - [Diagnose blocked Unreal generation](studio/BLOCKED_GENERATION_DIAGNOSTICS.md) — native exception, failed stage, partial import recovery and read-only job inspection

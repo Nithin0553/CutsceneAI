@@ -306,7 +306,8 @@ def _execute(job):
     try:
         import closed_loop_evaluation
         assessment = closed_loop_evaluation.evaluate(
-            cine_report, visual_report, repair_iterations=len(repairs)
+            cine_report, visual_report, repair_iterations=len(repairs),
+            coverage=_load(candidate_dir / 'coverage-report.json'),
         )
         assessment_path = candidate_dir / ('closed-loop-evaluation-' + job['job_id'] + '.json')
         closed_loop_evaluation.write_new(assessment_path, assessment)

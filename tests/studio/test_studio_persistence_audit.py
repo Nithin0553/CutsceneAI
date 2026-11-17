@@ -1,6 +1,7 @@
 """Read-only Studio persistence verification; these mocks do NOT prove Unreal fidelity."""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -350,3 +351,19 @@ def test_distinct_process_does_not_override_provenance_incomplete(tmp_path):
     report = AUDIT.audit(jobfile, candidate / "audit.json", unreal_api=fake)
     assert report["restart_verified"] is False
     assert report["status"] == "STRUCTURAL_READBACK_INCOMPLETE"
+
+
+def test_readback_rejects_changed_plan_even_if_sequence_identity_matches(tmp_path):
+    _root, jobfile, candidate, fake, _assets, _actors = fixture(tmp_path)
+    plan_path = candidate / "transfer-plan.json"
+    manifest_path = candidate / "automatic-setup.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["transfer_plan_sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    _write(manifest_path, manifest)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["actions"] = [{"kind": "property_bool", "source_component_id": "new-source"}]
+    _write(plan_path, plan)
+    output = candidate / "audit.json"
+    with pytest.raises(AUDIT.PersistenceAuditError, match=r"automatic_setup\.transfer_plan_sha256"):
+        AUDIT.audit(jobfile, output, unreal_api=fake)
+    assert not output.exists()
