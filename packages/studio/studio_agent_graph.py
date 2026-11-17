@@ -11,13 +11,17 @@ import hashlib
 import json
 import math
 import os
+import re
+import sys
 import uuid
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 
+import agent_intent_router
 from closed_loop_evaluation import redact_component_catalog
 
 MAX_REPAIRS = 2
+MAX_USER_COMMENT = 1200
 ALLOWED_STRATEGIES = {"restore_source_albedo", "report_only"}
 
 
@@ -43,6 +47,8 @@ class AgentState(TypedDict, total=False):
     failure: str
     fidelity_verified: bool
     source_evidence_sha256: str
+    feedback_id: str
+    intent_routing: dict[str, Any]
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -124,6 +130,56 @@ def _ced_policy() -> dict[str, Any]:
     }
 
 
+def _approved_precedents(workspace: Path, job: dict[str, Any]) -> list[dict[str, Any]]:
+    """Give the reasoning model *redacted* verified CED mapping precedents.
+
+    Case lookup has no engine mutation permission. Candidate paths, source
+    asset bytes and executable parameters never enter the LLM summary.
+    """
+    store = workspace / "learning" / "approved-cases"
+    if not store.is_dir() or store.is_symlink():
+        return []
+    package = str(Path(__file__).resolve().parents[1] / "learning")
+    if package not in sys.path:
+        sys.path.insert(0, package)
+    try:
+        from case_memory import list_cases, read_json, suggest
+        source = read_json(Path(str(job["csir"])))
+        fingerprint = str(source.get("source", {}).get("project_fingerprint") or "")
+        proposals = suggest(
+            source, list_cases(store),
+            exclude_project_fingerprint=fingerprint,
+            limit=3,
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+
+    def identifier(value: Any) -> str:
+        text = str(value or "")
+        return text if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,95}", text) else ""
+
+    precedents = []
+    for item in proposals:
+        labels = []
+        for raw in item.get("candidate_resolutions", [])[:6]:
+            if not isinstance(raw, dict):
+                continue
+            entry = {key: identifier(raw.get(key)) for key in
+                     ("ced", "resolver", "outcome")}
+            if all(entry.values()):
+                labels.append(entry)
+        if labels:
+            precedents.append({
+                "case_id": item.get("case_id"),
+                "similarity": item.get("similarity"),
+                "ced_mapping_labels": labels,
+                "proposal_only": True,
+                "can_execute_tools": False,
+                "full_fidelity_verified": False,
+            })
+    return precedents
+
+
 def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
     if not os.environ.get("OPENAI_API_KEY"):
         raise AgentError("OPENAI_API_KEY is not configured in the local Studio process.")
@@ -137,6 +193,9 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
         model=os.environ.get("CUTSCENEAI_AGENT_MODEL", "gpt-5-mini"),
         instructions=(
             "You are a diagnostic repair selector in CutSceneAI Studio. "
+            "A user's natural-language observation is unverified until independent "
+            "native readback confirms the relevant discrepancy. Never edit a "
+            "different semantic domain merely because it has a detected issue. "
             "Return only JSON. Choose strategy restore_source_albedo ONLY if "
             "that strategy is eligible from independently verified source GUID "
             "texture provenance and current Unreal character fallback slots; "
@@ -160,6 +219,28 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
     return {"strategy": result["strategy"], "reason": result["reason"]}
 
 
+def _current_user_feedback(candidate: Path, job: dict[str, Any]) -> dict[str, Any] | None:
+    """Read an immutable, job-bound user correction without authorizing execution."""
+    tools_path = str(Path(__file__).resolve().parents[2] / "tools")
+    if tools_path not in sys.path:
+        sys.path.insert(0, tools_path)
+    import studio_agent_feedback
+    return studio_agent_feedback.active_feedback(candidate, job)
+
+
+def _material_feedback_scope(message: str) -> bool:
+    """Conservative executable guard for the only installed repair strategy.
+
+    Unknown user language is still sent for diagnosis but cannot trigger an
+    unrelated material edit merely because the model suggests it.
+    """
+    return bool(re.search(
+        r"\b(material|materials|texture|textures|albedo|base.colou?r|"
+        r"material.slot|missing.texture|pink.material|checkerboard.texture)\b",
+        message.casefold(),
+    ))
+
+
 def build_graph(workspace: Path, job: dict[str, Any],
                 reasoner: Callable[[dict[str, Any]], dict[str, str]] | None = None):
     """Return an actual compiled LangGraph StateGraph with conditional retry loop."""
@@ -171,6 +252,9 @@ def build_graph(workspace: Path, job: dict[str, Any],
     candidate = _candidate(workspace, job)
     job_id = str(job["job_id"])
     choose = reasoner or _model_reasoner
+    comment = _current_user_feedback(candidate, job)
+    user_message = str(comment.get("message") or "") if comment else ""
+    relevant_material_request = not comment or _material_feedback_scope(user_message)
 
     def inspect(state: AgentState) -> dict[str, Any]:
         if state.get("pending_request"):
@@ -195,6 +279,32 @@ def build_graph(workspace: Path, job: dict[str, Any],
         issues = feedback.get("issues") or []
         if not isinstance(issues, list):
             raise AgentError("Invalid independent issue list.")
+        issues = list(issues)
+        try:
+            routing = agent_intent_router.route(
+                user_message if comment else None,
+                generation_complete=job.get("generation_status") == "GENERATED_UNVERIFIED",
+                native_material_fallback_slots=count,
+                source_albedo_provenance=_source_materials(candidate),
+                completed_repairs=state.get("iterations", 0),
+                repair_budget=MAX_REPAIRS,
+                independent_issues=issues,
+                adapter_catalog=feedback.get("component_adapter_catalog"),
+                fallback_observation_scope=(
+                    "character" if "character_material_slots_engine_default" in visual
+                    else "global"
+                ),
+            )
+        except agent_intent_router.IntentError as exc:
+            raise AgentError("Agent feedback routing blocked: " + str(exc)) from exc
+        if comment:
+            # A user's observation is valuable, but is not an independently
+            # measured CineTwin mismatch until native evidence confirms it.
+            issues.append({
+                "category": "USER_REPORTED_UNVERIFIED_DISCREPANCY",
+                "comment": user_message[:MAX_USER_COMMENT],
+                "verified": False,
+            })
         eligible = bool(
             job.get("generation_status") == "GENERATED_UNVERIFIED"
             and job.get("automatic_setup") and _source_materials(candidate)
@@ -210,6 +320,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "source_evidence_sha256": hashlib.sha256(json.dumps(
                 feedback, sort_keys=True).encode()).hexdigest(),
             "eligible_repair": eligible,
+            "intent_routing": routing,
         }
         if not issues:
             return {**base, "status": "NO_DETECTED_GAPS_FIDELITY_UNVERIFIED"}
@@ -233,12 +344,17 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "component_adapter_catalog": state.get("component_adapter_catalog", [])[:32],
             "unreal_character_fallback_slots": state["last_fallback"],
             "source_guid_backed_albedo": _source_materials(candidate),
-            "safe_strategies": (
-                sorted(ALLOWED_STRATEGIES) if state.get("eligible_repair")
-                else ["report_only"]
-            ),
+            "safe_strategies": state["intent_routing"]["safe_strategies"],
+            "interpreted_request": state["intent_routing"]["intent"],
+            "capability_decision": state["intent_routing"]["disposition"],
+            "capability_evidence": state["intent_routing"]["reason"],
+            "registered_adapters_informational":
+                state["intent_routing"]["registered_adapters_informational"],
+            "user_feedback": user_message[:MAX_USER_COMMENT] if comment else "",
+            "user_feedback_is_unverified": bool(comment),
             "remaining_repairs": MAX_REPAIRS - state.get("iterations", 0),
             "issues": state["issues"][:30],
+            "verified_ced_precedents": _approved_precedents(workspace, job),
         }
         try:
             suggestion = choose(summary)
@@ -249,8 +365,12 @@ def build_graph(workspace: Path, job: dict[str, Any],
         except Exception as exc:
             return {"status": "AGENT_REASONING_UNAVAILABLE",
                     "failure": str(exc)[:500], "chosen_strategy": "report_only"}
+        if strategy not in state["intent_routing"]["safe_strategies"]:
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "LLM proposal is not in the evidence-backed capability route.",
+                    "chosen_strategy": "report_only"}
         if strategy == "restore_source_albedo" and not (
-            state.get("eligible_repair") and
+            state.get("eligible_repair") and relevant_material_request and
             state["last_fallback"] > 0 and _source_materials(candidate)
         ):
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
@@ -259,7 +379,11 @@ def build_graph(workspace: Path, job: dict[str, Any],
         return {
             "status": "REPAIR_SELECTED" if strategy == "restore_source_albedo"
                       else "UNRESOLVED_NO_SAFE_STRATEGY",
-            "chosen_strategy": strategy, "reasoning": message,
+            "chosen_strategy": strategy,
+            "reasoning": (
+                state["intent_routing"]["reason"] + " " + message
+                if comment and strategy == "report_only" else message
+            ),
         }
 
     def dispatch(state: AgentState) -> dict[str, Any]:
@@ -368,6 +492,20 @@ def run_once(workspace: Path, job: dict[str, Any],
     }
     if state["job_id"] != job["job_id"] or state["candidate_id"] != job["candidate_id"]:
         raise AgentError("Agent state identity mismatch.")
+    comment = _current_user_feedback(candidate, job)
+    if comment and state.get("feedback_id") != comment["feedback_id"]:
+        if state.get("pending_request"):
+            raise AgentError("Cannot restart a correction while a native repair is pending.")
+        # New user feedback starts a fresh diagnosis for the same generated
+        # candidate, but NEVER resets the global repair budget or history.
+        state = {
+            **state,
+            "feedback_id": comment["feedback_id"],
+            "pending_request": "",
+            "status": "NEW",
+            "reasoning": "",
+            "failure": "",
+        }
     if state.get("status") in FINISHED:
         return state
     if job.get("status") in {"RUNNING", "QUEUED"}:
