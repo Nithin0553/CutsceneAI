@@ -79,6 +79,7 @@ namespace CutSceneAI.CineTwin
         private class BoneDefinition
         {
             public string bone_id;
+            public string native_bone_name;
             public string parent_bone_id;
             public string hierarchy_path;
         }
@@ -484,6 +485,7 @@ namespace CutSceneAI.CineTwin
                         bones = allBones.Select(bone => new BoneDefinition
                         {
                             bone_id = bone.bone_id,
+                            native_bone_name = bone.transform.name,
                             parent_bone_id = bone.transform.parent != null
                                 && boneIds.TryGetValue(
                                     bone.transform.parent, out string parentId)

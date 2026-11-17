@@ -228,9 +228,10 @@ class _TickSession:
                 "unmapped_source_entities": self.request["missing"],
                 "skeletal_rig_count": len(self.rigs),
                 "full_temporal_coverage": full,
-                "pose_semantic_comparison": "NOT_IMPLEMENTED_REQUIRES_BONE_MAPPING",
+                "pose_semantic_comparison": "PENDING_MEASURED_BONE_CORRESPONDENCE",
             },
             "native_rigs": self.rigs,
+            "skeletal_bone_maps": self.request["skeletal_bone_maps"],
             "samples": self.samples,
             "quality": {
                 "method": "slate_post_tick_between_sequencer_seeks",

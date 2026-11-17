@@ -63,6 +63,15 @@ def prepare_observation(
             "Cannot observe animated source rigs without target actor mappings: "
             + ", ".join(missing_rigs)
         )
+    bone_maps = mapping.get("skeletal_bone_maps", {})
+    if not isinstance(bone_maps, dict) or set(bone_maps) - rig_ids:
+        raise TargetPlanError("Skeletal bone maps must identify mapped source rigs.")
+    for rig_id, pairs in bone_maps.items():
+        if (not isinstance(pairs, dict) or not pairs or len(pairs) > 4096
+                or any(not isinstance(bone, str) or not bone or not isinstance(target, str) or not target
+                       for bone, target in pairs.items())
+                or len(set(pairs.values())) != len(pairs)):
+            raise TargetPlanError(f"Skeletal bone map must pair distinct bones for rig {rig_id}.")
 
     selected_times = all_times if max_samples is None else all_times[:max_samples]
     return {
@@ -73,4 +82,5 @@ def prepare_observation(
         "bound": bound,
         "missing": missing,
         "skeletal_rigs": resolved_rigs,
+        "skeletal_bone_maps": bone_maps,
     }
