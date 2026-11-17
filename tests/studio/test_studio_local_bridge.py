@@ -686,3 +686,30 @@ def test_unity_source_bridge_is_explicit_and_token_guarded(service):
         **payload, 'action': 'dangerously_run_any_editor_script',
     }, token)
     assert code == 422 and 'unsupported' in result['error'].lower()
+
+
+def test_default_agent_first_endpoints_require_local_session_token(service):
+    base, tmp = service
+    initial = call(base + '/api/status')[1]
+    assert call(base + '/api/autopilot')[1]['status'] == 'IDLE'
+    assert call(base + '/api/agent-conversation')[1]['available'] is False
+
+    request = {
+        'unity_folder': str(tmp / 'unity'),
+        'unreal_folder': str(tmp / 'unreal'),
+        'source_rights_confirmed': False,
+    }
+    code, denied = call(base + '/api/autopilot/start', request)
+    assert code == 403 and 'token' in denied['error'].lower()
+    code, blocked = call(base + '/api/autopilot/start', request, initial['token'])
+    assert code == 422 and 'rights' in blocked['error'].lower()
+
+    code, denied = call(base + '/api/agent-feedback', {
+        'message': 'The character is facing the wrong direction.',
+    })
+    assert code == 403 and 'token' in denied['error'].lower()
+    code, blocked = call(base + '/api/agent-feedback', {
+        'message': 'The character is facing the wrong direction.',
+    }, initial['token'])
+    assert code == 422 and 'complete a transfer' in blocked['error'].lower()
+    assert not (tmp / 'work' / 'autopilot-active.json').exists()
