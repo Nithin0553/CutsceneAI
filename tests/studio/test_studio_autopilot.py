@@ -42,6 +42,12 @@ def rig(tmp_path, monkeypatch):
                         lambda _: {"request_id": ticket, "instruction": "Open Unity"})
     monkeypatch.setattr(studio_autopilot.unity_bridge, "snapshot_status",
                         lambda *args: {"status": "WAITING_FOR_UNITY"})
+    monkeypatch.setattr(studio_autopilot.unity_bridge, "request_behavior_capture",
+                        lambda *args: {"request_id": "c" * 32,
+                                       "instruction": "Enter Unity Play Mode."})
+    monkeypatch.setattr(studio_autopilot.unity_bridge, "behavior_capture_status",
+                        lambda *args: {"status": "SUCCEEDED",
+                                       "capture_path": str(project / "capture.json")})
     monkeypatch.setattr(studio_autopilot.discovery, "build_connection", lambda *args, **kwargs: {
         "csir": str(project / "source.csir.json"), "target_project": str(target / "Target.uproject"),
         "unity_project": str(project), "level_path": "/Game/Trial",
@@ -123,6 +129,7 @@ def test_one_transfer_advances_through_all_stages_without_extra_user_calls(rig, 
                             "status": "SUCCEEDED",
                             "csir_path": str(csir), "census_path": str(census),
                         })
+    assert studio_autopilot.advance(workspace, service=service)["status"] == "WAITING_FOR_UNITY_CAPTURE"
     assert studio_autopilot.advance(workspace, service=service)["status"] == "CONNECTING"
     assert studio_autopilot.advance(workspace, service=service)["status"] == "PREPARING"
     assert studio_autopilot.advance(workspace, service=service)["status"] == "WAITING_FOR_UNREAL"
@@ -159,8 +166,58 @@ def test_missing_native_worker_does_not_guess_target_editor_level(rig, monkeypat
                             "status": "SUCCEEDED", "csir_path": str(project / "source.csir.json"),
                             "census_path": str(project / "census.json"),
                         })
+    assert studio_autopilot.advance(workspace, service=service)["status"] == "WAITING_FOR_UNITY_CAPTURE"
     assert studio_autopilot.advance(workspace, service=service)["status"] == "CONNECTING"
     result = studio_autopilot.advance(workspace, service=service)
     assert result["status"] == "CONNECTING"
     assert "Unreal" in result["message"]
     assert not (workspace / "connection.json").exists()
+
+
+
+def test_source_play_mode_capture_waits_without_faking_evidence(rig, monkeypatch):
+    workspace, project, target, service, _ = rig
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    monkeypatch.setattr(studio_autopilot.unity_bridge, "snapshot_status",
+                        lambda *args: {
+                            "status": "SUCCEEDED",
+                            "csir_path": str(project / "source.csir.json"),
+                            "census_path": str(project / "census.json"),
+                        })
+    monkeypatch.setattr(studio_autopilot.unity_bridge, "behavior_capture_status",
+                        lambda *args: {
+                            "status": "WAITING_FOR_UNITY_PLAY_MODE",
+                            "message": "Enter Play Mode; no source behavior was invented.",
+                        })
+    assert studio_autopilot.advance(workspace, service=service)["status"] == "WAITING_FOR_UNITY_CAPTURE"
+    waiting = studio_autopilot.advance(workspace, service=service)
+    assert waiting["status"] == "WAITING_FOR_UNITY_CAPTURE"
+    assert "Play Mode" in waiting["message"]
+    assert not (workspace / "connection.json").exists()
+    assert not (workspace / "active-candidate.json").exists()
+
+
+def test_blocked_native_source_capture_never_queues_unreal_job(rig, monkeypatch):
+    workspace, project, target, service, _ = rig
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    monkeypatch.setattr(studio_autopilot.unity_bridge, "snapshot_status",
+                        lambda *args: {
+                            "status": "SUCCEEDED",
+                            "csir_path": str(project / "source.csir.json"),
+                            "census_path": str(project / "census.json"),
+                        })
+    monkeypatch.setattr(studio_autopilot.unity_bridge, "behavior_capture_status",
+                        lambda *args: {
+                            "status": "BLOCKED", "reason": "Mismatched Unity Timeline GUID.",
+                        })
+    assert studio_autopilot.advance(workspace, service=service)["status"] == "WAITING_FOR_UNITY_CAPTURE"
+    blocked = studio_autopilot.advance(workspace, service=service)
+    assert blocked["status"] == "BLOCKED"
+    assert "Mismatched Unity Timeline" in blocked["error"]
+    assert not (workspace / "active-job.json").exists()
