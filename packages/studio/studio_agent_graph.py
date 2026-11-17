@@ -374,8 +374,10 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "status": "REPAIR_SELECTED" if strategy == "restore_source_albedo"
                       else "UNRESOLVED_NO_SAFE_STRATEGY",
             "chosen_strategy": strategy,
-            "reasoning": message if strategy == "restore_source_albedo" else
-                         state["intent_routing"]["reason"] + " " + message,
+            "reasoning": (
+                state["intent_routing"]["reason"] + " " + message
+                if comment and strategy == "report_only" else message
+            ),
         }
 
     def dispatch(state: AgentState) -> dict[str, Any]:
