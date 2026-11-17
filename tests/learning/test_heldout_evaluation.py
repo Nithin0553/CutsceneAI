@@ -111,6 +111,11 @@ def test_data_export_only_contains_training_project_cases(tmp_path):
     ]
     assert set(ids) == set(manifest["splits"]["train"]["case_ids"])
     assert not (set(ids) & set(manifest["splits"]["holdout"]["case_ids"]))
+    # Only reviewed policy identifiers may train: never ship executable
+    # parameters or arbitrary source/target asset paths in the JSONL.
+    exported = (tmp_path / "batch" / "train.jsonl").read_text()
+    assert '"parameters"' not in exported
+    assert "local_path" not in exported
     with pytest.raises(heldout.EvaluationError, match="overwrite"):
         heldout.export_training(cases, manifest, tmp_path / "batch")
 
