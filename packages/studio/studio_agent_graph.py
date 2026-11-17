@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, TypedDict
 
 MAX_REPAIRS = 2
+MAX_USER_COMMENT = 1200
 ALLOWED_STRATEGIES = {"restore_source_albedo", "report_only"}
 
 
@@ -42,6 +43,7 @@ class AgentState(TypedDict, total=False):
     failure: str
     fidelity_verified: bool
     source_evidence_sha256: str
+    feedback_id: str
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -186,6 +188,9 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
         model=os.environ.get("CUTSCENEAI_AGENT_MODEL", "gpt-5-mini"),
         instructions=(
             "You are a diagnostic repair selector in CutSceneAI Studio. "
+            "A user's natural-language observation is unverified until independent "
+            "native readback confirms the relevant discrepancy. Never edit a "
+            "different semantic domain merely because it has a detected issue. "
             "Return only JSON. Choose strategy restore_source_albedo ONLY if "
             "that strategy is eligible from independently verified source GUID "
             "texture provenance and current Unreal character fallback slots; "
@@ -209,6 +214,28 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
     return {"strategy": result["strategy"], "reason": result["reason"]}
 
 
+def _current_user_feedback(candidate: Path, job: dict[str, Any]) -> dict[str, Any] | None:
+    """Read an immutable, job-bound user correction without authorizing execution."""
+    tools_path = str(Path(__file__).resolve().parents[2] / "tools")
+    if tools_path not in sys.path:
+        sys.path.insert(0, tools_path)
+    import studio_agent_feedback
+    return studio_agent_feedback.active_feedback(candidate, job)
+
+
+def _material_feedback_scope(message: str) -> bool:
+    """Conservative executable guard for the only installed repair strategy.
+
+    Unknown user language is still sent for diagnosis but cannot trigger an
+    unrelated material edit merely because the model suggests it.
+    """
+    return bool(re.search(
+        r"\b(material|materials|texture|textures|albedo|base.colou?r|"
+        r"material.slot|missing.texture|pink.material|checkerboard.texture)\b",
+        message.casefold(),
+    ))
+
+
 def build_graph(workspace: Path, job: dict[str, Any],
                 reasoner: Callable[[dict[str, Any]], dict[str, str]] | None = None):
     """Return an actual compiled LangGraph StateGraph with conditional retry loop."""
@@ -220,6 +247,9 @@ def build_graph(workspace: Path, job: dict[str, Any],
     candidate = _candidate(workspace, job)
     job_id = str(job["job_id"])
     choose = reasoner or _model_reasoner
+    comment = _current_user_feedback(candidate, job)
+    user_message = str(comment.get("message") or "") if comment else ""
+    relevant_material_request = not comment or _material_feedback_scope(user_message)
 
     def inspect(state: AgentState) -> dict[str, Any]:
         if state.get("pending_request"):
@@ -244,6 +274,15 @@ def build_graph(workspace: Path, job: dict[str, Any],
         issues = feedback.get("issues") or []
         if not isinstance(issues, list):
             raise AgentError("Invalid independent issue list.")
+        issues = list(issues)
+        if comment:
+            # A user's observation is valuable, but is not an independently
+            # measured CineTwin mismatch until native evidence confirms it.
+            issues.append({
+                "category": "USER_REPORTED_UNVERIFIED_DISCREPANCY",
+                "comment": user_message[:MAX_USER_COMMENT],
+                "verified": False,
+            })
         eligible = bool(
             job.get("generation_status") == "GENERATED_UNVERIFIED"
             and job.get("automatic_setup") and _source_materials(candidate)
@@ -279,9 +318,12 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "unreal_character_fallback_slots": state["last_fallback"],
             "source_guid_backed_albedo": _source_materials(candidate),
             "safe_strategies": (
-                sorted(ALLOWED_STRATEGIES) if state.get("eligible_repair")
+                sorted(ALLOWED_STRATEGIES) if
+                (state.get("eligible_repair") and relevant_material_request)
                 else ["report_only"]
             ),
+            "user_feedback": user_message[:MAX_USER_COMMENT] if comment else "",
+            "user_feedback_is_unverified": bool(comment),
             "remaining_repairs": MAX_REPAIRS - state.get("iterations", 0),
             "issues": state["issues"][:30],
             "verified_ced_precedents": _approved_precedents(workspace, job),
@@ -296,7 +338,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             return {"status": "AGENT_REASONING_UNAVAILABLE",
                     "failure": str(exc)[:500], "chosen_strategy": "report_only"}
         if strategy == "restore_source_albedo" and not (
-            state.get("eligible_repair") and
+            state.get("eligible_repair") and relevant_material_request and
             state["last_fallback"] > 0 and _source_materials(candidate)
         ):
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
@@ -414,6 +456,20 @@ def run_once(workspace: Path, job: dict[str, Any],
     }
     if state["job_id"] != job["job_id"] or state["candidate_id"] != job["candidate_id"]:
         raise AgentError("Agent state identity mismatch.")
+    comment = _current_user_feedback(candidate, job)
+    if comment and state.get("feedback_id") != comment["feedback_id"]:
+        if state.get("pending_request"):
+            raise AgentError("Cannot restart a correction while a native repair is pending.")
+        # New user feedback starts a fresh diagnosis for the same generated
+        # candidate, but NEVER resets the global repair budget or history.
+        state = {
+            **state,
+            "feedback_id": comment["feedback_id"],
+            "pending_request": "",
+            "status": "NEW",
+            "reasoning": "",
+            "failure": "",
+        }
     if state.get("status") in FINISHED:
         return state
     if job.get("status") in {"RUNNING", "QUEUED"}:
