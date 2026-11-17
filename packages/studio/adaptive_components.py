@@ -79,6 +79,7 @@ def _light_shadow_action(_csir, _mapping, row, target) -> dict[str, Any]:
         "target_class": "LightComponent",
         "target_property_name": "cast_shadows",
         "target_property_path": "cast_shadows",
+        "native_property_name": "CastShadows",
         "source_semantic": "light.shadow",
         "source_component_type": SOURCE_LIGHT,
         "source_component_id": str(row.get("component_global_id") or ""),
@@ -251,6 +252,12 @@ def adapt(
         "UnityEngine.Rendering.Universal.UniversalAdditionalLightData",
         *(rule["source_component_type"] for rule in rules),
     }
+    package_versions: dict[str, list[str]] = {}
+    for package in census.get("installed_packages") or []:
+        if isinstance(package, dict) and isinstance(package.get("name"), str) and isinstance(
+            package.get("version"), str
+        ):
+            package_versions.setdefault(package["name"], []).append(package["version"])
     actions: list[dict[str, Any]] = []
     decisions: list[dict[str, Any]] = []
     reserved: set[tuple[str, str]] = set()
@@ -318,7 +325,7 @@ def adapt(
                     )
                 action = handlers.plan_component(
                     spec, csir=csir, mapping=mapping, row=row, target=target,
-                    location=desc["source_location"],
+                    location=desc["source_location"], package_versions=package_versions,
                 )
                 token = _target_slot(action)
                 if token in reserved:

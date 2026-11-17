@@ -65,3 +65,12 @@ and LODGroup source capture.
 The measured scope is static geometry. Physics interaction and callback
 parity need independently sampled results from actual interactions in
 the two engines before these use cases can advance beyond geometry.
+
+Unity documents the source capsule axes and dimensions.
+[Capsule direction](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/CapsuleCollider-direction.html)
+· [Capsule height](https://docs.unity3d.com/2022.3/Documentation/ScriptReference/CapsuleCollider-height.html)
+
+Unreal exposes the native shape APIs used by the adapter.
+[BoxComponent](https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/class/BoxComponent)
+· [SphereComponent](https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/class/SphereComponent)
+· [TriggerCapsule](https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/class/TriggerCapsule)

@@ -134,12 +134,16 @@ class ComponentAdapter:
     behavior: str
     unsupported_properties: tuple[str, ...]
     planner: Callable[..., dict[str, Any]]
+    source_package: str = ""
+    source_package_versions: tuple[str, ...] = ()
 
     def describe(self) -> dict[str, Any]:
         """Data-only capabilities for reports and agent discovery."""
         return {
             "adapter_id": self.adapter_id, "version": self.version,
             "source_type": self.source_type, "source_assembly": self.source_assembly,
+            "source_package": self.source_package,
+            "source_package_versions": list(self.source_package_versions),
             "semantic": self.semantic, "source_unity_versions": list(self.source_versions),
             "target_unreal_versions": list(self.target_versions),
             "target_classes": list(self.target_classes), "action_kind": self.action_kind,
@@ -251,6 +255,9 @@ def _validate_scalar_adapter_action(
         raise FeatureDispatchError("Scalar CED adapter requires native target identifiers.")
     if action.get("target_property_path") != action["target_property_name"]:
         raise FeatureDispatchError("Nested Unreal scalar properties need a distinct adapter.")
+    native = action.get("native_property_name")
+    if native is not None and (not isinstance(native, str) or not _NATIVE_IDENTIFIER.fullmatch(native)):
+        raise FeatureDispatchError("Scalar CED adapter native property name must be an identifier.")
     entity = mapping.get("entities", {}).get(action.get("entity_name"))
     if (not isinstance(entity, dict) or not entity.get("actor_label")
         or entity["actor_label"] != action.get("actor_label")):
@@ -388,6 +395,8 @@ class HandlerRegistry:
             raise FeatureDispatchError("Component adapter requires a namespaced CED semantic.")
         if spec.action_kind not in COMPONENT_ACTIONS:
             raise FeatureDispatchError("Component adapter requires an installed native component action.")
+        if bool(spec.source_package) != bool(spec.source_package_versions):
+            raise FeatureDispatchError("Package adapters require package identity and supported versions.")
         if (not spec.target_classes
                 or not all(_NATIVE_IDENTIFIER.fullmatch(name) for name in spec.target_classes)
                 or not spec.source_versions or not spec.target_versions
@@ -405,13 +414,25 @@ class HandlerRegistry:
     def plan_component(
         self, spec: ComponentAdapter, *, csir: Mapping[str, Any],
         mapping: Mapping[str, Any], row: Mapping[str, Any], target: Mapping[str, Any],
-        location: str,
+        location: str, package_versions: Mapping[str, list[str]],
     ) -> dict[str, Any]:
         """Compile a source-audited occurrence into one allowlisted native action."""
         if self.component_for(str(row.get("component_type") or "")) is not spec:
             raise FeatureDispatchError("Source component adapter is not installed.")
         if row.get("component_assembly") != spec.source_assembly:
             raise ComponentEvidenceError("SOURCE_COMPONENT_ASSEMBLY_UNSUPPORTED")
+        if spec.source_package and (
+            row.get("component_package") != spec.source_package
+            or row.get("component_package_version") not in spec.source_package_versions
+        ):
+            raise ComponentEvidenceError("SOURCE_COMPONENT_PACKAGE_OR_VERSION_UNSUPPORTED")
+        if spec.source_package and package_versions.get(spec.source_package) != [
+            row["component_package_version"]
+        ]:
+            raise ComponentEvidenceError("INSTALLED_SOURCE_PACKAGE_IDENTITY_REQUIRED")
+        target_version = mapping.get("target_engine_version")
+        if target_version and engine_version_family(str(target_version)) not in spec.target_versions:
+            raise ComponentEvidenceError("TARGET_ENGINE_VERSION_UNSUPPORTED")
         if engine_version_family(str(csir["source"].get("engine_version") or "")) not in (
             spec.source_versions
         ):

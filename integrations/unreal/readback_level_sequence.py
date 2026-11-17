@@ -556,11 +556,13 @@ def read_registered_scalar_components(
     api = unreal if api is None else api
     results = []
     for action in actions:
+        native_name = action.get("native_property_name")
+        native_path = native_name or action["target_property_path"]
         result = {
             "source_component_id": action["source_component_id"],
             "adapter_name": action["adapter_name"],
             "actor_label": action["actor_label"],
-            "target_property_path": action["target_property_path"],
+            "target_property_path": native_path,
             "expected_keys": action["keys"],
             "observed_keys": None,
             "status": "INCOMPLETE",
@@ -585,8 +587,9 @@ def read_registered_scalar_components(
                     continue
                 tracks.extend(track for track in binding.get_tracks()
                               if isinstance(track, track_class)
-                              and str(property_api.get_property_path(track))
-                              == action["target_property_path"])
+                              and str(property_api.get_property_path(track)) == native_path
+                              and str(property_api.get_property_name(track))
+                              == (native_name or action["target_property_name"]))
             if len(tracks) != 1:
                 result["status"] = "FAIL"
                 result["reason"] = "EXPECTED_ONE_NATIVE_PROPERTY_TRACK"

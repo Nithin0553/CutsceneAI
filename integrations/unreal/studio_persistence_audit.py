@@ -152,8 +152,22 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
             or runtime.get("status") != "GENERATED_UNVERIFIED"
             or runtime.get("stage") != "complete"):
         raise PersistenceAuditError("Generation receipt does not prove completed engine generation.")
-    plan = _json(candidate_dir / "transfer-plan.json")
+    plan_bytes = (candidate_dir / "transfer-plan.json").read_bytes()
+    plan = json.loads(plan_bytes.decode("utf-8-sig"))
+    if not isinstance(plan, dict):
+        raise PersistenceAuditError("Expected a prepared transfer plan object.")
+    plan_sha = hashlib.sha256(plan_bytes).hexdigest()
     provenance_missing = _verify_identity(job, setup, manifest, plan)
+    requires_plan_proof = any(
+        action.get("source_component_id") and action.get("adapter_name")
+        for action in plan.get("actions", [])
+    )
+    for name, record in (("automatic_setup", manifest), ("generation", runtime)):
+        expected = record.get("transfer_plan_sha256")
+        if expected is not None and expected != plan_sha:
+            raise PersistenceAuditError("Evidence identity mismatch: " + name + ".transfer_plan_sha256")
+        if requires_plan_proof and expected is None:
+            provenance_missing.append(name + ".transfer_plan_sha256")
     expected_project, expected_level = str(job["expected_project"]), str(job["expected_level"])
     observed_project, observed_level = _loaded_project(api), _loaded_level(api)
     if _project_key(observed_project) != _project_key(expected_project):
@@ -228,9 +242,11 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         from readback_level_sequence import read_registered_scalar_components
 
         component_rows = read_registered_scalar_components(sequence, scalar_actions, api=api)
-    from studio_collider_shapes import from_plan, inspect
+    colliders = [a for a in plan.get("actions", []) if a.get("kind") == "collider_primitive_shape"]
+    if colliders:
+        from studio_collider_shapes import inspect
 
-    component_rows.extend(inspect(api, from_plan(plan), actor_list))
+        component_rows.extend(inspect(api, colliders, actor_list))
     component_fail = any(row["status"] == "FAIL" for row in component_rows)
     component_incomplete = any(row["status"] == "INCOMPLETE" for row in component_rows)
     native_status = (
@@ -299,7 +315,7 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         "native_structure_issues": native_issues,
         "sequence_persisted": sequence_ok, "sequence_enumeration_complete": enumerable,
         "source_manifest_sha256": _sha(candidate_dir / "automatic-setup.json"),
-        "transfer_plan_sha256": _sha(candidate_dir / "transfer-plan.json"),
+        "transfer_plan_sha256": plan_sha,
         "setup_receipt_sha256": _sha(setup_file),
         "generation_receipt_sha256": _sha(runtime_file),
         "limitations": [

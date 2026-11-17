@@ -81,6 +81,43 @@ Previously saved source documents can be reused. Prepare a new candidate
 after updating Studio because the worker recomputes the immutable plan and
 coverage report with the installed registry.
 
+### Unity package and custom component adapters
+
+The feature census preserves the class, assembly version, registered package,
+and package version of loaded types where Unity resolves their assembly
+definition. The installed package inventory comes from the running Editor.
+For scene MonoBehaviours, the source snapshot records visible serialized
+Boolean, integer, float, string, enum, vector, color, array, and reference
+fields and the enabled state. The reference evidence records the native
+global ID and asset GUID when available. The report distinguishes missing
+references and incomplete capture. Managed references and other unrecognized
+field types retain their property path and native type for review. The
+existing CSIR animation records provide native component type, property path
+and keys for bindings discovered by the Unity clip exporter.
+
+Install a package adapter by declaring the exact `source_type`,
+`source_assembly`, `source_package`, and `source_package_versions` on a
+`ComponentAdapter`. Registry eligibility requires agreeing version evidence
+from the component and installed package inventory. Have the planner call
+`source_surface_gap.source_capture_valid`, select just the typed fields its
+semantics require, and validate their values and dependencies before returning
+a declared action. If the action writes an Unreal Sequencer property with a
+different UProperty name and Python alias, declare the original name as
+`native_property_name`.
+
+`tests/studio/test_serialized_component_adapters.py` contains a fixture
+adapter for a test package's Boolean shadow intent. The test runs the same
+component registration and planning path as Studio. The package version
+mismatch, missing package, missing reference, and no-adapter cases remain
+visible without a native action. Run a real-editor fixture before shipping any
+production middleware adapter.
+
+The agent summary receives adapter identifiers, CED semantics, versions, and
+occurrence counts. Candidates, scripts, source fields, and asset paths stay
+local. The guarded model executor continues to use its existing repair
+allowlist. Static collision geometry is documented in
+[Native collider geometry](../studio/NATIVE_COLLIDER_GEOMETRY.md).
+
 ## Current boundary
 
 This is an executable extension framework, not a universal converter for the

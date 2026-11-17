@@ -11,6 +11,7 @@ using UnityEngine;
 using UnityEngine.Playables;
 using UnityEngine.SceneManagement;
 using UnityEngine.Timeline;
+using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 
 namespace CutsceneAI.UnityExtractor
 {
@@ -22,6 +23,9 @@ namespace CutsceneAI.UnityExtractor
             public string role;
             public string full_name;
             public string assembly_name;
+            public string assembly_version;
+            public string package_name;
+            public string package_version;
         }
 
         [Serializable]
@@ -32,6 +36,9 @@ namespace CutsceneAI.UnityExtractor
             public string global_object_id;
             public string component_type;
             public string component_assembly;
+            public string component_assembly_version;
+            public string component_package;
+            public string component_package_version;
             public string component_global_id;
             public bool missing_script;
             public ComponentFeature feature;
@@ -87,6 +94,9 @@ namespace CutsceneAI.UnityExtractor
             public List<string> signal_reactions = new List<string>();
             public List<NativeValue> native_properties = new List<NativeValue>();
             public bool native_properties_truncated;
+            public bool has_behaviour_enabled;
+            public bool behaviour_enabled;
+            public bool game_object_active;
         }
 
         [Serializable]
@@ -114,15 +124,20 @@ namespace CutsceneAI.UnityExtractor
             public string path;
             public string native_type;
             public bool bool_value;
-            public float float_value;
-            public int int_value;
+            public double float_value;
+            public long int_value;
             public string string_value;
             public int enum_value_index;
             public string enum_name;
             public bool object_reference_is_null;
+            public bool object_reference_missing;
             public string object_reference_global_id;
             public string object_reference_asset_path;
             public string object_reference_guid;
+            public int array_size;
+            public Vec4 vector_value;
+            public Color color_value;
+            public string unsupported_serialized_type;
         }
 
         [Serializable]
@@ -137,6 +152,14 @@ namespace CutsceneAI.UnityExtractor
         {
             public float x, y, z, w;
             public Vec4(Quaternion q) { x = q.x; y = q.y; z = q.z; w = q.w; }
+            public Vec4(Vector4 v) { x = v.x; y = v.y; z = v.z; w = v.w; }
+            public bool IsFinite()
+            {
+                return !(float.IsNaN(x) || float.IsInfinity(x) ||
+                    float.IsNaN(y) || float.IsInfinity(y) ||
+                    float.IsNaN(z) || float.IsInfinity(z) ||
+                    float.IsNaN(w) || float.IsInfinity(w));
+            }
         }
 
         [Serializable]
@@ -146,6 +169,13 @@ namespace CutsceneAI.UnityExtractor
             public string guid;
             public string native_type;
             public string extension;
+        }
+
+        [Serializable]
+        private sealed class PackageReference
+        {
+            public string name;
+            public string version;
         }
 
         [Serializable]
@@ -161,6 +191,7 @@ namespace CutsceneAI.UnityExtractor
             public List<RegisteredType> registered_types = new List<RegisteredType>();
             public List<SceneComponent> loaded_scene_components = new List<SceneComponent>();
             public List<AssetReference> imported_assets = new List<AssetReference>();
+            public List<PackageReference> installed_packages = new List<PackageReference>();
             public List<string> limitations = new List<string>
             {
                 "Reflection sees loaded assemblies and installed packages, not classes in unopened plugins.",
@@ -181,15 +212,37 @@ namespace CutsceneAI.UnityExtractor
             return string.Join("/", names);
         }
 
-        private static void IncludeType(Census data, string role, Type type)
+        private static PackageInfo ResolveAssemblyPackage(Assembly assembly,
+            Dictionary<Assembly, PackageInfo> packagesByAssembly)
+        {
+            if (assembly == null)
+                return null;
+            if (!packagesByAssembly.TryGetValue(assembly, out var package))
+            {
+                string definition = UnityEditor.Compilation.CompilationPipeline
+                    .GetAssemblyDefinitionFilePathFromAssemblyName(assembly.GetName().Name);
+                package = string.IsNullOrEmpty(definition)
+                    ? null : PackageInfo.FindForAssetPath(definition);
+                packagesByAssembly.Add(assembly, package);
+            }
+            return package;
+        }
+
+        private static void IncludeType(Census data, string role, Type type,
+            Dictionary<Assembly, PackageInfo> packagesByAssembly)
         {
             if (type == null)
                 return;
+            var assembly = type.Assembly.GetName();
+            var package = ResolveAssemblyPackage(type.Assembly, packagesByAssembly);
             data.registered_types.Add(new RegisteredType
             {
                 role = role,
                 full_name = type.FullName ?? type.Name,
-                assembly_name = type.Assembly.GetName().Name,
+                assembly_name = assembly.Name,
+                assembly_version = assembly.Version?.ToString() ?? "",
+                package_name = package?.name ?? "",
+                package_version = package?.version ?? "",
             });
         }
 
@@ -222,18 +275,24 @@ namespace CutsceneAI.UnityExtractor
             {
                 var obj = new SerializedObject(component);
                 var property = obj.GetIterator();
-                int count = 0;
+                int visited = 0;
                 bool enterChildren = true;
                 while (property.NextVisible(enterChildren))
                 {
                     enterChildren = true;
-                    if (property.propertyPath == "m_Script") continue;
-                    if (count >= 256)
+                    if (++visited > 1024 || feature.native_properties.Count >= 256)
                     {
                         feature.native_properties_truncated = true;
                         break;
                     }
                     var value = new NativeValue { path = property.propertyPath };
+                    if (property.isArray && property.propertyType == SerializedPropertyType.Generic)
+                    {
+                        value.native_type = "array";
+                        value.array_size = property.arraySize;
+                        feature.native_properties.Add(value);
+                        continue;
+                    }
                     switch (property.propertyType)
                     {
                         case SerializedPropertyType.Boolean:
@@ -242,14 +301,11 @@ namespace CutsceneAI.UnityExtractor
                             break;
                         case SerializedPropertyType.Integer:
                             value.native_type = "int";
-                            value.int_value = property.intValue;
+                            value.int_value = property.longValue;
                             break;
                         case SerializedPropertyType.Float:
                             value.native_type = "float";
-                            value.float_value = property.floatValue;
-                            if (float.IsNaN(value.float_value) ||
-                                float.IsInfinity(value.float_value))
-                                continue;
+                            value.float_value = property.doubleValue;
                             break;
                         case SerializedPropertyType.String:
                             value.native_type = "string";
@@ -270,6 +326,8 @@ namespace CutsceneAI.UnityExtractor
                             value.native_type = "object_reference";
                             var reference = property.objectReferenceValue;
                             value.object_reference_is_null = reference == null;
+                            value.object_reference_missing = reference == null &&
+                                property.objectReferenceInstanceIDValue != 0;
                             if (reference != null)
                             {
                                 value.object_reference_global_id =
@@ -281,11 +339,46 @@ namespace CutsceneAI.UnityExtractor
                                         value.object_reference_asset_path);
                             }
                             break;
-                        default:
+                        case SerializedPropertyType.Vector2:
+                            var v2 = property.vector2Value;
+                            value.native_type = "vector2";
+                            value.vector_value = new Vec4(new Vector4(v2.x, v2.y, 0, 0));
+                            enterChildren = false;
+                            break;
+                        case SerializedPropertyType.Vector3:
+                            var v3 = property.vector3Value;
+                            value.native_type = "vector3";
+                            value.vector_value = new Vec4(new Vector4(v3.x, v3.y, v3.z, 0));
+                            enterChildren = false;
+                            break;
+                        case SerializedPropertyType.Vector4:
+                            value.native_type = "vector4";
+                            value.vector_value = new Vec4(property.vector4Value);
+                            enterChildren = false;
+                            break;
+                        case SerializedPropertyType.Color:
+                            value.native_type = "color";
+                            value.color_value = property.colorValue;
+                            enterChildren = false;
+                            break;
+                        case SerializedPropertyType.Generic:
+                        case SerializedPropertyType.ArraySize:
                             continue;
+                        default:
+                            value.native_type = "unsupported";
+                            value.unsupported_serialized_type = property.propertyType.ToString();
+                            enterChildren = false;
+                            break;
+                    }
+                    if ((value.native_type == "float" &&
+                         (double.IsNaN(value.float_value) || double.IsInfinity(value.float_value))) ||
+                        (value.vector_value != null && !value.vector_value.IsFinite()) ||
+                        (value.native_type == "color" && !new Vec4((Vector4)value.color_value).IsFinite()))
+                    {
+                        feature.native_properties_truncated = true;
+                        continue;
                     }
                     feature.native_properties.Add(value);
-                    count++;
                 }
             }
             catch (Exception)
@@ -330,9 +423,18 @@ namespace CutsceneAI.UnityExtractor
                 return feature;
             }
             // These types need no optional URP compile-time dependency.
-            string name = component.GetType().FullName ?? "";
+            Type type = component.GetType();
+            string name = type.FullName ?? "";
+            bool isUrpAssembly = type.Assembly.GetName().Name ==
+                "Unity.RenderPipelines.Universal.Runtime";
+            feature.game_object_active = component.gameObject.activeInHierarchy;
+            if (component is Behaviour behaviour)
+            {
+                feature.has_behaviour_enabled = true;
+                feature.behaviour_enabled = behaviour.enabled;
+            }
             CollectSerializableProperties(component, feature);
-            if (name == "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData")
+            if (isUrpAssembly && name == "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData")
             {
                 feature.extraction = "URP_CAMERA_PROPERTIES_PARTIAL";
                 bool flag;
@@ -344,7 +446,7 @@ namespace CutsceneAI.UnityExtractor
                 if (feature.has_render_shadows) feature.render_shadows = flag;
                 return feature;
             }
-            if (name == "UnityEngine.Rendering.Universal.UniversalAdditionalLightData")
+            if (isUrpAssembly && name == "UnityEngine.Rendering.Universal.UniversalAdditionalLightData")
             {
                 feature.extraction = "URP_LIGHT_PROPERTIES_PARTIAL";
                 bool flag;
@@ -550,7 +652,9 @@ namespace CutsceneAI.UnityExtractor
                 }
                 return feature;
             }
-            feature.extraction = "NOT_YET_EXTRACTED";
+            feature.extraction = component is MonoBehaviour
+                ? "SERIALIZED_COMPONENT_AUTHORING_SNAPSHOT_V1"
+                : "NOT_YET_EXTRACTED";
             return feature;
         }
 
@@ -563,16 +667,21 @@ namespace CutsceneAI.UnityExtractor
                 project_fingerprint = ExtractorUtilities.ProjectFingerprint(),
                 captured_utc = DateTime.UtcNow.ToString("o"),
             };
+            var packagesByAssembly = new Dictionary<Assembly, PackageInfo>();
             foreach (var type in TypeCache.GetTypesDerivedFrom<Component>())
-                IncludeType(data, "component", type);
+                IncludeType(data, "component", type, packagesByAssembly);
             foreach (var type in TypeCache.GetTypesDerivedFrom<ScriptableObject>())
-                IncludeType(data, "scriptable_object", type);
+                IncludeType(data, "scriptable_object", type, packagesByAssembly);
             foreach (var type in TypeCache.GetTypesDerivedFrom<PlayableAsset>())
-                IncludeType(data, "playable_asset", type);
+                IncludeType(data, "playable_asset", type, packagesByAssembly);
             foreach (var type in TypeCache.GetTypesDerivedFrom<TrackAsset>())
-                IncludeType(data, "timeline_track", type);
+                IncludeType(data, "timeline_track", type, packagesByAssembly);
             data.registered_types = data.registered_types
                 .OrderBy(row => row.role).ThenBy(row => row.full_name).ToList();
+            data.installed_packages = (PackageInfo.GetAllRegisteredPackages() ?? Array.Empty<PackageInfo>())
+                .OrderBy(package => package.name, StringComparer.Ordinal)
+                .Select(package => new PackageReference { name = package.name, version = package.version })
+                .ToList();
 
             for (var sceneIndex = 0; sceneIndex < SceneManager.sceneCount; sceneIndex++)
             {
@@ -590,6 +699,9 @@ namespace CutsceneAI.UnityExtractor
                         foreach (var component in go.GetComponents<Component>())
                         {
                             var absent = component == null;
+                            var assembly = absent ? null : component.GetType().Assembly;
+                            var assemblyName = assembly?.GetName();
+                            var package = ResolveAssemblyPackage(assembly, packagesByAssembly);
                             data.loaded_scene_components.Add(new SceneComponent
                             {
                                 scene_path = scene.path,
@@ -597,8 +709,10 @@ namespace CutsceneAI.UnityExtractor
                                 global_object_id = GlobalObjectId.GetGlobalObjectIdSlow(go).ToString(),
                                 component_type = absent ? "MISSING_MONOBEHAVIOUR_SCRIPT" :
                                     component.GetType().FullName,
-                                component_assembly = absent ? "" :
-                                    component.GetType().Assembly.GetName().Name,
+                                component_assembly = assemblyName?.Name ?? "",
+                                component_assembly_version = assemblyName?.Version?.ToString() ?? "",
+                                component_package = package?.name ?? "",
+                                component_package_version = package?.version ?? "",
                                 component_global_id = absent ? "" :
                                     GlobalObjectId.GetGlobalObjectIdSlow(component).ToString(),
                                 missing_script = absent,

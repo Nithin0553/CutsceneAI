@@ -15,6 +15,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 
+from closed_loop_evaluation import redact_component_catalog
+
 MAX_REPAIRS = 2
 ALLOWED_STRATEGIES = {"restore_source_albedo", "report_only"}
 
@@ -34,6 +36,7 @@ class AgentState(TypedDict, total=False):
     eligible_repair: bool
     issue_count: int
     issues: list[dict[str, Any]]
+    component_adapter_catalog: list[dict[str, Any]]
     chosen_strategy: str
     reasoning: str
     history: list[dict[str, Any]]
@@ -199,6 +202,9 @@ def build_graph(workspace: Path, job: dict[str, Any],
         )
         base = {
             "issues": issues[:100], "issue_count": len(issues),
+            "component_adapter_catalog": redact_component_catalog(
+                feedback.get("component_adapter_catalog")
+            ),
             "last_fallback": count,
             "baseline_fallback": state.get("baseline_fallback", count),
             "source_evidence_sha256": hashlib.sha256(json.dumps(
@@ -224,6 +230,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
     def reason(state: AgentState) -> dict[str, Any]:
         summary = {
             "ced_taxonomy": _ced_policy(),
+            "component_adapter_catalog": state.get("component_adapter_catalog", [])[:32],
             "unreal_character_fallback_slots": state["last_fallback"],
             "source_guid_backed_albedo": _source_materials(candidate),
             "safe_strategies": (

@@ -26,6 +26,11 @@ IDENTITY_FAILURES = frozenset({
     "SOURCE_OBJECT_IDENTITY_MISMATCH", "SOURCE_OBJECT_IDENTITY_UNVERIFIED",
     "DUPLICATE_SOURCE_ENTITY_PATH", "DUPLICATE_SOURCE_COMPONENT_IDENTITY",
 })
+_CUSTOM_SNAPSHOT = "SERIALIZED_COMPONENT_AUTHORING_SNAPSHOT_V1"
+_CUSTOM_CAPTURE_FAILURES = frozenset({
+    "CUSTOM_COMPONENT_SERIALIZATION_INCOMPLETE",
+    "CUSTOM_COMPONENT_REFERENCE_UNRESOLVED",
+})
 
 
 # These are only component classes whose source properties have *some*
@@ -238,9 +243,79 @@ def _partial_source_evidence(row: Mapping[str, Any]) -> bool:
     return False
 
 
+def _serialized_value_valid(value: dict[str, Any]) -> bool:
+    native_type = value.get("native_type")
+    if not isinstance(native_type, str):
+        return False
+    if native_type == "bool":
+        return type(value.get("bool_value")) is bool
+    if native_type == "float":
+        return _finite_xyz(value, ("float_value",))
+    if native_type in {"int", "enum"}:
+        return type(value.get("int_value")) is int
+    if native_type == "string":
+        return isinstance(value.get("string_value"), str)
+    if native_type == "array":
+        return type(value.get("array_size")) is int and value["array_size"] >= 0
+    if native_type in {"vector2", "vector3", "vector4"}:
+        return _finite_xyz(value.get("vector_value"), tuple("xyzw"[:int(native_type[-1])]))
+    if native_type == "color":
+        return _finite_xyz(value.get("color_value"), ("r", "g", "b", "a"))
+    if native_type == "unsupported":
+        return bool(value.get("unsupported_serialized_type"))
+    if native_type != "object_reference":
+        return False
+    if value.get("object_reference_missing") is not False:
+        return False
+    if value.get("object_reference_is_null") is True:
+        return not any(value.get(field) for field in (
+            "object_reference_global_id", "object_reference_asset_path", "object_reference_guid",
+        ))
+    native_id = value.get("object_reference_global_id")
+    path = value.get("object_reference_asset_path")
+    guid = value.get("object_reference_guid")
+    return value.get("object_reference_is_null") is False and (
+        _source_asset_reference(path, guid, native_id) if path
+        else not guid and isinstance(native_id, str) and bool(native_id.strip())
+    )
+
+
+def _serialized_capture_state(row: Mapping[str, Any]) -> str | None:
+    native_type = str(row.get("component_type") or "")
+    if native_type in _PARTIAL_SCANNER_CONTRACTS or row.get("missing_script") is True:
+        return None
+    feature = row.get("feature")
+    if not isinstance(feature, dict) or feature.get("extraction") != _CUSTOM_SNAPSHOT:
+        return None
+    incomplete = "CUSTOM_COMPONENT_SERIALIZATION_INCOMPLETE"
+    if (not row.get("component_assembly") or not row.get("component_global_id")
+            or feature.get("native_properties_truncated") is not False
+            or feature.get("has_behaviour_enabled") is not True
+            or type(feature.get("behaviour_enabled")) is not bool
+            or type(feature.get("game_object_active")) is not bool):
+        return incomplete
+    properties = feature.get("native_properties")
+    if not isinstance(properties, list) or not 1 <= len(properties) <= 256:
+        return incomplete
+    paths = set()
+    for value in properties:
+        if not isinstance(value, dict) or not isinstance(value.get("path"), str):
+            return incomplete
+        path = value["path"]
+        if not path or path in paths:
+            return incomplete
+        paths.add(path)
+        if not _serialized_value_valid(value):
+            return ("CUSTOM_COMPONENT_REFERENCE_UNRESOLVED"
+                    if value.get("native_type") == "object_reference" else incomplete)
+    return "SOURCE_COMPONENT_SNAPSHOT_PARTIAL_TARGET_UNVERIFIED"
+
+
 def source_capture_valid(row: Mapping[str, Any]) -> bool:
     """Public source-evidence gate; not a native Unreal adapter certification."""
-    return _partial_source_evidence(row)
+    return _partial_source_evidence(row) or (
+        _serialized_capture_state(row) == "SOURCE_COMPONENT_SNAPSHOT_PARTIAL_TARGET_UNVERIFIED"
+    )
 
 
 def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[str, Any]:
@@ -288,6 +363,9 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
     rows = source_surface.get("loaded_scene_components", [])
     if not isinstance(rows, list):
         raise SourceSurfaceGapError("Unity census component occurrences must be a list.")
+    packages = source_surface.get("installed_packages", [])
+    if not isinstance(packages, list):
+        raise SourceSurfaceGapError("Unity installed package inventory must be a list.")
     component_ids = Counter(
         str(row["component_global_id"]) for row in rows
         if isinstance(row, dict) and row.get("component_global_id")
@@ -315,6 +393,7 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
             totals["UNRELATED_SCENE_COMPONENT"] += 1
             continue
         observed_id = str(row.get("global_object_id") or "")
+        serialized_state = _serialized_capture_state(row)
         if is_member and source_entity["duplicate"]:
             state = "DUPLICATE_SOURCE_ENTITY_PATH"
         elif is_member and source_entity["native_ref"] and observed_id != source_entity["native_ref"]:
@@ -326,6 +405,8 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
             state = "MISSING_SOURCE_SCRIPT"
         elif native_type in KNOWN_SOURCE_COMPONENTS:
             state = "SOURCE_COMPONENT_SEMANTIC_REQUIRES_TARGET_EVIDENCE"
+        elif serialized_state is not None:
+            state = serialized_state
         elif _partial_source_evidence(row):
             # Source authoring state exists; target functionality is NOT
             # equivalent merely because the component has been inventoried.
@@ -354,6 +435,10 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
             "source_entity_id": source_entity["entity_id"] if is_member else None,
             "native_component": native_type,
             "source_component_id": global_id,
+            "source_component_assembly": row.get("component_assembly"),
+            "source_component_assembly_version": row.get("component_assembly_version"),
+            "source_component_package": row.get("component_package"),
+            "source_component_package_version": row.get("component_package_version"),
             "state": state,
             "target_native_verified": False,
             "behavior_verified": False,
@@ -377,7 +462,7 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
         if row["state"] == "SOURCE_COMPONENT_SNAPSHOT_PARTIAL_TARGET_UNVERIFIED"
     ]
     unresolved = sum(count for state, count in totals.items()
-                     if state in IDENTITY_FAILURES | {
+                     if state in IDENTITY_FAILURES | _CUSTOM_CAPTURE_FAILURES | {
                          "NATIVE_COMPONENT_EXTRACTION_OR_ADAPTER_REQUIRED",
                          "MISSING_SOURCE_SCRIPT",
                      })
@@ -419,6 +504,7 @@ def audit(csir: Mapping[str, Any], source_surface: Mapping[str, Any]) -> dict[st
         "source_assets_matched_by_path": source_asset_count,
         "other_project_asset_type_counts": dict(sorted(extra_asset_types.items())),
         "registered_native_type_count": len(source_surface.get("registered_types", [])),
+        "installed_package_count": len(packages),
         "unresolved_component_count": unresolved,
         "source_snapshot_partial_count": len(partial_source),
         "source_snapshot_partial_findings": partial_source,
