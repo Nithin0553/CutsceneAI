@@ -16,6 +16,7 @@ ROOT=Path(__file__).resolve().parents[2]
 if str(ROOT/'tools') not in sys.path:
     sys.path.insert(0,str(ROOT/'tools'))
 import studio_auto_assets as assets_plan
+import studio_collider_shapes
 import studio_material_restore
 
 
@@ -98,6 +99,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
             if not hasattr(api,required):
                 raise AutomaticSetupError('Unreal Python import capability unavailable: '+required)
         data=json.loads(Path(plan_path).read_text(encoding='utf-8-sig'))
+        collider_actions = studio_collider_shapes.from_plan(data)
         sequence=data['sequence_asset_path']
         receipt['target_namespace']=manifest['target_folder']
         receipt['fbx_embedded_material_import_requested'] = (
@@ -138,6 +140,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
         current={}
         for actor in ed.get_all_level_actors():
             current.setdefault(str(actor.get_actor_label()),[]).append(actor)
+        studio_collider_shapes.preflight(api, collider_actions, (*current, *planned_labels))
         for row in manifest['actors']:
             label=row['label']
             if len(current.get(label,[]))>1:
@@ -263,6 +266,11 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                         api, created, candidates, existing_assets=material_cache)
                 )
                 receipt['failed_step']=None
+        if collider_actions:
+            receipt['failed_step'] = {'phase': 'native_collider_staging'}
+            receipt['component_operations'] = []
+            mutation = True
+            studio_collider_shapes.stage(api, ed, collider_actions, receipt['component_operations'])
         receipt['failed_step']={'phase':'level_save','level':expected_level}
         _save_level(api,expected_level)
         receipt['level_saved']=True

@@ -49,6 +49,12 @@ features.
 
 ## Verified, degraded, and blocked
 
+| Registered component scope | Planned target | Verification available |
+| --- | --- | --- |
+| Unity Light shadow enable | Editable Sequencer Boolean track on the mapped light | Saved binding, property path and key readback. Matched renders pending. |
+| Box, sphere and capsule authored geometry | Editable Unreal volumes with collision disabled | Simulated staging and independent geometry checks. Unity compilation, native save/reopen and physics behavior pending. [Acceptance procedure](NATIVE_COLLIDER_GEOMETRY.md) |
+| MeshCollider and LODGroup | Source snapshots from [PR #114](https://github.com/Nithin0553/CutsceneAI/pull/114) | Typed source validators. Native conversion and behavior checks pending. |
+
 - `NATIVE_VERIFIED`: specific target data and independent behavior verified.
 - `STRUCTURAL_ONLY`: target assets and tracks created, readback pending.
 - `BAKED_PARTIAL`: time-sampled approximation whose deviation must be measured.

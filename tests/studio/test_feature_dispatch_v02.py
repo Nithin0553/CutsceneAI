@@ -253,7 +253,7 @@ def test_no_generic_catalog_route_is_automatically_executable():
         "camera_setup", "camera_cut", "camera_fov", "transform",
         "skeletal_animation", "light_intensity", "audio", "marker",
         "skeletal_world_root_lock", "actor_visibility", "property_float",
-        "property_bool",
+        "property_bool", "collider_primitive_shape",
     }
 
 

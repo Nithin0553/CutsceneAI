@@ -22,6 +22,7 @@ MODULES = (
     ("feature_dispatch", "packages/studio"),
     ("scalar_property_adapter", "packages/studio"),
     ("visual_activation", "packages/studio"),
+    ("collider_shape_adapter", "packages/studio"),
     ("adaptive_components", "packages/studio"),
     ("transfer_backend", "packages/studio"),
     ("prepared_transfer", "packages/studio"),

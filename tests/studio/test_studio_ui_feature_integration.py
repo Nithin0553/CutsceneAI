@@ -166,7 +166,8 @@ def test_capture_candidate_ui_options_apply_only_to_unique_mapping_copy(tmp_path
     original = Path(config["mapping"]).read_bytes()
 
     def fake_prepare(csir, mapping, capture, seq, out, *,
-                     skeletal_root_world_lock, hierarchy_transfer, transfer_options):
+                     skeletal_root_world_lock, hierarchy_transfer, native_component_staging,
+                     transfer_options):
         assert transfer_options["source_feature_surface_path"] == str(census)
         assert transfer_options["enable_actor_visibility_fallback"] is True
         out.mkdir(parents=True)

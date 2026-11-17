@@ -58,7 +58,13 @@ namespace CutsceneAI.UnityExtractor
             public Vec4 world_rotation_xyzw;
             public Vec3 world_size_m;
             public float world_radius_m;
+            public float world_height_m;
             public string collider_scale_policy;
+            public string primitive_snapshot_version;
+            public bool primitive_transform_supported;
+            public bool collider_owner_static;
+            public bool collider_has_body;
+            public bool collider_owner_active;
             // Source-native MeshCollider evidence: mesh identity is retained
             // rather than substituting a bounding-box collision shape.
             public bool mesh_collider_convex;
@@ -291,6 +297,30 @@ namespace CutsceneAI.UnityExtractor
             }
         }
 
+        private static bool HasPositiveOrthogonalScale(Transform transform)
+        {
+            var matrix = transform.localToWorldMatrix;
+            var rotation = transform.rotation;
+            foreach (var axis in new[] { Vector3.right, Vector3.up, Vector3.forward })
+            {
+                var column = matrix.MultiplyVector(axis);
+                if (!(column.sqrMagnitude > 1e-12f &&
+                    (column.normalized - rotation * axis).sqrMagnitude < 1e-10f))
+                    return false;
+            }
+            return true;
+        }
+
+        private static void CapturePrimitiveContext(Collider collider, ComponentFeature feature)
+        {
+            feature.primitive_snapshot_version = "1.0.0";
+            feature.primitive_transform_supported = HasPositiveOrthogonalScale(collider.transform);
+            feature.collider_owner_static = collider.gameObject.isStatic;
+            feature.collider_owner_active = collider.gameObject.activeInHierarchy;
+            feature.collider_has_body =
+                collider.attachedRigidbody != null || collider.attachedArticulationBody != null;
+        }
+
         private static ComponentFeature CaptureComponent(Component component)
         {
             var feature = new ComponentFeature();
@@ -344,6 +374,7 @@ namespace CutsceneAI.UnityExtractor
                 feature.world_rotation_xyzw = new Vec4(box.transform.rotation);
                 feature.world_size_m = new Vec3(size);
                 feature.collider_scale_policy = "LOSSY_SCALE_NO_SHEAR_PROOF";
+                CapturePrimitiveContext(box, feature);
                 return feature;
             }
             if (component is SphereCollider sphere)
@@ -360,6 +391,33 @@ namespace CutsceneAI.UnityExtractor
                 feature.world_radius_m = sphere.radius * Mathf.Max(
                     Mathf.Abs(scale.x), Mathf.Abs(scale.y), Mathf.Abs(scale.z));
                 feature.collider_scale_policy = "UNITY_SPHERE_MAX_AXIS_LOSSY_SCALE";
+                CapturePrimitiveContext(sphere, feature);
+                return feature;
+            }
+            if (component is CapsuleCollider capsule)
+            {
+                var scale = capsule.transform.lossyScale;
+                // Restrict translation to uniform scale. The effective capsule
+                // source radius and total height then share one scale.
+                float absoluteScale = Mathf.Abs(scale.y);
+                var axis = capsule.direction == 0 ? Vector3.right :
+                    capsule.direction == 2 ? Vector3.forward : Vector3.up;
+                feature.extraction = "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE";
+                feature.shape = "capsule";
+                feature.has_geometry = true;
+                feature.enabled = capsule.enabled;
+                feature.is_trigger = capsule.isTrigger;
+                feature.world_center_m = new Vec3(
+                    capsule.transform.TransformPoint(capsule.center));
+                feature.world_rotation_xyzw = new Vec4(capsule.transform.rotation *
+                    Quaternion.FromToRotation(Vector3.up, axis));
+                feature.world_radius_m = capsule.radius * absoluteScale;
+                feature.world_height_m = Mathf.Max(
+                    capsule.height * absoluteScale, 2 * feature.world_radius_m);
+                feature.collider_scale_policy = "UNITY_CAPSULE_UNIFORM_SCALE";
+                CapturePrimitiveContext(capsule, feature);
+                feature.primitive_transform_supported &= absoluteScale > 0 &&
+                    Mathf.Approximately(scale.x, scale.y) && Mathf.Approximately(scale.z, scale.y);
                 return feature;
             }
             if (component is MeshCollider meshCollider)
