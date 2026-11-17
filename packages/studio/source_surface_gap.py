@@ -50,6 +50,7 @@ KNOWN_SOURCE_COMPONENTS = frozenset({
 _PARTIAL_SCANNER_CONTRACTS = {
     "UnityEngine.BoxCollider": "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE",
     "UnityEngine.SphereCollider": "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE",
+    "UnityEngine.CapsuleCollider": "STATIC_COLLIDER_WORLD_SHAPE_CANDIDATE",
     "UnityEngine.MeshCollider": "MESH_COLLIDER_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED",
     "UnityEngine.LODGroup": "LOD_GROUP_SOURCE_SNAPSHOT_NATIVE_UNVERIFIED",
     "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData":
@@ -65,11 +66,14 @@ def _finite_xyz(value: Any, names: tuple[str, ...]) -> bool:
     """Reject missing or non-finite serialized vectors (never execute data)."""
     import math
 
-    return (
-        isinstance(value, dict)
-        and all(type(value.get(name)) in (int, float)
-                and math.isfinite(value[name]) for name in names)
-    )
+    try:
+        return (
+            isinstance(value, dict)
+            and all(type(value.get(name)) in (int, float)
+                    and math.isfinite(value[name]) for name in names)
+        )
+    except OverflowError:
+        return False
 
 
 def _source_asset_reference(path: Any, guid: Any, native_id: Any) -> bool:
@@ -184,23 +188,31 @@ def _partial_source_evidence(row: Mapping[str, Any]) -> bool:
     validator = _TYPED_SOURCE_EVIDENCE.get(native_type)
     if validator is not None:
         return validator(feature)
-    if native_type in {"UnityEngine.BoxCollider", "UnityEngine.SphereCollider"}:
+    primitive = {
+        "UnityEngine.BoxCollider": "box",
+        "UnityEngine.SphereCollider": "sphere",
+        "UnityEngine.CapsuleCollider": "capsule",
+    }.get(native_type)
+    if primitive:
         if not (feature.get("has_geometry") is True
-                and feature.get("shape") == ("box" if native_type.endswith("BoxCollider") else "sphere")
+                and feature.get("shape") == primitive
                 and type(feature.get("enabled")) is bool
                 and type(feature.get("is_trigger")) is bool
                 and _finite_xyz(feature.get("world_center_m"), ("x", "y", "z"))
                 and _finite_xyz(feature.get("world_rotation_xyzw"), ("x", "y", "z", "w"))):
             return False
-        if native_type.endswith("BoxCollider"):
+        if primitive == "box":
             size = feature.get("world_size_m")
             return bool(_finite_xyz(size, ("x", "y", "z"))
                         and all(size[axis] > 0 for axis in ("x", "y", "z"))
                         and feature.get("collider_scale_policy") == "LOSSY_SCALE_NO_SHEAR_PROOF")
-        radius = feature.get("world_radius_m")
-        return bool(type(radius) in (int, float) and _finite_xyz(
-            {"r": radius}, ("r",)) and radius > 0
-            and feature.get("collider_scale_policy") == "UNITY_SPHERE_MAX_AXIS_LOSSY_SCALE")
+        if not _finite_xyz(feature, ("world_radius_m",)) or feature["world_radius_m"] <= 0:
+            return False
+        if primitive == "sphere":
+            return feature.get("collider_scale_policy") == "UNITY_SPHERE_MAX_AXIS_LOSSY_SCALE"
+        return (feature.get("collider_scale_policy") == "UNITY_CAPSULE_UNIFORM_SCALE"
+                and _finite_xyz(feature, ("world_height_m",))
+                and feature["world_height_m"] >= 2 * feature["world_radius_m"])
     if native_type.endswith("UniversalAdditionalCameraData"):
         return bool(
             feature.get("has_render_post_processing") is True

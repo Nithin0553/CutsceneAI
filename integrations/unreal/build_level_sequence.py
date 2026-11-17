@@ -40,6 +40,7 @@ import hierarchy_realization
 import readiness_loader
 import csir_plan
 import scene_prep
+import studio_collider_shapes
 import unreal_compat
 
 # Resolve the semantic CineTwin audit by canonical file path. The tools/
@@ -98,6 +99,14 @@ def _preflight(plan: dict[str, Any]) -> None:
         unreal_compat.validate_runtime_capabilities(required_actions)
     except unreal_compat.UnrealCompatibilityError as exc:
         raise UnrealBuildError(str(exc)) from exc
+    collider_actions = studio_collider_shapes.from_plan(plan)
+    if collider_actions:
+        editor = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+        verified = studio_collider_shapes.inspect(unreal, collider_actions, editor.get_all_level_actors())
+        if any(item["status"] != "PASS" for item in verified):
+            raise UnrealBuildError(
+                "Planned collider geometry was not read back from automatic scene setup."
+            )
 
     # Fail on malformed easing before moving actors or creating a Level
     # Sequence. In particular, never pass Unity's -1 "no blend" sentinel to
@@ -993,6 +1002,10 @@ def _build_prepared_plan(
                 _add_property_bool(
                     sequence, bindings[action["entity_name"]]["actor"], action
                 )
+            elif kind == studio_collider_shapes.ACTION_KIND:
+                # World-space geometry is persisted by guarded automatic setup.
+                # Preflight above inspects the actual native shape before generation.
+                pass
             elif kind == "audio":
                 _add_audio(sequence, action)
             elif kind == "marker":

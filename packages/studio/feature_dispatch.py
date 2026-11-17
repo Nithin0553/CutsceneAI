@@ -58,9 +58,9 @@ BUILDER_ACTIONS = frozenset({
     "camera_setup", "camera_cut", "camera_fov", "transform",
     "skeletal_animation", "light_intensity", "audio", "marker",
     "skeletal_world_root_lock", "actor_visibility", "property_float",
-    "property_bool",
+    "property_bool", "collider_primitive_shape",
 })
-COMPONENT_ACTIONS = frozenset({"property_bool", "property_float"})
+COMPONENT_ACTIONS = frozenset({"property_bool", "property_float", "collider_primitive_shape"})
 # Each association is a source-track/Sequencer building *candidate*, not
 # a guaranteed semantic equivalent (event -> marker is deliberately lossy).
 EXPLICIT_ACTIONS = {
@@ -85,6 +85,7 @@ EXPLICIT_ACTIONS = {
     "camera.postprocess": ("property_float",),
     "light.shadow": ("property_bool",),
     "metadata.property_descriptor": ("property_float", "property_bool"),
+    "physics.collider": ("collider_primitive_shape",),
 }
 LOSSY_ACTION_SEMANTICS = frozenset({
     "event.trigger", "event.state", "light.animation", "audio.track", "audio.section",

@@ -137,13 +137,14 @@ def test_prepare_calls_existing_candidate_backend_without_changing_original(tmp_
     original_mapping = Path(config['mapping']).read_bytes()
 
     def fake_prepare(csir, mapping, capture, sequence, out, *, skeletal_root_world_lock,
-                     hierarchy_transfer):
+                     hierarchy_transfer, native_component_staging):
         assert Path(csir) == Path(config['csir'])
         assert Path(mapping) == Path(config['mapping'])
         assert Path(capture) == Path(config['capture'])
         assert sequence.startswith('/Game/Trials/LS_BenchmarkV8_STUDIO_')
         assert skeletal_root_world_lock is False
         assert hierarchy_transfer is False
+        assert native_component_staging is False
         out.mkdir(parents=True)
         (out / 'transfer-plan.json').write_text(json.dumps({'actions':[{'kind':'camera_cut'},{'kind':'transform'}]}))
         copy = out.with_suffix('.mapping.json')
@@ -437,8 +438,9 @@ def test_automatic_studio_preparation_requests_safe_hierarchy_reconstruction(tmp
     original = Path(config["mapping"]).read_bytes()
 
     def fake_prepare(csir, mapping, capture, sequence, out, *,
-                     skeletal_root_world_lock, hierarchy_transfer):
+                     skeletal_root_world_lock, hierarchy_transfer, native_component_staging):
         assert hierarchy_transfer is True
+        assert native_component_staging is True
         assert skeletal_root_world_lock is False
         out.mkdir(parents=True)
         (out / "transfer-plan.json").write_text(json.dumps({

@@ -304,6 +304,7 @@ def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> 
             new_sequence, candidate_dir,
             skeletal_root_world_lock=config['skeletal_root_world_lock'],
             hierarchy_transfer=bool(config.get('unity_project')),
+            native_component_staging=bool(config.get('unity_project')),
             **extra,
         )
     else:
@@ -323,6 +324,7 @@ def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> 
             # Activate the same source-aware attachment and parent-local
             # preflight for source-only Studio candidates.
             original['enable_cinetwin_hierarchy'] = True
+            original['enable_native_component_staging'] = True
         if config['skeletal_root_world_lock']:
             raise ValueError('Experimental skeletal root world lock requires source CineTwin evidence.')
         mapping_copy.parent.mkdir(parents=True, exist_ok=True)

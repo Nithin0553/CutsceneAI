@@ -144,9 +144,14 @@ def _execute(job):
     # or spawning any actor. A missing/circular module must not leave behind
     # a saved but unusable automatic setup.
     import build_level_sequence
+    import studio_collider_shapes
     import unreal_compat
     checked_plan = _load(candidate_dir / 'transfer-plan.json')
     unreal_compat.validate_component_versions(checked_plan['actions'])
+    collider_actions = studio_collider_shapes.from_plan(checked_plan)
+    if collider_actions and not job.get('automatic_setup'):
+        raise RuntimeError('Native collider geometry requires the guarded automatic scene setup.')
+    studio_collider_shapes.preflight(unreal, collider_actions)
     if job.get('automatic_setup'):
         # Essential source-content and adapter verification MUST precede
         # _ensure_target_level, which can create an empty Unreal map.

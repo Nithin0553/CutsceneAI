@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 import feature_dispatch
 import source_surface_gap
+import collider_shape_adapter
 
 SOURCE_CAMERA = "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData"
 SOURCE_LIGHT = "UnityEngine.Light"
@@ -104,6 +105,13 @@ def install_adapters(registry: feature_dispatch.HandlerRegistry) -> None:
         behavior="Compare evaluated shadow enable and controlled matched-time rendered shadows.",
         unsupported_properties=LIGHT_SHADOW_LOSSES, planner=_light_shadow_action,
     ))
+    collider_shape_adapter.install(registry)
+
+
+def _target_slot(action: Mapping[str, Any]) -> tuple[str, str]:
+    if action["kind"] == collider_shape_adapter.ACTION_KIND:
+        return ("staged_collider", action["collider_label"])
+    return (action["actor_label"], action["target_property_path"])
 
 _NATIVE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SOURCE_MEMBER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]]*$")
@@ -312,12 +320,16 @@ def adapt(
                     spec, csir=csir, mapping=mapping, row=row, target=target,
                     location=desc["source_location"],
                 )
-                token = (target["actor_label"], action["target_property_path"])
+                token = _target_slot(action)
                 if token in reserved:
-                    raise feature_dispatch.ComponentEvidenceError("DUPLICATE_TARGET_COMPONENT_PROPERTY")
+                    raise feature_dispatch.ComponentEvidenceError("DUPLICATE_TARGET_COMPONENT_SLOT")
                 reserved.add(token)
                 desc["actions"].append(action["kind"])
-                desc["status"] = "NATIVE_PROPERTY_PLANNED_PARTIAL_UNVERIFIED"
+                desc["status"] = (
+                    "NATIVE_COLLIDER_GEOMETRY_PLANNED_PARTIAL_UNVERIFIED"
+                    if action["kind"] == collider_shape_adapter.ACTION_KIND
+                    else "NATIVE_PROPERTY_PLANNED_PARTIAL_UNVERIFIED"
+                )
                 actions.append(action)
             except feature_dispatch.ComponentEvidenceError as exc:
                 desc["status"] = str(exc)
@@ -449,14 +461,13 @@ def adapt(
             ):
                 raise ValueError("Unregistered CED source semantic: " + semantic)
             action["ced_resolution"] = "EXPLICIT_PLUGIN_ADAPTER_UNVERIFIED"
-    if len({(a["actor_label"], a["target_property_path"]) for a in actions}) != len(actions):
-        raise ValueError("Adaptive component rules produced duplicate Unreal target properties.")
+    if len({_target_slot(action) for action in actions}) != len(actions):
+        raise ValueError("Adaptive component rules produced duplicate Unreal target slots.")
     # No arbitrary per-native reflection remapping: a new CED adapter is code,
     # with a version, source parser, target object type and native test.
     if not all(
-        all(math.isfinite(float(k["value"])) for k in a["keys"]
-            if a["kind"] == "property_float")
-        for a in actions
+        math.isfinite(float(key["value"])) for action in actions
+        if action["kind"] == "property_float" for key in action["keys"]
     ):
         raise ValueError("Adaptive component float action is not finite.")
     counts = Counter(d["status"] for d in decisions)

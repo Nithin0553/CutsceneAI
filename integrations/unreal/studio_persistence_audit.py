@@ -228,6 +228,9 @@ def audit(job_path: str | Path, report_path: str | Path, *, unreal_api: Any = No
         from readback_level_sequence import read_registered_scalar_components
 
         component_rows = read_registered_scalar_components(sequence, scalar_actions, api=api)
+    from studio_collider_shapes import from_plan, inspect
+
+    component_rows.extend(inspect(api, from_plan(plan), actor_list))
     component_fail = any(row["status"] == "FAIL" for row in component_rows)
     component_incomplete = any(row["status"] == "INCOMPLETE" for row in component_rows)
     native_status = (

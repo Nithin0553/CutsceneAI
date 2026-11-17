@@ -889,6 +889,8 @@ def compose_files(
             for a in plan["actions"] if a.get("kind") in {"property_float", "property_bool"}
         }
         for action in new_actions:
+            if action["kind"] not in {"property_float", "property_bool"}:
+                continue
             identity = (str(action["actor_label"]), str(action["target_property_path"]))
             if identity in all_targets:
                 raise TransferBackendError(

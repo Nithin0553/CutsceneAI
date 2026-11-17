@@ -28,6 +28,7 @@ def prepare_candidate(
     *,
     skeletal_root_world_lock: bool = False,
     hierarchy_transfer: bool = False,
+    native_component_staging: bool = False,
     transfer_options: dict[str, Any] | None = None,
 ) -> tuple[Path, dict]:
     """Write fresh mapping next to new output and source-verified prepared artifacts."""
@@ -62,6 +63,8 @@ def prepare_candidate(
         # only when source evidence proves it safe. It rejects unsupported
         # dynamic children before creating a single Unreal asset.
         copy["enable_cinetwin_hierarchy"] = True
+    if native_component_staging:
+        copy["enable_native_component_staging"] = True
     mapping_file.parent.mkdir(parents=True, exist_ok=True)
     try:
         with mapping_file.open("x", encoding="utf-8") as handle:
