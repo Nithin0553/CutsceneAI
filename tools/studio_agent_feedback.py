@@ -159,11 +159,18 @@ def conversation(workspace: Path, job: dict | None) -> dict[str, Any]:
     state = _json(state_path) if state_path.is_file() else {}
     response = {}
     if latest and state.get("feedback_id") == latest["feedback_id"]:
+        routing = state.get("intent_routing") or {}
+        intent = routing.get("intent") or {}
         response = {
             "feedback_id": latest["feedback_id"],
             "status": state.get("status", "NEW"),
-            "reasoning": str(state.get("reasoning") or "")[:700],
+            "reasoning": str(state.get("reasoning") or routing.get("reason") or "")[:700],
             "failure": str(state.get("failure") or "")[:500],
+            "interpreted_domains": [
+                d for d in intent.get("domains", [])[:5]
+                if isinstance(d, str)
+            ],
+            "capability_decision": str(routing.get("disposition") or ""),
             "repair_iterations": state.get("iterations", 0),
             "pending_native_repair": bool(state.get("pending_request")),
             "fidelity_verified": False,
