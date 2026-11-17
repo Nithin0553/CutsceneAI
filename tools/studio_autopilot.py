@@ -21,7 +21,7 @@ import studio_unity_bridge as unity_bridge
 _LOCK = threading.RLock()
 ACTIVE = "autopilot-active.json"
 STAGES = frozenset({
-    "WAITING_FOR_UNITY", "CONNECTING", "PREPARING",
+    "WAITING_FOR_UNITY", "WAITING_FOR_UNITY_CAPTURE", "CONNECTING", "PREPARING",
     "WAITING_FOR_UNREAL", "UNREAL_RUNNING",
 })
 FINISHED = frozenset({"GENERATED_UNVERIFIED", "BLOCKED"})
@@ -150,8 +150,28 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                 if source["status"] == "SUCCEEDED":
                     state["csir_path"] = source["csir_path"]
                     state["census_path"] = source["census_path"]
+                    request = unity_bridge.request_behavior_capture(
+                        state["unity_project"], state["source_request_id"]
+                    )
+                    state["capture_request_id"] = request["request_id"]
+                    state["status"] = "WAITING_FOR_UNITY_CAPTURE"
+                    state["message"] = request["instruction"]
+            elif phase == "WAITING_FOR_UNITY_CAPTURE":
+                observed = unity_bridge.behavior_capture_status(
+                    state["unity_project"], state["capture_request_id"]
+                )
+                if observed["status"] == "BLOCKED":
+                    raise AutopilotError(observed["reason"])
+                if observed["status"] == "SUCCEEDED":
+                    state["capture_path"] = observed["capture_path"]
                     state["status"] = "CONNECTING"
-                    state["message"] = "Unity analyzed the Timeline. Resolving project mappings."
+                    state["message"] = (
+                        "Source CineTwin samples verified. Resolving native transfer mappings."
+                    )
+                else:
+                    state["message"] = str(observed.get(
+                        "message", "Waiting for saved Unity Play Mode behavior capture."
+                    ))[:500]
             elif phase == "CONNECTING":
                 level = _pick_level(state, service, workspace)
                 if not level:
@@ -167,8 +187,10 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                         unreal_project=state["unreal_project"],
                         source_rights_confirmed=True,
                     )
+                    fields["capture"] = state["capture_path"]
                     connection = service.config_check(fields)
-                    if connection["csir"] != state["csir_path"]:
+                    if (connection["csir"] != state["csir_path"]
+                            or connection.get("capture") != state["capture_path"]):
                         raise AutopilotError("Unity source mapping changed during preparation.")
                     service.atomic_json(workspace / "connection.json", connection)
                     for name in ("active-candidate.json", "active-job.json",
