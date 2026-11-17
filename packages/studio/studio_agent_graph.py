@@ -17,6 +17,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 
+import agent_intent_router
+
 MAX_REPAIRS = 2
 MAX_USER_COMMENT = 1200
 ALLOWED_STRATEGIES = {"restore_source_albedo", "report_only"}
@@ -44,6 +46,7 @@ class AgentState(TypedDict, total=False):
     fidelity_verified: bool
     source_evidence_sha256: str
     feedback_id: str
+    intent_routing: dict[str, Any]
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -275,6 +278,23 @@ def build_graph(workspace: Path, job: dict[str, Any],
         if not isinstance(issues, list):
             raise AgentError("Invalid independent issue list.")
         issues = list(issues)
+        try:
+            routing = agent_intent_router.route(
+                user_message if comment else None,
+                generation_complete=job.get("generation_status") == "GENERATED_UNVERIFIED",
+                native_material_fallback_slots=count,
+                source_albedo_provenance=_source_materials(candidate),
+                completed_repairs=state.get("iterations", 0),
+                repair_budget=MAX_REPAIRS,
+                independent_issues=issues,
+                adapter_catalog=feedback.get("component_adapter_catalog"),
+                fallback_observation_scope=(
+                    "character" if "character_material_slots_engine_default" in visual
+                    else "global"
+                ),
+            )
+        except agent_intent_router.IntentError as exc:
+            raise AgentError("Agent feedback routing blocked: " + str(exc)) from exc
         if comment:
             # A user's observation is valuable, but is not an independently
             # measured CineTwin mismatch until native evidence confirms it.
@@ -295,6 +315,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "source_evidence_sha256": hashlib.sha256(json.dumps(
                 feedback, sort_keys=True).encode()).hexdigest(),
             "eligible_repair": eligible,
+            "intent_routing": routing,
         }
         if not issues:
             return {**base, "status": "NO_DETECTED_GAPS_FIDELITY_UNVERIFIED"}
@@ -317,11 +338,12 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "ced_taxonomy": _ced_policy(),
             "unreal_character_fallback_slots": state["last_fallback"],
             "source_guid_backed_albedo": _source_materials(candidate),
-            "safe_strategies": (
-                sorted(ALLOWED_STRATEGIES) if
-                (state.get("eligible_repair") and relevant_material_request)
-                else ["report_only"]
-            ),
+            "safe_strategies": state["intent_routing"]["safe_strategies"],
+            "interpreted_request": state["intent_routing"]["intent"],
+            "capability_decision": state["intent_routing"]["disposition"],
+            "capability_evidence": state["intent_routing"]["reason"],
+            "registered_adapters_informational":
+                state["intent_routing"]["registered_adapters_informational"],
             "user_feedback": user_message[:MAX_USER_COMMENT] if comment else "",
             "user_feedback_is_unverified": bool(comment),
             "remaining_repairs": MAX_REPAIRS - state.get("iterations", 0),
@@ -337,6 +359,10 @@ def build_graph(workspace: Path, job: dict[str, Any],
         except Exception as exc:
             return {"status": "AGENT_REASONING_UNAVAILABLE",
                     "failure": str(exc)[:500], "chosen_strategy": "report_only"}
+        if strategy not in state["intent_routing"]["safe_strategies"]:
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "LLM proposal is not in the evidence-backed capability route.",
+                    "chosen_strategy": "report_only"}
         if strategy == "restore_source_albedo" and not (
             state.get("eligible_repair") and relevant_material_request and
             state["last_fallback"] > 0 and _source_materials(candidate)
@@ -347,7 +373,9 @@ def build_graph(workspace: Path, job: dict[str, Any],
         return {
             "status": "REPAIR_SELECTED" if strategy == "restore_source_albedo"
                       else "UNRESOLVED_NO_SAFE_STRATEGY",
-            "chosen_strategy": strategy, "reasoning": message,
+            "chosen_strategy": strategy,
+            "reasoning": message if strategy == "restore_source_albedo" else
+                         state["intent_routing"]["reason"] + " " + message,
         }
 
     def dispatch(state: AgentState) -> dict[str, Any]:
