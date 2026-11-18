@@ -522,6 +522,25 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         and approval.get('target_level') == config['level_path']
         and approval.get('enable_ai_agents') is True
     )
+    conversion_record = candidate_dir / 'ai-conversion-decision.json'
+    conversion_sha = ''
+    if conversion_record.is_file():
+        if not selected_agent:
+            raise ValueError('AI conversion evidence requires explicit AI consent.')
+        if not candidate_record.is_file():
+            raise ValueError('AI conversion candidate is not active.')
+        prepared = load_json(candidate_record).get('prepared_options') or {}
+        import studio_transfer_ai
+        decision = load_json(conversion_record)
+        expected_opts = studio_transfer_ai.verify(
+            decision, config, str(prepared.get('source_feature_surface_path') or ''),
+            heartbeat,
+        )
+        copied_mapping = load_json(Path(session['target']['mapping_path']))
+        for key, value in expected_opts.items():
+            if bool(copied_mapping.get(key)) != value:
+                raise ValueError('Prepared transfer mapping differs from AI-verified strategy: ' + key)
+        conversion_sha = hashlib.sha256(conversion_record.read_bytes()).hexdigest()
     job_id = uuid.uuid4().hex
     job = {'kind': 'cutsceneai.studio.local_unreal_job', 'schema_version': '0.1.0',
            'job_id': job_id, 'status': 'QUEUED', 'candidate_id': candidate_id,
@@ -536,6 +555,7 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
            'create_level': bool(config.get('auto_create_level')),
            'created_at': datetime.now(timezone.utc).isoformat(),
            'ai_agents_enabled': selected_agent,
+           'ai_conversion_decision_sha256': conversion_sha,
            'generation_status': 'NOT_STARTED', 'fidelity_verified': False}
     atomic_json(folder / 'jobs' / (job_id + '.json'), job)
     atomic_json(folder / 'active-job.json', {'job_id': job_id})
