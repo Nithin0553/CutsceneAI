@@ -32,9 +32,9 @@ PARTIAL, UNSUPPORTED, or INSUFFICIENT_EVIDENCE.
 | AI planner | OpenAI Responses structured choice, redacted counts and registered strategies; Friday's one-approved-IK-retarget action | Implement typed, independently validated strategies for moving actor/root motion and multi-character/other supported domains |
 | Native conversion | Immutable transfer plan, source-provenanced import/retarget/material/camera/track adapters, no-overwrite checks | Extend supported asset types, time-varying root/actor ownership, tested non-humanoid/humanoid policy, and never silently promise equivalent simulation |
 | Native execution | Same-project/level verification, automatic staging, native builder receipt, safe rollback for narrow cases | Make failure/restart idempotence and partially imported candidate recovery fully explicit, no unsafe retry |
-| AI evaluation and correction | CineTwin actor/root measurements, LangGraph analysis and narrow source-bound material/translation strategies | Frame-matched rotation, complete skeletal pose and camera lens/shot timing coverage, additional *registered* safe repair adapters |
+| AI evaluation and correction | CineTwin actor/root measurements, LangGraph analysis, native physical camera FOV comparison, native camera cut binding/section audit and narrow source-bound repair strategies | Animated joint orientation/bind-basis coverage, exact rendered projection/cut parity and additional *registered* safe repair adapters |
 | Review UI | Dark minimal Studio, single-click transfer, AI planning progress, optional feedback, provenance audit, pre-native cancellation | Show all supported/partial domains and completed native results; end-user setup/recovery guidance |
-| Release evaluation | Canonical per-job release gate, exact native readback, separate AI/IK and reopened temporal checks | Complete visual/audio/physics/event/held-out acceptance artifacts and sign-off criteria |
+| Release evaluation | Canonical per-job release gate, exact native readback, AI/IK and reopened temporal checks, recomputation of source-bound actor/rig/camera comparison | Complete visual/audio/physics/event/held-out acceptance artifacts and sign-off criteria |
 | CI and packaging | Python tests, UI contract, compile/syntax, Ruff, repository hygiene | End-to-end code-only smoke workflow, Windows dependency/companion install checks and reproducible local build package |
 
 ## Required software completion gates before engine testing
@@ -109,6 +109,22 @@ deferred until software freeze.
   successful native receipt is **not** a real-engine fidelity pass.
   Reviewed first green integrated CI: commit `ca1496ce`,
   [960 Python tests passed, 7 skipped, Windows bootstrap and UI/ruff green](https://github.com/Nithin0553/CutsceneAI/actions/runs/44399720465).
+- Added independent **sampled camera optics** and **native camera cut timing**
+  checks. Unity's Play Mode camera vertical FOV is compared at source frame
+  timestamps with Unreal CineCamera filmback sensor height and focal length;
+  invalid, missing or inconsistent physical camera evidence is refused.
+  Source camera cut bindings and exact section bounds are recorded in the
+  source sampling-plan contract and compared against independent Unreal
+  Sequencer camera-cut track/binding readback, including native FrameNumber
+  values. Missing, overlapping, subframe, ambiguous and changed cuts cannot
+  claim exact timing parity.
+- Post-reopen acceptance and the canonical release gate now separate actor/root,
+  camera lens and authored cut timing outcomes. The release gate recomputes the
+  whole behavior comparison from exact saved source and target samples and
+  rejects altered metrics, foreign CSIR/capture hashes and fabricated PASS
+  reports. These checks establish only **measured structural/time/lens scope**,
+  not a rendered-equivalence claim. CI includes normal and adversarial camera
+  fixtures; genuine UE 5.8 editor execution remains untested.
 - Moving-character native adapter development is delegated to Friday under
   [F-003 issue #129](https://github.com/Nithin0553/CutsceneAI/issues/129);
   his isolated branch `agent/friday-moving-character-motion-v0.1` is based
@@ -135,9 +151,12 @@ deferred until software freeze.
 2. **General-purpose arbitrary asset conversion** (all shaders, all textures,
    audio, VFX, arbitrary avatar rigs, scripts, simulation components) and
    semantic engine behavior equivalence.
-3. **Comprehensive camera rendering + full joint pose parity** across all
-   frames and sequences. Scene-editable generation and native asset readback
-   are not visual fidelity certificates.
+3. **Comprehensive rendered camera/projection parity + full joint pose
+   orientation** across all frames and sequences. Camera FOV and authored
+   cut sections now have bounded source-vs-native software comparison, but
+   they do not prove rendered composition, post-process, exposure, active cut
+   frame imagery, or calibrated cross-rig joint orientation. Scene-editable
+   generation and native asset readback are not visual fidelity certificates.
 4. **First-run distribution installer** and a truly self-contained app
    that needs no manual Unity/Unreal companion bootstrap. A source-checkout
    Windows Python bootstrap now exists, but it is not standalone distribution
