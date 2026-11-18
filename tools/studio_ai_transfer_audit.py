@@ -113,6 +113,7 @@ def _decision(job: dict, candidate: Path) -> tuple[dict, dict, dict]:
 
 def _character_conversion(
     job: dict, candidate: Path, decision: dict, plan: dict,
+    *, native_builder_completed: bool,
 ) -> dict[str, Any]:
     """Join Friday's pre-transfer choice to a source-bound native readback.
 
@@ -210,7 +211,7 @@ def _character_conversion(
     if job_readback is not None and job_readback != status:
         raise AITransferAuditError("Job and native character-readback statuses disagree.")
     positive = bool(
-        status == "PASS" and job_readback == "PASS"
+        native_builder_completed and status == "PASS" and job_readback == "PASS"
         and native.get("duration_match") is True
         and (native.get("skeleton") or {}).get("status") == "PASS"
         and isinstance(native.get("observed_sections"), list)
@@ -360,7 +361,10 @@ def assess(workspace: str | Path, job_id: str) -> dict[str, Any]:
     if not isinstance(actions, list) or any(not isinstance(action, dict) for action in actions):
         raise AITransferAuditError("Prepared native plan has invalid action records.")
     native = _native_execution(job, candidate, plan)
-    character = _character_conversion(job, candidate, decision, plan)
+    character = _character_conversion(
+        job, candidate, decision, plan,
+        native_builder_completed=native["native_builder_completed"],
+    )
     visibility_count = sum(action.get("kind") == "actor_visibility" for action in actions)
     if decision["conversion_options"]["enable_actor_visibility_fallback"] and not visibility_count:
         raise AITransferAuditError("AI selected activation approximation but no native action was planned.")
