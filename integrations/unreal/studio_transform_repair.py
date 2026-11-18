@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -78,11 +77,14 @@ def attempt(api: Any, workspace: Path, job: dict, request: dict) -> dict:
         )
 
     fresh = measure()
-    if (not _identical_source(original["source"], fresh["source"])
-            or fresh["target"].get("sequence_path") != job["sequence_path"]
-            or os.path.normcase(str(Path(fresh["target"].get("project", "")).resolve()))
-            != os.path.normcase(str(Path(job["expected_project"]).resolve()))):
-        raise ValueError("Native diagnostic identity changed before repair.")
+    if not _identical_source(original["source"], fresh["source"]):
+        raise ValueError("Native source evidence changed before repair.")
+    if not evidence.same_unreal_project(
+            job["expected_project"], fresh["target"].get("project")):
+        raise ValueError("Fresh native diagnostic targets a different Unreal project.")
+    if not evidence.same_unreal_sequence(
+            job["sequence_path"], fresh["target"].get("sequence_path")):
+        raise ValueError("Fresh native diagnostic targets a different Level Sequence.")
     plan = evidence.review(fresh, target_name)
     if not plan.get("eligible"):
         raise ValueError("Fresh native re-measurement blocked translation: "
