@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -328,3 +329,113 @@ def test_unreal_disconnection_pauses_ai_analysis_and_preparation(rig, monkeypatc
     assert studio_autopilot.advance(workspace, service=service)[
         "status"] == "WAITING_FOR_UNREAL"
     assert decision_path.read_bytes() == previous
+
+
+def test_crash_after_unreal_job_submission_recovers_without_requeue(rig):
+    workspace, project, target, service, _ = rig
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    active = workspace / studio_autopilot.ACTIVE
+    record = json.loads(active.read_text())
+    record.update(status="WAITING_FOR_UNREAL", candidate_id="candidate1")
+    active.write_text(json.dumps(record))
+    candidate_dir = workspace / "candidates" / "candidate1"
+    candidate_dir.mkdir(parents=True)
+    job_id = "d" * 32
+    job_path = workspace / "jobs" / (job_id + ".json")
+    job_path.parent.mkdir()
+    job_path.write_text(json.dumps({
+        "kind": "cutsceneai.studio.local_unreal_job",
+        "job_id": job_id, "candidate_id": "candidate1",
+        "candidate_dir": str(candidate_dir), "status": "QUEUED",
+    }))
+    service.queue_trial = lambda *_: pytest.fail("Never queue the already submitted job")
+    recovered = studio_autopilot.advance(workspace, service=service)
+    assert recovered["status"] == "UNREAL_RUNNING"
+    assert recovered["job_id"] == job_id
+    assert json.loads((workspace / "active-job.json").read_text())["job_id"] == job_id
+    assert len(list((workspace / "jobs").glob("*.json"))) == 1
+
+
+def test_crash_recovery_refuses_duplicate_jobs_and_conflicting_pointer(rig):
+    workspace, project, target, service, _ = rig
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    active = workspace / studio_autopilot.ACTIVE
+    state = json.loads(active.read_text())
+    state.update(status="WAITING_FOR_UNREAL", candidate_id="candidate1")
+    active.write_text(json.dumps(state))
+    candidate_dir = workspace / "candidates" / "candidate1"
+    candidate_dir.mkdir(parents=True)
+    jobs = workspace / "jobs"
+    jobs.mkdir()
+    for letter in ("d", "e"):
+        ident = letter * 32
+        (jobs / (ident + ".json")).write_text(json.dumps({
+            "kind": "cutsceneai.studio.local_unreal_job",
+            "job_id": ident, "candidate_id": "candidate1",
+            "candidate_dir": str(candidate_dir),
+        }))
+    service.queue_trial = lambda *_: pytest.fail("Ambiguous jobs must not be replayed")
+    blocked = studio_autopilot.advance(workspace, service=service)
+    assert blocked["status"] == "BLOCKED"
+    assert "Multiple jobs" in blocked["error"]
+    assert not (workspace / "active-job.json").exists()
+
+    (jobs / ("e" * 32 + ".json")).unlink()
+    active.write_text(json.dumps(state))
+    (workspace / "active-job.json").write_text(json.dumps({"job_id": "e" * 32}))
+    blocked = studio_autopilot.advance(workspace, service=service)
+    assert blocked["status"] == "BLOCKED"
+    assert "Another Unreal job" in blocked["error"]
+
+
+def test_orphaned_native_character_probe_times_out_without_ai_or_native_write(rig, monkeypatch):
+    workspace, project, target, service, _ = rig
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    active = workspace / studio_autopilot.ACTIVE
+    state = json.loads(active.read_text())
+    state.update(status="ANALYZING_PROJECTS", census_path=str(project / "census.json"))
+    active.write_text(json.dumps(state))
+    (workspace / "connection.json").write_text(json.dumps({"source": "verified"}))
+    import studio_transfer_ai
+    monkeypatch.setattr(studio_transfer_ai, "target_probe",
+                        lambda *args, **kwargs: (True, None))
+    waiting = studio_autopilot.advance(workspace, service=service)
+    assert waiting["status"] == "ANALYZING_PROJECTS"
+    pending = json.loads(active.read_text())
+    assert pending["native_probe_wait_started_at"]
+    pending["native_probe_wait_started_at"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=181)
+    ).isoformat()
+    active.write_text(json.dumps(pending))
+    blocked = studio_autopilot.advance(workspace, service=service)
+    assert blocked["status"] == "BLOCKED"
+    assert "timed out" in blocked["error"]
+    assert not (workspace / "ai-conversion-decision.json").exists()
+    assert not (workspace / "active-candidate.json").exists()
+    assert not (workspace / "active-job.json").exists()
+
+
+def test_restart_during_partial_candidate_preparation_refuses_second_candidate(rig):
+    workspace, project, target, service, _ = rig
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    active = workspace / studio_autopilot.ACTIVE
+    state = json.loads(active.read_text())
+    state.update(status="PREPARING")
+    active.write_text(json.dumps(state))
+    (workspace / "active-candidate.json").write_text(json.dumps({"candidate_id": "existing"}))
+    service.prepare = lambda *_: pytest.fail("Never prepare a second candidate after crash")
+    blocked = studio_autopilot.advance(workspace, service=service)
+    assert blocked["status"] == "BLOCKED"
+    assert "already prepared" in blocked["error"]
