@@ -421,7 +421,8 @@ def test_connected_old_companion_explains_restart(tmp_path):
     })
     report = bridge.destination_readiness(work)
     assert report['status'] == 'UPGRADE_COMPANION'
-    assert 'restart unreal' in report['next_action'].lower()
+    assert 'keep unreal editor open' in report['next_action'].lower()
+    assert 'importlib.reload(w)' in report['next_action']
 
 
 def test_automatic_studio_preparation_requests_safe_hierarchy_reconstruction(tmp_path, monkeypatch):
@@ -616,7 +617,8 @@ def test_destination_readiness_blocks_older_editor_for_source_studio(tmp_path):
     report = bridge.destination_readiness(work)
     assert report['status'] == 'UPGRADE_COMPANION'
     assert report['ready'] is False
-    assert 'completely close Unreal Editor' in report['next_action']
+    assert 'Keep Unreal Editor open' in report['next_action']
+    assert 'w.stop(); importlib.reload(w); w.start()' in report['next_action']
     assert 'new transfer candidate' in report['next_action']
     current = _current_editor_heartbeat(config)
     bridge.atomic_json(work / 'unreal-worker.json', current)
