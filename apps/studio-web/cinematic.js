@@ -139,7 +139,7 @@
 
   function quickTransfer(){
     const run=state.autopilot||{};
-    const finished=['GENERATED_UNVERIFIED','BLOCKED'].includes(run.status);
+    const finished=['GENERATED_UNVERIFIED','BLOCKED','CANCELLED'].includes(run.status);
     return '<main class="transfer-view simple-studio">'+
       '<h1>AI Transfer</h1><p class="simple-intro">'+esc(run.message||'Connecting to your engines…')+'</p>'+
       '<div class="transfer-progress"><div class="indeterminate '+(!finished?'working':'')+
@@ -148,9 +148,11 @@
       (run.ai_animation_action?'<p class="subnote">Approved character conversion: '+esc(run.ai_animation_action)+'</p>':'')+
       (run.error?'<p class="warning" role="alert">'+esc(run.error)+'</p>':'')+
       (run.status==='BLOCKED'?'<p class="subnote">The agent stopped safely. The original projects were not overwritten. Resolve the reported editor or source dependency before starting a fresh transfer.</p>':'')+
+      (run.status==='CANCELLED'?'<p class="subnote">Cancelled before Unreal execution; no native job was interrupted.</p>':'')+
       '<div class="center-actions">'+
       (run.status==='GENERATED_UNVERIFIED'?button('Review Cutscene','quick-results'):
-        run.status==='BLOCKED'?button('Back to Projects','projects',false,'secondary'):'')+
+        ['BLOCKED','CANCELLED'].includes(run.status)?button('Back to Projects','projects',false,'secondary'):
+        run.status==='UNREAL_RUNNING'?'':button('Cancel before Unreal','autopilot-cancel',state.busy,'secondary'))+
       '</div></main>';
   }
 
@@ -726,6 +728,17 @@
   async function action(name){
     if(name==='quick-transfer'){state.screen='transfer';render();return;}
     if(name==='quick-results'){state.screen='results';render();return;}
+    if(name==='autopilot-cancel'){
+      if(state.busy||state.autopilot?.status==='UNREAL_RUNNING')return;
+      state.busy=true;render();
+      try{
+        state.autopilot=await api('autopilot/cancel',{});
+        state.screen='projects';state.error='';
+        state.info='The pre-execution transfer was cancelled safely.';
+      }catch(e){state.error=e.message;}
+      finally{state.busy=false;render();}
+      return;
+    }
     if(name==='autopilot-start'){
       if(state.busy)return;
       state.busy=true;render();
