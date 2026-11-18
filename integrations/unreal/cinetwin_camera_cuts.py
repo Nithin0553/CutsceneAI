@@ -17,7 +17,7 @@ def inspect(sequence: Any, api: Any) -> dict[str, Any]:
     track_type = getattr(api, "MovieSceneCameraCutTrack", None)
     editor_type = getattr(api, "UnrealEditorSubsystem", None)
     required = (
-        (extensions, "get_master_tracks"),
+        (extensions, "get_tracks"),
         (extensions, "get_bindings"),
         (extensions, "get_binding_id"),
         (extensions, "locate_bound_objects"),
@@ -29,7 +29,7 @@ def inspect(sequence: Any, api: Any) -> dict[str, Any]:
                    for container, name in required)):
         return {"status": "UNAVAILABLE", "reason": "NATIVE_SEQUENCER_CUT_API_UNVERIFIED"}
     try:
-        tracks = [track for track in extensions.get_master_tracks(sequence)
+        tracks = [track for track in extensions.get_tracks(sequence)
                   if isinstance(track, track_type)]
         if len(tracks) > 1:
             return {"status": "UNAVAILABLE", "reason": "MULTIPLE_NATIVE_CAMERA_CUT_TRACKS"}
