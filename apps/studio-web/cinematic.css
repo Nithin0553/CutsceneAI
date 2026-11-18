@@ -185,3 +185,11 @@
 .simple-chat textarea:focus-visible{outline:2px solid #39d900;outline-offset:2px}
 .simple-chat .button{align-self:flex-end}
 @media(max-width:680px){.simple-studio{padding:32px 6px 64px}.simple-studio .simple-connections{grid-template-columns:1fr;gap:12px}.simple-studio .simple-connections .button{width:100%}.simple-chat{padding:20px 14px}.simple-chat .button{width:100%}}
+
+/* Independent AI-planning vs Unreal execution evidence: compact by default. */
+.ai-conversion-summary{width:min(760px,100%);margin:24px auto 8px;text-align:left;border:1px solid #314631;background:#101611;padding:20px 24px;border-radius:14px}
+.ai-conversion-summary h2{font-size:17px;font-weight:700;margin:0 0 12px;color:#e9f7ea}
+.ai-conversion-summary p{font-size:13px;line-height:1.6;margin:8px 0;color:#c8d4c9;overflow-wrap:anywhere}
+.ai-conversion-summary strong{color:#b6efab;font-weight:650}
+.ai-conversion-summary .subnote{font-size:12px;color:#a1aba3;margin-top:12px;border-top:1px solid #29352b;padding-top:12px}
+@media(max-width:600px){.ai-conversion-summary{padding:16px 14px}}
