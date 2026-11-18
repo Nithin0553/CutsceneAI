@@ -6,7 +6,6 @@ reopen and cross-engine fidelity are intentionally NEVER claimed by this test.
 from __future__ import annotations
 
 import hashlib
-import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -17,22 +16,24 @@ ROOT = Path(__file__).resolve().parents[2]
 for folder in ("tools", "packages/studio", "packages/cinetwin", "integrations/unreal"):
     sys.path.insert(0, str(ROOT / folder))
 
-from test_character_animation_policy import (  # noqa: E402
+import animation_conversion_policy as policy
+import sampling_plan
+import studio_ai_transfer_audit as ai_audit
+import studio_character_execution as character_executor
+import studio_local_bridge as bridge
+import studio_release_gate as release_gate
+from test_character_animation_policy import (
     Asset,
     _choice,
     _json,
     _probe,
     _read,
-    case as case,
+    case,
 )
 
-import sampling_plan  # noqa: E402
-import studio_ai_transfer_audit as ai_audit  # noqa: E402
-import studio_character_execution as character_executor  # noqa: E402
-import studio_local_bridge as bridge  # noqa: E402
-import studio_release_gate as release_gate  # noqa: E402
-import animation_conversion_policy as policy  # noqa: E402
-
+# Re-export Friday's synthetic fixture to keep the integrated workflow on
+# the same validated source/target contract without duplicating setup.
+__all__ = ["case"]
 
 def _fake_native_character_readback(case, job, candidate, selected, plan):
     """Exercise the REAL native readback validator against a small Unreal mock."""
