@@ -127,11 +127,14 @@ def start(workspace=None, *, job_id=None, baseline_target=None):
         evaluation = comparison['evaluation']
         joints = [row['joint_positions']['status'] for row in comparison['rig_motion_diagnostics']]
         character_status = character_proof['reopened_character_readback_status'] if character_proof else 'PASS'
+        lens_status = comparison.get('camera_optics', {}).get('status')
+        cuts_status = comparison.get('camera_cut_timing', {}).get('status')
         if (evaluation['status'] == 'DIFFERENCES_DETECTED' or native['native_structure_status'] == 'FAIL'
-                or character_status == 'FAIL'):
+                or character_status == 'FAIL' or lens_status == 'FAIL' or cuts_status == 'FAIL'):
             status = 'DIFFERENCES_DETECTED'
         elif (not native['restart_verified'] or evaluation['unmapped_entity_count']
-              or 'INCOMPLETE' in joints or target['quality']['status'] == 'SUSPECT' or character_status != 'PASS'):
+              or 'INCOMPLETE' in joints or target['quality']['status'] == 'SUSPECT' or character_status != 'PASS'
+              or lens_status == 'INCOMPLETE' or cuts_status == 'INCOMPLETE'):
             status = 'INCOMPLETE_MEASURED_SCOPE'
         else:
             status = 'STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE'
