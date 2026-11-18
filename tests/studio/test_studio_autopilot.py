@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -413,7 +413,7 @@ def test_orphaned_native_character_probe_times_out_without_ai_or_native_write(ri
     pending = json.loads(active.read_text())
     assert pending["native_probe_wait_started_at"]
     pending["native_probe_wait_started_at"] = (
-        datetime.now(timezone.utc) - timedelta(seconds=181)
+        datetime.now(UTC) - timedelta(seconds=181)
     ).isoformat()
     active.write_text(json.dumps(pending))
     blocked = studio_autopilot.advance(workspace, service=service)
