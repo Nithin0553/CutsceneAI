@@ -395,6 +395,14 @@ def build_graph(workspace: Path, job: dict[str, Any],
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
                     "failure": "LLM proposal is not in the evidence-backed capability route.",
                     "chosen_strategy": "report_only"}
+        if strategy == "restore_constant_actor_offset" and not (
+            comment and state.get("transform_candidate", {}).get("eligible")
+            and "restore_constant_actor_offset" in
+            state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Transform proposal was not independently authorized.",
+                    "chosen_strategy": "report_only"}
         if strategy == "restore_source_albedo" and not (
             state.get("eligible_repair") and relevant_material_request and
             state["last_fallback"] > 0 and _source_materials(candidate)
@@ -403,7 +411,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
                     "failure": "LLM proposal failed deterministic provenance guard.",
                     "chosen_strategy": "report_only"}
         return {
-            "status": "REPAIR_SELECTED" if strategy == "restore_source_albedo"
+            "status": "REPAIR_SELECTED" if strategy != "report_only"
                       else "UNRESOLVED_NO_SAFE_STRATEGY",
             "chosen_strategy": strategy,
             "reasoning": (
@@ -413,7 +421,8 @@ def build_graph(workspace: Path, job: dict[str, Any],
         }
 
     def dispatch(state: AgentState) -> dict[str, Any]:
-        if state.get("chosen_strategy") != "restore_source_albedo":
+        strategy = state.get("chosen_strategy")
+        if strategy not in {"restore_source_albedo", "restore_constant_actor_offset"}:
             return {"status": "UNRESOLVED_NO_SAFE_STRATEGY"}
         request_id = uuid.uuid4().hex
         request = {
@@ -424,10 +433,22 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "expected_project": job["expected_project"],
             "expected_level": job["expected_level"],
             "request_id": request_id,
-            "strategy": "restore_source_albedo",
+            "strategy": strategy,
             "iteration": state.get("iterations", 0) + 1,
             "baseline_fallback": state.get("last_fallback", 0),
         }
+        if strategy == "restore_constant_actor_offset":
+            proof = state.get("transform_candidate") or {}
+            if not proof.get("eligible") or not state.get("feedback_id"):
+                raise AgentError("Missing user-authorized actor translation proof.")
+            origin = Path(job["diagnostic_file"]).resolve()
+            if origin.parent != candidate or not origin.is_file():
+                raise AgentError("Original native transform evidence is missing.")
+            request.update({
+                "target_entity": proof["entity"],
+                "feedback_id": state["feedback_id"],
+                "original_report_sha256": hashlib.sha256(origin.read_bytes()).hexdigest(),
+            })
         path = candidate / ("agent-request-" + request_id + ".json")
         with path.open("x", encoding="utf-8") as stream:
             json.dump(request, stream, sort_keys=True, indent=2)
