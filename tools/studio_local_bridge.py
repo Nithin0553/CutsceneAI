@@ -213,7 +213,9 @@ def companion_upgrade_action(reason: str) -> str:
         'import importlib, studio_local_editor_worker as w; '
         'w.stop(); importlib.reload(w); w.start(). '
         'This reconnects the bridge without restarting Unreal. '
-        'Never retry an interrupted native candidate; inspect its receipt.'
+        'Never retry an interrupted native candidate; inspect its receipt. '
+        'If a prepared plan is stale after code or source changes, create a '
+        'new transfer candidate after reconnecting; never modify the old one.'
     )
 
 
