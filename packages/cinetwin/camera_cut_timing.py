@@ -21,8 +21,8 @@ def compare_camera_cut_sections(
 ) -> dict[str, Any]:
     """Fail closed on missing camera binding IDs, section bounds and overlap."""
     source = plan.get("camera_cuts") or []
-    if not isinstance(source, list):
-        raise CameraCutEvidenceError("Source cut inventory must be an array.")
+    if not isinstance(source, list) or len(source) > 10000:
+        raise CameraCutEvidenceError("Source cut inventory exceeds the safe bound.")
     if not source:
         sections = native.get("sections") if isinstance(native, dict) else None
         return {
@@ -89,11 +89,14 @@ def compare_camera_cut_sections(
         actual.append((label, start, end))
     planned, measured = Counter(expected), Counter(actual)
     matched = sum(min(count, measured[key]) for key, count in planned.items())
-    overlap = sorted({(a[0], a[1], a[2]) for a in expected if sum(
-        1 for b in expected if b is not a and a[1] < b[2] and b[1] < a[2]
-    )})
-    if overlap:
-        reasons.append("OVERLAPPING_SOURCE_CAMERA_CUTS")
+    # O(n log n) interval scan prevents a large source clip inventory from
+    # turning release assessment into a quadratic editor-side stall.
+    latest_end = -1
+    for _label, first, last in sorted(expected, key=lambda row: (row[1], row[2])):
+        if first < latest_end:
+            reasons.append("OVERLAPPING_SOURCE_CAMERA_CUTS")
+            break
+        latest_end = max(latest_end, last)
     if measured != planned:
         status = "FAIL"
         reasons.append("NATIVE_CAMERA_BINDING_OR_SECTION_DIFFERENCE")
