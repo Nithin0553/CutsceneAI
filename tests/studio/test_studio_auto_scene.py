@@ -583,3 +583,69 @@ def test_static_mesh_staging_refuses_preexisting_planned_target(tmp_path):
     with pytest.raises(scene.AutomaticSetupError, match='Refusing to overwrite'):
         scene._materialize_static_mesh(fake, task, source, target, stage)
     assert fake.assets[target].path == target
+
+
+
+def test_two_source_bound_tree_props_complete_native_staging_with_separate_lod_nodes(tmp_path):
+    root, files = create(tmp_path)
+    tree = root / 'Assets' / 'SimpleNaturePack' / 'Models' / 'Tree_02.fbx'
+    tree.parent.mkdir(parents=True)
+    tree.write_bytes(b'lod0-and-lod1-tree-fbx')
+    source = json.loads(files[0].read_text())
+    plan = json.loads(files[2].read_text())
+    for side in ('LEFT', 'RIGHT'):
+        name = 'ENV_TREE_' + side
+        source['entities'].append({
+            'entity_id': 'tree:' + side.lower(), 'name': name,
+            'ced_type': 'entity.prop',
+            'metadata': {'source_model_assets': [{
+                'asset_path': 'Assets/SimpleNaturePack/Models/Tree_02.fbx',
+            }]},
+        })
+        plan['bindings'][name] = 'CSAI_' + name
+    files[0].write_text(json.dumps(source))
+    files[2].write_text(json.dumps(plan))
+    stage = studio_auto_assets.inspect(
+        *files, root, 'Assets',
+        '/Game/CutSceneAI/AutoTransfer/T_LOD_TREE',
+    )
+    assert stage['ready'], stage['blockers']
+    tree_ops = [row for row in stage['imports'] if row['source_file'] == str(tree.resolve())]
+    assert len(tree_ops) == 2
+    manifest = tmp_path / 'tree-manifest.json'
+    manifest.write_text(json.dumps(stage))
+    project = tmp_path / 'NewProject.uproject'
+    project.write_text('{}')
+    fake = FakeUnreal(str(project))
+    regular = fake.imports
+
+    def import_source_lods(tasks):
+        for task in tasks:
+            if task.props['filename'] != str(tree.resolve()):
+                regular([task])
+                continue
+            dest = task.props['destination_path']
+            names = [dest + '/Tree_02_LOD0', dest + '/Tree_02_LOD1']
+            for path in names:
+                fake.assets[path] = Asset('StaticMesh', path)
+            task.props['imported_object_paths'] = [
+                path + '.' + path.rsplit('/', 1)[-1] for path in names
+            ]
+
+    fake.asset_tools.import_asset_tasks = import_source_lods
+    receipt = scene.run(
+        str(manifest), str(tmp_path / 'tree-receipt.json'),
+        csir_path=str(files[0]), mapping_path=str(files[1]),
+        plan_path=str(files[2]), expected_project=str(project),
+        expected_level='/Game/Tests/L_Test', unreal_api=fake,
+    )
+    assert receipt['status'] == 'SETUP_SAVED_UNVERIFIED'
+    assert len(receipt['actors_created']) == 7
+    assert len(receipt['static_mesh_imports']) == 2
+    assert all(x['lod_chain_verified'] is False for x in receipt['static_mesh_imports'])
+    for side in ('LEFT', 'RIGHT'):
+        path = '/Game/CutSceneAI/AutoTransfer/T_LOD_TREE/Props/CSAI_ENV_TREE_' + side
+        assert fake.assets[path].klass == 'StaticMesh'
+        assert any(op['path'] == path and op['status'] == 'NATIVE_CLASS_CHECKED'
+                   for op in receipt['asset_operations'])
+    assert any('LOD meshes remain separate' in w for w in receipt['unsupported'])
