@@ -281,7 +281,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             }, {})
         count = _valid_fallback(visual)
         transform_proof = None
-        if comment:
+        if (comment and agent_intent_router.recognize(user_message)["domains"] == ["transform"]):
             import agent_transform_evidence
             try:
                 native_report = agent_transform_evidence.source_bound_report(job, candidate)
