@@ -25,7 +25,7 @@ STAGES = frozenset({
     "ANALYZING_PROJECTS", "PREPARING",
     "WAITING_FOR_UNREAL", "UNREAL_RUNNING",
 })
-FINISHED = frozenset({"GENERATED_UNVERIFIED", "BLOCKED"})
+FINISHED = frozenset({"GENERATED_UNVERIFIED", "BLOCKED", "CANCELLED"})
 
 
 class AutopilotError(ValueError):
@@ -113,6 +113,45 @@ def begin(workspace: Path, *, unity_folder: str, unreal_folder: str,
         }
         _write(workspace / ACTIVE, record)
         return {**status(workspace), "instruction": request["instruction"]}
+
+
+def cancel(workspace: Path, *, service: Any) -> dict[str, Any]:
+    """Stop before the first native job, without deleting immutable evidence.
+
+    Never cancel a queued/running Unreal import: an interrupted engine write
+    may already have changed staging assets or actor state.
+    """
+    with service.lock, _LOCK:
+        path = workspace / ACTIVE
+        if not path.is_file():
+            return status(workspace)
+        state = _load(path)
+        if state["status"] == "CANCELLED":
+            return status(workspace)
+        active = workspace / "active-job.json"
+        if active.is_file():
+            identifier = str(_load(active).get("job_id") or "")
+            if identifier:
+                previous = service.job_status(identifier, workspace)
+                if previous["status"] in {"QUEUED", "RUNNING"}:
+                    raise AutopilotError(
+                        "An Unreal transfer is queued or running; native import "
+                        "cannot be interrupted safely. Inspect the job instead."
+                    )
+        if state["status"] == "UNREAL_RUNNING":
+            raise AutopilotError(
+                "Unreal execution has started; do not interrupt a partially imported candidate."
+            )
+        if state["status"] not in STAGES:
+            raise AutopilotError("No pre-execution transfer is available to cancel.")
+        state["status"] = "CANCELLED"
+        state["message"] = (
+            "Transfer cancelled before native execution. Existing Unity "
+            "snapshots and prepared candidates were preserved."
+        )
+        state["error"] = ""
+        _write(path, state)
+        return status(workspace)
 
 
 def _pick_level(record: dict, service: Any, workspace: Path) -> str:
