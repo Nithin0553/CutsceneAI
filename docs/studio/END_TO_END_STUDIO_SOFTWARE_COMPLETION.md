@@ -131,10 +131,19 @@ deferred until software freeze.
   reports. These checks establish only **measured structural/time/lens scope**,
   not a rendered-equivalence claim. CI includes normal and adversarial camera
   fixtures; genuine UE 5.8 editor execution remains untested.
-- Moving-character native adapter development is delegated to Friday under
-  [F-003 issue #129](https://github.com/Nithin0553/CutsceneAI/issues/129);
-  his isolated branch `agent/friday-moving-character-motion-v0.1` is based
-  on the release candidate. No work from that assignment is yet accepted.
+- Friday's F-003 [draft PR #130](https://github.com/Nithin0553/CutsceneAI/pull/130)
+  delivered a source-bound, **one unparented translating/turning character**
+  actor-world trajectory strategy using a previously approved native IK
+  retarget profile, one supported FBX take and one demonstrably stable
+  actor-relative skeletal root. The primary developer reconciled Friday's
+  native motion receipt checks with the camera/joint-release gates in
+  [draft integration PR #131](https://github.com/Nithin0553/CutsceneAI/pull/131).
+  The combined software-only test run had **1,082 passed, 7 skipped**,
+  with Windows setup and 14 UI contract scenarios green
+  ([CI 44416807812](https://github.com/Nithin0553/CutsceneAI/actions/runs/44416807812)).
+  Review scope and exact remaining blockers are in
+  [PRIMARY_F003_INTEGRATION_REVIEW.md](PRIMARY_F003_INTEGRATION_REVIEW.md).
+  Neither genuine Unity/Unreal execution nor full fidelity is established.
 - Added bounded (60-minute) source Play Mode capture and (180-second) read-only
   Unreal character-probe waits. Expired requests report a safe terminal failure;
   they never invent samples or submit a native job.
@@ -151,9 +160,11 @@ deferred until software freeze.
 
 ## Deliberately NOT completed in current release candidate
 
-1. **Moving-character/root-motion correction** beyond current constrained
-   source-backed handlers and in-place IK strategy. Historical Ch31 actor and
-   root errors do not justify one offset guess.
+1. **Broad skeletal-root or compound motion conversion** beyond the
+   new bounded actor-owned moving/turning-character action. The code refuses
+   parented, layered, looping, humanoid, independently moving skeletal-root
+   and simultaneous multi-character cases rather than inventing offsets.
+   Historical Ch31 actor/root errors do not justify one fitted correction.
 2. **General-purpose arbitrary asset conversion** (all shaders, all textures,
    audio, VFX, arbitrary avatar rigs, scripts, simulation components) and
    semantic engine behavior equivalence.
@@ -173,6 +184,16 @@ deferred until software freeze.
 These are not documentation-only open items. Either complete a bounded,
 verifiable supported subset in code and test it, or explicitly exclude that
 domain from the versioned release scope with clear user-visible refusal.
+
+## Primary F-003 software-review decision
+
+**CODE-ONLY ACCEPTED FOR THE BOUNDED ACTOR-WORLD CONVERSION ACTION.**
+Friday F-003 may be included in the combined release candidate, with a
+versioned action catalog, independent native structural readback, refusal
+tests and a no-replay journal. The review is recorded in
+[PRIMARY_F003_INTEGRATION_REVIEW.md](PRIMARY_F003_INTEGRATION_REVIEW.md).
+**No `SOFTWARE_READY_FOR_ENGINE_TEST` decision yet.** Remaining software
+scope and companion setup gates must be reviewed first.
 
 ## When software freeze is allowed
 
