@@ -188,6 +188,10 @@ def worker_code_mismatch(worker: dict[str, Any]) -> str | None:
     if actual_sha != hashlib.sha256(expected_worker.read_bytes()).hexdigest():
         return ('Unreal companion has cached an outdated Python worker from '
                 'before the latest Studio update.')
+    live = worker.get('live_reload_state')
+    if live in {'BLOCKED', 'DEFERRED_NATIVE_JOB'}:
+        return ('Unreal companion Python refresh is ' + str(live) + ': ' +
+                str(worker.get('live_reload_error') or 'inspect the native job and code state'))
     return None
 
 
