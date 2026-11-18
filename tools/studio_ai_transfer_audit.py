@@ -126,6 +126,8 @@ def _native_execution(job: dict, candidate: Path, plan: dict) -> dict[str, Any]:
         return result
     receipt = _load(receipt_path)
     result["receipt_present"] = True
+    if job.get("receipt_file") and Path(str(job["receipt_file"])).resolve() != receipt_path:
+        raise AITransferAuditError("Job references a different Unreal execution receipt.")
     # The builder has its own independent CSIR-to-plan re-verification.
     if receipt.get("kind") != "cutsceneai.unreal.best_effort_receipt":
         raise AITransferAuditError("Unexpected native Unreal builder receipt.")
@@ -142,6 +144,9 @@ def _native_execution(job: dict, candidate: Path, plan: dict) -> dict[str, Any]:
     # They remain FAILED, not falsely counted as completed provenance.
     verified_project = receipt.get("verified_project")
     expected_project = job.get("expected_project")
+    if receipt.get("status") == "GENERATED_UNVERIFIED" and not isinstance(
+            verified_project, str):
+        raise AITransferAuditError("Completed Unreal receipt has no verified project.")
     if isinstance(verified_project, str) and (
             not isinstance(expected_project, str)
             or Path(verified_project).resolve() != Path(expected_project).resolve()):
@@ -181,6 +186,7 @@ def _cinetwin(job: dict, candidate: Path, session: dict) -> dict[str, Any]:
         raise AITransferAuditError("Native diagnostic is outside the exact transfer candidate.")
     report = _load(report_path)
     if (report.get("kind") != "cutsceneai.cinetwin.unreal_world_pose_diagnostic"
+            or report.get("status") != "DIAGNOSTIC_NOT_FIDELITY_VERIFIED"
             or not _same_sequence(job.get("sequence_path"),
                                   (report.get("target") or {}).get("sequence_path"))):
         raise AITransferAuditError("Native CineTwin comparison targets a different sequence.")
