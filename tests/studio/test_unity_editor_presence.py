@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -27,7 +27,7 @@ def _heartbeat(project, **changes):
     record = {
         "kind": "cutsceneai.unity.editor_presence",
         "schema_version": "1", "project_root": str(project.resolve()),
-        "heartbeat": datetime.now(timezone.utc).isoformat(),
+        "heartbeat": datetime.now(UTC).isoformat(),
         "editor_pid": 12345, "source_bridge_enabled": True,
         "editor_mode": "EDIT_MODE", "bridge_version": "unity-editor-v0.2",
     }
@@ -52,7 +52,7 @@ def test_play_mode_and_returned_domain_reload_heartbeat_are_both_live(project):
     marker.write_text(json.dumps({
         **json.loads(marker.read_text()),
         "editor_mode": "EDIT_MODE",
-        "heartbeat": datetime.now(timezone.utc).isoformat(),
+        "heartbeat": datetime.now(UTC).isoformat(),
     }))
     assert editor_status(project)["connected"] is True
 
@@ -72,7 +72,7 @@ def test_disabled_or_invalid_unity_presence_is_not_a_connection(project, overrid
 
 def test_expired_presence_waits_for_companion_to_reconnect(project):
     _heartbeat(project, heartbeat=(
-        datetime.now(timezone.utc) - timedelta(seconds=90)
+        datetime.now(UTC) - timedelta(seconds=90)
     ).isoformat())
     status = editor_status(project)
     assert status["connected"] is False
@@ -81,7 +81,7 @@ def test_expired_presence_waits_for_companion_to_reconnect(project):
 
 def test_future_presence_is_not_accepted(project):
     _heartbeat(project, heartbeat=(
-        datetime.now(timezone.utc) + timedelta(minutes=2)
+        datetime.now(UTC) + timedelta(minutes=2)
     ).isoformat())
     assert editor_status(project)["connected"] is False
 
