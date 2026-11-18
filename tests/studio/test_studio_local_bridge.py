@@ -715,3 +715,25 @@ def test_default_agent_first_endpoints_require_local_session_token(service):
     }, initial['token'])
     assert code == 422 and 'complete a transfer' in blocked['error'].lower()
     assert not (tmp / 'work' / 'autopilot-active.json').exists()
+
+
+def test_ai_transfer_audit_endpoint_reports_no_job_and_refuses_foreign_candidate(service):
+    base, tmp = service
+    status, empty = call(base + '/api/ai-transfer-audit')
+    assert status == 200
+    assert empty['status'] == 'NO_ACTIVE_TRANSFER'
+    assert empty['fidelity_verified'] is False
+
+    root = tmp / 'work'
+    job_id = 'b' * 32
+    bridge.atomic_json(root / 'active-job.json', {'job_id': job_id})
+    bridge.atomic_json(root / 'jobs' / (job_id + '.json'), {
+        'job_id': job_id,
+        'candidate_id': '20261118T030649Z_deadbeef',
+        'candidate_dir': str(tmp / 'outside-candidate'),
+        'ai_conversion_decision_sha256': 'a' * 64,
+    })
+    status, error = call(base + '/api/ai-transfer-audit')
+    assert status == 409
+    assert 'candidate' in error['error'].lower()
+
