@@ -164,6 +164,8 @@
         'An editable Unreal Level Sequence was generated. Review the result and tell the AI agent what should change.':
         run.message||'Your transfer has not completed.')+'</p>'+
       (j.generated_sequence?'<p class="subnote">Generated sequence: '+esc(j.generated_sequence)+'</p>':'')+
+      (run.ai_conversion_strategy?'<p class="subnote">AI pre-transfer conversion strategy: <strong>'+
+        esc(run.ai_conversion_strategy)+'</strong>. This selected only installed, source-verified conversion options; it does not certify cutscene fidelity.</p>':'')+
       '<p class="subnote">Conversion and AI corrections are limited to supported and independently checked native operations. Unverified or unsupported behavior is never silently called correct.</p>'+
       (run.status==='GENERATED_UNVERIFIED'?'<section class="simple-chat" aria-label="Talk to the AI agent">'+
         '<h2>Tell the AI what to correct</h2>'+
