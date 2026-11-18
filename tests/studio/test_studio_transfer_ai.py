@@ -71,6 +71,12 @@ def scene(tmp_path):
     worker = {
         "connected": True, "project": str(project),
         "level": "/Game/AI_Test02", "worker_version": "studio-editor-v0.6",
+        "scene_inventory": {
+            "available": True, "actor_count": 6,
+            "class_counts": {"CineCameraActor": 2, "SkeletalMeshActor": 2,
+                             "DirectionalLight": 2},
+            "truncated": False,
+        },
     }
     return config, str(census), worker
 
@@ -83,6 +89,8 @@ def test_ai_analyzes_both_projects_and_gates_partial_native_adapter(scene):
     assert summary["source_capture_sample_count"] == 1
     assert summary["target_project_metadata"]["engine_association"] == "5.8"
     assert summary["target_connected"] is True
+    assert summary["target_level_actor_count"] == 6
+    assert summary["target_level_actor_class_counts"]["CineCameraActor"] == 2
     assert summary["safe_partial_visibility_adapter_available"] is True
     assert "visual_activation_partial" in evidence["allowed_strategies"]
     decision = ai.decide(config, census, worker, reasoner=lambda _: {
@@ -131,6 +139,9 @@ def test_real_target_identity_is_required_without_name_only_guessing(scene, tmp_
     disconnected = dict(worker, connected=False)
     with pytest.raises(ai.TransferAIError, match="selected target"):
         ai.inspect(config, census, disconnected)
+    missing_inventory = dict(worker, scene_inventory=None)
+    with pytest.raises(ai.TransferAIError, match="level inventory"):
+        ai.inspect(config, census, missing_inventory)
 
 
 def test_partial_adapter_requires_actually_valid_activation_clips(scene):
