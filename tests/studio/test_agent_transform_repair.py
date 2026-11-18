@@ -79,7 +79,7 @@ def setup(tmp_path):
 
 
 def test_only_constant_actor_and_root_offset_is_eligible(tmp_path):
-    workspace, candidate, job = setup(tmp_path)
+    _workspace, candidate, job = setup(tmp_path)
     measured = proof.source_bound_report(job, candidate)
     candidate_plan = proof.review(measured, "Ch31_nonPBR")
     assert candidate_plan["eligible"]
@@ -248,3 +248,40 @@ def test_native_actor_offset_reaudits_and_rolls_back_on_root_mismatch(tmp_path, 
     assert actor.loc == 20.0
     assert saved == [job["expected_level"]]
     assert not outcome["fidelity_verified"]
+
+
+def test_executor_dispatches_only_bound_unreal_transform_request(tmp_path, monkeypatch):
+    workspace, _candidate, job = setup(tmp_path)
+    calls = []
+    monkeypatch.setitem(sys.modules, "studio_transform_repair", SimpleNamespace(
+        attempt=lambda api, ws, saved, request: (
+            calls.append((ws, saved["job_id"], request["target_entity"]))
+            or {"status": "TRANSFORM_OFFSET_SAVED_AND_REAUDITED"}
+        )
+    ))
+    api = SimpleNamespace(EditorAssetLibrary=SimpleNamespace(
+        does_asset_exist=lambda path: path == job["sequence_path"]
+    ))
+    request = {
+        "kind": "cutsceneai.studio.agent_repair_request",
+        "schema_version": "1", "request_id": "a" * 32,
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "expected_project": job["expected_project"],
+        "expected_level": job["expected_level"],
+        "sequence_path": job["sequence_path"],
+        "strategy": "restore_constant_actor_offset",
+        "target_entity": "Ch31_nonPBR",
+    }
+    answer = executor.execute(
+        api, workspace, job, request,
+        project=job["expected_project"], level=job["expected_level"]
+    )
+    assert answer["status"] == "TRANSFORM_OFFSET_SAVED_AND_REAUDITED"
+    assert calls == [(workspace, job["job_id"], "Ch31_nonPBR")]
+    unsafe = dict(request, expected_level="/Game/Unrelated")
+    with pytest.raises(ValueError, match="not authorized"):
+        executor.execute(
+            api, workspace, job, unsafe,
+            project=job["expected_project"], level=job["expected_level"]
+        )
+    assert len(calls) == 1
