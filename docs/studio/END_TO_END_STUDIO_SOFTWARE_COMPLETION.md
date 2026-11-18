@@ -100,6 +100,19 @@ deferred until software freeze.
   retarget receipts and source-bound post-reopen temporal measurements.
 - Added source-hash, wrong candidate, plan tampering, no receipt, offline and
   cancellation regression tests.
+- Added bounded (60-minute) source Play Mode capture and (180-second) read-only
+  Unreal character-probe waits. Expired requests report a safe terminal failure;
+  they never invent samples or submit a native job.
+- On a restart between durable native job submission and UI state update, Studio
+  now reconciles the exact persisted candidate/job rather than queuing again.
+  Ambiguous, symlinked, wrong-target or tampered job records fail closed. If
+  a prepared candidate is detected after interrupted preparation, Studio
+  preserves it and refuses silent duplicate preparation.
+- Added checkout-based Windows bootstrap (`tools/install_studio.ps1`), isolated
+  launch (`tools/start_studio.ps1`), read-only diagnostics
+  (`tools/check_studio_setup.py`), Windows CI dependency preflight and
+  [local setup instructions](STUDIO_LOCAL_SETUP.md). This checks localhost
+  prerequisites, NOT actual Unity/Unreal companion install or native acceptance.
 
 ## Deliberately NOT completed in current release candidate
 
@@ -113,7 +126,9 @@ deferred until software freeze.
    frames and sequences. Scene-editable generation and native asset readback
    are not visual fidelity certificates.
 4. **First-run distribution installer** and a truly self-contained app
-   that needs no manual Unity/Unreal companion bootstrap.
+   that needs no manual Unity/Unreal companion bootstrap. A source-checkout
+   Windows Python bootstrap now exists, but it is not standalone distribution
+   or confirmed in-editor companion installation.
 5. **Full AI-driven repair loop** for all detected defects, robust across
    repeated native restart, uncertain evidence and engine versions.
 
