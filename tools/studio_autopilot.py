@@ -21,7 +21,8 @@ import studio_unity_bridge as unity_bridge
 _LOCK = threading.RLock()
 ACTIVE = "autopilot-active.json"
 STAGES = frozenset({
-    "WAITING_FOR_UNITY", "WAITING_FOR_UNITY_CAPTURE", "CONNECTING", "PREPARING",
+    "WAITING_FOR_UNITY", "WAITING_FOR_UNITY_CAPTURE", "CONNECTING",
+    "ANALYZING_PROJECTS", "PREPARING",
     "WAITING_FOR_UNREAL", "UNREAL_RUNNING",
 })
 FINISHED = frozenset({"GENERATED_UNVERIFIED", "BLOCKED"})
@@ -64,6 +65,7 @@ def status(workspace: Path) -> dict[str, Any]:
         "source_fidelity_verified": False,
         "fidelity_verified": False,
         "agent_enabled": True,
+        "ai_conversion_strategy": state.get("ai_conversion_strategy", ""),
         "error": state.get("error", ""),
     }
 
@@ -197,21 +199,52 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                                  "attached-observation.json", "destination-readiness.json",
                                  "one-click-approval.json"):
                         (workspace / name).unlink(missing_ok=True)
-                    state["status"] = "PREPARING"
-                    state["message"] = "Preparing source-provenanced assets and CED transfer plan."
+                    state["status"] = "ANALYZING_PROJECTS"
+                    state["message"] = "AI is analyzing verified Unity capture, source features and the connected Unreal destination."
+            elif phase == "ANALYZING_PROJECTS":
+                import studio_ui_features
+                import studio_transfer_ai
+                config = service.load_json(workspace / "connection.json")
+                # The model cannot bypass source/census identity or partial
+                # fidelity disclosures. Fail before creating a candidate.
+                studio_ui_features.validate_options(config, {
+                    "source_feature_surface_path": state["census_path"],
+                    "require_complete_source_features": False,
+                })
+                decision = studio_transfer_ai.decide(
+                    config, state["census_path"], service.worker_connected(workspace)
+                )
+                _write(workspace / "ai-conversion-decision.json", decision)
+                state["ai_conversion_strategy"] = decision["strategy"]
+                state["status"] = "PREPARING"
+                state["message"] = (
+                    "AI selected registered conversion strategy: "
+                    + decision["strategy"] + ". Preparing immutable source-backed plan."
+                )
             elif phase == "PREPARING":
                 import studio_ui_features
                 # Validate the exact Unity-emitted census. Partial component
                 # support is recorded, never misrepresented as full parity.
+                import studio_transfer_ai
+                config = service.load_json(workspace / "connection.json")
+                decision = _load(workspace / "ai-conversion-decision.json")
+                options = studio_transfer_ai.verify(
+                    decision, config, state["census_path"],
+                    service.worker_connected(workspace),
+                )
                 audited = studio_ui_features.validate_options(
-                    service.load_json(workspace / "connection.json"),
+                    config,
                     {
                         "source_feature_surface_path": state["census_path"],
                         "require_complete_source_features": False,
-                        "enable_fbx_embedded_material_import": True,
+                        **options,
                     },
                 )
                 candidate = service.prepare(workspace, audited)
+                _write(
+                    Path(candidate["candidate_dir"]) / "ai-conversion-decision.json",
+                    decision,
+                )
                 service.approve_one_click(
                     candidate["candidate_id"], workspace, enable_ai_agents=True
                 )
