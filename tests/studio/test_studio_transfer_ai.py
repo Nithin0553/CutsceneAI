@@ -112,7 +112,10 @@ def test_ai_cannot_invent_strategy_or_bypass_source_provenance(scene):
     # Source material provenance is a deterministic floor regardless of model.
     assert chosen["conversion_options"]["enable_fbx_embedded_material_import"] is True
     assert chosen["conversion_options"]["enable_actor_visibility_fallback"] is False
-    Path(config["csir"]).write_text('{"changed": true}', encoding="utf-8")
+    source_path = Path(config["csir"])
+    mutated = json.loads(source_path.read_text(encoding="utf-8"))
+    mutated["source"]["engine_version"] = "modified-with-same-source-id"
+    source_path.write_text(json.dumps(mutated), encoding="utf-8")
     with pytest.raises(ai.TransferAIError, match="stale"):
         ai.verify(chosen, config, census, worker)
 
