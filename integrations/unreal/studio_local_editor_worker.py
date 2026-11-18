@@ -57,6 +57,31 @@ def _loaded_level():
     return str(world.get_path_name()).split('.')[0]
 
 
+def _native_level_inventory():
+    """Read-only, bounded actor-class census of the loaded Unreal level."""
+    try:
+        actors = unreal.get_editor_subsystem(
+            unreal.EditorActorSubsystem).get_all_level_actors()
+        counts = {}
+        for actor in actors[:5000]:
+            try:
+                label = str(actor.get_class().get_name())[:72]
+            except Exception:
+                label = 'Unknown'
+            counts[label] = counts.get(label, 0) + 1
+        return {
+            'available': True,
+            'actor_count': len(actors),
+            'class_counts': dict(sorted(counts.items())[:32]),
+            'truncated': len(actors) > 5000 or len(counts) > 32,
+        }
+    except Exception as exc:
+        return {
+            'available': False, 'reason': type(exc).__name__,
+            'actor_count': 0, 'class_counts': {},
+        }
+
+
 def _world_has_unsaved_changes():
     """Fail closed: UE new_level discards the currently open world without saving."""
     try:
@@ -467,6 +492,7 @@ def _tick(_delta):
             'level': _loaded_level(), 'worker': WORKER_PROTOCOL,
             'checkout_root': str(ROOT.resolve()),
             'worker_source_sha256': WORKER_SOURCE_SHA256,
+            'scene_inventory': _native_level_inventory(),
         })
         try:
             _update_destination_readiness()
