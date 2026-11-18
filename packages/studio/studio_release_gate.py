@@ -9,8 +9,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+# Independent pure-Python comparison replays persisted source/target evidence.
+# It never invokes a native engine or treats a synthetic receipt as real data.
+_CINETWIN = Path(__file__).resolve().parents[1] / "cinetwin"
+if str(_CINETWIN) not in sys.path:
+    sys.path.insert(0, str(_CINETWIN))
+
+from behavior_compare import BehavioralComparisonError, compare
 
 
 class ReleaseEvidenceError(ValueError):
@@ -298,6 +307,10 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
     if not accepted:
         record("reopened_temporal_acceptance", "INCOMPLETE",
                "No source-bound post-reopen CineTwin comparison has completed.")
+        record("reopened_camera_optics", "INCOMPLETE",
+               "No independent post-reopen physical camera lens observations exist.")
+        record("reopened_camera_cut_timing", "INCOMPLETE",
+               "No independent post-reopen native camera binding/section readback exists.")
     else:
         chosen = max(accepted, key=lambda p: (p.stat().st_mtime_ns, p.name))
         comparison = _read(chosen)
@@ -336,6 +349,51 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
                 "Reopened native measurement has mismatched editor or project identity."
             )
         compared = comparison.get("acceptance_status")
+
+        # A comparison JSON is not itself sufficient proof of camera parity.
+        # Re-evaluate exact source and observed target bytes whenever a proper
+        # source sampling plan requests camera coverage. This detects invented
+        # PASS values even when all file SHA-256 references are correct.
+        camera_checks = []
+        camera_plan = _read(sampling_file)
+        if camera_plan.get("kind") == "cinetwin.sampling_plan" and (
+            any(row.get("ced_type") == "entity.camera"
+                for row in camera_plan.get("entities", []))
+            or camera_plan.get("camera_cuts")
+        ):
+            try:
+                recomputed = compare(
+                    camera_plan, _read(capture_path), _read(target_file)
+                )
+            except (BehavioralComparisonError, KeyError, TypeError,
+                    ValueError, IndexError, ZeroDivisionError) as exc:
+                raise ReleaseEvidenceError(
+                    "Camera evidence cannot be recomputed from independent native samples."
+                ) from exc
+            if (recomputed["evaluation"]["status"] == "DIFFERENCES_DETECTED"
+                    and compared != "DIFFERENCES_DETECTED"):
+                raise ReleaseEvidenceError(
+                    "Reopened acceptance claimed success despite verified source-target differences."
+                )
+            for domain, check_name, explanation in (
+                ("camera_optics", "reopened_camera_optics",
+                 "Sampled native CineCamera sensor height and focal length versus Unity vertical FOV."),
+                ("camera_cut_timing", "reopened_camera_cut_timing",
+                 "Source-authored cut sections versus native Sequencer camera binding IDs and ranges."),
+            ):
+                if comparison.get(domain) != recomputed[domain]:
+                    raise ReleaseEvidenceError(
+                        "Reopened camera comparison differs from measured native evidence: " + domain
+                    )
+                check_status = recomputed[domain]["status"]
+                camera_checks.append(check_status)
+                record(check_name, check_status, explanation)
+        else:
+            record("reopened_camera_optics", "INCOMPLETE",
+                   "No verifiable source-camera sampling contract was attached.")
+            record("reopened_camera_cut_timing", "INCOMPLETE",
+                   "No verifiable source cut-section inventory was attached.")
+
         full_native_scope = bool(
             compared == "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE"
             and reopened.get("restart_verified") is True
@@ -344,6 +402,9 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
             and reopened.get("status")
             == "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS"
         )
+        full_native_scope = full_native_scope and all(
+            status in {"PASS", "NOT_APPLICABLE"} for status in camera_checks
+        ) and bool(camera_checks)
         if job.get("character_native_readback_status") == "PASS":
             native_character = comparison.get("character_conversion") or {}
             full_native_scope = full_native_scope and (
