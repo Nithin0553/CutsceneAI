@@ -279,3 +279,52 @@ def test_native_execution_cannot_be_interrupted_by_autopilot_cancel(rig):
         studio_autopilot.cancel(workspace, service=service)
     assert json.loads(active.read_text())["status"] == "UNREAL_RUNNING"
     assert json.loads(job.read_text())["job_id"] == "b" * 32
+
+
+def test_unreal_disconnection_pauses_ai_analysis_and_preparation(rig, monkeypatch):
+    workspace, project, target, service, _ = rig
+    native_worker = service.worker_connected
+    connected = {"value": True}
+    service.worker_connected = lambda folder: (
+        native_worker(folder) if connected["value"] else {"connected": False}
+    )
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    csir = project / "source.csir.json"
+    census = project / "census.json"
+    csir.write_text('{"source":{"engine":"unity"}}', encoding="utf-8")
+    census.write_text('{"source":"unity"}', encoding="utf-8")
+    monkeypatch.setattr(studio_autopilot.unity_bridge, "snapshot_status",
+                        lambda *_: {
+                            "status": "SUCCEEDED",
+                            "csir_path": str(csir),
+                            "census_path": str(census),
+                        })
+    assert studio_autopilot.advance(workspace, service=service)[
+        "status"] == "WAITING_FOR_UNITY_CAPTURE"
+    assert studio_autopilot.advance(workspace, service=service)[
+        "status"] == "CONNECTING"
+    assert studio_autopilot.advance(workspace, service=service)[
+        "status"] == "ANALYZING_PROJECTS"
+    connected["value"] = False
+    waiting = studio_autopilot.advance(workspace, service=service)
+    assert waiting["status"] == "ANALYZING_PROJECTS"
+    assert "Reconnect" in waiting["message"]
+    assert not (workspace / "ai-conversion-decision.json").exists()
+    connected["value"] = True
+    assert studio_autopilot.advance(workspace, service=service)[
+        "status"] == "PREPARING"
+    decision_path = workspace / "ai-conversion-decision.json"
+    previous = decision_path.read_bytes()
+    connected["value"] = False
+    waiting = studio_autopilot.advance(workspace, service=service)
+    assert waiting["status"] == "PREPARING"
+    assert "Reconnect" in waiting["message"]
+    assert decision_path.read_bytes() == previous
+    assert not (workspace / "active-candidate.json").exists()
+    connected["value"] = True
+    assert studio_autopilot.advance(workspace, service=service)[
+        "status"] == "WAITING_FOR_UNREAL"
+    assert decision_path.read_bytes() == previous
