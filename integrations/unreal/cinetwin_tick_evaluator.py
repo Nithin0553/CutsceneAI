@@ -26,6 +26,7 @@ for directory in (HERE, HERE.parents[1] / "packages" / "cinetwin"):
         sys.path.insert(0, str(directory))
 
 import cinetwin_target_evaluator as base
+import cinetwin_camera_cuts
 import cinetwin_motion_layers
 import target_observation_plan
 from motion_layers import analyze_motion_layers
@@ -244,6 +245,7 @@ class _TickSession:
             },
             "native_rigs": self.rigs,
             "skeletal_bone_maps": self.request["skeletal_bone_maps"],
+            "camera_cut_sections": cinetwin_camera_cuts.inspect(self.sequence, unreal),
             "samples": self.samples,
             "quality": {
                 "method": "slate_post_tick_between_sequencer_seeks",
