@@ -666,7 +666,9 @@ def _refresh_worker_python():
         module.LAST_DEPENDENCY_CHECK = 0.0
         unreal.log('[CutSceneAI Studio] Updated Python companion in the running Unreal Editor; no restart.')
         return True
-    except (OSError, SyntaxError, ValueError, TypeError, RuntimeError) as exc:
+    except Exception as exc:
+        # Any syntax/import failure leaves the editor open but blocks native
+        # submission. Never execute a queued candidate through partial code.
         LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'BLOCKED', (
             'Python worker update is invalid: ' + str(exc)
         )[:500]
