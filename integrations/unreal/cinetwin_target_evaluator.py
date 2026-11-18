@@ -20,6 +20,7 @@ for sibling in (HERE, HERE.parents[1] / "packages" / "cinetwin"):
     if str(sibling) not in sys.path:
         sys.path.insert(0, str(sibling))
 
+import camera_optics
 import readback_math
 import target_observation_plan
 
@@ -212,6 +213,9 @@ def run(
                     "entity_id": entry["entity_id"],
                     "actor_label": entry["actor_label"],
                     "world_transform": _actor_transform(actors[entry["entity_id"]]),
+                    **({"camera": camera_optics.observe_native_camera(
+                        actors[entry["entity_id"]]
+                    )} if entry["ced_type"] == "entity.camera" else {}),
                 }
                 for entry in request["bound"]
             ]

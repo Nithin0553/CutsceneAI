@@ -156,6 +156,9 @@ class _TickSession:
                 "world_transform": base._actor_transform(
                     self.actors[entry["entity_id"]]
                 ),
+                **({"camera": base.camera_optics.observe_native_camera(
+                    self.actors[entry["entity_id"]]
+                )} if entry["ced_type"] == "entity.camera" else {}),
             }
             for entry in self.request["bound"]
         ]

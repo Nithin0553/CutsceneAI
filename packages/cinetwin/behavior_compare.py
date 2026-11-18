@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+from camera_optics import compare_camera_optics
 from sampling_plan import validate_capture
 from target_observation_plan import prepare_observation
 
@@ -483,7 +484,12 @@ def compare(
                 "Possible motion ownership difference; this does not prove "
                 "that source trajectory or final pose matches."
             )
-    flags_present = any(item["flags"] for item in results + rig_diagnostics)
+    # Independently observed physical lens values; a matching transform
+    # cannot conceal a different camera FOV. Unsupported native camera shapes
+    # remain explicitly INCOMPLETE, never silently matching.
+    lens = compare_camera_optics(plan, source_samples, target_samples)
+    flags_present = (any(item["flags"] for item in results + rig_diagnostics)
+                     or lens["status"] == "FAIL")
 
     return {
         "schema_version": "0.1.0",
@@ -498,9 +504,15 @@ def compare(
             "unmapped_entity_count": len(missing_ids),
             "position_tolerance_cm": position_limit,
             "orientation_tolerance_degrees": orientation_limit,
+            "camera_optics_status": lens["status"],
         },
         "entities": results,
         "rig_motion_diagnostics": rig_diagnostics,
+        "camera_optics": lens,
+        "camera_cut_timing": {
+            "status": "INCOMPLETE",
+            "reason": "INDEPENDENT_NATIVE_CAMERA_CUT_BINDING_AND_SECTION_READBACK_NOT_RECORDED",
+        },
         "unmapped_source_entities": unmapped,
         "motion_ownership_policy": (
             "ACTOR_VS_NATIVE_SKELETON_DIAGNOSTIC_ONLY;"
@@ -508,7 +520,8 @@ def compare(
         ),
         "unverified_domains": [
             "skeletal_joint_orientation_and_bind_pose",
-            "camera_optics",
+            "camera_optics" if lens["status"] != "PASS" else "camera_projection_and_rendered_frame",
+            "camera_cut_timing",
             "light_appearance",
             "audio_output",
             "event_execution",
@@ -523,6 +536,8 @@ def compare(
             "bone motion diagnostics before diagnosing a missing translation.",
             "Source and target observation methods may not evaluate external script "
             "side effects or frame-dependent physics identically.",
+            "Camera FOV uses native CineCamera physical lens readback only; matched "
+            "FOV is not proof of exact projection or shot-cut timing.",
             "This diagnostic report does not modify any source or target asset.",
         ],
     }

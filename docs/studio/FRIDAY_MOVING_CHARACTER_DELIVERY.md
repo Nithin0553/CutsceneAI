@@ -9,6 +9,10 @@ The designated branch initially pointed to `8ace5828286b9cfa669fd2f6fa646feb7fbf
 it was fast-forwarded to the latest RC before implementation. Neither the RC,
 the old integration branch nor `main` was modified.
 
+Before handoff, the dedicated branch also incorporated the primary developer's
+new RC `44e7c1ce9aa17869bcd6696744a43dd07f7fd84f` without conflicts. Those
+incoming camera-optics changes are preserved; Friday did not edit them.
+
 ## Delivery scope and evidence levels
 
 This delivery implements `bake_verified_actor_world_trajectory`, version 1,
@@ -26,8 +30,8 @@ Benchmark002 playback and held-out rigs remain **BLOCKED by the user's explicit
 instruction to wait for reviewed software freeze**. No engine was launched, no
 workstation project was changed and no real-engine measurement is claimed.
 
-Implementation commit, draft PR and final CI links are recorded in the review
-record at the end of this document after publication.
+Implementation commit, draft PR and CI links are recorded in the review record
+at the end of this document.
 
 ## Issue #129 checklist
 
@@ -211,12 +215,13 @@ The [anonymized synthetic example](examples/friday-moving-character.synthetic.js
 contains compatibility, a typed decision and mocked native readback. Its
 origin and lack of real provider/engine invocation are explicit.
 
-Final local checks: **1,039 passed, 7 skipped**, including **79 F-003 tests**
+Final combined local checks: **1,054 passed, 7 skipped**, including **79 F-003 tests**
 and the existing **31 in-place policy regressions**. Python syntax, Ruff,
 JavaScript syntax, 14 cinematic UI scenarios, repository hygiene and whitespace
 checks passed. Both changed Unity C# files passed tree-sitter syntax parsing;
 this is not Unity compilation. The seven existing skips are retained and are
-not counted as engine acceptance.
+not counted as engine acceptance. The F-003 implementation alone passed
+1,039 tests before incorporating the primary developer's 15 new optics tests.
 
 API details were checked against Epic's documentation for
 [native root-track inspection](https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/class/AnimationLibrary),
@@ -248,4 +253,18 @@ neither a global software freeze nor cinematic fidelity.
 
 ## Review record
 
-Publication and final CI evidence will be appended here before handoff.
+- [Draft PR #130](https://github.com/Nithin0553/CutsceneAI/pull/130), targeting
+  `feature/studio-e2e-release-candidate-v0.1`; retained as draft for primary review.
+- F-003 implementation commit:
+  [`5d07b4a6b29db442e03f6721e037ac562a0926b7`](https://github.com/Nithin0553/CutsceneAI/commit/5d07b4a6b29db442e03f6721e037ac562a0926b7).
+- Synchronized RC: `44e7c1ce9aa17869bcd6696744a43dd07f7fd84f`.
+- [CI 44413087577 — SUCCESS](https://github.com/Nithin0553/CutsceneAI/actions/runs/44413087577)
+  checked implementation head `5d07b4a6` against that RC: **1,054 passed,
+  7 skipped**, Python/JS syntax, 14 UI scenarios, Ruff, repository checks and
+  Windows dependency bootstrap all green. This is code-only evidence.
+- [Final-head CI and exact current review SHA](https://github.com/Nithin0553/CutsceneAI/pull/130/checks)
+  remain attached to the draft. The final handoff records the exact published
+  head and confirms its CI completed. Documentation updates do not manufacture
+  engine evidence.
+- Issues #129 and #127 remain open. Primary review and the subsequent authorized
+  live-engine/provider matrix are the next steps; no merge was performed.
