@@ -37,16 +37,40 @@ assets or cross-engine fidelity.
 
 - **Unity:** Add or confirm the extractor package
   `integrations/unity/com.cutsceneai.extractor` in the *selected* Unity project.
-  In Editor select `Tools > CutsceneAI > Studio Bridge > Enable Source Bridge`.
-  A genuine CineTwin capture requires already-entered Play Mode; Studio cannot
-  silently execute project scripts or change the editor to Play Mode.
+  For live local-repo changes, ensure the Unity project references the local
+  package folder, rather than a stale copied package. In Editor select
+  `Tools > CutsceneAI > Studio Bridge > Enable Source Bridge` **once**.
+  The `[InitializeOnLoad]` callback automatically resumes after Unity C#
+  script compilation/domain reload. Unity writes a scoped, read-only
+  `CutSceneAI/StudioBridge/unity-editor.json` heartbeat; Studio detects
+  reconnects without a second enable click or reopening the Unity Editor.
+  A genuine CineTwin capture still requires **manually entered Play Mode**;
+  Studio never silently starts scripts or replays an export receipt.
 - **Unreal:** Open the selected backed-up target `.uproject`, load the intended
-  level and run the Studio-compatible editor worker using the command supplied
-  in the Studio interface. The worker reports project/level and version identity;
-  outdated or mismatched workers cannot be treated as connected to the target.
+  level and start the editor worker with the command supplied in Studio
+  **once**. The upgraded worker uses a stable callback that dynamically
+  dispatches to the current Python module, refreshes its own changed Python
+  source and trusted planning/adapter modules when the native worker is idle,
+  and resumes its heartbeat **without closing Unreal Editor**. Changes during
+  an active/uncertain native job wait for inspection; a broken update blocks
+  native transfer and never authorizes replay. Studio shows the source and
+  target editor heartbeats and can reconnect automatically after source updates.
+  A worker loaded before this feature was added may need a **one-time in-editor
+  Python console reload** with no native job running:
+  `import importlib, studio_local_editor_worker as w; w.stop(); importlib.reload(w); w.start()`.
+  Outdated or mismatched worker/adapter code never counts as transfer-ready.
+  See [Live bridge continuity](LIVE_BRIDGE_CONTINUITY.md).
 - **Model:** The real pre-transfer model requires a valid `OPENAI_API_KEY`
   within the local server process. The offline setup diagnostic verifies only
   the Python SDK is installed, never the key or an actual model invocation.
+
+**Limits:** Python-only Unreal edits can refresh without an editor restart.
+Unity can recompile/reload its C# domain in the same editor, but changes to
+native C++ plugins, engine binaries, project/UPM package wiring or damaged
+loaded packages may still require an engine-mandated restart. Independent
+fresh-process persistence acceptance remains a separate later gate; it is not
+required after every routine code edit. No engine was launched to validate this
+automatic reconnection behavior in the current CI run.
 
 Do not start native transfer tests until the release-candidate software
 contract records `SOFTWARE_READY_FOR_ENGINE_TEST` with an exact reviewed SHA
