@@ -45,6 +45,17 @@
     const d=readiness();return Boolean(validEditor()&&state.candidate&&!state.job&&
       ((d.ready&&d.candidate_id===state.candidate.candidate_id)||canAutoSetup()));
   }
+  function liveEngineStatus(){
+    const source=state.status?.unity_editor||{},dest=worker(),c=connection();
+    const unityPath=c?.unity_project||state.discovery?.unity?.folder||state.folders.unity;
+    const targetPath=c?.target_project||state.unrealProject||state.discovery?.unreal?.project;
+    const unityReady=Boolean(source.connected&&unityPath&&norm(source.project_root)===norm(unityPath));
+    const unrealReady=Boolean(dest.connected&&targetPath&&norm(dest.project)===norm(targetPath));
+    return '<p class="subnote" role="status" aria-label="Live editor connections">'+
+      'Unity bridge: '+esc(unityReady?'Connected · '+source.editor_mode:'Waiting for running editor')+
+      ' &nbsp;·&nbsp; Unreal bridge: '+esc(unrealReady?'Connected':'Waiting for running editor')+
+      '. Once enabled, supported code changes reconnect without restarting the editors.</p>';
+  }
   function progress(){
     const selected=state.screen==='results'?3:state.screen==='transfer'?2:state.candidate?1:0;
     return '<div class="steps" aria-label="Transfer workflow">'+
@@ -119,6 +130,7 @@
       '<div class="engine-pair">'+card('unity',state.folders.unity,Boolean(state.folders.unity))+
       line(Boolean(state.folders.unity&&state.folders.unreal))+
       card('unreal',state.folders.unreal,Boolean(state.folders.unreal))+'</div>'+
+      liveEngineStatus()+
       '<div class="simple-connections">'+
       '<div>'+button(state.folders.unity?'Change Unity Project':'Connect Unity','browse-unity',state.busy,'secondary')+'</div>'+
       '<div>'+button(state.folders.unreal?'Change Unreal Project':'Connect Unreal','browse-unreal',state.busy,'secondary')+'</div></div>'+
@@ -363,6 +375,7 @@
     return progress()+'<main class="transfer-view"><div class="engine-pair">'+
       card('unity',connection()?.unity_project||state.folders.unity,true)+line(true)+
       card('unreal',connection()?.target_project||state.folders.unreal,true)+'</div>'+
+      liveEngineStatus()+
       (['RUNNING','QUEUED'].includes(j.status)?movement():'')+
       '<h2>'+esc(label)+'</h2>'+
       (state.censusSelection?.source_snapshot_partial_count?
