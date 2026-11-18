@@ -13,6 +13,7 @@ from typing import Any
 
 from camera_cut_timing import compare_camera_cut_sections
 from camera_optics import compare_camera_optics
+from joint_motion_profile import compare_joint_angular_motion
 from sampling_plan import validate_capture
 from target_observation_plan import prepare_observation
 
@@ -437,11 +438,18 @@ def compare(
         )
         if joints["status"] == "FAIL":
             flags.append("SKELETAL_WORLD_JOINT_POSITION_MISMATCH")
+        angular = compare_joint_angular_motion(
+            source_samples, target_samples, eid, joints,
+            tolerance_degrees=orientation_limit,
+        )
+        if angular["status"] == "FAIL":
+            flags.append("SKELETAL_JOINT_ANGULAR_MOTION_PROFILE_MISMATCH")
         rig_diagnostics.append({
             "entity_id": eid, "source_name": by_id[eid].get("name", ""),
             "source": src_motion, "target": tgt_motion,
             "flags": flags,
             "joint_positions": joints,
+            "joint_angular_motion": angular,
             "skeletal_root_world": _skeletal_root_world(
                 source_samples, target_samples, source_rigs[eid], native_rigs[eid], joints, position_limit,
             ),
@@ -519,7 +527,7 @@ def compare(
             "NO_AUTOMATIC_ROOT_MOTION_REPAIR"
         ),
         "unverified_domains": [
-            "skeletal_joint_orientation_and_bind_pose",
+            "skeletal_joint_absolute_orientation_and_bind_pose",
             "camera_optics" if lens["status"] != "PASS" else "camera_projection_and_rendered_frame",
             "camera_cut_timing" if cuts["status"] != "PASS" else "rendered_camera_cut_compositing",
             "light_appearance",
@@ -531,7 +539,8 @@ def compare(
         ],
         "notes": [
             "Mapped actor transforms and hierarchy-matched joint positions have comparable semantics.",
-            "Joint rotation and bind-pose fidelity require separately calibrated native bone bases.",
+            "Joint rotation amplitude and timing are independently compared per frame where bone mapping is proven.",
+            "Joint rotation axis, absolute orientation and bind-pose fidelity require calibrated native bone bases.",
             "An apparently static actor may contain skeletal root motion; examine "
             "bone motion diagnostics before diagnosing a missing translation.",
             "Source and target observation methods may not evaluate external script "
