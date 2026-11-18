@@ -58,9 +58,16 @@ def inspect(sequence: Any, api: Any) -> dict[str, Any]:
             matches = [label for native_id, label in native_bindings if native_id == section_id]
             if len(matches) != 1 or not matches[0]:
                 return {"status": "UNAVAILABLE", "reason": "CAMERA_CUT_NATIVE_BINDING_UNRESOLVED"}
-            first = section_extensions.get_start_frame(section)
-            last = section_extensions.get_end_frame(section)
-            if type(first) is not int or type(last) is not int or first < 0 or last <= first:
+            start_native = section_extensions.get_start_frame(section)
+            end_native = section_extensions.get_end_frame(section)
+            if (isinstance(start_native, (bool, float))
+                    or isinstance(end_native, (bool, float))):
+                return {"status": "UNAVAILABLE", "reason": "CAMERA_CUT_NATIVE_RANGE_UNVERIFIED"}
+            # UE Python exposes FFrameNumber as a native value type, not
+            # necessarily Python int. Use its integer frame value explicitly.
+            first = int(getattr(start_native, "value", start_native))
+            last = int(getattr(end_native, "value", end_native))
+            if first < 0 or last <= first:
                 return {"status": "UNAVAILABLE", "reason": "CAMERA_CUT_NATIVE_RANGE_UNVERIFIED"}
             result.append({
                 "actor_label": matches[0],
