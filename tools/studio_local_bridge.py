@@ -955,6 +955,11 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         job = load_json(folder / 'jobs' / (job_id + '.json'))
                         result = studio_agent_feedback.submit(
                             folder, job, data.get('message'))
+                    elif route == '/api/autopilot/cancel':
+                        import studio_autopilot
+                        result = studio_autopilot.cancel(
+                            folder, service=autopilot_service()
+                        )
                     elif route == '/api/autopilot/start':
                         import studio_autopilot
                         result = studio_autopilot.begin(
