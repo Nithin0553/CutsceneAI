@@ -439,3 +439,69 @@ def test_restart_during_partial_candidate_preparation_refuses_second_candidate(r
     blocked = studio_autopilot.advance(workspace, service=service)
     assert blocked["status"] == "BLOCKED"
     assert "already prepared" in blocked["error"]
+
+
+def test_stalled_unity_play_mode_capture_times_out_without_reissuing_requests(rig, monkeypatch):
+    workspace, project, target, service, _ = rig
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    monkeypatch.setattr(studio_autopilot.unity_bridge, "snapshot_status",
+                        lambda *_: {
+                            "status": "SUCCEEDED", "csir_path": str(project / "source.csir.json"),
+                            "census_path": str(project / "feature-census.json"),
+                        })
+    requests = {"count": 0}
+
+    def request_capture(*_):
+        requests["count"] += 1
+        return {"request_id": "c" * 32, "instruction": "Enter Unity Play Mode."}
+
+    monkeypatch.setattr(studio_autopilot.unity_bridge, "request_behavior_capture",
+                        request_capture)
+    monkeypatch.setattr(studio_autopilot.unity_bridge, "behavior_capture_status",
+                        lambda *_: {
+                            "status": "WAITING_FOR_UNITY_PLAY_MODE",
+                            "message": "No source receipt yet.",
+                        })
+    assert studio_autopilot.advance(workspace, service=service)[
+        "status"] == "WAITING_FOR_UNITY_CAPTURE"
+    active = workspace / studio_autopilot.ACTIVE
+    pending = json.loads(active.read_text())
+    assert requests["count"] == 1
+    assert pending["capture_wait_started_at"]
+    pending["capture_wait_started_at"] = (
+        datetime.now(UTC) - timedelta(seconds=3601)
+    ).isoformat()
+    active.write_text(json.dumps(pending))
+    blocked = studio_autopilot.advance(workspace, service=service)
+    assert blocked["status"] == "BLOCKED"
+    assert "capture timed out" in blocked["error"]
+    assert requests["count"] == 1
+    assert not (workspace / "active-candidate.json").exists()
+    assert not (workspace / "active-job.json").exists()
+
+
+def test_completed_unity_capture_is_accepted_even_after_wait_limit(rig, monkeypatch):
+    workspace, project, target, service, _ = rig
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    monkeypatch.setattr(studio_autopilot.unity_bridge, "snapshot_status",
+                        lambda *_: {
+                            "status": "SUCCEEDED", "csir_path": str(project / "source.csir.json"),
+                            "census_path": str(project / "feature-census.json"),
+                        })
+    assert studio_autopilot.advance(workspace, service=service)[
+        "status"] == "WAITING_FOR_UNITY_CAPTURE"
+    active = workspace / studio_autopilot.ACTIVE
+    pending = json.loads(active.read_text())
+    pending["capture_wait_started_at"] = (
+        datetime.now(UTC) - timedelta(seconds=3601)
+    ).isoformat()
+    active.write_text(json.dumps(pending))
+    result = studio_autopilot.advance(workspace, service=service)
+    assert result["status"] == "CONNECTING"
+    assert "capture_wait_started_at" not in json.loads(active.read_text())
