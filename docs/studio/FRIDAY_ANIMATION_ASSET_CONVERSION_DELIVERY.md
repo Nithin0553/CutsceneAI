@@ -169,6 +169,11 @@ The previous CI branch filters excluded both the assigned `agent/` branch and
 the integration PR target. This PR adds those two event filters so the
 repository's existing checks run for this review.
 
+GitHub CI passed on review commit
+`b553daa17e4554ce0aceaebffd4667f1e80d6253`, including the test suite, Python
+syntax, Studio JavaScript, Ruff and repository hygiene.
+[Completed CI run](https://github.com/Nithin0553/CutsceneAI/actions/runs/44366783166)
+
 ## Workstation acceptance
 
 1. Pull the dedicated branch into the acceptance checkout and install its
