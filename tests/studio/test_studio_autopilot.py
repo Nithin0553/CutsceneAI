@@ -52,8 +52,8 @@ def rig(tmp_path, monkeypatch):
         "csir": str(project / "source.csir.json"), "target_project": str(target / "Target.uproject"),
         "unity_project": str(project), "level_path": "/Game/Trial",
     })
-    import studio_ui_features
     import studio_transfer_ai
+    import studio_ui_features
     monkeypatch.setattr(studio_ui_features, "validate_options",
                         lambda config, opts: opts)
     monkeypatch.setattr(studio_transfer_ai, "decide", lambda config, census, worker: {
