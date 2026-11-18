@@ -22,7 +22,7 @@ from closed_loop_evaluation import redact_component_catalog
 
 MAX_REPAIRS = 2
 MAX_USER_COMMENT = 1200
-ALLOWED_STRATEGIES = {"restore_source_albedo", "report_only"}
+ALLOWED_STRATEGIES = {"restore_source_albedo", "restore_constant_actor_offset", "report_only"}
 
 
 class AgentError(RuntimeError):
@@ -49,6 +49,7 @@ class AgentState(TypedDict, total=False):
     source_evidence_sha256: str
     feedback_id: str
     intent_routing: dict[str, Any]
+    transform_candidate: dict[str, Any]
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -199,7 +200,10 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
             "Return only JSON. Choose strategy restore_source_albedo ONLY if "
             "that strategy is eligible from independently verified source GUID "
             "texture provenance and current Unreal character fallback slots; "
-            "otherwise choose report_only. Do not create new commands or claim "
+            "otherwise choose report_only. Choose restore_constant_actor_offset ONLY "
+            "when safe_strategies includes it for a single user-named character "
+            "world-position correction; Unreal must independently remeasure it. "
+            "Do not create new commands or claim "
             "full visual/animation/camera/audio parity. The deterministic "
             "executor independently validates every action."
         ),
@@ -276,6 +280,21 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 }],
             }, {})
         count = _valid_fallback(visual)
+        transform_proof = None
+        if comment:
+            import agent_transform_evidence
+            try:
+                native_report = agent_transform_evidence.source_bound_report(job, candidate)
+                named = agent_transform_evidence.requested_character_correction(
+                    user_message, native_report
+                )
+                if named:
+                    transform_proof = agent_transform_evidence.review(native_report, named)
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                transform_proof = {
+                    "eligible": False,
+                    "reason": "Missing trusted native evidence: " + str(exc)[:250],
+                }
         issues = feedback.get("issues") or []
         if not isinstance(issues, list):
             raise AgentError("Invalid independent issue list.")
@@ -289,6 +308,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 completed_repairs=state.get("iterations", 0),
                 repair_budget=MAX_REPAIRS,
                 independent_issues=issues,
+                transform_repair_evidence=transform_proof,
                 adapter_catalog=feedback.get("component_adapter_catalog"),
                 fallback_observation_scope=(
                     "character" if "character_material_slots_engine_default" in visual
@@ -297,6 +317,10 @@ def build_graph(workspace: Path, job: dict[str, Any],
             )
         except agent_intent_router.IntentError as exc:
             raise AgentError("Agent feedback routing blocked: " + str(exc)) from exc
+        if transform_proof and not transform_proof.get("eligible"):
+            routing["reason"] += " Translation repair blocked: " + str(
+                transform_proof.get("reason") or "insufficient measurements"
+            )[:260]
         if comment:
             # A user's observation is valuable, but is not an independently
             # measured CineTwin mismatch until native evidence confirms it.
@@ -321,6 +345,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 feedback, sort_keys=True).encode()).hexdigest(),
             "eligible_repair": eligible,
             "intent_routing": routing,
+            "transform_candidate": transform_proof or {},
         }
         if not issues:
             return {**base, "status": "NO_DETECTED_GAPS_FIDELITY_UNVERIFIED"}
@@ -355,6 +380,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "remaining_repairs": MAX_REPAIRS - state.get("iterations", 0),
             "issues": state["issues"][:30],
             "verified_ced_precedents": _approved_precedents(workspace, job),
+            "verified_transform_candidate": state.get("transform_candidate", {}),
         }
         try:
             suggestion = choose(summary)
