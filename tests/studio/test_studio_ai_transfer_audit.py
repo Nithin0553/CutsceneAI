@@ -229,3 +229,152 @@ def test_unrelated_deterministic_transfer_returns_not_ai(run):
     out = audit.assess(root, job["job_id"])
     assert out["available"] is False
     assert out["status"] == "NO_AI_CONVERSION_DECISION"
+
+
+def _animation_setup(root: Path, candidate: Path, job: dict) -> dict:
+    """Fabricate immutable *mock* evidence, not a real engine acceptance."""
+    report = {
+        "kind": "cutsceneai.studio.character_compatibility_report",
+        "schema_version": "1",
+        "character_count": 1,
+        "characters": [{
+            "id": "character-01",
+            "source_entity_id": "source-ch",
+            "status": "COMPATIBLE_AFTER_APPROVED_RETARGET",
+        }],
+    }
+    report_file = candidate / "character-compatibility.json"
+    _write(report_file, report)
+    canonical = hashlib.sha256(json.dumps(
+        report, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+    animation = {
+        "kind": "cutsceneai.studio.ai_animation_conversion_decision",
+        "choice_id": "character-01",
+        "action_id": "use_approved_ik_retarget_profile",
+        "source_entity_id": "source-ch",
+        "compatibility_report_sha256": canonical,
+    }
+    decision_file = candidate / "ai-conversion-decision.json"
+    decision = json.loads(decision_file.read_text())
+    decision["character_compatibility_sha256"] = canonical
+    decision["animation_conversion"] = animation
+    _write(decision_file, decision)
+    mapping_path = Path(job["mapping"])
+    mapping = json.loads(mapping_path.read_text())
+    mapping["ai_character_animation"] = animation
+    _write(mapping_path, mapping)
+    plan_path = candidate / "transfer-plan.json"
+    plan = json.loads(plan_path.read_text())
+    plan["ai_character_animation"] = animation
+    _write(plan_path, plan)
+    session_file = candidate / "session.json"
+    session = json.loads(session_file.read_text())
+    session["target"]["mapping_sha256"] = hashlib.sha256(
+        mapping_path.read_bytes()).hexdigest()
+    _write(session_file, session)
+    job["character_compatibility_sha256"] = hashlib.sha256(
+        report_file.read_bytes()).hexdigest()
+    job["ai_conversion_decision_sha256"] = hashlib.sha256(
+        decision_file.read_bytes()).hexdigest()
+    _update_job(root, job)
+    return animation
+
+
+def _animation_readback(candidate: Path, job: dict, *, status="PASS") -> None:
+    _write(candidate / "character-native-execution.json", {
+        "kind": "cutsceneai.studio.character_native_readback",
+        "schema_version": "1",
+        "status": status,
+        "job_id": job["job_id"],
+        "sequence_path": job["sequence_path"],
+        "source_entity_id": "source-ch",
+        "decision_file_sha256": job["ai_conversion_decision_sha256"],
+        "compatibility_file_sha256": job["character_compatibility_sha256"],
+        "skeleton": {"status": "PASS"},
+        "duration_match": True,
+        "observed_sections": [{"clip": "/Game/NewClip"}],
+        "expected_sections": [{"clip": "/Game/NewClip"}],
+        "fidelity_verified": False,
+    })
+
+
+def test_friday_approved_retarget_requires_native_receipt(run):
+    root, candidate, job = run
+    _animation_setup(root, candidate, job)
+    planned = audit.assess(root, job["job_id"])
+    assert planned["character_conversion"]["selected"] is True
+    assert planned["character_conversion"]["native_readback_status"] == "NOT_EXECUTED"
+    assert not planned["character_conversion"]["native_readback_passed"]
+    assert planned["character_conversion"]["character_count"] == 1
+    assert planned["character_conversion"]["compatibility_outcomes"] == {
+        "COMPATIBLE_AFTER_APPROVED_RETARGET": 1
+    }
+    _animation_readback(candidate, job)
+    orphan = audit.assess(root, job["job_id"])
+    assert orphan["character_conversion"]["native_readback_status"] == "UNCONFIRMED_PASS"
+    assert not orphan["character_conversion"]["native_readback_passed"]
+
+
+def test_friday_native_readback_requires_both_job_and_builder_confirmation(run):
+    root, candidate, job = run
+    _animation_setup(root, candidate, job)
+    job.update({
+        "status": "GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED",
+        "generation_status": "GENERATED_UNVERIFIED",
+        "generated_sequence": job["sequence_path"] + ".LS_Benchmark",
+        "character_native_readback_status": "PASS",
+    })
+    _update_job(root, job)
+    _animation_readback(candidate, job)
+    # A claim in a readback file does not replace a verified Unreal receipt.
+    assert not audit.assess(root, job["job_id"])[
+        "character_conversion"]["native_readback_passed"]
+    _native_receipt(candidate, job)
+    output = audit.assess(root, job["job_id"])
+    assert output["character_conversion"]["native_readback_status"] == "PASS"
+    assert output["character_conversion"]["native_readback_passed"] is True
+    assert output["native_builder_completed"] is True
+    assert output["fidelity_verified"] is False
+
+
+def test_friday_tampered_retarget_and_wrong_native_job_are_blocked(run):
+    root, candidate, job = run
+    _animation_setup(root, candidate, job)
+    plan = json.loads((candidate / "transfer-plan.json").read_text())
+    plan["ai_character_animation"]["choice_id"] = "character-02"
+    _write(candidate / "transfer-plan.json", plan)
+    with pytest.raises(audit.AITransferAuditError, match="animation plan"):
+        audit.assess(root, job["job_id"])
+    plan["ai_character_animation"]["choice_id"] = "character-01"
+    _write(candidate / "transfer-plan.json", plan)
+    _animation_readback(candidate, job)
+    report_file = candidate / "character-native-execution.json"
+    native = json.loads(report_file.read_text())
+    native["job_id"] = "f" * 32
+    _write(report_file, native)
+    with pytest.raises(audit.AITransferAuditError, match="native IK retarget readback"):
+        audit.assess(root, job["job_id"])
+
+
+def test_friday_failed_readback_cannot_be_reported_as_success(run):
+    root, candidate, job = run
+    _animation_setup(root, candidate, job)
+    _animation_readback(candidate, job, status="FAIL")
+    job["character_native_readback_status"] = "FAIL"
+    _update_job(root, job)
+    out = audit.assess(root, job["job_id"])["character_conversion"]
+    assert out["native_readback_status"] == "FAIL"
+    assert out["native_readback_passed"] is False
+
+
+def test_friday_incompatible_source_report_is_rejected_before_display(run):
+    root, candidate, job = run
+    _animation_setup(root, candidate, job)
+    path = candidate / "character-compatibility.json"
+    changed = json.loads(path.read_text())
+    changed["characters"][0]["status"] = "INCOMPATIBLE"
+    _write(path, changed)
+    with pytest.raises(audit.AITransferAuditError, match="job-bound source evidence"):
+        audit.assess(root, job["job_id"])
