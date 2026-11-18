@@ -142,6 +142,7 @@ def worker_connected(folder: Path = WORKSPACE) -> dict[str, Any]:
                 'level': data.get('level'), 'worker_version': data.get('worker'),
                 'worker_source_sha256': data.get('worker_source_sha256'),
                 'checkout_root': data.get('checkout_root'),
+                'scene_inventory': data.get('scene_inventory'),
                 'age_seconds': round(age, 1)}
     except (ValueError, KeyError, OSError):
         return {'connected': False}
