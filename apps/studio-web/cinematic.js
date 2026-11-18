@@ -145,6 +145,7 @@
       '<div class="transfer-progress"><div class="indeterminate '+(!finished?'working':'')+
       '" role="progressbar" aria-label="Transfer status" aria-valuetext="'+esc(run.status||'STARTING')+'"><i></i></div>'+
       '<span>'+esc(run.status||'STARTING')+'</span></div>'+
+      (run.ai_animation_action?'<p class="subnote">Approved character conversion: '+esc(run.ai_animation_action)+'</p>':'')+
       (run.error?'<p class="warning" role="alert">'+esc(run.error)+'</p>':'')+
       (run.status==='BLOCKED'?'<p class="subnote">The agent stopped safely. The original projects were not overwritten. Resolve the reported editor or source dependency before starting a fresh transfer.</p>':'')+
       '<div class="center-actions">'+
@@ -160,7 +161,7 @@
         return '<p class="warning" role="alert">AI transfer provenance could not be verified. Inspect the local Studio AI transfer audit before treating this result as an AI-guided conversion.</p>';
       return '';
     }
-    const cine=audit.cinetwin||{};
+    const cine=audit.cinetwin||{},character=audit.character_conversion||{};
     const err=v=>typeof v==='number' && Number.isFinite(v)?v.toFixed(2)+' cm':'Not measured';
     const generated=audit.native_builder_completed===true;
     const material=Boolean(audit.conversion_options?.enable_fbx_embedded_material_import);
@@ -174,6 +175,15 @@
       ' · model-selected from registered conversion options</p>'+
       '<p><strong>Conversion plan:</strong> FBX material mode '+(material?'enabled':'disabled')+
       ' · '+esc(visibility)+' visual-only activation action(s) planned</p>'+
+      (character.compatibility_recorded?'<p><strong>Character compatibility:</strong> '+
+        esc(character.character_count||0)+' inspected · '+
+        Object.entries(character.compatibility_outcomes||{}).map(([name,n])=>
+          esc(name.replaceAll('_',' '))+' '+esc(n)).join(' · ')+
+        '</p>':'')+
+      (character.selected?'<p><strong>AI animation choice:</strong> approved IK Retargeter · native readback '+
+        esc(character.native_readback_status||'NOT_EXECUTED')+
+        (character.native_readback_passed===true?' (skeleton and clip sections checked)':' (not confirmed successful)')+
+        '</p>':'')+
       '<p><strong>Native execution:</strong> '+esc(generated?
         'Unreal sequence generated (fidelity unverified)':audit.native_status||'Not executed')+'</p>'+
       (generated?'<p><strong>CineTwin measured positions:</strong> actor max '+
@@ -199,8 +209,8 @@
       '<p class="subnote">Conversion and AI corrections are limited to supported and independently checked native operations. Unverified or unsupported behavior is never silently called correct.</p>'+
       aiConversionSummary()+
       (run.status==='GENERATED_UNVERIFIED'?'<section class="simple-chat" aria-label="Talk to the AI agent">'+
-        '<h2>Tell the AI what to correct</h2>'+
-        '<p class="subnote">For example: “The character is facing the wrong direction” or “The wall texture is missing.”</p>'+
+        '<h2>Optional AI follow-up</h2>'+
+        '<p class="subnote">AI is already part of pre-transfer analysis. Use this chat to report a remaining issue; only source-verified corrections are executable. For example: “The character is facing the wrong direction.”</p>'+
         messages+
         (reply.feedback_id?'<div class="simple-chat-agent"><strong>CutSceneAI Agent — '+
           esc(reply.status||'REVIEWING')+'</strong><p>'+esc(reply.reasoning||reply.failure||
