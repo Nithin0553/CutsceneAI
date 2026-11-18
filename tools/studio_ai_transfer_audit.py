@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,8 @@ def _decision(job: dict, candidate: Path) -> tuple[dict, dict, dict]:
     recorded_sha = job.get("ai_conversion_decision_sha256")
     if not isinstance(recorded_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", recorded_sha):
         raise AITransferAuditError("Job has no bound AI conversion decision hash.")
+    if decision_file.is_symlink() or not decision_file.is_file():
+        raise AITransferAuditError("Bound AI decision file is missing.")
     if hashlib.sha256(decision_file.read_bytes()).hexdigest() != recorded_sha:
         raise AITransferAuditError("AI decision bytes differ from approved queued job.")
     decision = _load(decision_file)
@@ -124,16 +127,23 @@ def _native_execution(job: dict, candidate: Path, plan: dict) -> dict[str, Any]:
     receipt = _load(receipt_path)
     result["receipt_present"] = True
     # The builder has its own independent CSIR-to-plan re-verification.
-    if (receipt.get("kind") != "cutsceneai.unreal.best_effort_receipt"
-            or receipt.get("transfer_plan_sha256")
-            != hashlib.sha256((candidate / "transfer-plan.json").read_bytes()).hexdigest()
-            or receipt.get("verified_level") != job.get("expected_level")
-            or not _same_sequence(job.get("sequence_path"), receipt.get("generated_sequence"))
-            and receipt.get("status") == "GENERATED_UNVERIFIED"):
-        raise AITransferAuditError("Native Unreal builder receipt does not match this job.")
+    if receipt.get("kind") != "cutsceneai.unreal.best_effort_receipt":
+        raise AITransferAuditError("Unexpected native Unreal builder receipt.")
+    if receipt.get("status") == "GENERATED_UNVERIFIED":
+        if (receipt.get("transfer_plan_sha256")
+                != hashlib.sha256(
+                    (candidate / "transfer-plan.json").read_bytes()).hexdigest()
+                or receipt.get("verified_level") != job.get("expected_level")
+                or not _same_sequence(
+                    job.get("sequence_path"), receipt.get("generated_sequence"))
+        ):
+            raise AITransferAuditError("Completed native Unreal receipt does not match plan or sequence.")
+    # Early failures may lack a target project or a transfer-plan checksum.
+    # They remain FAILED, not falsely counted as completed provenance.
     verified_project = receipt.get("verified_project")
     expected_project = job.get("expected_project")
-    if (not isinstance(verified_project, str) or not isinstance(expected_project, str)
+    if isinstance(verified_project, str) and (
+            not isinstance(expected_project, str)
             or Path(verified_project).resolve() != Path(expected_project).resolve()):
         raise AITransferAuditError("Unreal builder receipt has a different target project.")
     result["status"] = str(receipt.get("status") or "UNKNOWN")[:64]
@@ -198,7 +208,8 @@ def _cinetwin(job: dict, candidate: Path, session: dict) -> dict[str, Any]:
         ):
             info = entity.get(key) or {}
             value = info.get("max_absolute_error_cm")
-            if isinstance(value, (float, int)) and not isinstance(value, bool) and value >= 0:
+            if (type(value) in (float, int) and math.isfinite(value)
+                    and value >= 0):
                 target_list.append(float(value))
                 output[count_key] += 1
     if not max_actor and not max_root:
