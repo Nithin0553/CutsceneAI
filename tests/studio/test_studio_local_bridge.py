@@ -758,3 +758,59 @@ def test_autopilot_cancel_endpoint_requires_token_and_preserves_snapshot(service
     assert response["status"] == "CANCELLED"
     assert bridge.load_json(marker)["status"] == "CANCELLED"
     assert not (folder / "active-job.json").exists()
+
+
+def test_connected_source_status_recovers_automatically_after_unity_domain_reload(tmp_path):
+    import datetime
+
+    project = tmp_path / "Unity"
+    (project / "Assets").mkdir(parents=True)
+    (project / "ProjectSettings").mkdir()
+    work = tmp_path / "runs"
+    bridge.atomic_json(work / "autopilot-active.json", {
+        "unity_project": str(project), "status": "WAITING_FOR_UNITY",
+    })
+    marker = project / "CutSceneAI/StudioBridge/unity-editor.json"
+    bridge.atomic_json(marker, {
+        "kind": "cutsceneai.unity.editor_presence",
+        "schema_version": "1", "project_root": str(project.resolve()),
+        "heartbeat": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "editor_pid": 1234, "source_bridge_enabled": True,
+        "editor_mode": "EDIT_MODE", "bridge_version": "unity-editor-v0.2",
+    })
+    assert bridge._unity_live_status(work)["connected"] is True
+    bridge.atomic_json(marker, {
+        **bridge.load_json(marker),
+        "heartbeat": (
+            datetime.datetime.now(datetime.timezone.utc) -
+            datetime.timedelta(seconds=30)
+        ).isoformat(),
+    })
+    assert bridge._unity_live_status(work)["connected"] is False
+    bridge.atomic_json(marker, {
+        **bridge.load_json(marker),
+        "heartbeat": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    })
+    assert bridge._unity_live_status(work)["connected"] is True
+    assert not (work / "jobs").exists()
+
+
+def test_worker_rejects_an_explicitly_deferred_or_broken_live_reload():
+    import hashlib
+
+    stable = {
+        "worker_version": bridge.REQUIRED_WORKER_PROTOCOL,
+        "checkout_root": str(ROOT.resolve()),
+        "worker_source_sha256": hashlib.sha256(
+            (ROOT / "integrations/unreal/studio_local_editor_worker.py").read_bytes()
+        ).hexdigest(),
+    }
+    assert bridge.worker_code_mismatch({**stable, "live_reload_state": "CURRENT"}) is None
+    assert "DEFERRED_NATIVE_JOB" in bridge.worker_code_mismatch({
+        **stable, "live_reload_state": "DEFERRED_NATIVE_JOB",
+        "live_reload_error": "existing native job remains active",
+    })
+    assert "BLOCKED" in bridge.worker_code_mismatch({
+        **stable, "live_reload_state": "BLOCKED",
+        "live_reload_error": "invalid Python update",
+    })
