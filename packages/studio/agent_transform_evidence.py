@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -156,3 +157,29 @@ def source_bound_report(job: dict, candidate: Path) -> dict:
             target.get("sequence_path") != job.get("sequence_path")):
         raise ValueError("CineTwin diagnostic targets a different project or sequence.")
     return result
+
+
+def requested_character_correction(message: str, report: dict) -> str | None:
+    """Only an explicit single-entity translation *fix* can authorize a proposal.
+
+    No model-supplied entity names or coordinates are accepted as authority.
+    A mixed facing/rotation/motion request is diagnostic-only.
+    """
+    if (not isinstance(message, str) or len(message) > 1200 or
+            re.search(r"\\b(?:do not|don't|dont|without)\\s+(?:modify|edit|change|fix|move)",
+                      message, re.IGNORECASE)):
+        return None
+    if not re.search(r"\\b(?:fix|correct|repair|reposition|move|align|adjust)\\b",
+                     message, re.IGNORECASE):
+        return None
+    if not re.search(r"\\b(?:position|placement|location|translation|offset)\\b",
+                     message, re.IGNORECASE):
+        return None
+    if re.search(r"\\b(?:facing|face|rotate|rotation|orientation|animation|motion|pose|root)\\b",
+                 message, re.IGNORECASE):
+        return None
+    matches = [name for name in report.get("entities", {})
+               if isinstance(name, str) and re.search(
+                   r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])",
+                   message, re.IGNORECASE)]
+    return matches[0] if len(matches) == 1 else None
