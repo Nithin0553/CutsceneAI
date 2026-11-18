@@ -38,7 +38,8 @@ def _fake_native_character_readback(case, job, candidate, selected, plan):
     """Exercise the REAL native readback validator against a small Unreal mock."""
     clip = Asset(case.clip_path, "AnimSequence", skeleton=case.target_skeleton, duration=1.0)
     case.assets[case.clip_path] = clip
-    actor = Asset("/Game/Staging/Actor", "SkeletalMeshActor")
+    actor = Asset("/Game/Staging/Actor", "SkeletalMeshActor",
+                  skeletal_mesh_component=NS(get_skeletal_mesh_asset=lambda: case.assets[case.profile["target_mesh_path"]]))
     actor.get_actor_label = lambda: "NewPerformer"
     actor.get_path_name = lambda: "/Game/Staging/Actor.Actor"
     actor.get_components_by_class = lambda _: []
