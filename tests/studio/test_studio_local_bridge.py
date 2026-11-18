@@ -774,7 +774,7 @@ def test_connected_source_status_recovers_automatically_after_unity_domain_reloa
     bridge.atomic_json(marker, {
         "kind": "cutsceneai.unity.editor_presence",
         "schema_version": "1", "project_root": str(project.resolve()),
-        "heartbeat": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "heartbeat": datetime.datetime.now(datetime.UTC).isoformat(),
         "editor_pid": 1234, "source_bridge_enabled": True,
         "editor_mode": "EDIT_MODE", "bridge_version": "unity-editor-v0.2",
     })
@@ -782,14 +782,14 @@ def test_connected_source_status_recovers_automatically_after_unity_domain_reloa
     bridge.atomic_json(marker, {
         **bridge.load_json(marker),
         "heartbeat": (
-            datetime.datetime.now(datetime.timezone.utc) -
+            datetime.datetime.now(datetime.UTC) -
             datetime.timedelta(seconds=30)
         ).isoformat(),
     })
     assert bridge._unity_live_status(work)["connected"] is False
     bridge.atomic_json(marker, {
         **bridge.load_json(marker),
-        "heartbeat": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "heartbeat": datetime.datetime.now(datetime.UTC).isoformat(),
     })
     assert bridge._unity_live_status(work)["connected"] is True
     assert not (work / "jobs").exists()
