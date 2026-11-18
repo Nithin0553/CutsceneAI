@@ -1,0 +1,73 @@
+# Friday — AI-guided Character Animation, Root Motion & Asset Compatibility
+
+**Assignment:** [GitHub issue #125](https://github.com/Nithin0553/CutsceneAI/issues/125)  
+**Owner:** Friday (the separate ChatGPT/developer collaborator; no GitHub account username was supplied)  
+**Parent branch:** `integration/agent-native-adapters-v0.1` (draft PR #124)  
+**Feature branch:** `agent/friday-animation-rootmotion-assets-v0.1`  
+**Status:** ASSIGNED, awaiting Friday's implementation. This document does not claim work has started or real-engine verification has passed.
+
+## Mission
+
+Move CutSceneAI from a limited AI pre-transfer option chooser toward an **AI-guided, evidence-backed source → target animation/asset conversion planner**. AI must analyze **Unity source and Unreal destination** before native conversion and select only installed conversion strategies whose safety and compatibility are independently checked by code. A model's suggestion is not evidence that a particular Unreal animation or skeleton is compatible.
+
+The deliverable is **working code, tests and verified receipts**, not only a design report, LLM explanation or mocked demo. Do not train/fine-tune a new model as a substitute for implementing compatible typed adapters; model training is outside the first milestone.
+
+## Baseline (read before editing)
+
+1. `docs/studio/AI_IN_TRANSFER_PIPELINE.md`: current `ANALYZING_PROJECTS` → `PREPARING` pipeline; small, redacted OpenAI option chooser, candidate-scoped SHA evidence, and Unreal revalidation.
+2. `tools/studio_transfer_ai.py`: model currently chooses `native_source`, `source_materials` or `visual_activation_partial`. Read the entire module and its tests.
+3. `packages/studio/transfer_backend.py`: native/baked transform actions; source CineTwin capture; source-origin motion constraints; experimental `skeletal_world_root_lock` with mutually exclusive transform ownership.
+4. `packages/studio/root_world_lock.py`, `integrations/unreal/studio_ik_retarget.py`, `integrations/unreal/unreal_compat.py`: existing root-sampling, IK and engine capability handling. Reuse; do not reinvent.
+5. `tools/studio_auto_assets.py`, `tools/studio_source_identity.py`, `integrations/unreal/studio_auto_scene.py`: Unity source reference resolution (including Unity GUID and FBX hashing), target class and skeleton checks, guarded imports and optional pre-approved retarget profiles.
+6. `integrations/unreal/project_intelligence.py`, `integrations/unreal/studio_local_editor_worker.py`: destination capabilities, immutable plan verification and editor-thread execution.
+7. `integrations/unreal/diagnose_cinetwin_parity.py`, `packages/studio/agent_transform_evidence.py`, `docs/studio/GUARDED_CHARACTER_TRANSLATION.md`: pre/post native evidence and narrow, rollback-safe corrections.
+
+**Observed regression:** Unity `Benchmark002` → Unreal `AI_Test02`. The transfer produced an editable Level Sequence, not a parity proof. In one prior diagnosis, `Ch26_nonPBR` skeletal-root error was ~14.7 cm; `Ch31_nonPBR` actor error ~295.5 cm and root error ~379.7 cm (criterion 2 cm). These are **historical readback values**, not sufficient to infer a shared position offset. Do not make a hardcoded repair specific to these character names.
+
+## Work package 1 — semantic evidence and compatibility
+
+- Design a bounded, read-only `character_compatibility_report` with per-source-character IDs, Unity model/animation path+GUID+hash when available, clip duration/fps/frame range, source hierarchy and root-bone identity, source actor/root world trajectory, bone-name/signature evidence, and target actor/SkeletalMesh/Skeleton/AnimSequence/IK Retargeter classes/paths and capability probes.
+- Do not pretend metadata we do not currently export is available. Add narrow, source-bound exporters/probes as needed. Preserve missing/ambiguous/unsupported states.
+- Support *compatible / compatible-after-approved-retarget / incompatible / insufficient-evidence* outcomes with per-assertion evidence IDs. Reject name-only semantic guesses, unrelated FBXs, different skeletons, ambiguous identifiers and external source files.
+- Keep raw source paths, scripts and proprietary asset contents local. The LLM receives a bounded typed/redacted summary, not full files.
+
+**WP1 acceptance:** reproducible positive+negative mock fixtures; unambiguous exact-source identity; no source/target modifications; a read-only compatibility receipt with an exact Unity/Unreal project fingerprint and relevant per-asset hashes.
+
+## Work package 2 — typed AI conversion decisions that change the native plan
+
+- Add a **registered, versioned action catalog** and schema for at least one supported animation/asset action selected during `ANALYZING_PROJECTS`: e.g. `use_native_skeletal_clip`, `use_approved_ik_retarget_profile`, `bake_captured_actor_world_motion`, or `reject_incompatible_animation`. Each action names source IDs and verified target assets/adapter capability IDs; do not accept freeform path or code generated by an LLM.
+- Add a gated root-motion strategy only if source actor/root motion ownership and Unreal native sampling are independently demonstrated. Reject actor/skeletal root offsets that differ across frames; reject parented actors unless a verified parent-local implementation exists; avoid competing Sequencer transform + native skeletal root-motion tracks.
+- Candidate preparation and the Unreal editor worker must independently verify the exact decision, source and target identity, approved compatibility report, hashes, registered action and planned native mapping **before importing any file or creating any actor**.
+- Do not overwrite an existing `/Game` sequence or asset or retry failed partial imports. Do not bypass `prepared_transfer.verify` or source asset provenance.
+
+**WP2 acceptance:** A model-invoked pre-transfer decision actually changes a *supported native conversion choice*, produces an immutable plan and receipt, and is correctly rejected when eligibility or target identity changes. A safe report-only refusal is better than an unproven root-motion fix.
+
+## Work package 3 — cross-engine acceptance and measurable corrections
+
+- Extend native CineTwin comparison for selected frames/full frame ranges to show actor world translation/rotation, skeletal-root world translation/rotation, clip section timing and relevant bone/rig compatibility where available. Separate samples that are measured from inferred values.
+- Record `before` vs `after` metrics, tolerances, strategy selection, proof IDs, native Unreal asset/sequence paths and whether the Unreal project was reopened for persistence verification.
+- Real correction execution is allowed only through installed bounded adapter(s), with explicit ownership and rollback/no-save on failed measurement. If Unreal lacks needed API, report a specific `UNSUPPORTED` or `INSUFFICIENT_EVIDENCE` status.
+- Validate with disposable project copies and preserve the original Unity project and the current successfully generated Unreal scene. The editor may cache Python modules; restart after pulling updated code. No full-parity claims from Python mock tests.
+
+**WP3 acceptance:** A well-defined eligible case passes measurements and an ineligible case is refused *without mutation*; document separate real Unreal Engine 5.8 test evidence (or clearly mark NOT_TESTED).
+
+## Engineering process & coordination
+
+- Work **only** on `agent/friday-animation-rootmotion-assets-v0.1`; do not commit directly to `integration/agent-native-adapters-v0.1` or `main`. Open a PR whose **base** is `integration/agent-native-adapters-v0.1`.
+- Prefer standalone modules (for example `packages/studio/character_compatibility.py`, `packages/studio/animation_conversion_policy.py`) plus targeted tests. Changes to `studio_transfer_ai.py`, `studio_autopilot.py`, `studio_local_bridge.py`, `studio_local_editor_worker.py` and `transfer_backend.py` should be minimal, additive, and clearly called out in PR notes to minimize merge conflicts with the primary developer.
+- Keep LLM logic in orchestration, pure evidence checks in testable modules, and Unreal mutating logic on the editor thread. Do not execute model-authored Python/Blueprint/C++.
+- All new features must include positive, negative, ambiguous-asset, stale-hash, wrong-project, unavailable-plugin, and no-overwrite tests where applicable. Existing CI must stay green.
+- Avoid arbitrary requests for unrelated files, API keys or full Unity/Unreal project uploads. If the real engine is unavailable in Friday's account/environment, complete source and mocked tests, give the exact local acceptance commands/protocol, and mark real engine checks `NOT_TESTED`.
+- Do not alter GitHub branch protection, merge existing draft PR #124, or overwrite user project assets.
+
+## Delivery contract
+
+Friday must provide:
+1. Feature PR URL and commit hash; exact files changed and why.
+2. Small typed schema examples: redacted `character_compatibility_report`, `ai_animation_conversion_decision`, and target native readback.
+3. All applicable unit/integration test commands and actual outputs; CI run links.
+4. Concrete before/after source-vs-target measurements where genuinely captured; failure/unsupported cases otherwise.
+5. `docs/studio/FRIDAY_ANIMATION_ASSET_CONVERSION_DELIVERY.md` recording **IMPLEMENTED**, **TESTED_IN_MOCKS**, **TESTED_IN_REAL_UNREAL** and **NOT_IMPLEMENTED** separately.
+6. A handoff summary addressed to the primary developer with safe cherry-pick/merge instructions and open blockers.
+
+This assignment is only **complete for review** when its PR is ready; it is not automatically merged or considered fidelity-verified.

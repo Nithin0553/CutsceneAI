@@ -2,7 +2,8 @@
   "name": "CutsceneAI.UnityExtractor.Editor",
   "rootNamespace": "CutsceneAI.UnityExtractor",
   "references": [
-    "Unity.Timeline"
+    "Unity.Timeline",
+    "CutSceneAI.CineTwin.Capture.Editor"
   ],
   "includePlatforms": [
     "Editor"

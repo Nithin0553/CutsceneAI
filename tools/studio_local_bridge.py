@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlparse
 
@@ -141,6 +142,7 @@ def worker_connected(folder: Path = WORKSPACE) -> dict[str, Any]:
                 'level': data.get('level'), 'worker_version': data.get('worker'),
                 'worker_source_sha256': data.get('worker_source_sha256'),
                 'checkout_root': data.get('checkout_root'),
+                'scene_inventory': data.get('scene_inventory'),
                 'age_seconds': round(age, 1)}
     except (ValueError, KeyError, OSError):
         return {'connected': False}
@@ -521,6 +523,25 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         and approval.get('target_level') == config['level_path']
         and approval.get('enable_ai_agents') is True
     )
+    conversion_record = candidate_dir / 'ai-conversion-decision.json'
+    conversion_sha = ''
+    if conversion_record.is_file():
+        if not selected_agent:
+            raise ValueError('AI conversion evidence requires explicit AI consent.')
+        if not candidate_record.is_file():
+            raise ValueError('AI conversion candidate is not active.')
+        prepared = load_json(candidate_record).get('prepared_options') or {}
+        import studio_transfer_ai
+        decision = load_json(conversion_record)
+        expected_opts = studio_transfer_ai.verify(
+            decision, config, str(prepared.get('source_feature_surface_path') or ''),
+            heartbeat,
+        )
+        copied_mapping = load_json(Path(session['target']['mapping_path']))
+        for key, value in expected_opts.items():
+            if bool(copied_mapping.get(key)) != value:
+                raise ValueError('Prepared transfer mapping differs from AI-verified strategy: ' + key)
+        conversion_sha = hashlib.sha256(conversion_record.read_bytes()).hexdigest()
     job_id = uuid.uuid4().hex
     job = {'kind': 'cutsceneai.studio.local_unreal_job', 'schema_version': '0.1.0',
            'job_id': job_id, 'status': 'QUEUED', 'candidate_id': candidate_id,
@@ -535,6 +556,7 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
            'create_level': bool(config.get('auto_create_level')),
            'created_at': datetime.now(timezone.utc).isoformat(),
            'ai_agents_enabled': selected_agent,
+           'ai_conversion_decision_sha256': conversion_sha,
            'generation_status': 'NOT_STARTED', 'fidelity_verified': False}
     atomic_json(folder / 'jobs' / (job_id + '.json'), job)
     atomic_json(folder / 'active-job.json', {'job_id': job_id})
@@ -667,6 +689,22 @@ def observation_summary(path_string: str, config: dict[str, Any]) -> dict[str, A
             'fidelity': 'NOT_ESTABLISHED', 'comparison': 'TARGET_ONLY'}
 
 
+def autopilot_service():
+    """Expose only the canonical Studio operations to the opt-in coordinator."""
+    return SimpleNamespace(
+        lock=LOCK,
+        config_check=config_check,
+        load_json=load_json,
+        atomic_json=atomic_json,
+        prepare=prepare,
+        approve_one_click=approve_one_click,
+        queue_trial=queue_trial,
+        job_status=job_status,
+        worker_connected=worker_connected,
+        destination_readiness=destination_readiness,
+    )
+
+
 def create_handler(webroot: Path, folder: Path = WORKSPACE):
     tools_dir = str(ROOT / 'tools')
     if tools_dir not in sys.path:
@@ -700,6 +738,24 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
             if not self.permitted():
                 return self.reply(403, {'error': 'Local origin required.'})
             path = urlparse(self.path).path
+            if path == '/api/autopilot':
+                import studio_autopilot
+                return self.reply(200, studio_autopilot.status(folder))
+            if path == '/api/agent-conversation':
+                import studio_agent_feedback
+                active = folder / 'active-job.json'
+                if not active.is_file():
+                    return self.reply(200, {
+                        'available': False, 'messages': [], 'agent_status': 'NO_TRANSFER',
+                    })
+                job_id = str(load_json(active).get('job_id') or '')
+                if len(job_id) != 32 or any(c not in '0123456789abcdef' for c in job_id):
+                    return self.reply(409, {'error': 'Active transfer identity invalid.'})
+                job = load_json(folder / 'jobs' / (job_id + '.json'))
+                try:
+                    return self.reply(200, studio_agent_feedback.conversation(folder, job))
+                except (ValueError, OSError, KeyError, TypeError) as exc:
+                    return self.reply(409, {'error': 'Agent conversation unavailable: ' + str(exc)})
             if path == '/api/capabilities':
                 import studio_ui_features
                 return self.reply(200, studio_ui_features.capabilities())
@@ -781,6 +837,31 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                     return self.reply(200, {'available': True, **result})
                 except (ValueError, KeyError, OSError) as exc:
                     return self.reply(409, {'error': 'Invalid release evidence: ' + str(exc)})
+            if path == '/api/learning':
+                import studio_continual_learning
+                config_file = folder / 'connection.json'
+                source = Path(load_json(config_file)['csir']) if config_file.is_file() else None
+                try:
+                    return self.reply(200, studio_continual_learning.report(folder, source))
+                except (ValueError, OSError, KeyError) as exc:
+                    return self.reply(409, {'error': 'Learning evidence unavailable: ' + str(exc)})
+            if path == '/api/ai-transfer-audit':
+                import studio_ai_transfer_audit
+                active_path = folder / 'active-job.json'
+                if not active_path.is_file():
+                    return self.reply(200, {
+                        'available': False, 'status': 'NO_ACTIVE_TRANSFER',
+                        'fidelity_verified': False,
+                    })
+                try:
+                    job_id = str(load_json(active_path)['job_id'])
+                    return self.reply(
+                        200, studio_ai_transfer_audit.assess(folder, job_id)
+                    )
+                except (ValueError, OSError, KeyError, TypeError) as exc:
+                    return self.reply(409, {
+                        'error': 'AI transfer evidence unavailable: ' + str(exc)[:400]
+                    })
             if path == '/api/agents':
                 import studio_agent_coordinator
                 return self.reply(200, studio_agent_coordinator.status(folder))
@@ -838,6 +919,41 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         atomic_json(folder / 'connection.json', result)
                         for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json', 'destination-readiness.json', 'one-click-approval.json'):
                             (folder / name).unlink(missing_ok=True)
+                    elif route == '/api/agent-feedback':
+                        import studio_agent_feedback
+                        active = folder / 'active-job.json'
+                        if not active.is_file():
+                            raise ValueError('Complete a transfer before requesting a correction.')
+                        job_id = str(load_json(active).get('job_id') or '')
+                        if len(job_id) != 32 or any(c not in '0123456789abcdef' for c in job_id):
+                            raise ValueError('Active job identity is invalid.')
+                        job = load_json(folder / 'jobs' / (job_id + '.json'))
+                        result = studio_agent_feedback.submit(
+                            folder, job, data.get('message'))
+                    elif route == '/api/autopilot/start':
+                        import studio_autopilot
+                        result = studio_autopilot.begin(
+                            folder,
+                            unity_folder=str(data.get('unity_folder') or ''),
+                            unreal_folder=str(data.get('unreal_folder') or ''),
+                            unreal_project=str(data.get('unreal_project') or ''),
+                            source_rights_confirmed=data.get('source_rights_confirmed') is True,
+                            service=autopilot_service(),
+                        )
+                    elif route == '/api/unity-source':
+                        import studio_unity_bridge
+                        selected = str(data.get('unity_folder') or '')
+                        roots = studio_project_discovery.project_roots(selected, 'unity')
+                        if len(roots) != 1:
+                            raise ValueError('Choose exactly one real Unity project before source analysis.')
+                        operation = str(data.get('action') or '')
+                        if operation == 'request':
+                            result = studio_unity_bridge.request_snapshot(roots[0])
+                        elif operation == 'status':
+                            result = studio_unity_bridge.snapshot_status(
+                                roots[0], str(data.get('request_id') or ''))
+                        else:
+                            raise ValueError('Unsupported Unity source analysis action.')
                     elif route == '/api/prepare':
                         result = prepare(folder, data)
                     elif route == '/api/approve-one-click':
@@ -882,6 +998,8 @@ def main(argv=None) -> int:
         sys.path.insert(0, package_dir)
     import studio_agent_coordinator
     agent_stop = studio_agent_coordinator.start_daemon(WORKSPACE)
+    import studio_autopilot
+    autopilot_stop = studio_autopilot.start_daemon(WORKSPACE, service=autopilot_service())
     handler = create_handler(args.web.resolve(), WORKSPACE)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), handler)
     print(f'CutSceneAI Studio: http://127.0.0.1:{args.port}')

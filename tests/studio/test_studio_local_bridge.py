@@ -660,3 +660,80 @@ def test_queue_refuses_stale_worker_before_job_or_asset_mutation(tmp_path, monke
     with pytest.raises(ValueError, match='cached an outdated Python worker'):
         bridge.queue_trial(candidate, work)
     assert not (work / 'active-job.json').exists()
+
+
+def test_unity_source_bridge_is_explicit_and_token_guarded(service):
+    base, tmp = service
+    project = tmp / 'RealUnityProject'
+    (project / 'Assets').mkdir(parents=True)
+    (project / 'ProjectSettings').mkdir()
+    token = call(base + '/api/status')[1]['token']
+    payload = {'action': 'request', 'unity_folder': str(project)}
+    code, blocked = call(base + '/api/unity-source', payload)
+    assert code == 403 and 'token' in blocked['error'].lower()
+    code, request = call(base + '/api/unity-source', payload, token)
+    assert code == 200 and request['status'] == 'WAITING_FOR_UNITY'
+    request_id = request['request_id']
+    assert (project / 'CutSceneAI' / 'StudioBridge' / 'requests' /
+            (request_id + '.json')).is_file()
+    code, result = call(base + '/api/unity-source', {
+        **payload, 'action': 'status', 'request_id': request_id,
+    }, token)
+    assert code == 200 and result['status'] == 'WAITING_FOR_UNITY'
+    code, result = call(base + '/api/unity-source', {
+        **payload, 'action': 'status', 'request_id': '../escape',
+    }, token)
+    assert code == 422 and 'identity' in result['error'].lower()
+    code, result = call(base + '/api/unity-source', {
+        **payload, 'action': 'dangerously_run_any_editor_script',
+    }, token)
+    assert code == 422 and 'unsupported' in result['error'].lower()
+
+
+def test_default_agent_first_endpoints_require_local_session_token(service):
+    base, tmp = service
+    initial = call(base + '/api/status')[1]
+    assert call(base + '/api/autopilot')[1]['status'] == 'IDLE'
+    assert call(base + '/api/agent-conversation')[1]['available'] is False
+
+    request = {
+        'unity_folder': str(tmp / 'unity'),
+        'unreal_folder': str(tmp / 'unreal'),
+        'source_rights_confirmed': False,
+    }
+    code, denied = call(base + '/api/autopilot/start', request)
+    assert code == 403 and 'token' in denied['error'].lower()
+    code, blocked = call(base + '/api/autopilot/start', request, initial['token'])
+    assert code == 422 and 'rights' in blocked['error'].lower()
+
+    code, denied = call(base + '/api/agent-feedback', {
+        'message': 'The character is facing the wrong direction.',
+    })
+    assert code == 403 and 'token' in denied['error'].lower()
+    code, blocked = call(base + '/api/agent-feedback', {
+        'message': 'The character is facing the wrong direction.',
+    }, initial['token'])
+    assert code == 422 and 'complete a transfer' in blocked['error'].lower()
+    assert not (tmp / 'work' / 'autopilot-active.json').exists()
+
+
+def test_ai_transfer_audit_endpoint_reports_no_job_and_refuses_foreign_candidate(service):
+    base, tmp = service
+    status, empty = call(base + '/api/ai-transfer-audit')
+    assert status == 200
+    assert empty['status'] == 'NO_ACTIVE_TRANSFER'
+    assert empty['fidelity_verified'] is False
+
+    root = tmp / 'work'
+    job_id = 'b' * 32
+    bridge.atomic_json(root / 'active-job.json', {'job_id': job_id})
+    bridge.atomic_json(root / 'jobs' / (job_id + '.json'), {
+        'job_id': job_id,
+        'candidate_id': '20261118T030649Z_deadbeef',
+        'candidate_dir': str(tmp / 'outside-candidate'),
+        'ai_conversion_decision_sha256': 'a' * 64,
+    })
+    status, error = call(base + '/api/ai-transfer-audit')
+    assert status == 409
+    assert 'candidate' in error['error'].lower()
+

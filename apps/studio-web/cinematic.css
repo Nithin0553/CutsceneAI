@@ -160,3 +160,36 @@
   .results-view .transfer-failure { padding: 15px; }
   .results-view .transfer-failure .failure-actions .button { width: 100%; }
 }
+
+/* Simple, agent-first transfer is the only default user journey. */
+.simple-studio{max-width:1040px;margin:0 auto;padding:58px 22px 80px}
+.simple-studio h1{font-size:clamp(30px,4vw,48px);font-weight:750;letter-spacing:-.045em;line-height:1.18;margin:0 0 12px}
+.simple-studio .simple-intro{font-size:16px;line-height:1.7;color:#c0cbc2;max-width:680px;margin:0 auto 32px}
+.simple-studio .simple-connections{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:30px auto 24px;max-width:760px}
+.simple-studio .simple-connections>div{display:flex;justify-content:center;align-items:center}
+.simple-studio .simple-connections .button{min-width:210px}
+.simple-studio .simple-permission{display:flex;align-items:flex-start;justify-content:center;gap:10px;line-height:1.5;color:#cbd5cc;margin:24px auto;max-width:660px}
+.simple-studio .simple-permission input{accent-color:#39d900;margin-top:4px}
+.simple-studio .simple-status{border-left:2px solid #39d900;padding:12px 16px;margin:24px auto;background:#101810;max-width:720px}
+.simple-studio .center-actions{margin-top:30px}
+.simple-studio .center-actions .button.primary{font-size:16px;min-width:210px}
+.simple-studio .subnote{color:#aab3ac}
+.simple-chat{max-width:760px;margin:44px auto 0;border:1px solid #313e31;background:#0d110e;padding:clamp(18px,3.5vw,34px);border-radius:18px;text-align:left;display:flex;flex-direction:column;gap:15px}
+.simple-chat h2{margin:0;font-size:20px;letter-spacing:-.03em}
+.simple-chat p{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.simple-chat-user,.simple-chat-agent{border:1px solid #304334;border-radius:12px;padding:14px 18px;background:#131a14}
+.simple-chat-agent{border-color:#327b27;background:#0d190f}
+.simple-chat strong{font-size:13px;color:#7fe35c}
+.simple-chat label{font-weight:600;color:#e8efea}
+.simple-chat textarea{width:100%;resize:vertical;background:#080c09;border:1px solid #3a513d;color:#f2f6f3;border-radius:12px;padding:14px;font:inherit;min-height:110px}
+.simple-chat textarea:focus-visible{outline:2px solid #39d900;outline-offset:2px}
+.simple-chat .button{align-self:flex-end}
+@media(max-width:680px){.simple-studio{padding:32px 6px 64px}.simple-studio .simple-connections{grid-template-columns:1fr;gap:12px}.simple-studio .simple-connections .button{width:100%}.simple-chat{padding:20px 14px}.simple-chat .button{width:100%}}
+
+/* Independent AI-planning vs Unreal execution evidence: compact by default. */
+.ai-conversion-summary{width:min(760px,100%);margin:24px auto 8px;text-align:left;border:1px solid #314631;background:#101611;padding:20px 24px;border-radius:14px}
+.ai-conversion-summary h2{font-size:17px;font-weight:700;margin:0 0 12px;color:#e9f7ea}
+.ai-conversion-summary p{font-size:13px;line-height:1.6;margin:8px 0;color:#c8d4c9;overflow-wrap:anywhere}
+.ai-conversion-summary strong{color:#b6efab;font-weight:650}
+.ai-conversion-summary .subnote{font-size:12px;color:#a1aba3;margin-top:12px;border-top:1px solid #29352b;padding-top:12px}
+@media(max-width:600px){.ai-conversion-summary{padding:16px 14px}}

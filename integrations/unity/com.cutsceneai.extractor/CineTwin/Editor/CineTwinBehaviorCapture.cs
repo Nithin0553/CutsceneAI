@@ -12,7 +12,7 @@ using UnityEngine.Timeline;
 
 namespace CutSceneAI.CineTwin
 {
-    internal static class CineTwinBehaviorCapture
+    public static class CineTwinBehaviorCapture
     {
         private const string MenuPath =
             "Tools/CutsceneAI/CineTwin/Capture Selected Timeline Behavior (Play Mode)";
@@ -164,6 +164,37 @@ namespace CutSceneAI.CineTwin
             public List<CaptureLayer> capture_layers = new List<CaptureLayer>();
             public List<string> errors = new List<string>();
             public Provenance provenance;
+        }
+
+        // Studio programmatic capture deliberately reuses the exact native
+        // Play Mode evaluator, GUID checks and source entity/rig resolution.
+        // The Editor bridge owns the signed sampling plan, request/receipt IDs
+        // and exclusive destination. No synthetic fallback observations.
+        public static void CaptureForStudio(
+            PlayableDirector director, string planPath, string outputPath)
+        {
+            if (!EditorApplication.isPlaying || director == null ||
+                !(director.playableAsset is TimelineAsset))
+                throw new InvalidOperationException(
+                    "CineTwin source observation requires an existing Unity Play Mode.");
+            try
+            {
+                var plan = JsonUtility.FromJson<SamplingPlan>(File.ReadAllText(planPath));
+                ValidatePlan(plan, director);
+                var entities = ResolveEntities(plan.entities, director.gameObject.scene);
+                var rigs = ResolveRigs(plan, entities);
+                var capture = EvaluateInPlayMode(director, plan, entities, rigs);
+                using (var stream = new FileStream(
+                    outputPath, FileMode.CreateNew, FileAccess.Write))
+                using (var writer = new StreamWriter(stream))
+                    writer.Write(JsonUtility.ToJson(capture, true));
+                Debug.Log("[CineTwin] Studio source samples captured in Play Mode: "
+                    + outputPath + " (" + capture.samples.Count + " timestamps).");
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
         }
 
         [MenuItem(MenuPath, priority = 141)]

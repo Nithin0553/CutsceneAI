@@ -11,14 +11,18 @@ import hashlib
 import json
 import math
 import os
+import re
+import sys
 import uuid
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 
+import agent_intent_router
 from closed_loop_evaluation import redact_component_catalog
 
 MAX_REPAIRS = 2
-ALLOWED_STRATEGIES = {"restore_source_albedo", "report_only"}
+MAX_USER_COMMENT = 1200
+ALLOWED_STRATEGIES = {"restore_source_albedo", "restore_constant_actor_offset", "report_only"}
 
 
 class AgentError(RuntimeError):
@@ -43,6 +47,9 @@ class AgentState(TypedDict, total=False):
     failure: str
     fidelity_verified: bool
     source_evidence_sha256: str
+    feedback_id: str
+    intent_routing: dict[str, Any]
+    transform_candidate: dict[str, Any]
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -124,6 +131,56 @@ def _ced_policy() -> dict[str, Any]:
     }
 
 
+def _approved_precedents(workspace: Path, job: dict[str, Any]) -> list[dict[str, Any]]:
+    """Give the reasoning model *redacted* verified CED mapping precedents.
+
+    Case lookup has no engine mutation permission. Candidate paths, source
+    asset bytes and executable parameters never enter the LLM summary.
+    """
+    store = workspace / "learning" / "approved-cases"
+    if not store.is_dir() or store.is_symlink():
+        return []
+    package = str(Path(__file__).resolve().parents[1] / "learning")
+    if package not in sys.path:
+        sys.path.insert(0, package)
+    try:
+        from case_memory import list_cases, read_json, suggest
+        source = read_json(Path(str(job["csir"])))
+        fingerprint = str(source.get("source", {}).get("project_fingerprint") or "")
+        proposals = suggest(
+            source, list_cases(store),
+            exclude_project_fingerprint=fingerprint,
+            limit=3,
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+
+    def identifier(value: Any) -> str:
+        text = str(value or "")
+        return text if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,95}", text) else ""
+
+    precedents = []
+    for item in proposals:
+        labels = []
+        for raw in item.get("candidate_resolutions", [])[:6]:
+            if not isinstance(raw, dict):
+                continue
+            entry = {key: identifier(raw.get(key)) for key in
+                     ("ced", "resolver", "outcome")}
+            if all(entry.values()):
+                labels.append(entry)
+        if labels:
+            precedents.append({
+                "case_id": item.get("case_id"),
+                "similarity": item.get("similarity"),
+                "ced_mapping_labels": labels,
+                "proposal_only": True,
+                "can_execute_tools": False,
+                "full_fidelity_verified": False,
+            })
+    return precedents
+
+
 def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
     if not os.environ.get("OPENAI_API_KEY"):
         raise AgentError("OPENAI_API_KEY is not configured in the local Studio process.")
@@ -137,10 +194,16 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
         model=os.environ.get("CUTSCENEAI_AGENT_MODEL", "gpt-5-mini"),
         instructions=(
             "You are a diagnostic repair selector in CutSceneAI Studio. "
+            "A user's natural-language observation is unverified until independent "
+            "native readback confirms the relevant discrepancy. Never edit a "
+            "different semantic domain merely because it has a detected issue. "
             "Return only JSON. Choose strategy restore_source_albedo ONLY if "
             "that strategy is eligible from independently verified source GUID "
             "texture provenance and current Unreal character fallback slots; "
-            "otherwise choose report_only. Do not create new commands or claim "
+            "otherwise choose report_only. Choose restore_constant_actor_offset ONLY "
+            "when safe_strategies includes it for a single user-named character "
+            "world-position correction; Unreal must independently remeasure it. "
+            "Do not create new commands or claim "
             "full visual/animation/camera/audio parity. The deterministic "
             "executor independently validates every action."
         ),
@@ -160,6 +223,28 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
     return {"strategy": result["strategy"], "reason": result["reason"]}
 
 
+def _current_user_feedback(candidate: Path, job: dict[str, Any]) -> dict[str, Any] | None:
+    """Read an immutable, job-bound user correction without authorizing execution."""
+    tools_path = str(Path(__file__).resolve().parents[2] / "tools")
+    if tools_path not in sys.path:
+        sys.path.insert(0, tools_path)
+    import studio_agent_feedback
+    return studio_agent_feedback.active_feedback(candidate, job)
+
+
+def _material_feedback_scope(message: str) -> bool:
+    """Conservative executable guard for the only installed repair strategy.
+
+    Unknown user language is still sent for diagnosis but cannot trigger an
+    unrelated material edit merely because the model suggests it.
+    """
+    return bool(re.search(
+        r"\b(material|materials|texture|textures|albedo|base.colou?r|"
+        r"material.slot|missing.texture|pink.material|checkerboard.texture)\b",
+        message.casefold(),
+    ))
+
+
 def build_graph(workspace: Path, job: dict[str, Any],
                 reasoner: Callable[[dict[str, Any]], dict[str, str]] | None = None):
     """Return an actual compiled LangGraph StateGraph with conditional retry loop."""
@@ -171,6 +256,9 @@ def build_graph(workspace: Path, job: dict[str, Any],
     candidate = _candidate(workspace, job)
     job_id = str(job["job_id"])
     choose = reasoner or _model_reasoner
+    comment = _current_user_feedback(candidate, job)
+    user_message = str(comment.get("message") or "") if comment else ""
+    relevant_material_request = not comment or _material_feedback_scope(user_message)
 
     def inspect(state: AgentState) -> dict[str, Any]:
         if state.get("pending_request"):
@@ -192,9 +280,55 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 }],
             }, {})
         count = _valid_fallback(visual)
+        transform_proof = None
+        if (comment and agent_intent_router.recognize(user_message)["domains"] == ["transform"]):
+            import agent_transform_evidence
+            try:
+                native_report = agent_transform_evidence.source_bound_report(job, candidate)
+                named = agent_transform_evidence.requested_character_correction(
+                    user_message, native_report
+                )
+                if named:
+                    transform_proof = agent_transform_evidence.review(native_report, named)
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                transform_proof = {
+                    "eligible": False,
+                    "reason": "Missing trusted native evidence: " + str(exc)[:250],
+                }
         issues = feedback.get("issues") or []
         if not isinstance(issues, list):
             raise AgentError("Invalid independent issue list.")
+        issues = list(issues)
+        try:
+            routing = agent_intent_router.route(
+                user_message if comment else None,
+                generation_complete=job.get("generation_status") == "GENERATED_UNVERIFIED",
+                native_material_fallback_slots=count,
+                source_albedo_provenance=_source_materials(candidate),
+                completed_repairs=state.get("iterations", 0),
+                repair_budget=MAX_REPAIRS,
+                independent_issues=issues,
+                transform_repair_evidence=transform_proof,
+                adapter_catalog=feedback.get("component_adapter_catalog"),
+                fallback_observation_scope=(
+                    "character" if "character_material_slots_engine_default" in visual
+                    else "global"
+                ),
+            )
+        except agent_intent_router.IntentError as exc:
+            raise AgentError("Agent feedback routing blocked: " + str(exc)) from exc
+        if transform_proof and not transform_proof.get("eligible"):
+            routing["reason"] += " Translation repair blocked: " + str(
+                transform_proof.get("reason") or "insufficient measurements"
+            )[:260]
+        if comment:
+            # A user's observation is valuable, but is not an independently
+            # measured CineTwin mismatch until native evidence confirms it.
+            issues.append({
+                "category": "USER_REPORTED_UNVERIFIED_DISCREPANCY",
+                "comment": user_message[:MAX_USER_COMMENT],
+                "verified": False,
+            })
         eligible = bool(
             job.get("generation_status") == "GENERATED_UNVERIFIED"
             and job.get("automatic_setup") and _source_materials(candidate)
@@ -210,6 +344,8 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "source_evidence_sha256": hashlib.sha256(json.dumps(
                 feedback, sort_keys=True).encode()).hexdigest(),
             "eligible_repair": eligible,
+            "intent_routing": routing,
+            "transform_candidate": transform_proof or {},
         }
         if not issues:
             return {**base, "status": "NO_DETECTED_GAPS_FIDELITY_UNVERIFIED"}
@@ -233,12 +369,18 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "component_adapter_catalog": state.get("component_adapter_catalog", [])[:32],
             "unreal_character_fallback_slots": state["last_fallback"],
             "source_guid_backed_albedo": _source_materials(candidate),
-            "safe_strategies": (
-                sorted(ALLOWED_STRATEGIES) if state.get("eligible_repair")
-                else ["report_only"]
-            ),
+            "safe_strategies": state["intent_routing"]["safe_strategies"],
+            "interpreted_request": state["intent_routing"]["intent"],
+            "capability_decision": state["intent_routing"]["disposition"],
+            "capability_evidence": state["intent_routing"]["reason"],
+            "registered_adapters_informational":
+                state["intent_routing"]["registered_adapters_informational"],
+            "user_feedback": user_message[:MAX_USER_COMMENT] if comment else "",
+            "user_feedback_is_unverified": bool(comment),
             "remaining_repairs": MAX_REPAIRS - state.get("iterations", 0),
             "issues": state["issues"][:30],
+            "verified_ced_precedents": _approved_precedents(workspace, job),
+            "verified_transform_candidate": state.get("transform_candidate", {}),
         }
         try:
             suggestion = choose(summary)
@@ -249,21 +391,38 @@ def build_graph(workspace: Path, job: dict[str, Any],
         except Exception as exc:
             return {"status": "AGENT_REASONING_UNAVAILABLE",
                     "failure": str(exc)[:500], "chosen_strategy": "report_only"}
+        if strategy not in state["intent_routing"]["safe_strategies"]:
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "LLM proposal is not in the evidence-backed capability route.",
+                    "chosen_strategy": "report_only"}
+        if strategy == "restore_constant_actor_offset" and not (
+            comment and state.get("transform_candidate", {}).get("eligible")
+            and "restore_constant_actor_offset" in
+            state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Transform proposal was not independently authorized.",
+                    "chosen_strategy": "report_only"}
         if strategy == "restore_source_albedo" and not (
-            state.get("eligible_repair") and
+            state.get("eligible_repair") and relevant_material_request and
             state["last_fallback"] > 0 and _source_materials(candidate)
         ):
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
                     "failure": "LLM proposal failed deterministic provenance guard.",
                     "chosen_strategy": "report_only"}
         return {
-            "status": "REPAIR_SELECTED" if strategy == "restore_source_albedo"
+            "status": "REPAIR_SELECTED" if strategy != "report_only"
                       else "UNRESOLVED_NO_SAFE_STRATEGY",
-            "chosen_strategy": strategy, "reasoning": message,
+            "chosen_strategy": strategy,
+            "reasoning": (
+                state["intent_routing"]["reason"] + " " + message
+                if comment and strategy == "report_only" else message
+            ),
         }
 
     def dispatch(state: AgentState) -> dict[str, Any]:
-        if state.get("chosen_strategy") != "restore_source_albedo":
+        strategy = state.get("chosen_strategy")
+        if strategy not in {"restore_source_albedo", "restore_constant_actor_offset"}:
             return {"status": "UNRESOLVED_NO_SAFE_STRATEGY"}
         request_id = uuid.uuid4().hex
         request = {
@@ -274,10 +433,22 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "expected_project": job["expected_project"],
             "expected_level": job["expected_level"],
             "request_id": request_id,
-            "strategy": "restore_source_albedo",
+            "strategy": strategy,
             "iteration": state.get("iterations", 0) + 1,
             "baseline_fallback": state.get("last_fallback", 0),
         }
+        if strategy == "restore_constant_actor_offset":
+            proof = state.get("transform_candidate") or {}
+            if not proof.get("eligible") or not state.get("feedback_id"):
+                raise AgentError("Missing user-authorized actor translation proof.")
+            origin = Path(job["diagnostic_file"]).resolve()
+            if origin.parent != candidate or not origin.is_file():
+                raise AgentError("Original native transform evidence is missing.")
+            request.update({
+                "target_entity": proof["entity"],
+                "feedback_id": state["feedback_id"],
+                "original_report_sha256": hashlib.sha256(origin.read_bytes()).hexdigest(),
+            })
         path = candidate / ("agent-request-" + request_id + ".json")
         with path.open("x", encoding="utf-8") as stream:
             json.dump(request, stream, sort_keys=True, indent=2)
@@ -296,6 +467,45 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 or result.get("job_id") != job_id
                 or result.get("candidate_id") != job["candidate_id"]):
             raise AgentError("Stale or mismatched Unreal repair receipt.")
+        if state.get("chosen_strategy") == "restore_constant_actor_offset":
+            expected_entity = (state.get("transform_candidate") or {}).get("entity")
+            actor_after = result.get("actor_error_after_cm")
+            root_after = result.get("root_error_after_cm")
+            verified = bool(
+                result.get("status") == "TRANSFORM_OFFSET_SAVED_AND_REAUDITED"
+                and result.get("target_entity") == expected_entity
+                and all(
+                    type(v) in (float, int) and math.isfinite(v)
+                    and 0 <= v <= 2.0
+                    for v in (actor_after, root_after)
+                )
+            )
+            entry = {
+                "request_id": request_id, "strategy": "restore_constant_actor_offset",
+                "status": str(result.get("status") or "UNKNOWN"),
+                "target_entity": result.get("target_entity"),
+                "actor_error_after_cm": actor_after,
+                "root_error_after_cm": root_after,
+            }
+            common = {
+                "history": (state.get("history") or []) + [entry],
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+            }
+            if not verified:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                                       "Actor/root native verification did not pass")[:500]}
+            return {
+                **common,
+                "status": "ACTOR_TRANSLATION_IMPROVED_OTHER_DOMAINS_UNVERIFIED",
+                "reasoning": (
+                    str(state.get("reasoning") or "")[:350]
+                    + f" Native actor/root errors after translation: "
+                    + f"{actor_after:.3f} cm / {root_after:.3f} cm. "
+                    + "Reopened-project persistence and full parity remain unverified."
+                ),
+            }
         old_count = state.get("last_fallback", 0)
         new_count = result.get("fallback_after")
         if type(new_count) is not int or new_count < 0:
@@ -348,6 +558,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
 FINISHED = {
     "NO_DETECTED_GAPS_FIDELITY_UNVERIFIED", "UNRESOLVED_NO_SAFE_STRATEGY",
     "AGENT_REASONING_UNAVAILABLE", "REJECTED_UNSUPPORTED_STRATEGY",
+    "ACTOR_TRANSLATION_IMPROVED_OTHER_DOMAINS_UNVERIFIED",
     "REPAIR_FAILED_OR_INCOMPLETE", "STOPPED_NO_MEASURABLE_PROGRESS",
     "MATERIAL_FALLBACK_RESOLVED_OTHER_DOMAINS_UNVERIFIED", "MAX_SAFE_REPAIRS_REACHED",
     "EVIDENCE_UNAVAILABLE",
@@ -368,6 +579,20 @@ def run_once(workspace: Path, job: dict[str, Any],
     }
     if state["job_id"] != job["job_id"] or state["candidate_id"] != job["candidate_id"]:
         raise AgentError("Agent state identity mismatch.")
+    comment = _current_user_feedback(candidate, job)
+    if comment and state.get("feedback_id") != comment["feedback_id"]:
+        if state.get("pending_request"):
+            raise AgentError("Cannot restart a correction while a native repair is pending.")
+        # New user feedback starts a fresh diagnosis for the same generated
+        # candidate, but NEVER resets the global repair budget or history.
+        state = {
+            **state,
+            "feedback_id": comment["feedback_id"],
+            "pending_request": "",
+            "status": "NEW",
+            "reasoning": "",
+            "failure": "",
+        }
     if state.get("status") in FINISHED:
         return state
     if job.get("status") in {"RUNNING", "QUEUED"}:

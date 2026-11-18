@@ -57,6 +57,44 @@ def _loaded_level():
     return str(world.get_path_name()).split('.')[0]
 
 
+def _native_level_inventory():
+    """Read-only, bounded actor-class census of the loaded Unreal level."""
+    try:
+        actors = unreal.get_editor_subsystem(
+            unreal.EditorActorSubsystem).get_all_level_actors()
+        counts = {}
+        for index, actor in enumerate(actors):
+            if index >= 5000:
+                break
+            try:
+                label = str(actor.get_class().get_name())[:72]
+            except Exception:
+                label = 'Unknown'
+            counts[label] = counts.get(label, 0) + 1
+        return {
+            'available': True,
+            'actor_count': len(actors),
+            'class_counts': dict(sorted(counts.items())[:32]),
+            'native_capabilities': {
+                'fbx_asset_import': bool(
+                    getattr(unreal, 'AssetImportTask', None)
+                    and getattr(unreal, 'FbxImportUI', None)),
+                'sequencer_visibility_track': bool(
+                    getattr(unreal, 'MovieSceneVisibilityTrack', None)),
+                'sequencer_skeletal_animation_track': bool(
+                    getattr(unreal, 'MovieSceneSkeletalAnimationTrack', None)),
+                'cine_camera_actor': bool(
+                    getattr(unreal, 'CineCameraActor', None)),
+            },
+            'truncated': len(actors) > 5000 or len(counts) > 32,
+        }
+    except Exception as exc:
+        return {
+            'available': False, 'reason': type(exc).__name__,
+            'actor_count': 0, 'class_counts': {},
+        }
+
+
 def _world_has_unsaved_changes():
     """Fail closed: UE new_level discards the currently open world without saving."""
     try:
@@ -140,6 +178,27 @@ def _execute(job):
         raise RuntimeError('Prepared evidence does not match submitted job.')
     if prepared['target']['sequence_asset_path'] != job['sequence_path']:
         raise RuntimeError('Sequence identity mismatch.')
+    # A host AI conversion choice is a measured, source-bound option record,
+    # not authority to write arbitrary Unreal commands. Match its bytes to
+    # the job's approved hash BEFORE any native editor mutation.
+    ai_decision = candidate_dir / 'ai-conversion-decision.json'
+    ai_sha = job.get('ai_conversion_decision_sha256') or ''
+    if ai_sha or ai_decision.exists():
+        if not (isinstance(ai_sha, str) and len(ai_sha) == 64
+                and ai_decision.is_file() and not ai_decision.is_symlink()
+                and hashlib.sha256(ai_decision.read_bytes()).hexdigest() == ai_sha
+                and job.get('ai_agents_enabled') is True):
+            raise RuntimeError('AI conversion provenance is missing or stale; do not import assets.')
+        decision = _load(ai_decision)
+        mapped = _load(Path(job['mapping']))
+        options = decision.get('conversion_options') or {}
+        if decision.get('kind') != 'cutsceneai.studio.ai_conversion_decision':
+            raise RuntimeError('Unexpected AI conversion decision format.')
+        for option in ('enable_fbx_embedded_material_import',
+                       'enable_actor_visibility_fallback'):
+            if (type(options.get(option)) is not bool
+                    or bool(mapped.get(option)) != options[option]):
+                raise RuntimeError('Unreal mapping no longer matches AI-approved option: ' + option)
     # Import the engine generator BEFORE creating a level, importing any FBX,
     # or spawning any actor. A missing/circular module must not leave behind
     # a saved but unusable automatic setup.
@@ -446,6 +505,7 @@ def _tick(_delta):
             'level': _loaded_level(), 'worker': WORKER_PROTOCOL,
             'checkout_root': str(ROOT.resolve()),
             'worker_source_sha256': WORKER_SOURCE_SHA256,
+            'scene_inventory': _native_level_inventory(),
         })
         try:
             _update_destination_readiness()

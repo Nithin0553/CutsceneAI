@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -37,6 +38,82 @@ def _level(api):
 
 def _klass(asset):
     return str(asset.get_class().get_name()) if asset is not None else ''
+
+
+def _static_import_stage(expected):
+    """Use a unique import directory so repeated FBX mesh node names never collide."""
+    parent, name = expected.rsplit('/', 1)
+    return parent + '/_CutSceneAI_FbxImports/' + name + '/' + name
+
+
+def _materialize_static_mesh(api, task, source, expected, stage):
+    """Promote only a deterministically identified FBX mesh to its planned asset.
+
+    Multi-mesh FBX files may ignore destination_name. In particular, Unity's
+    Tree_02.fbx imports as Tree_02_LOD0 and Tree_02_LOD1 under UE 5.8.
+    The source LOD0 mesh can supply the base StaticMesh, but a separate LOD1
+    asset is NOT proof that the target mesh contains a corresponding LOD.
+    """
+    folder = stage.rsplit('/', 1)[0]
+    if api.EditorAssetLibrary.does_asset_exist(expected):
+        raise AutomaticSetupError('Refusing to overwrite planned prop mesh: ' + expected)
+    direct = api.load_asset(stage)
+    selected = stage if _klass(direct) == 'StaticMesh' else None
+    other_lods = []
+    if selected is None:
+        try:
+            paths = list(task.get_editor_property('imported_object_paths'))
+        except (AttributeError, RuntimeError, ValueError, TypeError) as exc:
+            raise AutomaticSetupError(
+                'Unreal did not expose source-bound FBX imported object paths for ' + expected
+            ) from exc
+        stems = {
+            Path(source).stem.casefold(),
+            expected.rsplit('/', 1)[-1].casefold(),
+            (expected.rsplit('/', 1)[-1] + '_' + Path(source).stem).casefold(),
+        }
+        lods = {}
+        static_count = 0
+        for value in paths:
+            path = str(value).split('.', 1)[0]
+            if path.rsplit('/', 1)[0] != folder:
+                continue
+            asset = api.load_asset(path)
+            if _klass(asset) != 'StaticMesh':
+                continue
+            static_count += 1
+            name = path.rsplit('/', 1)[-1]
+            match = re.fullmatch(r'(.+)_LOD([0-9]+)', name, re.IGNORECASE)
+            if match is None or match.group(1).casefold() not in stems:
+                raise AutomaticSetupError(
+                    'FBX contains an unrecognized separate mesh, not a source-approved LOD: '
+                    + path
+                )
+            index = int(match.group(2))
+            if index in lods:
+                raise AutomaticSetupError('Ambiguous duplicate source FBX LOD index: ' + path)
+            lods[index] = path
+        if not lods or 0 not in lods or static_count != len(lods):
+            raise AutomaticSetupError(
+                'FBX did not provide exactly one identifiable source LOD0 StaticMesh: '
+                + str(source)
+            )
+        selected = lods[0]
+        other_lods = [lods[i] for i in sorted(lods) if i != 0]
+    duplicator = getattr(api.EditorAssetLibrary, 'duplicate_asset', None)
+    if not callable(duplicator):
+        raise AutomaticSetupError('Unreal asset duplication API is unavailable for source FBX staging.')
+    copied = duplicator(selected, expected)
+    canonical = api.load_asset(expected)
+    if not copied or _klass(canonical) != 'StaticMesh':
+        raise AutomaticSetupError('Could not stage source-bound StaticMesh at ' + expected)
+    return canonical, {
+        'expected_asset': expected,
+        'source_fbx': str(source),
+        'source_mesh_path': selected,
+        'separate_unverified_lod_meshes': other_lods,
+        'lod_chain_verified': False,
+    }
 
 
 def _task(api, source, dest, kind, skeleton=None, embedded_materials=False):
@@ -157,6 +234,9 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
         for row in manifest['imports']:
             if api.EditorAssetLibrary.does_asset_exist(row['target_asset_path']):
                 raise AutomaticSetupError('Automatic setup refuses existing target asset: '+row['target_asset_path'])
+        if any(row['kind'] == 'StaticMesh' for row in manifest['imports']):
+            if not callable(getattr(api.EditorAssetLibrary, 'duplicate_asset', None)):
+                raise AutomaticSetupError('Unreal asset duplication API is required for safe prop FBX staging.')
         retargeting = studio_ik_retarget.prepare(api, manifest)
         # Unreal Engine 5.8 supports importing MP3 and WAV directly into
         # SoundWave assets. Let the native importer validate the file and
@@ -165,6 +245,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
         actor_ops={row['name']:row for row in receipt['actor_operations']}
         meshes={}
         props={}
+        receipt['static_mesh_imports'] = []
         groups=[('SkeletalMesh',manifest['imports']),('StaticMesh',manifest['imports']),('AnimSequence',manifest['imports']),
                 ('SoundWave',manifest['imports']),('Texture2D',manifest['imports'])]
         for kind,records in groups:
@@ -183,8 +264,10 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                     skeleton=mesh.get_editor_property('skeleton')
                     if skeleton is None:
                         raise AutomaticSetupError('Imported mesh has no skeleton: '+row.get('character',''))
+                stage_path = (_static_import_stage(import_path)
+                              if kind == 'StaticMesh' else import_path)
                 task=_task(
-                    api,source,import_path,kind,skeleton,
+                    api,source,stage_path,kind,skeleton,
                     embedded_materials=(
                         manifest.get('fbx_embedded_material_import_requested') is True
                     ),
@@ -195,7 +278,19 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
                                         'path':import_path}
                 mutation=True
                 api.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
-                result=api.load_asset(import_path)
+                if kind == 'StaticMesh':
+                    result, native = _materialize_static_mesh(
+                        api, task, source, import_path, stage_path,
+                    )
+                    receipt['static_mesh_imports'].append(native)
+                    if native['separate_unverified_lod_meshes']:
+                        receipt['unsupported'].append(
+                            'Imported ' + import_path +
+                            ' from source LOD0; other FBX LOD meshes remain separate '
+                            'and their native LOD chain is not verified.'
+                        )
+                else:
+                    result=api.load_asset(import_path)
                 if _klass(result)!=kind:
                     raise AutomaticSetupError('Import did not create '+kind+' at '+import_path)
                 if kind=='SkeletalMesh':
