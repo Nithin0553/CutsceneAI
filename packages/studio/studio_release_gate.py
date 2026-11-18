@@ -356,11 +356,7 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
         # PASS values even when all file SHA-256 references are correct.
         camera_checks = []
         camera_plan = _read(sampling_file)
-        if camera_plan.get("kind") == "cinetwin.sampling_plan" and (
-            any(row.get("ced_type") == "entity.camera"
-                for row in camera_plan.get("entities", []))
-            or camera_plan.get("camera_cuts")
-        ):
+        if camera_plan.get("kind") == "cinetwin.sampling_plan":
             try:
                 recomputed = compare(
                     camera_plan, _read(capture_path), _read(target_file)
@@ -370,6 +366,14 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
                 raise ReleaseEvidenceError(
                     "Camera evidence cannot be recomputed from independent native samples."
                 ) from exc
+            # Do not accept a plausible-looking comparison JSON with correctly
+            # hashed input files but fabricated actor/root/joint measurements.
+            for field in ("evaluation", "entities", "rig_motion_diagnostics",
+                          "unmapped_source_entities"):
+                if comparison.get(field) != recomputed[field]:
+                    raise ReleaseEvidenceError(
+                        "Reopened behavior metrics differ from source-target samples: " + field
+                    )
             if (recomputed["evaluation"]["status"] == "DIFFERENCES_DETECTED"
                     and compared != "DIFFERENCES_DETECTED"):
                 raise ReleaseEvidenceError(
@@ -390,9 +394,9 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
                 record(check_name, check_status, explanation)
         else:
             record("reopened_camera_optics", "INCOMPLETE",
-                   "No verifiable source-camera sampling contract was attached.")
+                   "No valid source sampling-plan contract was attached.")
             record("reopened_camera_cut_timing", "INCOMPLETE",
-                   "No verifiable source cut-section inventory was attached.")
+                   "No valid source sampling-plan contract was attached.")
 
         full_native_scope = bool(
             compared == "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE"
