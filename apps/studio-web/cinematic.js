@@ -155,20 +155,32 @@
 
   function aiConversionSummary(){
     const audit=state.aiTransferAudit||{};
-    if(!audit.available)return '';
+    if(!audit.available){
+      if(audit.status==='AUDIT_UNAVAILABLE')
+        return '<p class="warning" role="alert">AI transfer provenance could not be verified. Inspect the local Studio AI transfer audit before treating this result as an AI-guided conversion.</p>';
+      return '';
+    }
     const cine=audit.cinetwin||{};
     const err=v=>typeof v==='number' && Number.isFinite(v)?v.toFixed(2)+' cm':'Not measured';
     const generated=audit.native_builder_completed===true;
+    const material=Boolean(audit.conversion_options?.enable_fbx_embedded_material_import);
+    const visibility=Number(audit.native_visibility_actions_planned||0);
+    const drift=generated && [cine.max_actor_error_cm,cine.max_root_error_cm].some(
+      v=>typeof v==='number'&&Number.isFinite(v)&&v>2
+    );
     return '<section class="ai-conversion-summary" aria-label="AI conversion execution audit">'+
       '<h2>AI transfer audit</h2>'+
-      '<p><strong>AI plan:</strong> '+esc(audit.strategy||'Not recorded')+
-      ' · model-selected, restricted to installed native adapters</p>'+
+      '<p><strong>AI decision:</strong> '+esc(audit.strategy||'Not recorded')+
+      ' · model-selected from registered conversion options</p>'+
+      '<p><strong>Conversion plan:</strong> FBX material mode '+(material?'enabled':'disabled')+
+      ' · '+esc(visibility)+' visual-only activation action(s) planned</p>'+
       '<p><strong>Native execution:</strong> '+esc(generated?
         'Unreal sequence generated (fidelity unverified)':audit.native_status||'Not executed')+'</p>'+
       (generated?'<p><strong>CineTwin measured positions:</strong> actor max '+
         esc(err(cine.max_actor_error_cm))+' · skeletal root max '+
         esc(err(cine.max_root_error_cm))+'</p>':'')+
-      '<p class="subnote">AI planning, Unreal execution and behavioral fidelity are separate checks. Neither a generated cutscene nor an AI response proves matching behavior.</p>'+
+      (drift?'<p class="warning">Measured actor/root position differences exceed 2 cm in the recorded source/target comparison. Further analysis is required.</p>':'')+
+      '<p class="subnote">AI planning, native execution and behavioral fidelity are separate checks. Neither a generated sequence nor an AI response proves matching behavior.</p>'+
       '</section>';
   }
   function quickResults(){
