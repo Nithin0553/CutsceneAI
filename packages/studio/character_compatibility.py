@@ -10,6 +10,7 @@ from collections import Counter
 from pathlib import Path
 
 import csir_plan
+import character_motion
 import sampling_plan
 from studio_source_identity import GUID, resolve
 
@@ -23,8 +24,8 @@ MAX_CHARACTERS = 32
 MAX_SECTIONS = 64
 MAX_ASSET_BYTES = 512 * 1024 * 1024
 MAX_METADATA_BYTES = 4 * 1024 * 1024
-STILL_CM = 0.1
-STILL_DEGREES = 0.1
+STILL_CM = character_motion.STILL_CM
+STILL_DEGREES = character_motion.STILL_DEGREES
 
 
 class CompatibilityError(ValueError):
@@ -53,6 +54,22 @@ def file_digest(path: Path, limit=MAX_ASSET_BYTES) -> str:
 def digest(value: object) -> str:
     data = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+def package_files(project: Path, path: str) -> dict:
+    """Recheck the exact probed packages on the host as well as in Unreal."""
+    if not PACKAGE_PATH.fullmatch(path):
+        raise CompatibilityError("Unsafe or external Unreal package path.")
+    content = project.parent / "Content"
+    base = content / path.removeprefix("/Game/")
+    if not base.resolve().is_relative_to(content):
+        raise CompatibilityError("Unreal package resolves outside project Content.")
+    files = {".uasset": file_digest(base.with_suffix(".uasset"))}
+    for suffix in (".uexp", ".ubulk"):
+        sidecar = base.with_suffix(suffix)
+        if sidecar.exists() or sidecar.is_symlink():
+            files[suffix] = file_digest(sidecar)
+    return files
 
 
 def approved_profiles(project: Path, source_fingerprint: str) -> tuple[str | None, dict]:
@@ -190,8 +207,12 @@ def _motion(capture: dict, entity: dict, usable: bool) -> dict:
                               for a, b in samples)
         actor_deg = max(angle_degrees(first_actor["rotation_xyzw"], a["rotation_xyzw"]) for a, _ in samples)
         root_deg = max(angle_degrees(first_root["rotation_xyzw"], b["rotation_xyzw"]) for _, b in samples)
+        relative = [character_motion.relative_root(a, b) for a, b in samples]
+        local_cm = 100 * max(math.dist(relative[0][0], p) for p, _ in relative)
+        local_deg = max(angle_degrees(relative[0][1], q) for _, q in relative)
         unit_scale = all(math.dist(a["scale_xyz"], [1, 1, 1]) <= 1e-5 for a, _ in samples)
-        finite = all(math.isfinite(value) for value in (actor_cm, root_cm, offset_cm, actor_deg, root_deg))
+        root_unit_scale = all(math.dist(b["scale_xyz"], [1, 1, 1]) <= 1e-5 for _, b in samples)
+        finite = all(math.isfinite(value) for value in (actor_cm, root_cm, offset_cm, actor_deg, root_deg, local_cm, local_deg))
         if not finite:
             raise CompatibilityError("Nonfinite actor or root motion sample.")
     except (CompatibilityError, KeyError, TypeError, ValueError, IndexError):
@@ -199,13 +220,15 @@ def _motion(capture: dict, entity: dict, usable: bool) -> dict:
     moving_actor = actor_cm > STILL_CM or actor_deg > STILL_DEGREES
     moving_root = root_cm > STILL_CM or root_deg > STILL_DEGREES
     if moving_actor:
-        owner = "ACTOR_WITH_STABLE_WORLD_OFFSET" if offset_cm <= STILL_CM else "COMPOUND_OR_UNRESOLVED"
+        owner = character_motion.LOCAL_OWNER if local_cm <= STILL_CM and local_deg <= STILL_DEGREES else "COMPOUND_OR_UNRESOLVED"
     else:
         owner = "SKELETAL_ROOT" if moving_root else "IN_PLACE"
     return {"owner": owner, "sample_count": len(samples), "root_bone_id": root_id, "rig_sha256": digest(rig),
             "bones": rig, "actor_translation_cm": actor_cm, "root_translation_cm": root_cm,
             "actor_rotation_degrees": actor_deg, "root_rotation_degrees": root_deg,
             "relative_world_offset_drift_cm": offset_cm, "actor_has_unit_scale": unit_scale,
+            "relative_actor_space_drift_cm": local_cm, "relative_actor_space_rotation_degrees": local_deg,
+            "root_has_unit_scale": root_unit_scale,
             "basis": "UNITY_PLAY_MODE_CAPTURE_CANONICAL_WORLD"}
 
 
@@ -247,6 +270,7 @@ def inspect(config: dict, csir: dict, capture: dict, mapping: dict, fingerprints
             target_probe: dict | None) -> dict:
     context, profiles = input_context(config, csir)
     context["input_sha256"] = fingerprints
+    context["original_sequence_path"] = mapping.get("sequence_asset_path")
     probe = target_probe or {}
     probe = probe if probe.get("context_sha256") == probe_identity(context) else {}
     native = probe.get("profiles", {})
@@ -279,6 +303,12 @@ def inspect(config: dict, csir: dict, capture: dict, mapping: dict, fingerprints
         model = (_asset(context, dict(zip(("asset_path", "guid"), next(iter(refs)))), ".fbx")
                  if len(refs) == 1 else {"status": "AMBIGUOUS_OR_MISSING_RENDERER_FBX"})
         motion = _motion(capture, entity, usable)
+        if motion["owner"] == character_motion.LOCAL_OWNER:
+            try:
+                path = character_motion.trajectory(csir, capture, identifier)
+                motion.update(trajectory=path, trajectory_sha256=digest(path))
+            except (ValueError, TypeError, KeyError, ZeroDivisionError) as exc:
+                motion.update(owner="INSUFFICIENT_EVIDENCE", reason=str(exc))
         sections = [s for track in tracks if track.get("binding_entity_id") == identifier for s in track["sections"]]
         clips = []
         for section in sections[:MAX_SECTIONS]:
@@ -293,6 +323,14 @@ def inspect(config: dict, csir: dict, capture: dict, mapping: dict, fingerprints
         materials = [_asset(context, record, ".mat") for record in (meta.get("source_material_assets") or [])[:32]]
         profile = profiles.get(identifier)
         target = native.get(identifier, {})
+        if target.get("status") == "OBSERVED":
+            try:
+                packages = target["packages"]
+                if not packages or any(package_files(Path(context["unreal_project"]), p["path"]) != p["files_sha256"]
+                                       for p in packages.values()):
+                    raise CompatibilityError("Changed native packages.")
+            except (OSError, ValueError, KeyError, TypeError):
+                target = {"status": "TARGET_PACKAGE_EVIDENCE_STALE"}
         binding = (mapping.get("entities") or {}).get(name, {})
         sections_known = {c.get("section_id") for c in clips}
         takes = {(c.get("source", {}).get("guid"), c.get("unity_local_file_id")) for c in clips}
@@ -312,8 +350,38 @@ def inspect(config: dict, csir: dict, capture: dict, mapping: dict, fingerprints
                 failures.append("APPROVED_FBX_HASH_MISMATCH")
             if entity.get("parent_entity_id") or config.get("skeletal_root_world_lock") or mapping.get("enable_cinetwin_skeletal_world_lock"):
                 failures.append("PARENTED_OR_COMPETING_ROOT_MOTION_POLICY")
-            if motion["owner"] != "IN_PLACE" or not motion.get("actor_has_unit_scale"):
+            if (motion["owner"] not in ("IN_PLACE", character_motion.LOCAL_OWNER)
+                    or not motion.get("actor_has_unit_scale") or not motion.get("root_has_unit_scale")):
                 failures.append("UNPROVEN_MOTION_COMPOSITION")
+            if motion["owner"] == character_motion.LOCAL_OWNER:
+                if any(r.get("source_sha256") != model.get("sha256") or r.get("source_meta_sha256") != model.get("meta_sha256")
+                       for r in (meta.get("source_model_assets") or [])):
+                    failures.append("UNITY_MODEL_EXPORT_HASH_MISSING_OR_STALE")
+                if probe.get("observed_identity", {}).get("native_actor_motion") is not True:
+                    failures.append("TARGET_ACTOR_MOTION_API_UNAVAILABLE")
+                # This version deliberately excludes layered/crossfaded root ownership.
+                ordered = sorted(clips, key=lambda c: c.get("timing", {}).get("start_seconds", -1))
+                if (len(clips) != 1 or by_entity[identifier] != 1
+                        or any(csir_plan.timeline_clip_easing_seconds(s.get("native_payload", {}), direction) > 0
+                               for s in sections for direction in ("in", "out"))):
+                    failures.append("MOVING_ACTOR_REQUIRES_ONE_UNBLENDED_CLIP")
+                if any(c.get("timing", {}).get("source_fps", 1) * c.get("timing", {}).get("duration_seconds", 0)
+                       >= character_motion.MAX_FRAMES - 1 for c in clips):
+                    failures.append("MOVING_ACTOR_NATIVE_ROOT_SAMPLE_BUDGET_EXCEEDED")
+                try:
+                    native_plan = csir_plan.build_plan({**csir, "tracks": [t for t in tracks if t.get("binding_entity_id") == identifier]}, mapping)
+                    if any("expected_root_delta_cm" in a for a in native_plan["actions"] if a.get("entity_name") == name):
+                        failures.append("MOVING_ACTOR_REFUSES_LEGACY_ROOT_CURVE_CORRECTION")
+                except (ValueError, KeyError, TypeError, ZeroDivisionError):
+                    failures.append("MOVING_ACTOR_NATIVE_CLIP_PLAN_UNVERIFIED")
+                if ordered and "timing" in ordered[0] and "trajectory" in motion:
+                    timing = ordered[0]["timing"]
+                    path = motion["trajectory"]
+                    rate = path["display_rate"]
+                    end = path["source_start_seconds"] + path["duration_frames"] * rate["denominator"] / rate["numerator"]
+                    if (not math.isclose(timing["start_seconds"], path["source_start_seconds"], abs_tol=1e-8)
+                            or not math.isclose(timing["end_seconds"], end, abs_tol=1e-8)):
+                        failures.append("MOVING_ACTOR_CLIP_MUST_COVER_PLAYBACK")
             if target.get("status") != "OBSERVED":
                 failures.append(target.get("status", "TARGET_NATIVE_PROBE_UNAVAILABLE"))
             elif (target.get("source_rig_sha256") != motion.get("rig_sha256")
@@ -352,4 +420,4 @@ def inspect(config: dict, csir: dict, capture: dict, mapping: dict, fingerprints
 
 
 def probe_identity(context: dict) -> str:
-    return digest({key: value for key, value in context.items() if key != "input_sha256"})
+    return digest({key: value for key, value in context.items() if key not in ("input_sha256", "original_sequence_path")})

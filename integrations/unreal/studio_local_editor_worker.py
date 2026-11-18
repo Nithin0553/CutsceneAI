@@ -236,8 +236,11 @@ def _execute(job):
             character = studio_character_execution.preflight(
                 unreal, job, decision, mapped, checked_plan, inspected,
                 worker={'connected': True, 'project': _loaded_project(), 'level': _loaded_level(),
+                        'editor_pid': os.getpid(),
                         'worker_version': WORKER_PROTOCOL, 'scene_inventory': _native_level_inventory()},
             )
+    if character is not None:
+        studio_character_execution.begin(job, checked_plan)
     job['execution_stage'] = 'PREPARING_DESTINATION_LEVEL'
     _ensure_target_level(job)
     if job.get('automatic_setup'):
@@ -265,6 +268,9 @@ def _execute(job):
             job['actors_created_count'] = len(staged.get('actors_created') or [])
         if staged['status'] != 'SETUP_SAVED_UNVERIFIED':
             raise RuntimeError('Automatic setup not saved; sequence generation blocked.')
+        if character is not None:
+            job['execution_stage'] = 'VERIFYING_STAGED_CHARACTER_MOTION'
+            studio_character_execution.validate_staged(unreal, job, checked_plan)
     # Last-second check: an actor may have been removed after the UI approved
     # this job. Report a setup state, not a failed engine generation.
     job['execution_stage'] = 'CHECKING_DESTINATION_READINESS'
@@ -573,6 +579,12 @@ def _tick(_delta):
                 job['error'] = str(exc)
                 job['traceback'] = traceback.format_exc()
                 job['fidelity_verified'] = False
+                if (Path(job['candidate_dir']) / 'character-native-attempt.json').exists():
+                    try:
+                        import studio_character_execution
+                        studio_character_execution.attempt_status(job, 'FAILED_NO_REPLAY', reason=str(exc))
+                    except Exception as attempt_error:
+                        job['character_attempt_record_error'] = str(attempt_error)
                 unreal.log_error('[CutSceneAI Studio] Job stopped: ' + str(exc))
             finally:
                 _save(path, job)

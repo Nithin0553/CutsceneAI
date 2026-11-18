@@ -29,6 +29,7 @@ import source_surface_gap
 import adaptive_components
 import component_capability_ledger
 import scalar_property_adapter
+import character_motion
 
 NATIVE_GAPS = {
     "event.trigger": "Preserves event timestamp/identity as a marked frame, NOT executable payload.",
@@ -773,6 +774,10 @@ def compose(
     }
     if "ai_character_animation" in mapping:
         plan["ai_character_animation"] = mapping["ai_character_animation"]
+        try:
+            character_motion.apply_plan(plan, mapping, csir, capture)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise TransferBackendError(str(exc)) from exc
     counts = dict(Counter(row["outcome"] for row in ledger))
     entity_coverage = [{
         "entity_id": str(e.get("entity_id", "")),

@@ -1,0 +1,623 @@
+{
+  "evidence_origin": "SYNTHETIC_TEST_FIXTURE",
+  "real_unity_invoked": false,
+  "real_unreal_invoked": false,
+  "real_provider_invoked": false,
+  "fidelity_verified": false,
+  "note": "Mock API outputs illustrate the code contract. Hashes identify fixture evidence; no real engine receipt or measurement is represented.",
+  "compatibility": {
+    "kind": "cutsceneai.studio.character_compatibility_report",
+    "schema_version": "1",
+    "context": {
+      "unity_project_fingerprint": "unity-fixture",
+      "unity_project": "/synthetic/projects/ExampleUnity",
+      "source_scope": "Assets",
+      "unreal_project": "/synthetic/projects/Unreal/Staging.uproject",
+      "uproject_sha256": "068d472ab4789973c526096075b5a3e956acd55e4d69e1bf7799ca593dcd59f9",
+      "destination_level": "/Game/Staging/L_Draft",
+      "create_level": false,
+      "profile_catalog_sha256": "058fcf9c97e54c61ebb8952420d35d9fa520b99a1637267eb54b5fcb274cbfbc",
+      "input_sha256": {
+        "csir": "6430301f3c9b891810d815fa0159eeb3d61ab961431222a08d1a606e3ce213a7",
+        "capture": "b8cb1c502c50307a10a6aeb145992b8c0d1d83a7a846a35eb3bdba50333219d5",
+        "mapping": "14bda9ecb8e746407d3914ef7910d9f31f3aa5f1726d861105213fb624aba12f",
+        "census": "59fac3a847b88a582809fbba09b3a24d86d721cbab00e214582a347e4db77f48",
+        "uproject": "068d472ab4789973c526096075b5a3e956acd55e4d69e1bf7799ca593dcd59f9"
+      },
+      "original_sequence_path": "/Game/Staging/LS_Base"
+    },
+    "characters": [
+      {
+        "id": "character-01",
+        "source_entity_id": "source-char",
+        "source_entity_name": "ExamplePerformer",
+        "source_parent_entity_id": null,
+        "target_actor_label": "NewPerformer",
+        "model": {
+          "status": "EXACT",
+          "asset_path": "Assets/SourceModel.fbx",
+          "guid": "11111111111111111111111111111111",
+          "sha256": "1434290dd18d1a05a074cb77a57359095de2c72ca5454903f6c1ae76b5f85a7d",
+          "meta_sha256": "9c9be7b1d37d844aef0902b89ec018a6a8a60f9ee89110c09002a2820f9c1216"
+        },
+        "clips": [
+          {
+            "section_id": "section",
+            "asset_id": "unity-asset:22222222222222222222222222222222:111",
+            "source": {
+              "status": "EXACT",
+              "asset_path": "Assets/ExampleClip.fbx",
+              "guid": "22222222222222222222222222222222",
+              "sha256": "e3a91d8b1687badbce202c4b345ec6fef2e5315fed14c669f66ea03005575bb8",
+              "meta_sha256": "881dbab1dc76ae895e7568ec74a26b64c4984fa5ae6b58dff9a71a0da8021801"
+            },
+            "unity_local_file_id": 111,
+            "planned_target_clip": "/Game/Staging/Animations/AS_Fresh",
+            "timing": {
+              "start_seconds": 0.0,
+              "end_seconds": 1.0,
+              "offset_seconds": 0.0,
+              "time_scale": 1.0,
+              "duration_seconds": 1.0,
+              "source_fps": 24.0
+            },
+            "status": "EXACT",
+            "target": {
+              "status": "AVAILABLE_FOR_NEW_ASSET",
+              "class": null,
+              "skeleton": null
+            }
+          }
+        ],
+        "motion": {
+          "owner": "ACTOR_WITH_STABLE_LOCAL_ROOT",
+          "sample_count": 25,
+          "root_bone_id": "root-id",
+          "rig_sha256": "38129c22e797d88c2e0493e436bfcb1645df2d0edda885ae09c99239539c88fc",
+          "bones": [
+            [
+              "Arm",
+              "Root"
+            ],
+            [
+              "Root",
+              ""
+            ]
+          ],
+          "actor_translation_cm": 223.60679774997894,
+          "root_translation_cm": 180.4019761008116,
+          "actor_rotation_degrees": 119.99999999999999,
+          "root_rotation_degrees": 119.99999999999999,
+          "relative_world_offset_drift_cm": 43.30127018922194,
+          "actor_has_unit_scale": true,
+          "relative_actor_space_drift_cm": 1.942890293094024e-14,
+          "relative_actor_space_rotation_degrees": 0.0,
+          "root_has_unit_scale": true,
+          "basis": "UNITY_PLAY_MODE_CAPTURE_CANONICAL_WORLD",
+          "trajectory": {
+            "display_rate": {
+              "numerator": 24,
+              "denominator": 1
+            },
+            "duration_frames": 24,
+            "source_start_seconds": 0.0,
+            "keys": [
+              {
+                "frame": 0,
+                "location_cm": [
+                  10.0,
+                  30.0,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              {
+                "frame": 1,
+                "location_cm": [
+                  9.826388886111111,
+                  38.333333399999994,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -5.000000040000003
+                ]
+              },
+              {
+                "frame": 2,
+                "location_cm": [
+                  9.305555561111111,
+                  46.66666659999999,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -9.999999959999997
+                ]
+              },
+              {
+                "frame": 3,
+                "location_cm": [
+                  8.4375,
+                  55.00000000000001,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -15.0
+                ]
+              },
+              {
+                "frame": 4,
+                "location_cm": [
+                  7.222222211111112,
+                  63.3333334,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -20.000000040000003
+                ]
+              },
+              {
+                "frame": 5,
+                "location_cm": [
+                  5.6597222361111115,
+                  71.66666660000001,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -24.999999959999997
+                ]
+              },
+              {
+                "frame": 6,
+                "location_cm": [
+                  3.7500000000000004,
+                  80.0,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -30.0
+                ]
+              },
+              {
+                "frame": 7,
+                "location_cm": [
+                  1.4930555361111124,
+                  88.3333334,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -35.00000004
+                ]
+              },
+              {
+                "frame": 8,
+                "location_cm": [
+                  -1.1111110888888887,
+                  96.66666660000001,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -39.99999996
+                ]
+              },
+              {
+                "frame": 9,
+                "location_cm": [
+                  -4.062499999999999,
+                  105.0,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -45.0
+                ]
+              },
+              {
+                "frame": 10,
+                "location_cm": [
+                  -7.361111138888887,
+                  113.3333334,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -50.00000004
+                ]
+              },
+              {
+                "frame": 11,
+                "location_cm": [
+                  -11.006944413888888,
+                  121.66666660000001,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -54.999999960000025
+                ]
+              },
+              {
+                "frame": 12,
+                "location_cm": [
+                  -15.0,
+                  130.0,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -60.0
+                ]
+              },
+              {
+                "frame": 13,
+                "location_cm": [
+                  -19.340277813888886,
+                  138.33333340000001,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -65.00000004000003
+                ]
+              },
+              {
+                "frame": 14,
+                "location_cm": [
+                  -24.027777738888894,
+                  146.6666666,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -69.99999996000003
+                ]
+              },
+              {
+                "frame": 15,
+                "location_cm": [
+                  -29.062500000000004,
+                  155.0,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -75.0
+                ]
+              },
+              {
+                "frame": 16,
+                "location_cm": [
+                  -34.44444448888889,
+                  163.33333340000001,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -80.00000004
+                ]
+              },
+              {
+                "frame": 17,
+                "location_cm": [
+                  -40.17361106388889,
+                  171.6666666,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -84.99999996
+                ]
+              },
+              {
+                "frame": 18,
+                "location_cm": [
+                  -46.25,
+                  180.0,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -89.99999999999997
+                ]
+              },
+              {
+                "frame": 19,
+                "location_cm": [
+                  -52.67361116388889,
+                  188.33333340000001,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -95.00000004
+                ]
+              },
+              {
+                "frame": 20,
+                "location_cm": [
+                  -59.4444443888889,
+                  196.6666666,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -99.99999996
+                ]
+              },
+              {
+                "frame": 21,
+                "location_cm": [
+                  -66.5625,
+                  204.99999999999997,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -105.00000000000003
+                ]
+              },
+              {
+                "frame": 22,
+                "location_cm": [
+                  -74.02777783888888,
+                  213.33333340000001,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -110.00000004
+                ]
+              },
+              {
+                "frame": 23,
+                "location_cm": [
+                  -81.8402777138889,
+                  221.6666666,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -114.99999996
+                ]
+              },
+              {
+                "frame": 24,
+                "location_cm": [
+                  -90.0,
+                  229.99999999999997,
+                  20.0
+                ],
+                "rotation_rpy_degrees": [
+                  0.0,
+                  0.0,
+                  -119.99999999999997
+                ]
+              }
+            ]
+          },
+          "trajectory_sha256": "527affa9d7fa618b722b44b8208d022acd25094662747a7b48f6412a09e52c74"
+        },
+        "target": {
+          "status": "OBSERVED",
+          "packages": {
+            "retargeter": {
+              "path": "/Game/Approved/Retarget",
+              "class": "IKRetargeter",
+              "files_sha256": {
+                ".uasset": "c844d90cf3bef5c32576cef3b8256b0383b969993a7da0e827bdc01cb34d97bb"
+              }
+            },
+            "source": {
+              "path": "/Game/Approved/Source",
+              "class": "SkeletalMesh",
+              "files_sha256": {
+                ".uasset": "404e2aa2bf42dec7e78aafa2bc4c876cb0a842cddfbc773bc9ec7fa0f0d62bb1"
+              }
+            },
+            "target": {
+              "path": "/Game/Approved/Target",
+              "class": "SkeletalMesh",
+              "files_sha256": {
+                ".uasset": "404e2aa2bf42dec7e78aafa2bc4c876cb0a842cddfbc773bc9ec7fa0f0d62bb1"
+              }
+            },
+            "source_rig": {
+              "path": "/Game/Approved/SourceRig",
+              "class": "IKRigDefinition",
+              "files_sha256": {
+                ".uasset": "131c3816c6c43231d95f0ba7673b18c8be2c9503ac50c3b75daebf002ef161ba"
+              }
+            },
+            "target_rig": {
+              "path": "/Game/Approved/TargetRig",
+              "class": "IKRigDefinition",
+              "files_sha256": {
+                ".uasset": "131c3816c6c43231d95f0ba7673b18c8be2c9503ac50c3b75daebf002ef161ba"
+              }
+            },
+            "source_skeleton": {
+              "path": "/Game/Approved/SourceSkeleton",
+              "class": "Skeleton",
+              "files_sha256": {
+                ".uasset": "ea5f6bdc79b884c397d6163ed999deafd3908d8c928097911d4085a99ef1b575"
+              }
+            },
+            "target_skeleton": {
+              "path": "/Game/Approved/TargetSkeleton",
+              "class": "Skeleton",
+              "files_sha256": {
+                ".uasset": "ea5f6bdc79b884c397d6163ed999deafd3908d8c928097911d4085a99ef1b575"
+              }
+            }
+          },
+          "source_import_path": "/synthetic/projects/ExampleUnity/Assets/SourceModel.fbx",
+          "source_rig_sha256": "38129c22e797d88c2e0493e436bfcb1645df2d0edda885ae09c99239539c88fc",
+          "target_rig_sha256": "38129c22e797d88c2e0493e436bfcb1645df2d0edda885ae09c99239539c88fc",
+          "source_reference_pose_sha256": "05d08c08871d931a9d8c6d972e015d2ca83fb87a6ec3e9e80dad6074701fcdfc",
+          "target_reference_pose_sha256": "05d08c08871d931a9d8c6d972e015d2ca83fb87a6ec3e9e80dad6074701fcdfc",
+          "target_material_slot_count": 1
+        },
+        "materials": [],
+        "approved_profile": {
+          "source_fbx_sha256": "1434290dd18d1a05a074cb77a57359095de2c72ca5454903f6c1ae76b5f85a7d",
+          "source_mesh_path": "/Game/Approved/Source",
+          "target_mesh_path": "/Game/Approved/Target",
+          "retargeter_path": "/Game/Approved/Retarget"
+        },
+        "status": "COMPATIBLE_AFTER_APPROVED_RETARGET",
+        "reasons": [],
+        "source_reference_pose_status": "UNAVAILABLE_FROM_SOURCE_CAPTURE",
+        "source_local_reference_validation": "CHECKED_AFTER_FRESH_IMPORT_BEFORE_RETARGETING",
+        "material_status": "TARGET_MESH_MATERIALS_RETAINED",
+        "evidence_ids": {
+          "model": "8332556ceb134a716e41bfc85f321716b2d694785e16da86928785822585925b",
+          "clips": "3c81caaf1447e39a293f4402f96403516bf24f0bc662e54ced8fc6d569463f41",
+          "motion": "895f327fc35a0ac419eb2a9a7e63f43514c09007e2f7065be8444f2152efa0fa",
+          "target": "1c463a8cb485bc0c6a1db767e3f3e1c0ccc5986c9b5a3cb6cd7cf9a2a9286b9c",
+          "materials": "f126665a03e4c586df8751b34b24d1146aeecb726132a9b0c4470ce670922c89"
+        }
+      }
+    ],
+    "target_probe": {
+      "project": "/synthetic/projects/Unreal/Staging.uproject",
+      "level": "/Game/Staging/L_Draft",
+      "engine_version": "5.8.3",
+      "editor_pid": 4242,
+      "native_skeletal_track": true,
+      "native_actor_motion": true
+    },
+    "probe_request_sha256": "af7d89e6fee275f445c639d5a11ece8265c5fcc39be03a0b128a70d85ec0a81c",
+    "character_count": 1,
+    "truncated": false,
+    "fidelity_verified": false
+  },
+  "decision": {
+    "kind": "cutsceneai.studio.ai_animation_conversion_decision",
+    "schema_version": "1",
+    "choice_id": "character-01",
+    "action_id": "bake_verified_actor_world_trajectory",
+    "version": "1",
+    "capability_id": "unreal.character.actor_world_trajectory",
+    "motion_ownership": "ACTOR_WORLD_TRAJECTORY_WITH_STATIC_SKELETAL_ROOT",
+    "source_entity_id": "source-char",
+    "evidence_ids": {
+      "model": "8332556ceb134a716e41bfc85f321716b2d694785e16da86928785822585925b",
+      "clips": "3c81caaf1447e39a293f4402f96403516bf24f0bc662e54ced8fc6d569463f41",
+      "motion": "895f327fc35a0ac419eb2a9a7e63f43514c09007e2f7065be8444f2152efa0fa",
+      "target": "1c463a8cb485bc0c6a1db767e3f3e1c0ccc5986c9b5a3cb6cd7cf9a2a9286b9c",
+      "materials": "f126665a03e4c586df8751b34b24d1146aeecb726132a9b0c4470ce670922c89"
+    },
+    "compatibility_report_sha256": "4eb612c5e43b02cc641e45bff0c7d49b07acdd2c83bec05100e4082df1638ded"
+  },
+  "mock_native_readback": {
+    "kind": "cutsceneai.studio.character_native_readback",
+    "schema_version": "1",
+    "job_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sequence_path": "/Game/Staging/LS_Moving",
+    "decision_file_sha256": "7f7e3ad594633ba91779dab306dfc7faf09a46acf4ce5828078058b673bba509",
+    "compatibility_file_sha256": "4eb612c5e43b02cc641e45bff0c7d49b07acdd2c83bec05100e4082df1638ded",
+    "source_entity_id": "source-char",
+    "status": "PASS",
+    "measured_scope": "NATIVE_SKELETON_SECTIONS_AND_ACTOR_TRAJECTORY_READBACK",
+    "reopened": false,
+    "target_playback_sample_status": "AWAITING_INDEPENDENT_CINETWIN",
+    "fidelity_verified": false,
+    "motion": {
+      "status": "PASS",
+      "motion_ownership": "ACTOR_WORLD_TRAJECTORY_WITH_STATIC_SKELETAL_ROOT",
+      "actor_path": "/Game/Staging/NewActor.NewActor",
+      "owning_actor_binding_count": 1,
+      "transform_track_count": 1,
+      "section_start_frame": 0,
+      "section_end_frame": 25,
+      "display_rate": {
+        "denominator": 1,
+        "numerator": 24
+      },
+      "frame_count": 25,
+      "trajectory_sha256": "527affa9d7fa618b722b44b8208d022acd25094662747a7b48f6412a09e52c74",
+      "observed_channels_sha256": "41973107ef8836005ad40c3da17755ebec009b17aabde428bdb1d1cd8f4dd15c",
+      "native_roots": {
+        "status": "PASS",
+        "motion_ownership": "ACTOR_WORLD_TRAJECTORY_WITH_STATIC_SKELETAL_ROOT",
+        "roots": [
+          {
+            "clip": "/Game/Staging/Animations/AS_Fresh",
+            "sample_count": 25,
+            "maximum_translation_cm": 0.0,
+            "maximum_rotation_degrees": 0.0,
+            "raw_root_samples_sha256": "54c2edbb23dd27b6325aabffccd4366c370253320d2b412ae62be1245d870e8e",
+            "status": "PASS"
+          }
+        ]
+      },
+      "fidelity_verified": false
+    },
+    "skeleton": {
+      "status": "PASS",
+      "expected_mesh": "/Game/Approved/Target",
+      "observed_mesh": "/Game/Approved/Target",
+      "expected_skeleton": "/Game/Approved/TargetSkeleton",
+      "clip_skeletons": {
+        "/Game/Staging/Animations/AS_Fresh": "/Game/Approved/TargetSkeleton"
+      }
+    },
+    "observed_sections": [
+      {
+        "clip": "/Game/Staging/Animations/AS_Fresh",
+        "start_frame": 0,
+        "end_frame": 24,
+        "clip_duration_seconds": 1.0,
+        "time_scale": 1.0,
+        "source_trim_ticks": 0,
+        "ticks_per_second": 24000.0,
+        "post_roll_ticks": 1000
+      }
+    ],
+    "expected_sections": [
+      {
+        "clip": "/Game/Staging/Animations/AS_Fresh",
+        "start_frame": 0,
+        "end_frame": 24,
+        "time_scale": 1.0,
+        "source_trim_ticks": 0,
+        "count": 1
+      }
+    ],
+    "duration_match": true
+  }
+}

@@ -140,6 +140,8 @@ namespace CutsceneAI.UnityExtractor
                     guid = AssetDatabase.AssetPathToGUID(path),
                     renderer_path = HierarchyPath(renderer),
                     mesh_name = mesh.name,
+                    source_sha256 = SourceFileSha256(path),
+                    source_meta_sha256 = SourceFileSha256(path + ".meta"),
                 });
             }
             foreach (var renderer in gameObject.GetComponentsInChildren<SkinnedMeshRenderer>(true))

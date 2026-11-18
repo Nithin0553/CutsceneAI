@@ -237,6 +237,12 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
     }
     if config.get("unity_project") and any(entity.get("ced_type") == "entity.character" for entity in entities):
         policy = character_policy()
+        if native_character_probe is not None:
+            observed = native_character_probe.get("observed_identity") or {}
+            if (observed.get("editor_pid") != worker.get("editor_pid")
+                    or observed.get("project") != worker.get("project")
+                    or observed.get("level") != worker.get("level")):
+                raise TransferAIError("Character probe belongs to another native worker, project or map.")
         report = policy.compatibility.inspect(config, csir, docs["capture"], scene_mapping, fingerprints, native_character_probe)
         evidence["character_compatibility"] = report
         evidence["summary"]["character_compatibility"] = policy.report_for_model(report)
@@ -269,7 +275,9 @@ def _model_choose(summary: dict) -> dict:
             "eligible; otherwise prefer source_materials for material references "
             "and native_source for remaining scenes. When animation_choice_id is available, "
             "choose a listed character only if its saved source/target rig evidence supports the "
-            "approved IK retarget action and the character is in place. Otherwise use keep_native. "
+            "registered approved_action shown for that character. The actor-world trajectory action "
+            "bakes measured actor translation and rotation with a proven static actor-relative root. "
+            "The in-place IK action requires in-place motion. Otherwise use keep_native. "
             "Never invent mappings, "
             "engine commands, new adapters, paths, imports or fidelity claims."
         ),
@@ -337,6 +345,10 @@ def decide(config: dict, census_path: str, worker: dict,
             raise TransferAIError("AI selected an animation action without eligible source and target evidence.")
         decision["animation_conversion"] = character_policy().decision_for(report, choice)
     if report is not None:
+        try:
+            character_policy().require_motion_choice(report, decision.get("animation_conversion"))
+        except ValueError as exc:
+            raise TransferAIError(str(exc)) from exc
         decision["character_compatibility_sha256"] = character_policy().compatibility.digest(report)
         decision["character_compatibility"] = report
     return decision
@@ -362,10 +374,14 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
     if opts != expected:
         raise TransferAIError("AI conversion options do not match supported native policy.")
     report = current.get("character_compatibility")
-    if decision.get("character_compatibility_sha256") or decision.get("animation_conversion"):
+    if report is not None or decision.get("character_compatibility_sha256") or decision.get("animation_conversion"):
         policy = character_policy()
         if report is None or decision.get("character_compatibility_sha256") != policy.compatibility.digest(report):
             raise TransferAIError("The character compatibility report has stale source or target evidence.")
         if decision.get("animation_conversion") is not None:
             policy.selected(report, decision["animation_conversion"])
+        try:
+            policy.require_motion_choice(report, decision.get("animation_conversion"))
+        except ValueError as exc:
+            raise TransferAIError(str(exc)) from exc
     return expected
