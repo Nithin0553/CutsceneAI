@@ -291,7 +291,10 @@ def test_reopened_native_comparison_is_scoped_and_not_full_parity(tmp_path):
     }
     put(folder / "comparison.json", comparison)
     verdict = gate.assess(workspace, job["job_id"])
-    assert verdict["checks"]["reopened_temporal_acceptance"]["status"] == "PASS"
+    # A fabricated sampling-plan kind and source capture lacking actual frames
+    # can no longer certify reopen acceptance, even if its file hashes agree.
+    assert verdict["checks"]["reopened_temporal_acceptance"]["status"] == "INCOMPLETE"
+    assert verdict["checks"]["reopened_camera_optics"]["status"] == "INCOMPLETE"
     assert not verdict["release_ready"]
     assert "rendered_frame_parity" in verdict["incomplete"]
     comparison["source_capture_sha256"] = "a" * 64
