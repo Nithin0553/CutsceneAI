@@ -354,7 +354,7 @@ def test_friday_tampered_retarget_and_wrong_native_job_are_blocked(run):
     native = json.loads(report_file.read_text())
     native["job_id"] = "f" * 32
     _write(report_file, native)
-    with pytest.raises(audit.AITransferAuditError, match="native IK retarget readback"):
+    with pytest.raises(audit.AITransferAuditError, match="Native IK retarget readback"):
         audit.assess(root, job["job_id"])
 
 
