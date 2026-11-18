@@ -168,6 +168,30 @@
         "additionalProperties": false
       }
     },
+    "camera_cuts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_entity_id", "source_section_id", "start_frame", "end_frame",
+                     "start_seconds", "end_seconds", "status"],
+        "properties": {
+          "source_entity_id": {"type": "string"},
+          "source_section_id": {"type": "string"},
+          "start_frame": {"type": "integer"},
+          "end_frame": {"type": "integer"},
+          "start_seconds": {"type": "number"},
+          "end_seconds": {"type": "number"},
+          "status": {
+            "enum": [
+              "FRAME_ALIGNED",
+              "SUBFRAME_CUT_BOUNDARY_UNVERIFIED",
+              "UNVERIFIED_SOURCE_CAMERA_OR_RANGE"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "skeletal_entity_ids": {
       "type": "array",
       "uniqueItems": true,

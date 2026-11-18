@@ -78,7 +78,7 @@ def test_matched_sampled_physical_camera_lens_passes_without_rendered_fidelity()
     assert optics["per_camera"][0]["max_vertical_fov_error_degrees"] == pytest.approx(0)
     assert optics["rendered_projection_verified"] is False
     assert optics["shot_cut_timing_verified"] is False
-    assert result["camera_cut_timing"]["status"] == "INCOMPLETE"
+    assert result["camera_cut_timing"]["status"] == "NOT_APPLICABLE"
     assert "camera_cut_timing" in result["unverified_domains"]
 
 

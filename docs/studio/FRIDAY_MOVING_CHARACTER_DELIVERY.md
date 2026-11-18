@@ -10,8 +10,11 @@ it was fast-forwarded to the latest RC before implementation. Neither the RC,
 the old integration branch nor `main` was modified.
 
 Before handoff, the dedicated branch also incorporated the primary developer's
-new RC `44e7c1ce9aa17869bcd6696744a43dd07f7fd84f` without conflicts. Those
-incoming camera-optics changes are preserved; Friday did not edit them.
+RC `44e7c1ce9aa17869bcd6696744a43dd07f7fd84f`, followed by
+`56d46616d83c9ffdbe053dffd716a1f15c775ee5`, without conflicts. The primary
+developer's camera optics, cut timing and stricter reopened evidence gates are
+preserved. Friday added one missing `Path` import in their new reopened-camera
+test so that the combined suite can collect; no camera acceptance gate was relaxed.
 
 ## Delivery scope and evidence levels
 
@@ -186,7 +189,9 @@ candidate/namespace/sequence. Never clear the attempt file to retry in place.
   `packages/studio/studio_release_gate.py`: recognize the additional action
   and require its motion proof; retain all behavioral and release gates.
 - New moving-character tests, one corrected legacy rotation-ownership
-  regression expectation, this report and the synthetic example.
+  regression expectation, this report and the synthetic example. One import
+  in `tests/studio/test_reopened_camera_gate.py` repairs an incoming RC
+  collection/lint error; the primary developer was notified on PR #128.
 
 Shared-file coordination was posted on
 [PR #128](https://github.com/Nithin0553/CutsceneAI/pull/128#issuecomment-6992775441)
@@ -215,13 +220,14 @@ The [anonymized synthetic example](examples/friday-moving-character.synthetic.js
 contains compatibility, a typed decision and mocked native readback. Its
 origin and lack of real provider/engine invocation are explicit.
 
-Final combined local checks: **1,054 passed, 7 skipped**, including **79 F-003 tests**
+Final combined local checks: **1,072 passed, 7 skipped**, including **79 F-003 tests**
 and the existing **31 in-place policy regressions**. Python syntax, Ruff,
 JavaScript syntax, 14 cinematic UI scenarios, repository hygiene and whitespace
 checks passed. Both changed Unity C# files passed tree-sitter syntax parsing;
 this is not Unity compilation. The seven existing skips are retained and are
 not counted as engine acceptance. The F-003 implementation alone passed
-1,039 tests before incorporating the primary developer's 15 new optics tests.
+1,039 tests before incorporating the primary developer's optics, camera-cut
+and reopened-camera gate tests.
 
 API details were checked against Epic's documentation for
 [native root-track inspection](https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/class/AnimationLibrary),
@@ -257,17 +263,23 @@ neither a global software freeze nor cinematic fidelity.
   `feature/studio-e2e-release-candidate-v0.1`; retained as draft for primary review.
 - F-003 implementation commit:
   [`5d07b4a6b29db442e03f6721e037ac562a0926b7`](https://github.com/Nithin0553/CutsceneAI/commit/5d07b4a6b29db442e03f6721e037ac562a0926b7).
-- Synchronized RC: `44e7c1ce9aa17869bcd6696744a43dd07f7fd84f`.
-- Exact reviewed combined implementation:
+- Latest synchronized RC: `56d46616d83c9ffdbe053dffd716a1f15c775ee5`.
+- Earlier reviewed combined implementation:
   [`1898fda2be2a4cd2622a1c5b86586c7256fc624c`](https://github.com/Nithin0553/CutsceneAI/commit/1898fda2be2a4cd2622a1c5b86586c7256fc624c).
 - [Combined implementation CI 44413605334 — SUCCESS](https://github.com/Nithin0553/CutsceneAI/actions/runs/44413605334)
-  ran on that exact head. Both the Python/source/UI/Ruff/hygiene job and Windows
-  dependency-bootstrap job passed; **1,054 passed, 7 skipped**. This final report
-  record is a documentation-only follow-up to the verified implementation.
+  used PR head `1898fda2` merged with the then-current RC `6f9501f3`.
+  Both the Python/source/UI/Ruff/hygiene job and Windows dependency-bootstrap
+  job passed; **1,067 passed, 7 skipped**. GitHub PR CI tests the merge ref,
+  which can include newer primary-developer changes than the branch baseline.
 - [CI 44413087577 — SUCCESS](https://github.com/Nithin0553/CutsceneAI/actions/runs/44413087577)
-  checked implementation head `5d07b4a6` against that RC: **1,054 passed,
+  checked implementation head `5d07b4a6` against RC `44e7c1ce`: **1,054 passed,
   7 skipped**, Python/JS syntax, 14 UI scenarios, Ruff, repository checks and
   Windows dependency bootstrap all green. This is code-only evidence.
+- CI `44414034220` subsequently caught the older reopen fixture expecting PASS
+  without sampled camera evidence as stricter primary gates landed. The final
+  synchronization includes primary fix `ad4d272` and the missing test import;
+  the combined local suite passes with the stronger gate retained. Final-head
+  CI is verified again before handoff.
 - [Final-head CI and exact current review SHA](https://github.com/Nithin0553/CutsceneAI/pull/130/checks)
   remain attached to the draft. The final handoff records the exact published
   head and confirms its CI completed. Documentation updates do not manufacture

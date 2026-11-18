@@ -20,6 +20,7 @@ for sibling in (HERE, HERE.parents[1] / "packages" / "cinetwin"):
     if str(sibling) not in sys.path:
         sys.path.insert(0, str(sibling))
 
+import cinetwin_camera_cuts
 import camera_optics
 import readback_math
 import target_observation_plan
@@ -259,6 +260,7 @@ def run(
             },
             "native_rigs": rigs,
             "skeletal_bone_maps": request["skeletal_bone_maps"],
+            "camera_cut_sections": cinetwin_camera_cuts.inspect(sequence, unreal),
             "samples": observations,
             "provenance": {
                 "method": "sequencer_jump_force_evaluation",

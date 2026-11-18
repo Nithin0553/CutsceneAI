@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+from camera_cut_timing import compare_camera_cut_sections
 from camera_optics import compare_camera_optics
 from sampling_plan import validate_capture
 from target_observation_plan import prepare_observation
@@ -488,8 +489,9 @@ def compare(
     # cannot conceal a different camera FOV. Unsupported native camera shapes
     # remain explicitly INCOMPLETE, never silently matching.
     lens = compare_camera_optics(plan, source_samples, target_samples)
+    cuts = compare_camera_cut_sections(plan, target.get("camera_cut_sections"), bound)
     flags_present = (any(item["flags"] for item in results + rig_diagnostics)
-                     or lens["status"] == "FAIL")
+                     or lens["status"] == "FAIL" or cuts["status"] == "FAIL")
 
     return {
         "schema_version": "0.1.0",
@@ -505,14 +507,12 @@ def compare(
             "position_tolerance_cm": position_limit,
             "orientation_tolerance_degrees": orientation_limit,
             "camera_optics_status": lens["status"],
+            "camera_cut_timing_status": cuts["status"],
         },
         "entities": results,
         "rig_motion_diagnostics": rig_diagnostics,
         "camera_optics": lens,
-        "camera_cut_timing": {
-            "status": "INCOMPLETE",
-            "reason": "INDEPENDENT_NATIVE_CAMERA_CUT_BINDING_AND_SECTION_READBACK_NOT_RECORDED",
-        },
+        "camera_cut_timing": cuts,
         "unmapped_source_entities": unmapped,
         "motion_ownership_policy": (
             "ACTOR_VS_NATIVE_SKELETON_DIAGNOSTIC_ONLY;"
@@ -521,7 +521,7 @@ def compare(
         "unverified_domains": [
             "skeletal_joint_orientation_and_bind_pose",
             "camera_optics" if lens["status"] != "PASS" else "camera_projection_and_rendered_frame",
-            "camera_cut_timing",
+            "camera_cut_timing" if cuts["status"] != "PASS" else "rendered_camera_cut_compositing",
             "light_appearance",
             "audio_output",
             "event_execution",
@@ -537,7 +537,9 @@ def compare(
             "Source and target observation methods may not evaluate external script "
             "side effects or frame-dependent physics identically.",
             "Camera FOV uses native CineCamera physical lens readback only; matched "
-            "FOV is not proof of exact projection or shot-cut timing.",
+            "FOV is not proof of exact projection or rendered image parity.",
+            "Camera cuts are compared using observed Sequencer binding IDs and "
+            "section bounds; they do not prove actual frame composition.",
             "This diagnostic report does not modify any source or target asset.",
         ],
     }
