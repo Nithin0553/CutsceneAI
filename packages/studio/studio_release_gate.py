@@ -285,6 +285,80 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
                "Measured actor/root motion only; other temporal domains require their own tests.",
                motion_or_coverage_issues=errors)
 
+    # Friday's exact CineTwin acceptance lives in an immutable nested folder
+    # produced after a *different* Unreal editor process reopens the map.
+    # This supplements the legacy closed-loop readback rather than pretending
+    # the latest same-editor diagnostic proves saved behavioral parity.
+    accepted = [
+        p for p in candidate.glob("native-acceptance-*/comparison.json")
+        if p.is_file() and not p.is_symlink()
+        and p.resolve().parent.parent == candidate
+        and p.parent.name.startswith("native-acceptance-")
+    ]
+    if not accepted:
+        record("reopened_temporal_acceptance", "INCOMPLETE",
+               "No source-bound post-reopen CineTwin comparison has completed.")
+    else:
+        chosen = max(accepted, key=lambda p: (p.stat().st_mtime_ns, p.name))
+        comparison = _read(chosen)
+        folder = chosen.parent
+        persistence_file = folder / "persistence.json"
+        target_file = folder / "target-behavior.json"
+        sampling_file = folder / "sampling-plan.json"
+        capture_path = Path(str(job.get("capture") or "")).resolve()
+        expected_files = (
+            ("persistence_sha256", persistence_file),
+            ("target_observation_sha256", target_file),
+            ("sampling_plan_sha256", sampling_file),
+            ("source_capture_sha256", capture_path),
+        )
+        if (comparison.get("job_id") != job_id
+                or not all(path.is_file() and not path.is_symlink()
+                           and comparison.get(key) == _sha(path)
+                           for key, path in expected_files)):
+            raise ReleaseEvidenceError(
+                "Reopened comparison has changed or foreign source/target evidence."
+            )
+        reopened = _read(persistence_file)
+        generation_pid = comparison.get("generation_editor_pid")
+        observation_pid = comparison.get("observation_editor_pid")
+        same_job = (
+            type(generation_pid) is int and generation_pid > 0
+            and type(observation_pid) is int and observation_pid > 0
+            and generation_pid != observation_pid
+            and generation_pid == job.get("generation_editor_pid")
+            and reopened.get("kind") == "cutsceneai.studio.persistence_audit"
+            and reopened.get("expected_project") == job.get("expected_project")
+            and reopened.get("expected_level") == job.get("expected_level")
+        )
+        if not same_job:
+            raise ReleaseEvidenceError(
+                "Reopened native measurement has mismatched editor or project identity."
+            )
+        compared = comparison.get("acceptance_status")
+        full_native_scope = bool(
+            compared == "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE"
+            and reopened.get("restart_verified") is True
+            and reopened.get("native_structure_status") == "PASS"
+            and reopened.get("provenance_status") == "COMPLETE"
+            and reopened.get("status")
+            == "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS"
+        )
+        if job.get("character_native_readback_status") == "PASS":
+            native_character = comparison.get("character_conversion") or {}
+            full_native_scope = full_native_scope and (
+                native_character.get("action_id") == "use_approved_ik_retarget_profile"
+                and native_character.get("reopened_character_readback_status") == "PASS"
+            )
+        record(
+            "reopened_temporal_acceptance",
+            "PASS" if full_native_scope else
+            "FAIL" if compared == "DIFFERENCES_DETECTED" else "INCOMPLETE",
+            "Distinct-editor native structure and matched-frame actor/root "
+            "motion only. Rendering/audio/physics remain separate release domains.",
+            native_status=compared,
+        )
+
     for domain, explanation in {
         "rendered_frame_parity": "Matched-time source and target images/camera projections are not independently compared.",
         "full_skeletal_pose": "All animated joint transforms, reference poses and retargeting remain unverified.",
