@@ -136,6 +136,7 @@ def route(
     independent_issues: object,
     adapter_catalog: object = None,
     fallback_observation_scope: str = "character",
+    transform_repair_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Choose *admissible strategies*, not a repair or an engine operation.
 
@@ -179,7 +180,21 @@ def route(
         and completed_repairs < repair_budget
         and (auto_mode or user_is_material_only)
     )
-    if eligibility:
+    transform_eligible = bool(
+        intent["mode"] == "user_feedback"
+        and domains == ["transform"] and not intent["ambiguous"]
+        and generation_complete and completed_repairs < repair_budget
+        and isinstance(transform_repair_evidence, dict)
+        and transform_repair_evidence.get("eligible") is True
+        and isinstance(transform_repair_evidence.get("entity"), str)
+    )
+    if transform_eligible:
+        disposition = "GUARDED_ACTOR_TRANSLATION_AVAILABLE"
+        reason = ("The exact user-named character has an independently sampled "
+                  "constant actor/root offset, without conflicting native transform "
+                  "tracks. Unreal must remeasure and validate before any edit.")
+        allowed = ["report_only", "restore_constant_actor_offset"]
+    elif eligibility:
         disposition = "GUARDED_MATERIAL_REPAIR_AVAILABLE"
         reason = ("A source-backed material fallback was observed in native "
                   "Unreal readback. A bounded, previously installed repair "
@@ -230,7 +245,7 @@ def route(
         "native_material_fallback_slots": native_material_fallback_slots,
         "registered_adapters_informational": _sanitized_adapters(adapter_catalog),
         "safe_strategies": allowed,
-        "requires_editor_receipt": eligibility,
+        "requires_editor_receipt": eligibility or transform_eligible,
         "user_observation_verified": False,
         "native_fidelity_verified": False,
         "model_can_authorize_native_commands": False,
