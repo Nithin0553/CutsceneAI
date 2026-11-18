@@ -104,8 +104,12 @@ def inspect(config: dict, census_path: str, worker: dict) -> dict:
     entities = csir.get("entities")
     if not isinstance(tracks, list) or not isinstance(entities, list):
         raise TransferAIError("Malformed Unity cutscene track/entity inventory.")
-    types = Counter(str(t.get("ced_type") or "unknown") for t in tracks
-                    if isinstance(t, dict))
+    # Treat Unity names and extension types as untrusted metadata. Do not
+    # send arbitrary strings or asset paths to the external reasoning model.
+    types = Counter(
+        str(t.get("ced_type") or "unknown")[:72]
+        for t in tracks if isinstance(t, dict)
+    )
     materials = sum(len((e.get("metadata") or {}).get("source_material_assets") or [])
                     for e in entities if isinstance(e, dict))
     models = sum(len((e.get("metadata") or {}).get("source_model_assets") or [])
