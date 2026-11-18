@@ -118,5 +118,7 @@ def test_forged_full_acceptance_rejects_actual_camera_section_difference(tmp_pat
     comparison["target_observation_sha256"] = gate._sha(folder / "target-behavior.json")
     comparison["acceptance_status"] = "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE"
     put(folder / "comparison.json", comparison)
-    with pytest.raises(gate.ReleaseEvidenceError, match="claimed success"):
+    # The independent full-comparison recomputation can refuse the altered
+    # frame before the explicit false acceptance-status check.
+    with pytest.raises(gate.ReleaseEvidenceError, match="differ from source-target|claimed success"):
         gate.assess(work, job["job_id"])
