@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -174,7 +175,7 @@ def _character_conversion(
         return result
     if (not isinstance(selected, dict)
             or selected.get("kind") != "cutsceneai.studio.ai_animation_conversion_decision"
-            or selected.get("action_id") != "use_approved_ik_retarget_profile"
+            or selected.get("action_id") not in ("use_approved_ik_retarget_profile", "bake_verified_actor_world_trajectory")
             or selected.get("compatibility_report_sha256") != canonical_sha
             or plan.get("ai_character_animation") != selected
             or mapping.get("ai_character_animation") != selected):
@@ -183,13 +184,15 @@ def _character_conversion(
         row for row in rows
         if row.get("id") == selected.get("choice_id")
         and row.get("source_entity_id") == selected.get("source_entity_id")
-        and row.get("status") == "COMPATIBLE_AFTER_APPROVED_RETARGET"
+        and row.get("status") in ({"COMPATIBLE", "COMPATIBLE_AFTER_APPROVED_RETARGET"}
+                                  if selected.get("action_id") == "bake_verified_actor_world_trajectory"
+                                  else {"COMPATIBLE_AFTER_APPROVED_RETARGET"})
     ]
     if len(matches) != 1:
         raise AITransferAuditError("Selected AI character is not uniquely compatible.")
     result.update({
         "selected": True,
-        "action": "use_approved_ik_retarget_profile",
+        "action": selected["action_id"],
         "native_readback_status": "NOT_EXECUTED",
     })
 
@@ -219,6 +222,13 @@ def _character_conversion(
         and isinstance(native.get("expected_sections"), list)
         and bool(native["expected_sections"])
     )
+    if selected["action_id"] == "bake_verified_actor_world_trajectory":
+        studio = str(Path(__file__).resolve().parents[1] / "packages/studio")
+        if studio not in sys.path:
+            sys.path.insert(0, studio)
+        from character_motion import receipt_matches
+        positive = positive and receipt_matches(native, plan)
+        result["native_motion_readback_status"] = (native.get("motion") or {}).get("status", "MISSING")
     result["native_readback_status"] = status if positive or status != "PASS" else "UNCONFIRMED_PASS"
     result["native_readback_passed"] = positive
     return result

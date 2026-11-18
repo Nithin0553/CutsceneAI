@@ -158,6 +158,9 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
                 and bool(readback.get("expected_sections"))
                 and readback.get("fidelity_verified") is False
             )
+            if animation_selected.get("action_id") == "bake_verified_actor_world_trajectory":
+                import character_motion
+                okay = okay and character_motion.receipt_matches(readback, plan)
             record(
                 "ai_native_character_conversion",
                 "PASS" if okay else "FAIL",
@@ -347,7 +350,8 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
         if job.get("character_native_readback_status") == "PASS":
             native_character = comparison.get("character_conversion") or {}
             full_native_scope = full_native_scope and (
-                native_character.get("action_id") == "use_approved_ik_retarget_profile"
+                native_character.get("action_id") == (animation_selected or {}).get("action_id")
+                and native_character.get("action_id") in ("use_approved_ik_retarget_profile", "bake_verified_actor_world_trajectory")
                 and native_character.get("reopened_character_readback_status") == "PASS"
             )
         record(
