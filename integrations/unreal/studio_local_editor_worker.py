@@ -36,6 +36,26 @@ BUSY = False
 # native editor or an already-running/partially completed transfer.
 LIVE_RELOAD_STATE = 'CURRENT'
 LIVE_RELOAD_ERROR = ''
+# Reloading the worker alone is insufficient after a git pull changes adapters.
+# Capture a bounded fingerprint of code in the trusted repo at worker startup.
+def _dependency_fingerprint():
+    result = hashlib.sha256()
+    checked = 0
+    for relative in ('integrations/unreal', 'packages/studio', 'packages/cinetwin', 'tools'):
+        folder = ROOT / relative
+        for path in sorted(folder.glob('*.py')):
+            if path.is_symlink():
+                raise RuntimeError('A Studio Python dependency is a symlink: ' + relative)
+            checked += 1
+            if checked > 500 or path.stat().st_size > 4 * 1024 * 1024:
+                raise RuntimeError('Studio Python dependency inventory is out of bounds.')
+            result.update(str(path.relative_to(ROOT)).encode('utf-8'))
+            result.update(hashlib.sha256(path.read_bytes()).digest())
+    return result.hexdigest()
+
+
+DEPENDENCY_SOURCE_SHA256 = _dependency_fingerprint()
+LAST_DEPENDENCY_CHECK = 0.0
 
 
 def _load(path):
@@ -544,6 +564,42 @@ def _running_native_job_exists():
     return False
 
 
+def _refresh_dependency_modules():
+    """Refresh known source/target pipeline modules, never the native editor.
+
+    The existing planner synchronization already checks canonical module paths,
+    and protects against stale/shadowed versions before native mutation. The
+    supplementary observer and generator imports are similarly origin-pinned.
+    """
+    import studio_planner_sync
+    expected_sync = (ROOT / 'integrations/unreal/studio_planner_sync.py').resolve()
+    if Path(getattr(studio_planner_sync, '__file__', '')).resolve() != expected_sync:
+        raise RuntimeError('Reloaded Studio planner belongs to another checkout.')
+    importlib.reload(studio_planner_sync)
+    studio_planner_sync.synchronize()
+    extras = (
+        ('unreal_compat', 'integrations/unreal'),
+        ('studio_agent_executor', 'integrations/unreal'),
+        ('studio_auto_scene', 'integrations/unreal'),
+        ('build_level_sequence', 'integrations/unreal'),
+        ('cinetwin_target_evaluator', 'integrations/unreal'),
+        ('cinetwin_tick_evaluator', 'integrations/unreal'),
+        ('cinetwin_camera_cuts', 'integrations/unreal'),
+        ('behavior_compare', 'packages/cinetwin'),
+        ('camera_optics', 'packages/cinetwin'),
+        ('camera_cut_timing', 'packages/cinetwin'),
+        ('joint_motion_profile', 'packages/cinetwin'),
+    )
+    for name, relative in extras:
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        expected = (ROOT / relative / (name + '.py')).resolve()
+        if Path(getattr(module, '__file__', '')).resolve() != expected:
+            raise RuntimeError('A loaded Studio adapter comes from another checkout: ' + name)
+        importlib.reload(module)
+
+
 def _refresh_worker_python():
     """Refresh changed repo Python inside the same editor, only when idle.
 
@@ -552,6 +608,7 @@ def _refresh_worker_python():
     a callback on an active Unreal tick or restarting the Unreal Editor.
     """
     global LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR
+    global DEPENDENCY_SOURCE_SHA256, LAST_DEPENDENCY_CHECK
     path = Path(__file__).resolve()
     if Path(__file__).is_symlink():
         LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'BLOCKED', 'Worker source is a symlink.'
@@ -560,8 +617,28 @@ def _refresh_worker_python():
         source = path.read_bytes()
         current_sha = hashlib.sha256(source).hexdigest()
         if current_sha == WORKER_SOURCE_SHA256:
-            LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'CURRENT', ''
-            return False
+            if time.monotonic() - LAST_DEPENDENCY_CHECK < 3.0:
+                return False
+            LAST_DEPENDENCY_CHECK = time.monotonic()
+            current_deps = _dependency_fingerprint()
+            if current_deps == DEPENDENCY_SOURCE_SHA256:
+                LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'CURRENT', ''
+                return False
+            if BUSY or _running_native_job_exists():
+                LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = (
+                    'DEFERRED_NATIVE_JOB', 'Adapter source changed while a native job is running.'
+                )
+                return True
+            _refresh_dependency_modules()
+            if _dependency_fingerprint() != current_deps:
+                LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'BLOCKED', (
+                    'Adapter source changed during the code refresh.'
+                )
+                return True
+            DEPENDENCY_SOURCE_SHA256 = current_deps
+            LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'AUTO_RELOADED', ''
+            unreal.log('[CutSceneAI Studio] Updated Studio Python adapters in the open Unreal Editor.')
+            return True
         if BUSY or _running_native_job_exists():
             LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = (
                 'DEFERRED_NATIVE_JOB', 'Code changed during native execution; preserve the job for inspection.'
@@ -584,6 +661,9 @@ def _refresh_worker_python():
         module.LAST_TICK = time.monotonic()
         module.LIVE_RELOAD_STATE = 'AUTO_RELOADED'
         module.LIVE_RELOAD_ERROR = ''
+        # The compiled source recalculates the adapter fingerprint and receives
+        # the latest managed module functions on the next idle heartbeat.
+        module.LAST_DEPENDENCY_CHECK = 0.0
         unreal.log('[CutSceneAI Studio] Updated Python companion in the running Unreal Editor; no restart.')
         return True
     except (OSError, SyntaxError, ValueError, TypeError, RuntimeError) as exc:
