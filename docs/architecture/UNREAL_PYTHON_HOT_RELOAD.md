@@ -1,41 +1,76 @@
-# Unreal Python hot reload for CutSceneAI Studio
+# Unreal Python hot reload — continuous CutSceneAI Studio companion
 
-Python-only updates should NOT require a costly Unreal Editor restart.
+Python-only updates should **not** require closing/reopening Unreal Editor.
+The primary implementation is the live Studio worker in
+`integrations/unreal/studio_local_editor_worker.py`. It uses one registered
+Slate post-tick dispatcher, source-bounded idle module refresh and a
+project/worker hash heartbeat. See
+[Live bridge continuity](../studio/LIVE_BRIDGE_CONTINUITY.md).
 
-## One-time setup: open the correct healthy Unreal editor/project
+## Automatic behavior once connected
 
-After pulling the Python branch, open the Unreal Python Output Log and run:
+After the worker was started **once** in the selected, backed-up Unreal
+project, it keeps polling the Studio localhost file queue and reports the
+actual editor project/map/PID. The source code hash is captured when the
+Python worker is loaded. When the worker Python file changes on disk, the
+idle callback compiles and refreshes only that trusted source file in the
+same interpreter, retaining the original Slate callback handle and
+workspace. After refresh, its source hash changes; a previously loaded
+companion cannot simply claim the new hash from disk.
+
+The worker also scans a bounded source set of Studio Python packages and
+reloads the existing whitelisted transfer planner/adapter modules when
+their code changes. It checks module origin to refuse another checkout.
+Import/syntax errors or uncertain running-native-job state cause a
+**fail-closed pause**, not a partial conversion or fake healthy status.
+A Studio browser refresh or localhost server restart does not require
+restarting either engine editor.
+
+The Studio UI shows live connected/reloading/offline state from fresh
+heartbeats. Native sequence generation still requires a *new* source-bound
+immutable candidate and explicit transfer approval. A code refresh is
+not a native transfer and does not write, overwrite or delete Unreal
+assets.
+
+## One-time upgrade of an older, already loaded companion
+
+An old worker loaded before this feature has no idle self-refresh hook.
+With **no native job running**, run the following in the existing Unreal
+Python console; **do not close Unreal**:
 
 ```python
-import sys
-sys.path.insert(0, r"B:\Research\CutsceneAI\CutsceneAI\integrations\unreal")
-
-import cutsceneai_hot_reload
-cutsceneai_hot_reload.reload_project_python()
+import importlib
+import studio_local_editor_worker as w
+w.stop()
+importlib.reload(w)
+w.start()
 ```
 
-Expected console result: CutSceneAI Python HOT RELOAD: OK. This imports/reloads an explicit list of project modules in dependency order: source planner, sampled behavior/scene preparation, CED validation, hierarchy support, Unreal adapter shim, best-effort transfer backend and runtime builder.
+After this one-time upgrade, normal Python source updates refresh
+automatically. Confirm the connected worker hash and project in Studio.
+Never run the upgrade while a native job is RUNNING or while its
+partial-import state is uncertain.
 
-For subsequent code changes in VS Code, run the same hot-reload command from Unreal's Python console (or call the imported module's reload_project_python function). No Unity/Unreal scene or asset is changed by the hot-reload command.
+For non-worker tools, the explicit
+`cutsceneai_hot_reload.reload_project_python()` helper remains an
+optional development diagnostic. Routine Studio transfers no longer
+require calling it by hand after each Python edit.
 
-Use the module reference, e.g. build_level_sequence.build_prepared_files(...), not previously captured function references imported with from-import; stale references are not updated by an importlib.reload call.
+## Limits
 
-## Limits and safety
+- This is Python code refresh **in an existing healthy Unreal Editor**, not
+  a reset of UObjects, open Sequencer windows, saved packages or
+  transaction history.
+- C++ plugins, compiled engine modules or unsafe loaded packages may
+  require a genuine engine restart and/or recovery from a backup.
+- The independent fresh-process persistence test remains a separate
+  later engine-acceptance gate. It is **not** a prerequisite for routine
+  local Python edits or Studio reconnection.
+- A partially written native candidate is never requeued after refresh.
+  Use its saved receipt and a new candidate, not the same sequence path.
+- The code-only CI regressions do not establish Unreal 5.8 runtime
+  compatibility or Unity/Unreal cutscene fidelity.
 
-- Python hot reload is a **code refresh**, not a reset of Unreal UObjects, loaded packages, native references, active Sequencer editor windows, incomplete transactions, unsaved levels or the project's filesystem.
-- A prior attempt that caused Unreal to report a potentially **corrupt Level Sequence package** requires closing the Editor without saving, taking a project backup and inspecting a healthy new session. Do not use this command as recovery for a corrupt V7 package.
-- Content mappings, sequence names, source hash provenance and transfer-plan files do not mutate automatically. New implementation changes that affect planned JSON require a **fresh plan directory and source-hash verification**. Never patch a signed plan/evidence file.
-- Some Unreal C++ plugins, compiled native modules and editor subsystem state changes still require a restart.
-- Reload the source files only when no generator call is currently running. Avoid retaining old class/function objects across reloads.
-- Hot reload supports pure Python changes in the whitelisted modules. Other scripts may need to be added deliberately with dependency ordering and tests; it does not indiscriminately clear sys.modules.
-- The tool refuses to reload a same-named module imported from an unrelated checkout, to prevent a hard-to-detect wrong-version transfer.
-
-## Minimal future development loop
-
-1. Change code in VS Code and run pytest/repo checks in an ordinary PowerShell window.
-2. Pull/update the code if edited on GitHub.
-3. In the running, *healthy* Unreal Editor, call cutsceneai_hot_reload.reload_project_python().
-4. Prepare the next transfer plan with unique immutable output dir and new unoccupied sequence target path; verify source evidence.
-5. Perform runtime generation; inspect receipts and independently validate saved playback before accepting results.
-
-This workflow is for development convenience. Every successful runtime run still needs provenance, saved-target readback and CineTwin comparison.
+Do not use hot reload to recover an Unreal Editor session in which
+packages are known to be corrupt; isolate the project and inspect a
+healthy backup instead.
