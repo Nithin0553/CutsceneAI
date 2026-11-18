@@ -1,7 +1,7 @@
 """Guarded Unreal editor adapter for optional host LangGraph repair requests.
 
-No arbitrary code execution. One exact source-backed material restoration per
-request, editor thread only, bounded to two receipts per generated job.
+No arbitrary code execution. A source-backed material restoration or one
+full-frame actor translation, editor thread only, two receipts per job.
 """
 from __future__ import annotations
 
@@ -29,7 +29,9 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
             or request.get("schema_version") != "1"
             or request.get("job_id") != job["job_id"]
             or request.get("candidate_id") != job["candidate_id"]
-            or request.get("strategy") != "restore_source_albedo"
+            or request.get("strategy") not in {
+                "restore_source_albedo", "restore_constant_actor_offset"
+            }
             or request.get("sequence_path") != job["sequence_path"]
             or request.get("expected_project") != job["expected_project"]
             or request.get("expected_level") != job["expected_level"]):
@@ -45,6 +47,9 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
         raise ValueError("Agent request refers to inactive job.")
     if len(list(candidate.glob("agent-receipt-*.json"))) >= 2:
         raise ValueError("Exceeded two guarded repair receipts.")
+    if request["strategy"] == "restore_constant_actor_offset":
+        import studio_transform_repair
+        return studio_transform_repair.attempt(api, workspace, job, request)
     import studio_visual_audit
     before = studio_visual_audit.audit_latest(workspace, api=api)
     old_count = before.get("character_material_slots_engine_default")
