@@ -845,6 +845,23 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                     return self.reply(200, studio_continual_learning.report(folder, source))
                 except (ValueError, OSError, KeyError) as exc:
                     return self.reply(409, {'error': 'Learning evidence unavailable: ' + str(exc)})
+            if path == '/api/ai-transfer-audit':
+                import studio_ai_transfer_audit
+                active_path = folder / 'active-job.json'
+                if not active_path.is_file():
+                    return self.reply(200, {
+                        'available': False, 'status': 'NO_ACTIVE_TRANSFER',
+                        'fidelity_verified': False,
+                    })
+                try:
+                    job_id = str(load_json(active_path)['job_id'])
+                    return self.reply(
+                        200, studio_ai_transfer_audit.assess(folder, job_id)
+                    )
+                except (ValueError, OSError, KeyError, TypeError) as exc:
+                    return self.reply(409, {
+                        'error': 'AI transfer evidence unavailable: ' + str(exc)[:400]
+                    })
             if path == '/api/agents':
                 import studio_agent_coordinator
                 return self.reply(200, studio_agent_coordinator.status(folder))
