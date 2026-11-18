@@ -238,3 +238,44 @@ def test_blocked_native_source_capture_never_queues_unreal_job(rig, monkeypatch)
     assert blocked["status"] == "BLOCKED"
     assert "Mismatched Unity Timeline" in blocked["error"]
     assert not (workspace / "active-job.json").exists()
+
+
+def test_pre_execution_cancel_is_durable_and_keeps_existing_files(rig):
+    workspace, project, target, service, _ = rig
+    started = studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    assert started["status"] == "WAITING_FOR_UNITY"
+    existing = workspace / "candidates" / "existing" / "receipt.json"
+    existing.parent.mkdir(parents=True)
+    existing.write_text('{"source":"preserve"}', encoding="utf-8")
+    cancelled = studio_autopilot.cancel(workspace, service=service)
+    assert cancelled["status"] == "CANCELLED"
+    assert studio_autopilot.advance(workspace, service=service) == cancelled
+    assert existing.read_text(encoding="utf-8") == '{"source":"preserve"}'
+    assert not (workspace / "active-job.json").exists()
+    again = studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    assert again["status"] == "WAITING_FOR_UNITY"
+
+
+def test_native_execution_cannot_be_interrupted_by_autopilot_cancel(rig):
+    workspace, project, target, service, state = rig
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    active = workspace / studio_autopilot.ACTIVE
+    record = json.loads(active.read_text(encoding="utf-8"))
+    record["status"] = "UNREAL_RUNNING"
+    active.write_text(json.dumps(record), encoding="utf-8")
+    job = workspace / "active-job.json"
+    job.write_text(json.dumps({"job_id": "b" * 32}), encoding="utf-8")
+    state["job_status"] = "QUEUED"
+    with pytest.raises(studio_autopilot.AutopilotError, match="cannot be interrupted"):
+        studio_autopilot.cancel(workspace, service=service)
+    assert json.loads(active.read_text())["status"] == "UNREAL_RUNNING"
+    assert json.loads(job.read_text())["job_id"] == "b" * 32
