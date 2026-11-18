@@ -30,6 +30,9 @@ FINISHED = frozenset({"GENERATED_UNVERIFIED", "BLOCKED", "CANCELLED"})
 # Native read-only character inspection must not wait forever on an orphaned
 # editor request. Disconnects never authorize issuing a second native job.
 NATIVE_PROBE_TIMEOUT_SECONDS = 180
+# Manual Play Mode is explicitly requested; an orphaned request still needs an
+# eventual safe terminal outcome without repeatedly creating capture tickets.
+UNITY_CAPTURE_TIMEOUT_SECONDS = 3600
 JOB_ID_RE = re.compile(r"[a-f0-9]{32}\Z")
 
 
@@ -159,18 +162,18 @@ def cancel(workspace: Path, *, service: Any) -> dict[str, Any]:
         return status(workspace)
 
 
-def _probe_timed_out(state: dict) -> bool:
-    started = state.get("native_probe_wait_started_at")
+def _wait_timed_out(state: dict, timestamp_key: str, seconds: int) -> bool:
+    started = state.get(timestamp_key)
     if not started:
         return False
     try:
         timestamp = datetime.fromisoformat(str(started))
     except ValueError as exc:
-        raise AutopilotError("Native character probe timeout state is invalid.") from exc
+        raise AutopilotError("Studio wait timeout state is invalid.") from exc
     if timestamp.tzinfo is None:
-        raise AutopilotError("Native character probe timeout is missing timezone.")
+        raise AutopilotError("Studio wait timeout is missing timezone.")
     elapsed = (datetime.now(timezone.utc) - timestamp).total_seconds()
-    return elapsed > NATIVE_PROBE_TIMEOUT_SECONDS
+    return elapsed > seconds
 
 
 def _submitted_job(workspace: Path, candidate_id: str) -> str:
@@ -256,6 +259,7 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                         state["unity_project"], state["source_request_id"]
                     )
                     state["capture_request_id"] = request["request_id"]
+                    state["capture_wait_started_at"] = datetime.now(timezone.utc).isoformat()
                     state["status"] = "WAITING_FOR_UNITY_CAPTURE"
                     state["message"] = request["instruction"]
             elif phase == "WAITING_FOR_UNITY_CAPTURE":
@@ -265,12 +269,22 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                 if observed["status"] == "BLOCKED":
                     raise AutopilotError(observed["reason"])
                 if observed["status"] == "SUCCEEDED":
+                    state.pop("capture_wait_started_at", None)
                     state["capture_path"] = observed["capture_path"]
                     state["status"] = "CONNECTING"
                     state["message"] = (
                         "Source CineTwin samples verified. Resolving native transfer mappings."
                     )
                 else:
+                    if _wait_timed_out(
+                        state, "capture_wait_started_at", UNITY_CAPTURE_TIMEOUT_SECONDS,
+                    ):
+                        raise AutopilotError(
+                            "Unity source CineTwin capture timed out after 60 minutes. "
+                            "Check that the selected Unity Editor has the Studio Bridge "
+                            "enabled and is in Play Mode; start a fresh transfer. "
+                            "No Unreal candidate was submitted."
+                        )
                     state["message"] = str(observed.get(
                         "message", "Waiting for saved Unity Play Mode behavior capture."
                     ))[:500]
@@ -322,7 +336,9 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                     return status(workspace)
                 requested, probe = studio_transfer_ai.target_probe(config, worker, workspace, state["run_id"], write=_write)
                 if requested and probe is None:
-                    if _probe_timed_out(state):
+                    if _wait_timed_out(
+                        state, "native_probe_wait_started_at", NATIVE_PROBE_TIMEOUT_SECONDS,
+                    ):
                         raise AutopilotError(
                             "Native Unreal character inspection timed out after 180 seconds. "
                             "Inspect the editor worker and start a fresh transfer; "
