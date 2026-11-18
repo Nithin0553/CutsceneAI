@@ -166,16 +166,16 @@ def requested_character_correction(message: str, report: dict) -> str | None:
     A mixed facing/rotation/motion request is diagnostic-only.
     """
     if (not isinstance(message, str) or len(message) > 1200 or
-            re.search(r"\\b(?:do not|don't|dont|without)\\s+(?:modify|edit|change|fix|move)",
+            re.search(r"\b(?:do not|don't|dont|without)\s+(?:modify|edit|change|fix|move)",
                       message, re.IGNORECASE)):
         return None
-    if not re.search(r"\\b(?:fix|correct|repair|reposition|move|align|adjust)\\b",
+    if not re.search(r"\b(?:fix|correct|repair|reposition|move|align|adjust)\b",
                      message, re.IGNORECASE):
         return None
-    if not re.search(r"\\b(?:position|placement|location|translation|offset)\\b",
+    if not re.search(r"\b(?:position|placement|location|translation|offset)\b",
                      message, re.IGNORECASE):
         return None
-    if re.search(r"\\b(?:facing|face|rotate|rotation|orientation|animation|motion|pose|root)\\b",
+    if re.search(r"\b(?:facing|face|rotate|rotation|orientation|animation|motion|pose|root)\b",
                  message, re.IGNORECASE):
         return None
     matches = [name for name in report.get("entities", {})
