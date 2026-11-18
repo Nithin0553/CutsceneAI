@@ -331,6 +331,36 @@ def test_unreal_disconnection_pauses_ai_analysis_and_preparation(rig, monkeypatc
     assert decision_path.read_bytes() == previous
 
 
+def _recovery_evidence(workspace, project, target, candidate_dir):
+    config = {
+        "csir": str(project / "source.csir.json"),
+        "capture": str(project / "capture.json"),
+        "target_project": str(target / "Target.uproject"),
+        "level_path": "/Game/Trial",
+    }
+    (workspace / "connection.json").write_text(json.dumps(config))
+    (workspace / "active-candidate.json").write_text(
+        json.dumps({"candidate_id": "candidate1"})
+    )
+    (candidate_dir / "session.json").write_text(json.dumps({
+        "source": {"csir_path": config["csir"]},
+        "source_capture": {"path": config["capture"]},
+        "target": {
+            "project_path": config["target_project"],
+            "sequence_asset_path": "/Game/CutSceneAI/LS_Candidate",
+            "mapping_path": str(candidate_dir / "resolved-mapping.json"),
+        },
+    }))
+    return {
+        "csir": config["csir"],
+        "capture": config["capture"],
+        "expected_project": config["target_project"],
+        "expected_level": config["level_path"],
+        "sequence_path": "/Game/CutSceneAI/LS_Candidate",
+        "mapping": str(candidate_dir / "resolved-mapping.json"),
+    }
+
+
 def test_crash_after_unreal_job_submission_recovers_without_requeue(rig):
     workspace, project, target, service, _ = rig
     studio_autopilot.begin(
@@ -343,6 +373,7 @@ def test_crash_after_unreal_job_submission_recovers_without_requeue(rig):
     active.write_text(json.dumps(record))
     candidate_dir = workspace / "candidates" / "candidate1"
     candidate_dir.mkdir(parents=True)
+    metadata = _recovery_evidence(workspace, project, target, candidate_dir)
     job_id = "d" * 32
     job_path = workspace / "jobs" / (job_id + ".json")
     job_path.parent.mkdir()
@@ -350,6 +381,7 @@ def test_crash_after_unreal_job_submission_recovers_without_requeue(rig):
         "kind": "cutsceneai.studio.local_unreal_job",
         "job_id": job_id, "candidate_id": "candidate1",
         "candidate_dir": str(candidate_dir), "status": "QUEUED",
+        **metadata,
     }))
     service.queue_trial = lambda *_: pytest.fail("Never queue the already submitted job")
     recovered = studio_autopilot.advance(workspace, service=service)
@@ -371,6 +403,7 @@ def test_crash_recovery_refuses_duplicate_jobs_and_conflicting_pointer(rig):
     active.write_text(json.dumps(state))
     candidate_dir = workspace / "candidates" / "candidate1"
     candidate_dir.mkdir(parents=True)
+    metadata = _recovery_evidence(workspace, project, target, candidate_dir)
     jobs = workspace / "jobs"
     jobs.mkdir()
     for letter in ("d", "e"):
@@ -379,6 +412,7 @@ def test_crash_recovery_refuses_duplicate_jobs_and_conflicting_pointer(rig):
             "kind": "cutsceneai.studio.local_unreal_job",
             "job_id": ident, "candidate_id": "candidate1",
             "candidate_dir": str(candidate_dir),
+            **metadata,
         }))
     service.queue_trial = lambda *_: pytest.fail("Ambiguous jobs must not be replayed")
     blocked = studio_autopilot.advance(workspace, service=service)
