@@ -26,6 +26,10 @@ WORKSPACE = Path.home() / '.cutsceneai-studio' / 'runs'
 MAX_BODY = 64 * 1024
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.RLock()
+# Engine editors are separate long-lived processes. Reloading the host never
+# starts or stops them, and never requeues an immutable native job.
+SOURCE_WATCHER = None
+HOST_RESTARTING = threading.Event()
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -841,6 +845,10 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                 cfg = folder / 'connection.json'
                 return self.reply(200, {'service': 'CutSceneAI Studio Local Companion',
                                         'repo_root': str(ROOT), 'token': TOKEN, 'connected': cfg.is_file(),
+                                        'host_reload': SOURCE_WATCHER.status() if SOURCE_WATCHER else {
+                                            'status': 'NOT_ENABLED', 'engine_restart_required': False,
+                                            'native_job_replayed': False,
+                                        },
                                         'connection': load_json(cfg) if cfg.is_file() else None,
                                         'unreal_worker': worker_connected(folder),
                                         'unity_editor': _unity_live_status(folder),
@@ -944,6 +952,10 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                     raise ValueError('Expected JSON request object.')
                 route = urlparse(self.path).path
                 with LOCK:
+                    if HOST_RESTARTING.is_set():
+                        return self.reply(503, {'error': 'Studio localhost is reconnecting after a code update. Unity and Unreal stay open.'})
+                    if SOURCE_WATCHER is not None and not SOURCE_WATCHER.mutation_safe():
+                        return self.reply(503, {'error': 'Studio source changed. New mutating requests are paused until a safe localhost reload: ' + SOURCE_WATCHER.status()['reason']})
                     if route == '/api/pick-folder':
                         selected = studio_project_discovery.browse_project_folder(str(data.get('kind') or ''))
                         result = {'path': selected, 'cancelled': not bool(selected)}
@@ -1038,12 +1050,14 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
 
 
 def main(argv=None) -> int:
-    global ROOT, WORKSPACE
+    global ROOT, WORKSPACE, SOURCE_WATCHER
     parser = argparse.ArgumentParser(description='CutSceneAI Studio localhost-only editor companion API')
     parser.add_argument('--repo', type=Path, default=ROOT, help='Repository root containing tools/studio_candidate.py')
     parser.add_argument('--web', type=Path, default=ROOT / 'apps/studio-web')
     parser.add_argument('--workspace', type=Path, default=WORKSPACE)
     parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--watch', action='store_true',
+                        help='Auto-rotate only the localhost Studio server on safe Python updates; use the supervising launcher.')
     args = parser.parse_args(argv)
     ROOT = args.repo.resolve()
     WORKSPACE = args.workspace.resolve()
@@ -1061,6 +1075,32 @@ def main(argv=None) -> int:
     autopilot_stop = studio_autopilot.start_daemon(WORKSPACE, service=autopilot_service())
     handler = create_handler(args.web.resolve(), WORKSPACE)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), handler)
+    reload_stop = threading.Event()
+    reload_thread = None
+    HOST_RESTARTING.clear()
+    if args.watch:
+        import studio_host_live_reload
+        SOURCE_WATCHER = studio_host_live_reload.HostCodeWatcher(ROOT, WORKSPACE)
+
+        def watch_source():
+            while not reload_stop.wait(2.0):
+                if not SOURCE_WATCHER.observe():
+                    continue
+                if not LOCK.acquire(blocking=False):
+                    continue
+                try:
+                    if not SOURCE_WATCHER.observe():
+                        continue
+                    HOST_RESTARTING.set()
+                finally:
+                    LOCK.release()
+                # Called from a separate thread, never from the HTTP server.
+                # The launcher reopens only the localhost Python process.
+                server.shutdown()
+                return
+
+        reload_thread = threading.Thread(target=watch_source, name='studio-host-reload', daemon=True)
+        reload_thread.start()
     print(f'CutSceneAI Studio: http://127.0.0.1:{args.port}')
     print('Only localhost is accessible. Close with Ctrl+C.')
     try:
@@ -1068,9 +1108,14 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        reload_stop.set()
         agent_stop.set()
+        autopilot_stop.set()
         server.server_close()
-    return 0
+        if reload_thread is not None:
+            reload_thread.join(timeout=5)
+        SOURCE_WATCHER = None
+    return 75 if HOST_RESTARTING.is_set() else 0
 
 
 if __name__ == '__main__':
