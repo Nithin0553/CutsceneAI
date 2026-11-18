@@ -71,9 +71,27 @@ Play Mode, not an automatic transition triggered by source changes.
    Do not run this command during a native job. Subsequent compatible Python
    changes use the new automatic path.
 
-The Python host/web server itself may need to be relaunched to pick up host
-code changes. That does **not** require closing either game-engine editor;
-its local file-based bridges resume when the server is available.
+**The Studio localhost server now also reconnects automatically for valid
+repository Python changes** when launched using `tools/start_studio.ps1`.
+The launcher supervises `studio_local_bridge.py --watch`, which scans a bounded
+set of trusted host modules, compiles changed source without executing it,
+and waits for a stable file state. It refuses to rotate while a native
+candidate is QUEUED/RUNNING or an active orchestration/partial job is
+uncertain. Only the Studio localhost Python process exits (reserved exit
+status 75) and the launcher immediately starts a new localhost process.
+The two already-open editors are separate processes; they remain running,
+their opted-in bridge callbacks remain registered, and browser polling
+reconnects to the same local port. The host's bearer token is renewed on each
+rotation and learned automatically from `/api/status`.
+
+A malformed update leaves the previous localhost service online for status
+inspection but blocks all new mutating HTTP actions until the files are fixed.
+No queued job is recreated, no existing candidate is rewritten and no editor
+is opened or closed by the source watcher. Starting `studio_local_bridge.py`
+directly without the supervised `--watch` option intentionally omits
+automatic host process replacement. Browser HTML/CSS/JS files are served from
+the updated checkout with no-store headers; a page reload can pick up UI code
+without restarting either editor.
 
 ## Limits that cannot be promised away
 
@@ -96,5 +114,7 @@ Code-only tests cover idle Unreal worker refresh, callback continuity,
 update-induced native job deferral, broken code refusal, changed Python
 adapter detection, Unity Editor heartbeat freshness/wrong-project/disable
 checks, health reporting through Studio, and unchanged zero-side-effect
-native queue constraints. Real Unity compilation and Unreal-editor API
+native queue constraints. The host supervisor additionally tests stable
+source hashing, valid/invalid code, blocked mutations and queued/running
+job deferral, with no engine subprocess creation. Real Unity compilation and Unreal-editor API
 acceptance remain outstanding until the user authorizes engine tests.
