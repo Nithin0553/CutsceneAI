@@ -16,7 +16,23 @@ From a full checkout of the release-candidate branch in Windows PowerShell:
 The installer checks that Python 3.11+ is available, creates a dedicated
 `.venv-studio` environment, installs the repository's declared `.[agents]`
 dependency set, and runs a strict setup diagnostic. It does not edit either
-engine project. To use a different Python executable:
+engine project.
+
+**Keep this PowerShell Studio launcher open during development.** Its
+`--watch` supervisor detects changes to trusted Studio host Python modules,
+checks that the files are syntax-valid and stable, waits until no queued,
+running or uncertain native transfer exists, and restarts **only the Studio
+localhost Python process** on the same port. The running Unity and Unreal
+Editors do not close; their own file-bridge heartbeats automatically reconnect.
+The browser polls the new server and obtains its new local session token.
+While the backend reloads, avoid submitting another transfer. Invalid code
+blocks new mutations rather than replaying an existing candidate.
+
+For code changes made while the Editor is running, ordinary Unity C# changes
+recompile in the existing Unity process and eligible Unreal Python modules
+reload on an idle editor tick. You do not need to close and reopen both
+editors after each git pull. The first installation/enablement of each
+engine companion remains a separate, explicit one-time setup step. To use a different Python executable:
 
 ```powershell
 .\tools\install_studio.ps1 -Python "C:\Path\To\python.exe"
