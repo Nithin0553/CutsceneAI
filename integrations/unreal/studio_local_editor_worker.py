@@ -73,6 +73,17 @@ def _native_level_inventory():
             'available': True,
             'actor_count': len(actors),
             'class_counts': dict(sorted(counts.items())[:32]),
+            'native_capabilities': {
+                'fbx_asset_import': bool(
+                    getattr(unreal, 'AssetImportTask', None)
+                    and getattr(unreal, 'FbxImportUI', None)),
+                'sequencer_visibility_track': bool(
+                    getattr(unreal, 'MovieSceneVisibilityTrack', None)),
+                'sequencer_skeletal_animation_track': bool(
+                    getattr(unreal, 'MovieSceneSkeletalAnimationTrack', None)),
+                'cine_camera_actor': bool(
+                    getattr(unreal, 'CineCameraActor', None)),
+            },
             'truncated': len(actors) > 5000 or len(counts) > 32,
         }
     except Exception as exc:
