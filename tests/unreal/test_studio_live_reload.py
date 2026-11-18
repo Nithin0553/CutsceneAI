@@ -116,3 +116,54 @@ def test_auto_refresh_does_not_perform_asset_or_level_mutations():
     before_refresh = source.split("def _refresh_worker_python():")[1].split("def _tick_dispatch(")[0]
     for operation in ("delete_asset(", "save_loaded_asset(", "_ensure_target_level(", "build_prepared_files(", "queue_trial("):
         assert operation not in before_refresh
+
+
+def test_changed_trusted_adapter_is_refreshed_while_editor_remains_open(worker, monkeypatch):
+    mod, source, _state = worker
+    dependency = source.parents[2] / "packages/studio/adapter_example.py"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("ADAPTER_REVISION = 1\n")
+    invocations = []
+    monkeypatch.setattr(mod, "_refresh_dependency_modules", lambda: invocations.append("sync"))
+    old_fingerprint = mod.DEPENDENCY_SOURCE_SHA256
+    mod.LAST_DEPENDENCY_CHECK = 0
+    assert mod._refresh_worker_python() is True
+    assert invocations == ["sync"]
+    assert mod.LIVE_RELOAD_STATE == "AUTO_RELOADED"
+    assert mod.DEPENDENCY_SOURCE_SHA256 != old_fingerprint
+    assert mod.DEPENDENCY_SOURCE_SHA256 == mod._dependency_fingerprint()
+    assert mod.WORKER_SOURCE_SHA256 == hashlib.sha256(source.read_bytes()).hexdigest()
+
+
+def test_changed_adapter_is_not_loaded_during_running_native_job(worker, monkeypatch):
+    mod, source, _state = worker
+    dependency = source.parents[2] / "packages/studio/motion_adapter.py"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("MOTION = 2\n")
+    invocations = []
+    monkeypatch.setattr(mod, "_refresh_dependency_modules", lambda: invocations.append("sync"))
+    mod.BUSY = True
+    mod.LAST_DEPENDENCY_CHECK = 0
+    assert mod._refresh_worker_python() is True
+    assert mod.LIVE_RELOAD_STATE == "DEFERRED_NATIVE_JOB"
+    assert invocations == []
+    assert mod.DEPENDENCY_SOURCE_SHA256 != mod._dependency_fingerprint()
+
+
+def test_broken_dependency_refresh_blocks_engine_queue(worker, monkeypatch):
+    mod, source, _state = worker
+    dependency = source.parents[2] / "packages/studio/broken_adapter.py"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("BROKEN = True\n")
+    old_fingerprint = mod.DEPENDENCY_SOURCE_SHA256
+
+    def raises():
+        raise ImportError("not safe to reload")
+
+    monkeypatch.setattr(mod, "_refresh_dependency_modules", raises)
+    mod.LAST_DEPENDENCY_CHECK = 0
+    assert mod._refresh_worker_python() is True
+    assert mod.LIVE_RELOAD_STATE == "BLOCKED"
+    assert "not safe to reload" in mod.LIVE_RELOAD_ERROR
+    assert mod.DEPENDENCY_SOURCE_SHA256 == old_fingerprint
+    assert mod.WORKER_SOURCE_SHA256 == hashlib.sha256(source.read_bytes()).hexdigest()
