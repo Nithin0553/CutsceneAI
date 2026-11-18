@@ -17,7 +17,7 @@ DIRECTORIES = ("tools", "packages/studio", "packages/cinetwin",
                "packages/learning", "integrations/unreal")
 MAX_FILES = 750
 MAX_BYTES = 4 * 1024 * 1024
-IN_PROGRESS_STAGES = {"CONNECTING", "ANALYZING_PROJECTS", "PREPARING"}
+IN_PROGRESS_STAGES = {"CONNECTING", "ANALYZING_PROJECTS", "PREPARING", "UNREAL_RUNNING"}
 NATIVE_IN_FLIGHT = {"QUEUED", "RUNNING"}
 
 
@@ -73,7 +73,7 @@ def active_work(workspace: Path) -> bool:
     state = workspace / "autopilot-active.json"
     if state.exists() or state.is_symlink():
         try:
-            if _load_record(state).get("stage") in IN_PROGRESS_STAGES:
+            if _load_record(state).get("status") in IN_PROGRESS_STAGES:
                 return True
         except (ValueError, OSError, KeyError, TypeError):
             return True
