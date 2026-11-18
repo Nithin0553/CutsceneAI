@@ -46,7 +46,9 @@ def report(job, *, offset=10.0, root_extra=0.0, transform_track=False):
                    "missing_source_frames": []},
         "target": {
             "project": job["expected_project"],
-            "sequence_path": job["sequence_path"],
+            # Native Unreal get_path_name() includes the matching object suffix.
+            "sequence_path": (job["sequence_path"] + "." +
+                              job["sequence_path"].rsplit("/", 1)[-1]),
             "binding_tracks": [{"binding": label, "tracks": [
                 {"class": "MovieScene3DTransformTrack" if transform_track
                   else "MovieSceneSkeletalAnimationTrack"}
@@ -76,6 +78,39 @@ def setup(tmp_path):
     write(path, report(job))
     write(workspace / "jobs" / (job["job_id"] + ".json"), job)
     return workspace, candidate, job
+
+
+@pytest.mark.parametrize(("observed", "same"), [
+    ("/Game/CutSceneAI/LS_Test", True),
+    ("/Game/CutSceneAI/LS_Test.LS_Test", True),
+    ("/Game/CutSceneAI/LS_Test.AnotherAsset", False),
+    ("/Game/CutSceneAI/Other.Other", False),
+    ("/Game/Elsewhere/LS_Test.LS_Test", False),
+    ("/Game/CutSceneAI/LS_Test:PersistentLevel", False),
+    ("LevelSequence'/Game/CutSceneAI/LS_Test.LS_Test'", False),
+    ("", False),
+    ("/Game/CutSceneAI/LS_Test.LS_Test:Unexpected", False),
+])
+def test_only_matching_unreal_sequence_object_paths_are_equivalent(observed, same):
+    expected = "/Game/CutSceneAI/LS_Test"
+    assert proof.same_unreal_sequence(expected, observed) is same
+
+
+def test_native_source_identity_accepts_object_path_but_not_other_project_or_asset(tmp_path):
+    _workspace, candidate, job = setup(tmp_path)
+    assert proof.source_bound_report(job, candidate)["target"]["sequence_path"].endswith(
+        ".LS_Generated"
+    )
+    document = report(job)
+    document["target"]["sequence_path"] = "/Game/CSAI/Another.Another"
+    write(Path(job["diagnostic_file"]), document)
+    with pytest.raises(ValueError, match="different Level Sequence"):
+        proof.source_bound_report(job, candidate)
+    document = report(job)
+    document["target"]["project"] = str(tmp_path / "Different.uproject")
+    write(Path(job["diagnostic_file"]), document)
+    with pytest.raises(ValueError, match="different Unreal project"):
+        proof.source_bound_report(job, candidate)
 
 
 def test_only_constant_actor_and_root_offset_is_eligible(tmp_path):
