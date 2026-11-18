@@ -80,6 +80,11 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
             {status: 'WAITING_FOR_UNREAL', ready:false, next_action:'Open Unreal Editor'}};
       } else if (url === '/api/autopilot') {
         result=autopilot;
+      } else if (url === '/api/autopilot/cancel') {
+        assert.notEqual(autopilot.status,'UNREAL_RUNNING');
+        autopilot={...autopilot,status:'CANCELLED',active:true,
+          message:'Transfer cancelled before native execution.'};
+        result=autopilot;
       } else if (url === '/api/autopilot/start') {
         assert.equal(body.source_rights_confirmed,true);
         autopilot={active:true,status:'WAITING_FOR_UNITY',
@@ -186,6 +191,8 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
     writes:()=>writes, copied:()=>copied, pause,finish:()=>{done=true;},
     csir,otherCsir,censusA,censusB,invalidCensus,
     removeCensuses:()=>{availableCensuses=false;},
+    setAutopilot:(status)=>{autopilot={active:true,status,
+      message:'Engine-safe transfer stage: '+status,agent_enabled:true};},
     completeAutopilot:()=>{autopilot={active:true,status:'GENERATED_UNVERIFIED',
       message:'Editable sequence generated',agent_enabled:true};
       currentJob={job_id:'a'.repeat(32),candidate_id:'candidate001',
@@ -486,6 +493,34 @@ async function testRunningJobShowsResumeInsteadOfDisabledStart() {
 }
 
 
+async function testSimpleAIAnalysisStageAndPreNativeCancel(){
+  const x=boot({simple:true});
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('source-rights',null,true);
+  await x.click('autopilot-start');
+  x.setAutopilot('ANALYZING_PROJECTS');
+  await x.poll();
+  await x.click('projects');
+  assert.match(x.app.innerHTML,/View Transfer/);
+  assert.doesNotMatch(x.app.innerHTML,/data-action="autopilot-start"/,
+    'active AI project analysis must not allow a second transfer');
+  await x.click('quick-transfer');
+  assert.match(x.app.innerHTML,/ANALYZING_PROJECTS/);
+  assert.match(x.app.innerHTML,/Cancel before Unreal/);
+  await x.click('autopilot-cancel');
+  assert.equal(x.requests.filter(v=>v.url==='/api/autopilot/cancel').length,1);
+  assert.equal(x.requests.filter(v=>v.url==='/api/execute').length,0);
+  x.setAutopilot('UNREAL_RUNNING');
+  await x.poll();
+  await x.click('quick-transfer');
+  assert.doesNotMatch(x.app.innerHTML,/Cancel before Unreal/,
+    'never offer cancellation when native import might have begun');
+}
+
+
 async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
   const x=boot({simple:true});
   await x.pause();
@@ -507,7 +542,7 @@ async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
   await x.poll();
   x.completeAutopilot();
   await x.poll();
-  assert.match(x.app.innerHTML,/Tell the AI what to correct/);
+  assert.match(x.app.innerHTML,/Optional AI follow-up/);
   assert.doesNotMatch(x.app.innerHTML,/Verified Release Transfer/);
   await x.change('user-feedback','The character is facing the wrong direction.');
   await x.click('send-feedback');
@@ -519,6 +554,7 @@ async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
 
 (async()=>{
   await testSimpleOneClickFlowAndNaturalLanguageCorrections();
+  await testSimpleAIAnalysisStageAndPreNativeCancel();
   await testSelectionLayoutContract();
   await testStartupAlwaysHomeWithSavedResults();
   await testStartupHomeWithRunningJobCanResume();
@@ -532,5 +568,5 @@ async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
   await testMissingSelectedCensusFailsClosed();
-  console.log('Cinematic UI backend contract: 13 scenarios including actionable Start Transfer recovery, native errors, responsive selectors and Home-first startup passed.');
+  console.log('Cinematic UI backend contract: 14 scenarios including actionable Start Transfer recovery, native errors, responsive selectors and Home-first startup passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
