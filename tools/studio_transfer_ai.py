@@ -81,6 +81,22 @@ def inspect(config: dict, census_path: str, worker: dict) -> dict:
             or (not config.get("auto_create_level") and
                 worker.get("level") != config["level_path"])):
         raise TransferAIError("Unreal Editor is not connected to the selected target project/level.")
+    inventory = worker.get("scene_inventory")
+    if (not isinstance(inventory, dict) or inventory.get("available") is not True
+            or type(inventory.get("actor_count")) is not int
+            or inventory["actor_count"] < 0
+            or not isinstance(inventory.get("class_counts"), dict)):
+        raise TransferAIError(
+            "Unreal native level inventory is missing. Restart Unreal Editor "
+            "and load the updated CutSceneAI worker before AI conversion."
+        )
+    safe_classes = {}
+    for name, count in sorted(inventory["class_counts"].items())[:24]:
+        if (not isinstance(name, str) or len(name) > 72
+                or not name.replace("_", "").isalnum()
+                or type(count) is not int or count < 0):
+            raise TransferAIError("Unreal level inventory contains invalid native class counts.")
+        safe_classes[name] = count
     source = Path(config["csir"]).resolve()
     capture = Path(config["capture"]).resolve()
     mapping = Path(config["mapping"]).resolve()
@@ -139,6 +155,10 @@ def inspect(config: dict, census_path: str, worker: dict) -> dict:
             "target_worker_version": str(worker.get("worker_version") or "")[:50],
             "target_project_metadata": _project_summary(target),
             "target_level_selected": True,
+            "target_level_actor_count": inventory["actor_count"],
+            "target_level_actor_class_counts": safe_classes,
+            "target_level_inventory_partial": bool(inventory.get("truncated")),
+            "target_new_level_planned": bool(config.get("auto_create_level")),
             "safe_partial_visibility_adapter_available": eligible,
         },
         "allowed_strategies": (["native_source", "source_materials"] +
