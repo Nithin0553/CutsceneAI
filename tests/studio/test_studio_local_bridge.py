@@ -737,3 +737,22 @@ def test_ai_transfer_audit_endpoint_reports_no_job_and_refuses_foreign_candidate
     assert status == 409
     assert 'candidate' in error['error'].lower()
 
+
+
+def test_autopilot_cancel_endpoint_requires_token_and_preserves_snapshot(service):
+    base, tmp = service
+    folder = tmp / "work"
+    marker = folder / "autopilot-active.json"
+    bridge.atomic_json(marker, {
+        "status": "ANALYZING_PROJECTS", "run_id": "a" * 32,
+        "message": "AI is analyzing the source and target.",
+    })
+    status, refused = call(base + "/api/autopilot/cancel", {})
+    assert status == 403
+    assert "token" in refused["error"].lower()
+    token = call(base + "/api/status")[1]["token"]
+    status, response = call(base + "/api/autopilot/cancel", {}, token)
+    assert status == 200
+    assert response["status"] == "CANCELLED"
+    assert bridge.load_json(marker)["status"] == "CANCELLED"
+    assert not (folder / "active-job.json").exists()
