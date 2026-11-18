@@ -101,6 +101,70 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
             csir_sha256=source_digest, plan_sha256=plan_digest,
         )
 
+    # An LLM strategy is part of conversion only when its exact candidate
+    # decision is bound to the submitted job. Synthetic reasoning does not
+    # count as a genuine model invocation.
+    decision_file = candidate / "ai-conversion-decision.json"
+    recorded_decision = job.get("ai_conversion_decision_sha256")
+    animation_selected = None
+    if not recorded_decision:
+        record("ai_pretransfer_planning", "INCOMPLETE",
+               "No job-bound AI conversion decision is recorded.")
+    elif not decision_file.is_file() or decision_file.is_symlink():
+        record("ai_pretransfer_planning", "FAIL",
+               "AI decision file is unavailable or unsafe.")
+    elif recorded_decision != _sha(decision_file):
+        record("ai_pretransfer_planning", "FAIL",
+               "AI conversion decision differs from the submitted job bytes.")
+    else:
+        decision = _read(decision_file)
+        animation_selected = decision.get("animation_conversion")
+        genuine = bool(
+            decision.get("kind") == "cutsceneai.studio.ai_conversion_decision"
+            and decision.get("model_invoked") is True
+            and decision.get("model_provider") == "OPENAI_RESPONSES"
+            and isinstance(decision.get("model_response_id"), str)
+            and decision["model_response_id"].startswith("resp_")
+        )
+        record("ai_pretransfer_planning", "PASS" if genuine else "INCOMPLETE",
+               "Genuine source-bound OpenAI planning requires provider response evidence; "
+               "mocked selections are insufficient.")
+    if animation_selected is None:
+        record("ai_native_character_conversion", "NOT_APPLICABLE",
+               "No approved AI character retargeting action was selected.")
+    else:
+        character_file = candidate / "character-native-execution.json"
+        char_sha = job.get("character_compatibility_sha256")
+        comp_file = candidate / "character-compatibility.json"
+        if not character_file.is_file():
+            record("ai_native_character_conversion", "INCOMPLETE",
+                   "Selected character has no native skeleton/clip readback.")
+        elif not comp_file.is_file() or not char_sha or _sha(comp_file) != char_sha:
+            record("ai_native_character_conversion", "FAIL",
+                   "Character compatibility evidence is missing or modified.")
+        else:
+            readback = _read(character_file)
+            okay = bool(
+                readback.get("kind") == "cutsceneai.studio.character_native_readback"
+                and readback.get("job_id") == job_id
+                and readback.get("source_entity_id") == animation_selected.get("source_entity_id")
+                and readback.get("decision_file_sha256") == recorded_decision
+                and readback.get("compatibility_file_sha256") == char_sha
+                and readback.get("status") == "PASS"
+                and job.get("character_native_readback_status") == "PASS"
+                and (readback.get("skeleton") or {}).get("status") == "PASS"
+                and readback.get("duration_match") is True
+                and bool(readback.get("observed_sections"))
+                and bool(readback.get("expected_sections"))
+                and readback.get("fidelity_verified") is False
+            )
+            record(
+                "ai_native_character_conversion",
+                "PASS" if okay else "FAIL",
+                "Native retargeting readback must match this exact AI choice, "
+                "job, source evidence and clip sections.",
+            )
+
     generation = (
         job.get("generation_status") == "GENERATED_UNVERIFIED"
         and job.get("status") in {
