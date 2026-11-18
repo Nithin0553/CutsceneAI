@@ -15,7 +15,7 @@
     diagnosis:null, feedback:null, releaseReadiness:null, running:false, detailsOpen:false, menuOpen:false,
     censusOptions:[], censusPath:'', censusSelection:null, censusIssue:false,
     unitySnapshotRequestId:'', unitySnapshotStatus:null, learningStatus:null,
-    autopilot:null, agentConversation:null, feedbackDraft:''};
+    autopilot:null, agentConversation:null, feedbackDraft:'', aiTransferAudit:null};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
   const connection = () => state.status?.connection;
   const worker = () => state.status?.unreal_worker || {};
@@ -153,6 +153,24 @@
       '</div></main>';
   }
 
+  function aiConversionSummary(){
+    const audit=state.aiTransferAudit||{};
+    if(!audit.available)return '';
+    const cine=audit.cinetwin||{};
+    const err=v=>typeof v==='number' && Number.isFinite(v)?v.toFixed(2)+' cm':'Not measured';
+    const generated=audit.native_builder_completed===true;
+    return '<section class="ai-conversion-summary" aria-label="AI conversion execution audit">'+
+      '<h2>AI transfer audit</h2>'+
+      '<p><strong>AI plan:</strong> '+esc(audit.strategy||'Not recorded')+
+      ' · model-selected, restricted to installed native adapters</p>'+
+      '<p><strong>Native execution:</strong> '+esc(generated?
+        'Unreal sequence generated (fidelity unverified)':audit.native_status||'Not executed')+'</p>'+
+      (generated?'<p><strong>CineTwin measured positions:</strong> actor max '+
+        esc(err(cine.max_actor_error_cm))+' · skeletal root max '+
+        esc(err(cine.max_root_error_cm))+'</p>':'')+
+      '<p class="subnote">AI planning, Unreal execution and behavioral fidelity are separate checks. Neither a generated cutscene nor an AI response proves matching behavior.</p>'+
+      '</section>';
+  }
   function quickResults(){
     const run=state.autopilot||{},j=state.job||{},dialog=state.agentConversation||{};
     const messages=(dialog.messages||[]).slice(-12).map(item=>
@@ -167,6 +185,7 @@
       (run.ai_conversion_strategy?'<p class="subnote">AI pre-transfer conversion strategy: <strong>'+
         esc(run.ai_conversion_strategy)+'</strong>. This selected only installed, source-verified conversion options; it does not certify cutscene fidelity.</p>':'')+
       '<p class="subnote">Conversion and AI corrections are limited to supported and independently checked native operations. Unverified or unsupported behavior is never silently called correct.</p>'+
+      aiConversionSummary()+
       (run.status==='GENERATED_UNVERIFIED'?'<section class="simple-chat" aria-label="Talk to the AI agent">'+
         '<h2>Tell the AI what to correct</h2>'+
         '<p class="subnote">For example: “The character is facing the wrong direction” or “The wall texture is missing.”</p>'+
@@ -395,6 +414,7 @@
         v.persistence?.restart_verified?'Verified in a different Unreal process':
         'Not verified — reopen the saved map in a new Unreal Editor process')+'</p>'+
       '<p>CineTwin behavioral parity: '+(state.diagnosis?'Measured — not full fidelity':'Not verified')+'</p>'+
+      aiConversionSummary()+
       '<p>Visual fidelity: '+esc(v.visual?.status||'Not verified')+'</p>'+
       '<p><strong>Release readiness: '+esc(gate.release_ready?'VERIFIED':gate.status)+
       '</strong> · '+esc((gate.failed||[]).length)+' failed, '+
@@ -500,7 +520,7 @@
     const info=await api('connect-projects',{unity_folder:state.folders.unity,
       unreal_folder:state.folders.unreal,unreal_project:state.unrealProject,
       csir:state.csir,level:state.level,source_rights_confirmed:state.sourceRights});
-    state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.releaseReadiness=null;state.agentStatus=null;state.running=false;
+    state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.releaseReadiness=null;state.agentStatus=null;state.aiTransferAudit=null;state.running=false;
     state.censusOptions=[];state.censusPath='';state.censusSelection=null;
     state.phase='CONNECTED';state.info='Projects connected. Choose a Source Census to start a transfer.';
     state.error='';state.censusIssue=false;
@@ -518,7 +538,11 @@
       try{state.learningStatus=await api('learning');}catch{state.learningStatus=null;}
     }
     if(!state.running)state.candidate=s.candidate||null;
-    if(s.active_job)state.job=await api('jobs/'+s.active_job);
+    if(s.active_job){
+      state.job=await api('jobs/'+s.active_job);
+      try{state.aiTransferAudit=await api('ai-transfer-audit');}
+      catch(e){state.aiTransferAudit={available:false,status:'AUDIT_UNAVAILABLE',error:String(e.message||e)};}
+    }else state.aiTransferAudit=null;
     if(state.aiAgentsEnabled||state.job?.ai_agents_enabled){
       try{state.agentStatus=await api('agents');}catch(e){
         state.agentStatus={enabled:true,status:'AGENT_STATUS_UNAVAILABLE',failure:String(e.message||e)};
