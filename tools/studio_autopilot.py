@@ -183,24 +183,15 @@ def _submitted_job(workspace: Path, candidate_id: str) -> str:
     result reaches autopilot-active.json. Never submit a second native write in
     that situation. Ambiguous or conflicting jobs require an explicit stop.
     """
-    if not isinstance(candidate_id, str) or not candidate_id.isascii() or not candidate_id.replace("_", "").isalnum():
+    if (not isinstance(candidate_id, str) or not candidate_id.isascii()
+            or not candidate_id.replace("_", "").isalnum()):
         raise AutopilotError("Invalid candidate identity during Unreal job recovery.")
     candidate_root = (workspace / "candidates").resolve()
     original_dir = workspace / "candidates" / candidate_id
     expected_dir = original_dir.resolve()
     if original_dir.is_symlink() or not expected_dir.is_relative_to(candidate_root):
         raise AutopilotError("Prepared candidate path is unsafe for native job recovery.")
-    candidate_pointer = workspace / "active-candidate.json"
-    if candidate_pointer.is_symlink() or not candidate_pointer.is_file():
-        raise AutopilotError("Missing trusted active candidate for native job recovery.")
-    if _load(candidate_pointer).get("candidate_id") != candidate_id:
-        raise AutopilotError("Active candidate changed after the native job was submitted.")
-    config = _load(workspace / "connection.json")
-    session = _load(expected_dir / "session.json")
-    if (session.get("source", {}).get("csir_path") != config.get("csir")
-            or (session.get("source_capture") or {}).get("path") != config.get("capture")
-            or session.get("target", {}).get("project_path") != config.get("target_project")):
-        raise AutopilotError("Prepared session source or target changed during job recovery.")
+
     candidates = []
     jobs_dir = workspace / "jobs"
     for path in sorted(jobs_dir.glob("*.json")) if jobs_dir.is_dir() else ():
@@ -213,15 +204,9 @@ def _submitted_job(workspace: Path, candidate_id: str) -> str:
         if (job.get("kind") != "cutsceneai.studio.local_unreal_job"
                 or not isinstance(job_id, str) or not JOB_ID_RE.fullmatch(job_id)
                 or path.stem != job_id
-                or Path(str(job.get("candidate_dir") or "")).resolve() != expected_dir
-                or job.get("csir") != config.get("csir")
-                or job.get("capture") != config.get("capture")
-                or job.get("expected_project") != config.get("target_project")
-                or job.get("expected_level") != config.get("level_path")
-                or job.get("sequence_path") != session.get("target", {}).get("sequence_asset_path")
-                or job.get("mapping") != session.get("target", {}).get("mapping_path")):
+                or Path(str(job.get("candidate_dir") or "")).resolve() != expected_dir):
             raise AutopilotError("Existing Unreal job identity disagrees with the prepared candidate.")
-        candidates.append(job_id)
+        candidates.append((job_id, job))
     if len(candidates) > 1:
         raise AutopilotError("Multiple jobs reference the same candidate; refusing unsafe replay.")
     active = workspace / "active-job.json"
@@ -229,14 +214,35 @@ def _submitted_job(workspace: Path, candidate_id: str) -> str:
         raise AutopilotError("Symlinked active Unreal job pointer is unsafe.")
     if active.is_file():
         pointer = _load(active).get("job_id")
-        if not candidates or pointer != candidates[0]:
+        if not candidates or pointer != candidates[0][0]:
             raise AutopilotError("Another Unreal job is active; refusing to queue or adopt a candidate.")
     if not candidates:
         return ""
-    if not active.is_file():
-        _write(active, {"job_id": candidates[0]})
-    return candidates[0]
 
+    # A job exists: verify immutable session/connection and candidate pointer
+    # before displaying or monitoring this already-submitted native work.
+    candidate_pointer = workspace / "active-candidate.json"
+    if candidate_pointer.is_symlink() or not candidate_pointer.is_file():
+        raise AutopilotError("Missing trusted active candidate for native job recovery.")
+    if _load(candidate_pointer).get("candidate_id") != candidate_id:
+        raise AutopilotError("Active candidate changed after the native job was submitted.")
+    config = _load(workspace / "connection.json")
+    session = _load(expected_dir / "session.json")
+    if (session.get("source", {}).get("csir_path") != config.get("csir")
+            or (session.get("source_capture") or {}).get("path") != config.get("capture")
+            or session.get("target", {}).get("project_path") != config.get("target_project")):
+        raise AutopilotError("Prepared session source or target changed during job recovery.")
+    job_id, job = candidates[0]
+    if (job.get("csir") != config.get("csir")
+            or job.get("capture") != config.get("capture")
+            or job.get("expected_project") != config.get("target_project")
+            or job.get("expected_level") != config.get("level_path")
+            or job.get("sequence_path") != session.get("target", {}).get("sequence_asset_path")
+            or job.get("mapping") != session.get("target", {}).get("mapping_path")):
+        raise AutopilotError("Submitted Unreal job source, target or mapping changed during recovery.")
+    if not active.is_file():
+        _write(active, {"job_id": job_id})
+    return job_id
 
 def _pick_level(record: dict, service: Any, workspace: Path) -> str:
     """Choose a proven active destination, never an arbitrary map in a project."""
