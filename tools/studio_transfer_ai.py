@@ -90,6 +90,17 @@ def inspect(config: dict, census_path: str, worker: dict) -> dict:
             "Unreal native level inventory is missing. Restart Unreal Editor "
             "and load the updated CutSceneAI worker before AI conversion."
         )
+    native_capabilities = inventory.get("native_capabilities")
+    supported_caps = (
+        "fbx_asset_import", "sequencer_visibility_track",
+        "sequencer_skeletal_animation_track", "cine_camera_actor",
+    )
+    if (not isinstance(native_capabilities, dict)
+            or any(type(native_capabilities.get(key)) is not bool
+                   for key in supported_caps)):
+        raise TransferAIError(
+            "Unreal target capability probe is incomplete. Restart the updated editor worker."
+        )
     safe_classes = {}
     for name, count in sorted(inventory["class_counts"].items())[:24]:
         if (not isinstance(name, str) or len(name) > 72
@@ -130,7 +141,14 @@ def inspect(config: dict, census_path: str, worker: dict) -> dict:
                     for e in entities if isinstance(e, dict))
     models = sum(len((e.get("metadata") or {}).get("source_model_assets") or [])
                  for e in entities if isinstance(e, dict))
-    eligible = _activation_eligible(csir, scene_mapping)
+    eligible = (
+        native_capabilities["sequencer_visibility_track"]
+        and _activation_eligible(csir, scene_mapping)
+    )
+    if models and not native_capabilities["fbx_asset_import"]:
+        raise TransferAIError(
+            "Unreal FBX import capability is unavailable; cannot plan sourced 3D meshes."
+        )
     return {
         "kind": "cutsceneai.studio.ai_conversion_evidence",
         "schema_version": VERSION,
@@ -158,6 +176,9 @@ def inspect(config: dict, census_path: str, worker: dict) -> dict:
             "target_level_actor_count": inventory["actor_count"],
             "target_level_actor_class_counts": safe_classes,
             "target_level_inventory_partial": bool(inventory.get("truncated")),
+            "target_native_capabilities": {
+                key: native_capabilities[key] for key in supported_caps
+            },
             "target_new_level_planned": bool(config.get("auto_create_level")),
             "safe_partial_visibility_adapter_available": eligible,
         },
