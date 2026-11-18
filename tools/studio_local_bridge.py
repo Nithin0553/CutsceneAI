@@ -198,7 +198,7 @@ def _unity_live_status(folder: Path) -> dict[str, Any]:
     if connected.is_file():
         project = load_json(connected).get('unity_project')
     else:
-        state = folder / 'autopilot.json'
+        state = folder / 'autopilot-active.json'
         project = load_json(state).get('unity_project') if state.is_file() else None
     return (studio_unity_bridge.editor_status(project)
             if project else {'connected': False, 'status': 'NO_SELECTED_UNITY_PROJECT'})
