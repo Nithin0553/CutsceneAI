@@ -51,9 +51,15 @@
     const targetPath=c?.target_project||state.unrealProject||state.discovery?.unreal?.project;
     const unityReady=Boolean(source.connected&&unityPath&&norm(source.project_root)===norm(unityPath));
     const unrealReady=Boolean(dest.connected&&targetPath&&norm(dest.project)===norm(targetPath));
+    const host=state.status?.host_reload||{};
+    const updating=host.status&&!['CURRENT','NOT_ENABLED'].includes(host.status);
+    const hostState=host.status==='BLOCKED_INVALID_CODE'?'Studio code needs review':
+      host.status==='DEFERRED_ACTIVE_TRANSFER'?'Studio update deferred during transfer':
+      'Studio reconnecting after code update';
     return '<p class="subnote" role="status" aria-label="Live editor connections">'+
       'Unity bridge: '+esc(unityReady?'Connected · '+source.editor_mode:'Waiting for running editor')+
       ' &nbsp;·&nbsp; Unreal bridge: '+esc(unrealReady?'Connected':'Waiting for running editor')+
+      (updating?' &nbsp;·&nbsp; '+esc(hostState):'')+
       '. Once enabled, supported code changes reconnect without restarting the editors.</p>';
   }
   function progress(){
