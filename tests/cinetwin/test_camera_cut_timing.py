@@ -84,7 +84,7 @@ def test_native_sequencer_camera_cut_reader_uses_real_section_bounds_and_binding
         MovieSceneCameraCutTrack=CameraCutTrack,
         UnrealEditorSubsystem=object(),
         MovieSceneSequenceExtensions=NS(
-            get_master_tracks=lambda _: [CameraCutTrack()],
+            get_tracks=lambda _: [CameraCutTrack()],
             get_bindings=lambda _: [binding],
             get_binding_id=lambda _seq, _binding: "native-camera-id",
             locate_bound_objects=lambda _seq, _binding, _world: [actor],
@@ -114,7 +114,7 @@ def test_missing_native_binding_id_fails_closed_without_guessing():
         MovieSceneCameraCutTrack=CameraCutTrack,
         UnrealEditorSubsystem=object(),
         MovieSceneSequenceExtensions=NS(
-            get_master_tracks=lambda _: [CameraCutTrack()],
+            get_tracks=lambda _: [CameraCutTrack()],
             get_bindings=lambda _: [], get_binding_id=lambda *_: "",
             locate_bound_objects=lambda *_: [],
         ),
@@ -127,6 +127,12 @@ def test_missing_native_binding_id_fails_closed_without_guessing():
     assert result["status"] == "UNAVAILABLE"
     assert result["reason"] == "CAMERA_CUT_BINDING_READBACK_MISSING"
     assert cinetwin_camera_cuts.inspect(object(), NS())["status"] == "UNAVAILABLE"
+
+
+def test_native_camera_cut_reader_uses_supported_sequence_get_tracks_method():
+    text = (ROOT / "integrations/unreal/cinetwin_camera_cuts.py").read_text()
+    assert "get_master_tracks" not in text
+    assert "get_tracks" in text
 
 
 def test_source_bound_camera_cut_native_section_match_and_wrong_frame():
