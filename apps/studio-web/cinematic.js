@@ -108,7 +108,7 @@
   }
   function quickProjects(){
     const run=state.autopilot||{status:'IDLE'},working=[
-      'WAITING_FOR_UNITY','WAITING_FOR_UNITY_CAPTURE','CONNECTING','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING'
+      'WAITING_FOR_UNITY','WAITING_FOR_UNITY_CAPTURE','CONNECTING','ANALYZING_PROJECTS','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING'
     ].includes(run.status),complete=run.status==='GENERATED_UNVERIFIED';
     const targetOptions=state.discovery?.unreal?.project_options||[];
     const valid=Boolean(state.folders.unity&&state.folders.unreal&&
