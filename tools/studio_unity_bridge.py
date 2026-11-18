@@ -11,6 +11,7 @@ import json
 import re
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 BRIDGE_KIND = "cutsceneai.unity.source_bridge"
@@ -64,6 +65,50 @@ def _safe_ticket(request_id: str) -> str:
     if not isinstance(request_id, str) or ID_RE.fullmatch(request_id) is None:
         raise UnityBridgeError("Invalid Unity source request identity.")
     return request_id
+
+
+def editor_status(project_root: str | Path) -> dict:
+    """Read-only Unity presence bound to the selected project and editor PID.
+
+    Unity automatically resumes its bridge polling after C# domain reloads.
+    This marker is diagnostic, never authority to generate an Unreal asset or
+    to accept source capture without its separately hashed request receipt.
+    """
+    offline = {"connected": False, "status": "WAITING_FOR_UNITY_EDITOR"}
+    try:
+        root = _root(project_root)
+        marker = _bridge(root) / "unity-editor.json"
+        if not marker.is_file():
+            return offline
+        record = _load(marker, 4096)
+        if (record.get("kind") != "cutsceneai.unity.editor_presence"
+                or record.get("schema_version") != "1"
+                or record.get("source_bridge_enabled") is not True
+                or record.get("bridge_version") != "unity-editor-v0.2"
+                or type(record.get("editor_pid")) is not int
+                or record["editor_pid"] <= 0
+                or record.get("editor_mode") not in ("PLAY_MODE", "EDIT_MODE")):
+            return {"connected": False, "status": "INVALID_OR_DISABLED_UNITY_BRIDGE"}
+        reported = record.get("project_root")
+        if (not isinstance(reported, str) or not Path(reported).is_absolute()
+                or Path(reported).resolve() != root):
+            return {"connected": False, "status": "WRONG_UNITY_PROJECT"}
+        tick = datetime.fromisoformat(str(record["heartbeat"]).replace("Z", "+00:00"))
+        if tick.tzinfo is None:
+            return {"connected": False, "status": "INVALID_UNITY_HEARTBEAT"}
+        age = (datetime.now(timezone.utc) - tick).total_seconds()
+        if not 0 <= age < 8:
+            return {"connected": False, "status": "UNITY_COMPANION_RELOADING_OR_OFFLINE"}
+        return {
+            "connected": True, "status": "CONNECTED",
+            "project_root": str(root), "editor_pid": record["editor_pid"],
+            "editor_mode": record["editor_mode"],
+            "bridge_version": record["bridge_version"],
+            "age_seconds": round(age, 1),
+            "restart_required": False,
+        }
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, UnityBridgeError):
+        return {"connected": False, "status": "INVALID_UNITY_BRIDGE_HEARTBEAT"}
 
 
 def request_snapshot(project_root: str | Path) -> dict:
