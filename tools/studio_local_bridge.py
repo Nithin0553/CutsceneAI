@@ -143,6 +143,8 @@ def worker_connected(folder: Path = WORKSPACE) -> dict[str, Any]:
                 'worker_source_sha256': data.get('worker_source_sha256'),
                 'checkout_root': data.get('checkout_root'),
                 'scene_inventory': data.get('scene_inventory'), 'editor_pid': data.get('editor_pid'),
+                'live_reload_state': data.get('live_reload_state', 'LEGACY_WORKER'),
+                'live_reload_error': data.get('live_reload_error'),
                 'age_seconds': round(age, 1)}
     except (ValueError, KeyError, OSError):
         return {'connected': False}
@@ -189,10 +191,30 @@ def worker_code_mismatch(worker: dict[str, Any]) -> str | None:
     return None
 
 
+def _unity_live_status(folder: Path) -> dict[str, Any]:
+    """Read project-bound Unity editor presence; never initiate Play Mode."""
+    import studio_unity_bridge
+    connected = folder / 'connection.json'
+    if connected.is_file():
+        project = load_json(connected).get('unity_project')
+    else:
+        state = folder / 'autopilot.json'
+        project = load_json(state).get('unity_project') if state.is_file() else None
+    return (studio_unity_bridge.editor_status(project)
+            if project else {'connected': False, 'status': 'NO_SELECTED_UNITY_PROJECT'})
+
+
 def companion_upgrade_action(reason: str) -> str:
-    return (reason + ' Save the target project, completely close Unreal Editor, '
-            'restart Unreal Editor, and start the Python companion from this exact checkout. '
-            'Prepare a new transfer candidate after reconnecting.')
+    return (
+        reason + ' Keep Unreal Editor open. A current Studio worker refreshes '
+        'changed Python automatically when idle, normally on the next heartbeat. '
+        'If this is a worker started before the live-reload upgrade, and no native '
+        'job is running, use the Unreal Python console once: '
+        'import importlib, studio_local_editor_worker as w; '
+        'w.stop(); importlib.reload(w); w.start(). '
+        'This reconnects the bridge without restarting Unreal. '
+        'Never retry an interrupted native candidate; inspect its receipt.'
+    )
 
 
 def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
@@ -237,15 +259,15 @@ def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
     if not plan_file.is_file():
         return unavailable('Prepared transfer plan is missing. Return to Review and prepare a new plan.')
     if not report_file.is_file():
-        return unavailable('The Unreal companion is connected, but has not produced a scene inspection. Check its Python log and restart the companion if needed.')
+        return unavailable('The connected Unreal companion has not produced a scene inspection. It will retry automatically; inspect its Python log if it stays unavailable.')
     try:
         report = load_json(report_file)
         stamp = datetime.fromisoformat(str(report['checked_at']).replace('Z', '+00:00'))
         age = (datetime.now(timezone.utc) - stamp).total_seconds()
         if not 0 <= age < 8 or report.get('kind') != 'cutsceneai.studio.destination_readiness':
-            return unavailable('The scene inspection has expired or is invalid. Check the Unreal Python log and restart the editor companion.')
+            return unavailable('The Unreal scene inspection expired; leave the Editor open while its companion refreshes the native snapshot.')
         if report.get('candidate_id') != candidate_id or report.get('sequence_path') != candidate.get('sequence_path'):
-            return unavailable('Inspection belongs to a different transfer candidate. Restart the Unreal companion to inspect this plan.')
+            return unavailable('Inspection belongs to another candidate. The connected companion will observe the new plan on its next tick.')
         if report.get('plan_sha256') != hashlib.sha256(plan_file.read_bytes()).hexdigest():
             return unavailable('The transfer plan changed after inspection. Return to Review and prepare a fresh plan.')
         if (os.path.normcase(str(report.get('expected_project', ''))) != os.path.normcase(connected['target_project'])
@@ -257,7 +279,7 @@ def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
                     'next_action': 'Open the connected Unreal project and selected level.'}
         return report
     except (KeyError, ValueError, OSError, TypeError):
-        return unavailable('Unreal inspection report could not be read. Check the Unreal Python log and reconnect the editor companion.')
+        return unavailable('Unreal inspection report could not be read; the connected companion will retry. Inspect the Python log if this persists.')
 
 
 def review_flags(config: dict[str, Any], action_counts: dict[str, int]) -> list[str]:
@@ -815,6 +837,7 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                                         'repo_root': str(ROOT), 'token': TOKEN, 'connected': cfg.is_file(),
                                         'connection': load_json(cfg) if cfg.is_file() else None,
                                         'unreal_worker': worker_connected(folder),
+                                        'unity_editor': _unity_live_status(folder),
                                         'destination_readiness': destination_readiness(folder),
                                         'candidate': load_json(folder / 'active-candidate.json') if (folder / 'active-candidate.json').is_file() else None,
                                         'active_job': load_json(folder / 'active-job.json').get('job_id') if (folder / 'active-job.json').is_file() else None,
