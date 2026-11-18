@@ -29,13 +29,13 @@ PARTIAL, UNSUPPORTED, or INSUFFICIENT_EVIDENCE.
 | Project selection | Folder discovery, exact Unity project and Unreal `.uproject`, target level identity, permissions | Finalize first-run setup, errors, and project-switch recovery |
 | Unity source | CSIR, scoped source-component census, source GUID/FBX/meta hashes, Play Mode CineTwin sample capture | Compile/review changed Unity extractor after software freeze; add missing semantic exporters as typed schema extensions |
 | Unreal destination | Editor-thread worker, project and level checks, actor census, IK/asset probes, exact hashes | Complete broader read-only component/shader/asset capability inventory and validate feature flags |
-| AI planner | OpenAI Responses structured choice, redacted counts and registered strategies; Friday's one-approved-IK-retarget action | Implement typed, independently validated strategies for moving actor/root motion and multi-character/other supported domains |
+| AI planner | OpenAI Responses structured choice, redacted counts, approved IK retarget and source-bound one-character actor-world motion actions | Broad root-only/compound/multi-character strategies remain unsupported/refused; no universal adapter claims |
 | Native conversion | Immutable transfer plan, source-provenanced import/retarget/material/camera/track adapters, no-overwrite checks | Extend supported asset types, time-varying root/actor ownership, tested non-humanoid/humanoid policy, and never silently promise equivalent simulation |
-| Native execution | Same-project/level verification, automatic staging, native builder receipt, safe rollback for narrow cases | Make failure/restart idempotence and partially imported candidate recovery fully explicit, no unsafe retry |
+| Native execution | Same-project/level verification, immutable native generation, partial-import inspection receipts, no-replay native recovery and live idle Python refresh | True editor-process persistence, more asset-class coverage and exceptional corrupt-package recovery remain separate |
 | AI evaluation and correction | CineTwin actor/root, mapped joint angular-motion magnitude diagnostics, LangGraph analysis, physical camera FOV comparison, native cut binding/section audit and narrow source-bound repair strategies | Calibrated joint orientation-axis/bind-basis parity, exact rendered projection/cut parity and additional *registered* safe repair adapters |
-| Review UI | Dark minimal Studio, single-click transfer, AI planning progress, optional feedback, provenance audit, pre-native cancellation | Show all supported/partial domains and completed native results; end-user setup/recovery guidance |
+| Review UI | Dark minimal Studio, one-click transfer, AI planning progress, provenance audit, pre-native cancellation and subdued live Unity/Unreal bridge health | Complete setup, support/refusal scope and recovery guidance for all declared domains |
 | Release evaluation | Canonical per-job release gate, exact native readback, AI/IK and reopened temporal checks, recomputation of source-bound actor/rig/camera comparison | Complete visual/audio/physics/event/held-out acceptance artifacts and sign-off criteria |
-| CI and packaging | Python tests, UI contract, compile/syntax, Ruff, repository hygiene | End-to-end code-only smoke workflow, Windows dependency/companion install checks and reproducible local build package |
+| CI and packaging | Integrated synthetic transfer smoke, Windows Python bootstrap, UI contracts, lint, source syntax and regression/security coverage | Full native companion installer and self-contained desktop distribution are not yet verified |
 
 ## Required software completion gates before engine testing
 
@@ -67,6 +67,12 @@ PARTIAL, UNSUPPORTED, or INSUFFICIENT_EVIDENCE.
 8. **Automated freeze**: entire Python/JS/contract suite green; the code-only
    integrated transfer scenario and negative security/identity cases pass;
    no TODO claiming an unsupported feature is transferred.
+9. **Live engine bridge continuity**: after explicit initial opt-in, Unity
+   reconnects after ordinary C# domain reload; the already-open Unreal Editor
+   refreshes trusted Python worker/adapters only when native execution is
+   idle. Stale/wrong-project/invalid heartbeats must refuse native work;
+   changed source must not resubmit a queued, running or uncertain candidate.
+   Compiled native engine changes may still require an editor restart.
 
 **Engine acceptance remains a subsequent distinct gate** even after these
 software criteria. Unity compilation, true OpenAI provider calls, Unreal
@@ -194,6 +200,29 @@ tests and a no-replay journal. The review is recorded in
 [PRIMARY_F003_INTEGRATION_REVIEW.md](PRIMARY_F003_INTEGRATION_REVIEW.md).
 **No `SOFTWARE_READY_FOR_ENGINE_TEST` decision yet.** Remaining software
 scope and companion setup gates must be reviewed first.
+
+## Continuous local engine bridge implementation
+
+- The Unity `[InitializeOnLoad]` companion now retains its opt-in after C#
+  script domain reload and publishes a short-lived per-project editor heartbeat
+  without modifying Unity scenes. Studio checks its project, process ID,
+  timestamp, source-enabled flag and editor mode.
+- The Unreal Editor worker now uses one stable tick dispatcher, compiling and
+  refreshing changed *trusted* worker Python while idle and synchronizing
+  whitelisted native Studio adapter/planner modules after local checkout
+  updates. Broken code, stale checkout, and an active or orphaned native job
+  fail closed; neither bridge automatically replays a native candidate.
+- Studio's minimalist dark UI reports the live Unity and Unreal bridge
+  states, and the connection/recovery guidance no longer demands routine
+  Unreal Editor restarts for Python-only code changes. Legacy workers may
+  need a one-time Python-console upgrade without closing Unreal.
+- [Live bridge continuity contract](LIVE_BRIDGE_CONTINUITY.md). Green
+  [CI 44420357385](https://github.com/Nithin0553/CutsceneAI/actions/runs/44420357385)
+  verified **1,107 Python tests passed, 7 skipped**, 14 UI contract
+  scenarios and the Windows dependency bootstrap. **No live Unity script
+  compilation, Unreal callback execution or real-engine session test occurred.**
+  Engine-required binary/plugin changes can still need an actual restart.
+  This feature is software-code verified, not a universal no-restart guarantee.
 
 ## When software freeze is allowed
 
