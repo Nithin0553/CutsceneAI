@@ -467,6 +467,45 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 or result.get("job_id") != job_id
                 or result.get("candidate_id") != job["candidate_id"]):
             raise AgentError("Stale or mismatched Unreal repair receipt.")
+        if state.get("chosen_strategy") == "restore_constant_actor_offset":
+            expected_entity = (state.get("transform_candidate") or {}).get("entity")
+            actor_after = result.get("actor_error_after_cm")
+            root_after = result.get("root_error_after_cm")
+            verified = bool(
+                result.get("status") == "TRANSFORM_OFFSET_SAVED_AND_REAUDITED"
+                and result.get("target_entity") == expected_entity
+                and all(
+                    type(v) in (float, int) and math.isfinite(v)
+                    and 0 <= v <= 2.0
+                    for v in (actor_after, root_after)
+                )
+            )
+            entry = {
+                "request_id": request_id, "strategy": "restore_constant_actor_offset",
+                "status": str(result.get("status") or "UNKNOWN"),
+                "target_entity": result.get("target_entity"),
+                "actor_error_after_cm": actor_after,
+                "root_error_after_cm": root_after,
+            }
+            common = {
+                "history": (state.get("history") or []) + [entry],
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+            }
+            if not verified:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                                       "Actor/root native verification did not pass")[:500]}
+            return {
+                **common,
+                "status": "ACTOR_TRANSLATION_IMPROVED_OTHER_DOMAINS_UNVERIFIED",
+                "reasoning": (
+                    str(state.get("reasoning") or "")[:350]
+                    + f" Native actor/root errors after translation: "
+                    + f"{actor_after:.3f} cm / {root_after:.3f} cm. "
+                    + "Reopened-project persistence and full parity remain unverified."
+                ),
+            }
         old_count = state.get("last_fallback", 0)
         new_count = result.get("fallback_after")
         if type(new_count) is not int or new_count < 0:
@@ -519,6 +558,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
 FINISHED = {
     "NO_DETECTED_GAPS_FIDELITY_UNVERIFIED", "UNRESOLVED_NO_SAFE_STRATEGY",
     "AGENT_REASONING_UNAVAILABLE", "REJECTED_UNSUPPORTED_STRATEGY",
+    "ACTOR_TRANSLATION_IMPROVED_OTHER_DOMAINS_UNVERIFIED",
     "REPAIR_FAILED_OR_INCOMPLETE", "STOPPED_NO_MEASURABLE_PROGRESS",
     "MATERIAL_FALLBACK_RESOLVED_OTHER_DOMAINS_UNVERIFIED", "MAX_SAFE_REPAIRS_REACHED",
     "EVIDENCE_UNAVAILABLE",
