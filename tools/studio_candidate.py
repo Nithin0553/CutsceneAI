@@ -30,6 +30,7 @@ def prepare_candidate(
     hierarchy_transfer: bool = False,
     native_component_staging: bool = False,
     transfer_options: dict[str, Any] | None = None,
+    character_selection: tuple[dict, dict] | None = None,
 ) -> tuple[Path, dict]:
     """Write fresh mapping next to new output and source-verified prepared artifacts."""
     mapping_file = output_folder.with_suffix(".mapping.json")
@@ -56,6 +57,9 @@ def prepare_candidate(
     if set(transfer_options or {}) - allowed:
         raise ValueError('Unexpected candidate conversion option.')
     copy.update(transfer_options or {})
+    if character_selection is not None:
+        import animation_conversion_policy
+        animation_conversion_policy.apply_mapping(copy, *character_selection)
     if skeletal_root_world_lock:
         copy["enable_cinetwin_skeletal_world_lock"] = True
     if hierarchy_transfer:

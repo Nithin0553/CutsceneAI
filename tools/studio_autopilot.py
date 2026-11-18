@@ -66,6 +66,7 @@ def status(workspace: Path) -> dict[str, Any]:
         "fidelity_verified": False,
         "agent_enabled": True,
         "ai_conversion_strategy": state.get("ai_conversion_strategy", ""),
+        "ai_animation_action": state.get("ai_animation_action", ""),
         "error": state.get("error", ""),
     }
 
@@ -211,16 +212,31 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                     "source_feature_surface_path": state["census_path"],
                     "require_complete_source_features": False,
                 })
+                worker = service.worker_connected(workspace)
+                requested, probe = studio_transfer_ai.target_probe(config, worker, workspace, state["run_id"], write=_write)
+                if requested and probe is None:
+                    state["message"] = "Waiting for Unreal to inspect the mapped animation packages and approved rigs."
+                    _write(file, state)
+                    return status(workspace)
+                native_evidence = {"native_character_probe": probe} if probe is not None else {}
                 decision = studio_transfer_ai.decide(
-                    config, state["census_path"], service.worker_connected(workspace)
+                    config, state["census_path"], worker, **native_evidence
                 )
+                character_report = decision.pop("character_compatibility", None)
+                if character_report is not None:
+                    policy = studio_transfer_ai.character_policy()
+                    _write(workspace / policy.REPORT_FILE, character_report)
+                    decision["character_probe_run_id"] = state["run_id"]
                 _write(workspace / "ai-conversion-decision.json", decision)
                 state["ai_conversion_strategy"] = decision["strategy"]
+                state["ai_animation_action"] = (decision.get("animation_conversion") or {}).get("action_id", "")
                 state["status"] = "PREPARING"
                 state["message"] = (
                     "AI selected registered conversion strategy: "
                     + decision["strategy"] + ". Preparing immutable source-backed plan."
                 )
+                if state["ai_animation_action"]:
+                    state["message"] = "AI selected an approved IK Retargeter for an evidence-matched in-place character."
             elif phase == "PREPARING":
                 import studio_ui_features
                 # Validate the exact Unity-emitted census. Partial component
@@ -228,9 +244,18 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                 import studio_transfer_ai
                 config = service.load_json(workspace / "connection.json")
                 decision = _load(workspace / "ai-conversion-decision.json")
+                worker = service.worker_connected(workspace)
+                native_evidence = {}
+                character_report = None
+                if decision.get("character_compatibility_sha256"):
+                    policy = studio_transfer_ai.character_policy()
+                    character_report = _load(workspace / policy.REPORT_FILE)
+                    if policy.compatibility.digest(character_report) != decision["character_compatibility_sha256"]:
+                        raise AutopilotError("Character report changed after the model selected a strategy.")
+                    _, probe = studio_transfer_ai.target_probe(config, worker, workspace, state["run_id"])
+                    native_evidence["native_character_probe"] = probe
                 options = studio_transfer_ai.verify(
-                    decision, config, state["census_path"],
-                    service.worker_connected(workspace),
+                    decision, config, state["census_path"], worker, **native_evidence,
                 )
                 audited = studio_ui_features.validate_options(
                     config,
@@ -240,7 +265,11 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                         **options,
                     },
                 )
-                candidate = service.prepare(workspace, audited)
+                animation = decision.get("animation_conversion")
+                selection = {"character_selection": (character_report, animation)} if animation else {}
+                candidate = service.prepare(workspace, audited, **selection)
+                if character_report is not None:
+                    _write(Path(candidate["candidate_dir"]) / policy.REPORT_FILE, character_report)
                 _write(
                     Path(candidate["candidate_dir"]) / "ai-conversion-decision.json",
                     decision,

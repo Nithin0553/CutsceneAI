@@ -771,6 +771,8 @@ def compose(
         "adapter_capabilities_version": discovery["capabilities_version"],
         "adapter_capabilities_sha256": discovery["capabilities_sha256"],
     }
+    if "ai_character_animation" in mapping:
+        plan["ai_character_animation"] = mapping["ai_character_animation"]
     counts = dict(Counter(row["outcome"] for row in ledger))
     entity_coverage = [{
         "entity_id": str(e.get("entity_id", "")),

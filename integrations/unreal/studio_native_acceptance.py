@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-for directory in (HERE, HERE.parents[1] / 'packages' / 'studio',
+for directory in (HERE, HERE.parents[1] / 'tools', HERE.parents[1] / 'packages' / 'studio',
                   HERE.parents[1] / 'packages' / 'cinetwin', HERE.parents[1] / 'packages' / 'learning'):
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
@@ -26,7 +26,20 @@ def _write(path, document):
         stream.write('\n')
 
 
-def start(workspace=None, *, job_id=None):
+def _character_metrics(report, identifier):
+    actor, = [row for row in report['entities'] if row['entity_id'] == identifier]
+    rig, = [row for row in report['rig_motion_diagnostics'] if row['entity_id'] == identifier]
+    return {
+        'actor_world_position_error_cm': actor['max_world_position_error_cm'],
+        'actor_world_rotation_error_degrees': actor['max_world_rotation_error_degrees'],
+        'root_world_position_error_cm': rig['skeletal_root_world'].get('max_world_position_error_cm'),
+        'root_rotation_excursion': {key: rig['skeletal_root_world'].get(key) for key in (
+            'source_world_rotation_excursion_degrees', 'target_world_rotation_excursion_degrees')},
+        'joint_world_position_error_cm': rig['joint_positions'].get('maximum_error_cm'),
+    }
+
+
+def start(workspace=None, *, job_id=None, baseline_target=None):
     """Run after opening the generated map in a different Unreal process."""
     root = Path(workspace).resolve() if workspace is not None else Path.home() / '.cutsceneai-studio' / 'runs'
     if job_id is None:
@@ -62,6 +75,7 @@ def start(workspace=None, *, job_id=None):
     native_path = folder / 'persistence.json'
     native = persistence.audit(job_path, native_path)
     observed_path = folder / 'target-behavior.json'
+    baseline = persistence._json(Path(baseline_target)) if baseline_target is not None else None
 
     def finish(target):
         import unreal
@@ -72,12 +86,52 @@ def start(workspace=None, *, job_id=None):
                 or persistence._loaded_level(unreal) != job['expected_level']):
             raise ValueError('Unreal observations do not belong to the reopened Studio scene.')
         comparison = compare(plan, source, target)
+        character_proof = None
+        if job.get('character_native_readback_status') == 'PASS':
+            import animation_conversion_policy as policy
+            import studio_character_execution
+
+            compatibility_file = candidate / policy.REPORT_FILE
+            decision_file = candidate / 'ai-conversion-decision.json'
+            if (persistence._sha(compatibility_file) != job['character_compatibility_sha256']
+                    or persistence._sha(decision_file) != job['ai_conversion_decision_sha256']):
+                raise ValueError('Reopened character evidence does not match the submitted job.')
+            decision = persistence._json(decision_file)['animation_conversion']
+            selected = policy.selected(persistence._json(compatibility_file), decision)
+            native_character_report = studio_character_execution.record(
+                unreal, job, persistence._json(candidate / 'transfer-plan.json'), selected,
+                unreal.load_asset(job['sequence_path']), path=folder / 'character-reopened.json', reopened=True,
+            )
+            identifier = selected['source_entity_id']
+            character_proof = {
+                'action_id': decision['action_id'], 'source_entity_id': identifier,
+                'evidence_ids': decision['evidence_ids'], 'tolerances': {
+                    'position_cm': comparison['evaluation']['position_tolerance_cm'],
+                    'rotation_degrees': comparison['evaluation']['orientation_tolerance_degrees']},
+                'after': _character_metrics(comparison, identifier),
+                'before': None, 'baseline_status': 'BASELINE_TARGET_OBSERVATIONS_NOT_PROVIDED',
+                'reopened_character_readback_status': native_character_report['status'],
+            }
+            if baseline is not None:
+                current = target['target']
+                previous = baseline.get('target', {})
+                if (previous.get('sequence_asset_path') == current['sequence_asset_path']
+                        or previous.get('project_file_sha256') != current.get('project_file_sha256')
+                        or not current.get('project_identity_sha256')
+                        or previous.get('project_identity_sha256') != current['project_identity_sha256']
+                        or previous.get('engine_version') != current['engine_version']):
+                    raise ValueError('Baseline requires a distinct sequence with matching Unreal project and version.')
+                character_proof['before'] = _character_metrics(compare(plan, source, baseline), identifier)
+                character_proof['baseline_status'] = 'MATCHED_SOURCE_GRID_AND_UNREAL_PROJECT'
+                character_proof['baseline_sha256'] = persistence._sha(Path(baseline_target))
         evaluation = comparison['evaluation']
         joints = [row['joint_positions']['status'] for row in comparison['rig_motion_diagnostics']]
-        if evaluation['status'] == 'DIFFERENCES_DETECTED' or native['native_structure_status'] == 'FAIL':
+        character_status = character_proof['reopened_character_readback_status'] if character_proof else 'PASS'
+        if (evaluation['status'] == 'DIFFERENCES_DETECTED' or native['native_structure_status'] == 'FAIL'
+                or character_status == 'FAIL'):
             status = 'DIFFERENCES_DETECTED'
         elif (not native['restart_verified'] or evaluation['unmapped_entity_count']
-              or 'INCOMPLETE' in joints or target['quality']['status'] == 'SUSPECT'):
+              or 'INCOMPLETE' in joints or target['quality']['status'] == 'SUSPECT' or character_status != 'PASS'):
             status = 'INCOMPLETE_MEASURED_SCOPE'
         else:
             status = 'STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE'
@@ -89,6 +143,7 @@ def start(workspace=None, *, job_id=None):
             'target_observation_sha256': persistence._sha(observed_path),
             'persistence_sha256': persistence._sha(native_path),
             'sampling_plan_sha256': persistence._sha(sampling_path),
+            **({'character_conversion': character_proof} if character_proof else {}),
         })
         unreal.log('[CutSceneAI Studio] ' + status + ' — ' + str(output))
 

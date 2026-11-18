@@ -1,0 +1,224 @@
+{
+  "evidence_origin": "SYNTHETIC_TEST_FIXTURE",
+  "real_model_invoked": false,
+  "real_editor_invoked": false,
+  "character_compatibility_report": {
+    "kind": "cutsceneai.studio.character_compatibility_report",
+    "schema_version": "1",
+    "context": {
+      "unity_project_fingerprint": "unity-fixture",
+      "unity_project": "/local/example/PrivateUnity",
+      "source_scope": "Assets",
+      "unreal_project": "/local/example/Unreal/Staging.uproject",
+      "uproject_sha256": "068d472ab4789973c526096075b5a3e956acd55e4d69e1bf7799ca593dcd59f9",
+      "destination_level": "/Game/Staging/L_Draft",
+      "create_level": false,
+      "profile_catalog_sha256": "058fcf9c97e54c61ebb8952420d35d9fa520b99a1637267eb54b5fcb274cbfbc",
+      "input_sha256": {
+        "csir": "52a16cdce64c0d428ece1abce44680689554e77ee73318bf78e5a9803513ebae",
+        "capture": "1bcfe9c3ed47103d928e4baddd276cf57417d2c09eebbf524324972ce2273ac3",
+        "mapping": "14bda9ecb8e746407d3914ef7910d9f31f3aa5f1726d861105213fb624aba12f",
+        "census": "59fac3a847b88a582809fbba09b3a24d86d721cbab00e214582a347e4db77f48",
+        "uproject": "068d472ab4789973c526096075b5a3e956acd55e4d69e1bf7799ca593dcd59f9"
+      }
+    },
+    "characters": [
+      {
+        "id": "character-01",
+        "source_entity_id": "source-char",
+        "source_entity_name": "PrivatePerformer",
+        "source_parent_entity_id": null,
+        "target_actor_label": "NewPerformer",
+        "model": {
+          "status": "EXACT",
+          "asset_path": "Assets/SourceModel.fbx",
+          "guid": "11111111111111111111111111111111",
+          "sha256": "1434290dd18d1a05a074cb77a57359095de2c72ca5454903f6c1ae76b5f85a7d",
+          "meta_sha256": "9c9be7b1d37d844aef0902b89ec018a6a8a60f9ee89110c09002a2820f9c1216"
+        },
+        "clips": [
+          {
+            "section_id": "section",
+            "asset_id": "unity-asset:22222222222222222222222222222222:111",
+            "source": {
+              "status": "EXACT",
+              "asset_path": "Assets/PrivateClip.fbx",
+              "guid": "22222222222222222222222222222222",
+              "sha256": "e3a91d8b1687badbce202c4b345ec6fef2e5315fed14c669f66ea03005575bb8",
+              "meta_sha256": "881dbab1dc76ae895e7568ec74a26b64c4984fa5ae6b58dff9a71a0da8021801"
+            },
+            "unity_local_file_id": 111,
+            "planned_target_clip": "/Game/Staging/Animations/AS_Fresh",
+            "timing": {
+              "start_seconds": 0.0,
+              "end_seconds": 1.0,
+              "offset_seconds": 0.0,
+              "time_scale": 1.0,
+              "duration_seconds": 1.0,
+              "source_fps": 24.0
+            },
+            "status": "EXACT",
+            "target": {
+              "status": "AVAILABLE_FOR_NEW_ASSET",
+              "class": null,
+              "skeleton": null
+            }
+          }
+        ],
+        "motion": {
+          "owner": "IN_PLACE",
+          "sample_count": 25,
+          "root_bone_id": "root-id",
+          "rig_sha256": "38129c22e797d88c2e0493e436bfcb1645df2d0edda885ae09c99239539c88fc",
+          "bones": [
+            [
+              "Arm",
+              "Root"
+            ],
+            [
+              "Root",
+              ""
+            ]
+          ],
+          "actor_translation_cm": 0.0,
+          "root_translation_cm": 0.0,
+          "actor_rotation_degrees": 0.0,
+          "root_rotation_degrees": 0.0,
+          "relative_world_offset_drift_cm": 0.0,
+          "actor_has_unit_scale": true,
+          "basis": "UNITY_PLAY_MODE_CAPTURE_CANONICAL_WORLD"
+        },
+        "target": {
+          "status": "OBSERVED",
+          "packages": {
+            "retargeter": {
+              "path": "/Game/Approved/Retarget",
+              "class": "IKRetargeter",
+              "files_sha256": {
+                ".uasset": "c844d90cf3bef5c32576cef3b8256b0383b969993a7da0e827bdc01cb34d97bb"
+              }
+            },
+            "source": {
+              "path": "/Game/Approved/Source",
+              "class": "SkeletalMesh",
+              "files_sha256": {
+                ".uasset": "404e2aa2bf42dec7e78aafa2bc4c876cb0a842cddfbc773bc9ec7fa0f0d62bb1"
+              }
+            },
+            "target": {
+              "path": "/Game/Approved/Target",
+              "class": "SkeletalMesh",
+              "files_sha256": {
+                ".uasset": "404e2aa2bf42dec7e78aafa2bc4c876cb0a842cddfbc773bc9ec7fa0f0d62bb1"
+              }
+            },
+            "source_rig": {
+              "path": "/Game/Approved/SourceRig",
+              "class": "IKRigDefinition",
+              "files_sha256": {
+                ".uasset": "131c3816c6c43231d95f0ba7673b18c8be2c9503ac50c3b75daebf002ef161ba"
+              }
+            },
+            "target_rig": {
+              "path": "/Game/Approved/TargetRig",
+              "class": "IKRigDefinition",
+              "files_sha256": {
+                ".uasset": "131c3816c6c43231d95f0ba7673b18c8be2c9503ac50c3b75daebf002ef161ba"
+              }
+            },
+            "source_skeleton": {
+              "path": "/Game/Approved/SourceSkeleton",
+              "class": "Skeleton",
+              "files_sha256": {
+                ".uasset": "ea5f6bdc79b884c397d6163ed999deafd3908d8c928097911d4085a99ef1b575"
+              }
+            },
+            "target_skeleton": {
+              "path": "/Game/Approved/TargetSkeleton",
+              "class": "Skeleton",
+              "files_sha256": {
+                ".uasset": "ea5f6bdc79b884c397d6163ed999deafd3908d8c928097911d4085a99ef1b575"
+              }
+            }
+          },
+          "source_import_path": "/local/example/PrivateUnity/Assets/SourceModel.fbx",
+          "source_rig_sha256": "38129c22e797d88c2e0493e436bfcb1645df2d0edda885ae09c99239539c88fc",
+          "target_rig_sha256": "38129c22e797d88c2e0493e436bfcb1645df2d0edda885ae09c99239539c88fc",
+          "source_reference_pose_sha256": "05d08c08871d931a9d8c6d972e015d2ca83fb87a6ec3e9e80dad6074701fcdfc",
+          "target_reference_pose_sha256": "05d08c08871d931a9d8c6d972e015d2ca83fb87a6ec3e9e80dad6074701fcdfc",
+          "target_material_slot_count": 1
+        },
+        "materials": [],
+        "approved_profile": {
+          "source_fbx_sha256": "1434290dd18d1a05a074cb77a57359095de2c72ca5454903f6c1ae76b5f85a7d",
+          "source_mesh_path": "/Game/Approved/Source",
+          "target_mesh_path": "/Game/Approved/Target",
+          "retargeter_path": "/Game/Approved/Retarget"
+        },
+        "status": "COMPATIBLE_AFTER_APPROVED_RETARGET",
+        "reasons": [],
+        "source_reference_pose_status": "UNAVAILABLE_FROM_SOURCE_CAPTURE",
+        "source_local_reference_validation": "CHECKED_AFTER_FRESH_IMPORT_BEFORE_RETARGETING",
+        "material_status": "TARGET_MESH_MATERIALS_RETAINED",
+        "evidence_ids": {
+          "model": "8332556ceb134a716e41bfc85f321716b2d694785e16da86928785822585925b",
+          "clips": "9668f6f8c3a01b607656cb3b8c4af1ecfc86c2533fefef4ea475d95a4c9f83ec",
+          "motion": "aa0ca473f2f66138f8f2da56881a3471cda90e440be763c8406fc35450e0be02",
+          "target": "af5a4e34b290662d82c81f15e99ed93f6797e172478b622b8737c27c99eabaf6",
+          "materials": "f126665a03e4c586df8751b34b24d1146aeecb726132a9b0c4470ce670922c89"
+        }
+      }
+    ],
+    "target_probe": {
+      "project": "/local/example/Unreal/Staging.uproject",
+      "level": "/Game/Staging/L_Draft",
+      "engine_version": "5.8.3",
+      "editor_pid": 1234,
+      "native_skeletal_track": true
+    },
+    "probe_request_sha256": "15bddc1f2cedb23ca9ccafa54a3eef173c33d8bd6653e417c31df90bf2588940",
+    "character_count": 1,
+    "truncated": false,
+    "fidelity_verified": false
+  },
+  "ai_animation_conversion_decision": {
+    "kind": "cutsceneai.studio.ai_animation_conversion_decision",
+    "schema_version": "1",
+    "choice_id": "character-01",
+    "action_id": "use_approved_ik_retarget_profile",
+    "version": "1",
+    "capability_id": "unreal.ik_retarget.batch",
+    "motion_ownership": "IN_PLACE_NATIVE_SKELETAL_CLIP",
+    "source_entity_id": "source-char",
+    "evidence_ids": {
+      "model": "8332556ceb134a716e41bfc85f321716b2d694785e16da86928785822585925b",
+      "clips": "9668f6f8c3a01b607656cb3b8c4af1ecfc86c2533fefef4ea475d95a4c9f83ec",
+      "motion": "aa0ca473f2f66138f8f2da56881a3471cda90e440be763c8406fc35450e0be02",
+      "target": "af5a4e34b290662d82c81f15e99ed93f6797e172478b622b8737c27c99eabaf6",
+      "materials": "f126665a03e4c586df8751b34b24d1146aeecb726132a9b0c4470ce670922c89"
+    },
+    "compatibility_report_sha256": "36f1cc0af5043ea5025c18c69a8f82df2d2f612d11d8b3ce17b2b66c62a9715c"
+  },
+  "target_native_readback": {
+    "kind": "cutsceneai.studio.character_native_readback",
+    "schema_version": "1",
+    "status": "NOT_TESTED",
+    "source_entity_id": "source-char",
+    "expected_skeleton": "/Game/Approved/TargetSkeleton",
+    "expected_sections": [
+      {
+        "clip": "/Game/Staging/Animations/AS_Fresh",
+        "start_frame": 0,
+        "end_frame": 24,
+        "time_scale": 1.0,
+        "source_trim_ticks": 0
+      }
+    ],
+    "observed_sections": [],
+    "reopened": false,
+    "before": null,
+    "after": null,
+    "target_playback_sample_status": "AWAITING_INDEPENDENT_CINETWIN",
+    "fidelity_verified": false
+  }
+}

@@ -162,6 +162,20 @@ def test_explicit_joint_map_measures_the_worst_native_sample() -> None:
     bone, = diagnostic["joint_positions"]["bones"]
     assert bone["max_error_cm"] == pytest.approx(3.5)
     assert bone["worst_time_seconds"] == frame["time_seconds"]
+    root = diagnostic["skeletal_root_world"]
+    assert root["status"] == "POSITION_MISMATCH"
+    assert root["max_world_position_error_cm"] == pytest.approx(3.5)
+    assert root["absolute_root_rotation_error_degrees"] is None
+    assert root["source_world_rotation_excursion_degrees"] == 0
+
+
+def test_unmatched_root_never_acquires_an_absolute_pose_parity_claim() -> None:
+    plan, source, target = _fixtures()
+    observed = compare(plan, source, target)["rig_motion_diagnostics"][0]["skeletal_root_world"]
+    assert observed["status"] == "ROOT_CORRESPONDENCE_UNVERIFIED"
+    assert observed["max_world_position_error_cm"] is None
+    assert observed["absolute_root_rotation_error_degrees"] is None
+    assert observed["source_world_excursion_cm"] == observed["target_world_excursion_cm"] == 100
 
 
 def test_unique_native_joint_name_and_unmapped_native_parent() -> None:

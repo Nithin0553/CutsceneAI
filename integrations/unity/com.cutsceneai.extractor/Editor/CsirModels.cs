@@ -98,6 +98,19 @@ namespace CutsceneAI.UnityExtractor
         public string asset_type;
         public string guid;
         public long local_file_id;
+        public AnimationClipMetadata animation_clip;
+        public string source_sha256;
+        public string source_meta_sha256;
+    }
+
+    [Serializable]
+    internal sealed class AnimationClipMetadata
+    {
+        public double duration_seconds;
+        public float frame_rate;
+        public bool is_looping;
+        public bool is_humanoid;
+        public bool default_single_fbx_take;
     }
 
     [Serializable]

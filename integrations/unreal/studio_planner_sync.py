@@ -33,6 +33,12 @@ MODULES = (
     ("studio_source_identity", "tools"),
     ("studio_source_materials", "tools"),
     ("studio_auto_assets", "tools"),
+    ("character_compatibility", "packages/studio"),
+    ("animation_conversion_policy", "packages/studio"),
+    ("studio_ik_retarget", "integrations/unreal"),
+    ("studio_character_probe", "integrations/unreal"),
+    ("studio_transfer_ai", "tools"),
+    ("studio_character_execution", "integrations/unreal"),
 )
 
 

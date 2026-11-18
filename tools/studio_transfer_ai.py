@@ -10,13 +10,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import sys
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 KINDS = frozenset({"native_source", "source_materials", "visual_activation_partial"})
 SCHEMA = "cutsceneai.studio.ai_conversion_decision"
 VERSION = "1"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class TransferAIError(ValueError):
@@ -41,10 +45,49 @@ def _project_summary(path: Path) -> dict:
     plugins = [row for row in data.get("Plugins", [])
                if isinstance(row, dict) and row.get("Enabled") is True]
     return {
-        "engine_association": str(data.get("EngineAssociation") or "")[:40],
+        "engine_association": _version(data.get("EngineAssociation")),
         "enabled_plugin_count": len(plugins),
         "has_enabled_plugins": bool(plugins),
     }
+
+
+def _version(value) -> str:
+    return value if isinstance(value, str) and re.fullmatch(r"\d{1,4}(?:\.\d{1,4}){1,3}(?:[a-z]\d{1,5})?", value) else "unknown"
+
+
+def character_policy():
+    for part in ("packages/studio", "packages/cinetwin", "integrations/unreal"):
+        path = str(ROOT / part)
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    import animation_conversion_policy
+    return animation_conversion_policy
+
+
+def target_probe(config: dict, worker: dict, workspace: Path, run_id: str, *, write=None) -> tuple[bool, dict | None]:
+    """Request the native snapshot using installed code and exact mapped assets."""
+    if (not config.get("unity_project") or not worker.get("connected")
+            or (worker.get("scene_inventory") or {}).get("character_compatibility_probe") is not True):
+        return False, None
+    policy = character_policy()
+    request = policy.make_probe_request(config, _read(Path(config["csir"])), _read(Path(config["mapping"])), run_id=run_id)
+    if request is None:
+        return False, None
+    path = workspace / policy.PROBE_REQUEST
+    if write is not None and (not path.is_file() or _read(path) != request):
+        write(path, request)
+    result_path = workspace / policy.PROBE_RESULT
+    if not result_path.is_file():
+        return True, None
+    result = _read(result_path)
+    if result.get("request_sha256") != policy.compatibility.digest(request):
+        return True, None
+    if result.get("error"):
+        raise TransferAIError("Native character inspection failed: " + result["error"])
+    identity = result.get("observed_identity", {})
+    if identity.get("level") != worker.get("level") or identity.get("editor_pid") != worker.get("editor_pid"):
+        return True, None
+    return True, result
 
 
 def _activation_eligible(csir: dict, mapping: dict) -> bool:
@@ -72,7 +115,7 @@ def _activation_eligible(csir: dict, mapping: dict) -> bool:
     return True
 
 
-def inspect(config: dict, census_path: str, worker: dict) -> dict:
+def inspect(config: dict, census_path: str, worker: dict, *, native_character_probe: dict | None = None) -> dict:
     """Native file metadata and exact transfer connection; no model calls."""
     if (worker.get("connected") is not True
             or not isinstance(worker.get("project"), str)
@@ -102,12 +145,16 @@ def inspect(config: dict, census_path: str, worker: dict) -> dict:
             "Unreal target capability probe is incomplete. Restart the updated editor worker."
         )
     safe_classes = {}
+    public_native_classes = {"Actor", "SkeletalMeshActor", "StaticMeshActor", "CineCameraActor", "CameraActor",
+                             "DirectionalLight", "PointLight", "SpotLight", "SkyLight", "LevelSequenceActor",
+                             "PlayerStart", "WorldSettings", "Brush", "ExponentialHeightFog", "SkyAtmosphere"}
     for name, count in sorted(inventory["class_counts"].items())[:24]:
         if (not isinstance(name, str) or len(name) > 72
                 or not name.replace("_", "").isalnum()
                 or type(count) is not int or count < 0):
             raise TransferAIError("Unreal level inventory contains invalid native class counts.")
-        safe_classes[name] = count
+        key = name if name in public_native_classes else "Other"
+        safe_classes[key] = safe_classes.get(key, 0) + count
     source = Path(config["csir"]).resolve()
     capture = Path(config["capture"]).resolve()
     mapping = Path(config["mapping"]).resolve()
@@ -133,10 +180,10 @@ def inspect(config: dict, census_path: str, worker: dict) -> dict:
         raise TransferAIError("Malformed Unity cutscene track/entity inventory.")
     # Treat Unity names and extension types as untrusted metadata. Do not
     # send arbitrary strings or asset paths to the external reasoning model.
-    types = Counter(
-        str(t.get("ced_type") or "unknown")[:72]
-        for t in tracks if isinstance(t, dict)
-    )
+    known_types = {"animation.track", "camera.transform", "camera.cut", "audio.track", "light.animation",
+                   "event.state", "event.signal", "event.trigger", "timeline.marker", "timeline.opaque"}
+    types = Counter(t.get("ced_type") if t.get("ced_type") in known_types else "other"
+                    for t in tracks if isinstance(t, dict))
     materials = sum(len((e.get("metadata") or {}).get("source_material_assets") or [])
                     for e in entities if isinstance(e, dict))
     models = sum(len((e.get("metadata") or {}).get("source_model_assets") or [])
@@ -149,18 +196,18 @@ def inspect(config: dict, census_path: str, worker: dict) -> dict:
         raise TransferAIError(
             "Unreal FBX import capability is unavailable; cannot plan sourced 3D meshes."
         )
-    return {
+    fingerprints = {key: _sha(p) for key, p in (
+        ("csir", source), ("capture", capture), ("mapping", mapping), ("census", census), ("uproject", target)
+    )}
+    evidence = {
         "kind": "cutsceneai.studio.ai_conversion_evidence",
         "schema_version": VERSION,
-        "fingerprints": {key: _sha(p) for key, p in (
-            ("csir", source), ("capture", capture),
-            ("mapping", mapping), ("census", census), ("uproject", target)
-        )},
+        "fingerprints": fingerprints,
         "selected_target_level": config["level_path"],
         "target_project": str(target),
         "summary": {
             "source_engine": "unity",
-            "source_version": str(csir.get("source", {}).get("engine_version") or "unknown")[:50],
+            "source_version": _version(csir.get("source", {}).get("engine_version")),
             "source_entity_count": len(entities),
             "source_track_count": len(tracks),
             "source_track_types": dict(sorted(types.items())[:30]),
@@ -170,7 +217,9 @@ def inspect(config: dict, census_path: str, worker: dict) -> dict:
             "source_census_present": bool(census_obj),
             "target_engine": "unreal",
             "target_connected": True,
-            "target_worker_version": str(worker.get("worker_version") or "")[:50],
+            "target_worker_version": (worker["worker_version"] if isinstance(worker.get("worker_version"), str)
+                                      and re.fullmatch(r"studio-editor-v\d{1,3}\.\d{1,3}", worker["worker_version"])
+                                      else "unknown"),
             "target_project_metadata": _project_summary(target),
             "target_level_selected": True,
             "target_level_actor_count": inventory["actor_count"],
@@ -186,6 +235,13 @@ def inspect(config: dict, census_path: str, worker: dict) -> dict:
                                (["visual_activation_partial"] if eligible else [])),
         "fidelity_verified": False,
     }
+    if config.get("unity_project") and any(entity.get("ced_type") == "entity.character" for entity in entities):
+        policy = character_policy()
+        report = policy.compatibility.inspect(config, csir, docs["capture"], scene_mapping, fingerprints, native_character_probe)
+        evidence["character_compatibility"] = report
+        evidence["summary"]["character_compatibility"] = policy.report_for_model(report)
+        evidence["animation_choices"] = policy.available_choices(report)
+    return evidence
 
 
 def _model_choose(summary: dict) -> dict:
@@ -195,6 +251,10 @@ def _model_choose(summary: dict) -> dict:
         from openai import OpenAI
     except ImportError as exc:
         raise TransferAIError("Install the openai package in the Studio Python environment.") from exc
+    properties = {"strategy": {"type": "string", "enum": summary["allowed_strategies"]},
+                  "reason": {"type": "string"}}
+    if summary.get("animation_choices"):
+        properties["animation_choice_id"] = {"type": "string", "enum": ["keep_native", *summary["animation_choices"]]}
     response = OpenAI(timeout=25, max_retries=0).responses.create(
         model=os.environ.get("CUTSCENEAI_AGENT_MODEL", "gpt-5-mini"),
         instructions=(
@@ -207,37 +267,42 @@ def _model_choose(summary: dict) -> dict:
             "it does NOT reproduce scripts, physics, or activation semantics. "
             "Use partial activation ONLY if the provided installed adapter is "
             "eligible; otherwise prefer source_materials for material references "
-            "and native_source for remaining scenes. Never invent mappings, "
+            "and native_source for remaining scenes. When animation_choice_id is available, "
+            "choose a listed character only if its saved source/target rig evidence supports the "
+            "approved IK retarget action and the character is in place. Otherwise use keep_native. "
+            "Never invent mappings, "
             "engine commands, new adapters, paths, imports or fidelity claims."
         ),
         input=json.dumps({
             "evidence": summary["summary"],
             "allowed_strategies": summary["allowed_strategies"],
-        }, sort_keys=True)[:12000],
+        }, sort_keys=True),
         text={"format": {"type": "json_schema",
                          "name": "cutsceneai_pretransfer_choice", "strict": True,
                          "schema": {
                              "type": "object", "additionalProperties": False,
-                             "properties": {
-                                 "strategy": {"type": "string", "enum": sorted(KINDS)},
-                                 "reason": {"type": "string"}
-                             },
-                             "required": ["strategy", "reason"]
+                             "properties": properties,
+                             "required": list(properties),
                          }}},
     )
     answer = json.loads(response.output_text)
+    response_id = getattr(response, "id", None)
+    if isinstance(answer, dict) and response_id:
+        answer = {**answer, "_provider_response_id": response_id}
     return answer
 
 
 def decide(config: dict, census_path: str, worker: dict,
-           *, reasoner: Callable[[dict], dict] | None = None) -> dict:
-    evidence = inspect(config, census_path, worker)
+           *, reasoner: Callable[[dict], dict] | None = None, native_character_probe: dict | None = None) -> dict:
+    evidence = inspect(config, census_path, worker, native_character_probe=native_character_probe)
     try:
         answer = (reasoner or _model_choose)(evidence)
     except Exception as exc:
         raise TransferAIError("Pre-transfer AI reasoning failed: " + str(exc)[:400]) from exc
     if not isinstance(answer, dict) or answer.get("strategy") not in KINDS:
         raise TransferAIError("AI returned an unregistered conversion strategy.")
+    if set(answer) - {"strategy", "reason", "animation_choice_id", "_provider_response_id"}:
+        raise TransferAIError("AI returned unregistered conversion data.")
     strategy = answer["strategy"]
     if strategy not in evidence["allowed_strategies"]:
         raise TransferAIError("AI selected a strategy not supported by the Unity source.")
@@ -251,21 +316,35 @@ def decide(config: dict, census_path: str, worker: dict,
         "enable_fbx_embedded_material_import": bool(enable_materials),
         "enable_actor_visibility_fallback": strategy == "visual_activation_partial",
     }
-    return {
+    decision = {
         "kind": SCHEMA, "schema_version": VERSION, "strategy": strategy,
         "reason": str(answer.get("reason") or "")[:600],
         "input_sha256": evidence["fingerprints"],
         "summary": summary, "allowed_strategies": evidence["allowed_strategies"],
         "conversion_options": options,
-        "model_invoked": True, "native_conversion_executed": False,
+        "model_invoked": True, "model_provider": "OPENAI_RESPONSES" if reasoner is None else "INJECTED_REASONER",
+        "native_conversion_executed": False,
         "source_and_target_fidelity_verified": False,
         "activation_semantics_partial": options["enable_actor_visibility_fallback"],
     }
+    provider_id = answer.get("_provider_response_id")
+    if reasoner is None and isinstance(provider_id, str) and re.fullmatch(r"resp_[A-Za-z0-9_]{1,120}", provider_id):
+        decision["model_response_id"] = provider_id
+    report = evidence.get("character_compatibility")
+    choice = answer.get("animation_choice_id", "keep_native")
+    if choice != "keep_native":
+        if choice not in evidence.get("animation_choices", []):
+            raise TransferAIError("AI selected an animation action without eligible source and target evidence.")
+        decision["animation_conversion"] = character_policy().decision_for(report, choice)
+    if report is not None:
+        decision["character_compatibility_sha256"] = character_policy().compatibility.digest(report)
+        decision["character_compatibility"] = report
+    return decision
 
 
-def verify(decision: dict, config: dict, census_path: str, worker: dict) -> dict:
+def verify(decision: dict, config: dict, census_path: str, worker: dict, *, native_character_probe: dict | None = None) -> dict:
     """Recompute all input hashes and safe actions immediately before prepare."""
-    current = inspect(config, census_path, worker)
+    current = inspect(config, census_path, worker, native_character_probe=native_character_probe)
     if (decision.get("kind") != SCHEMA
             or decision.get("schema_version") != VERSION
             or decision.get("input_sha256") != current["fingerprints"]
@@ -282,4 +361,11 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict) -> dict
     }
     if opts != expected:
         raise TransferAIError("AI conversion options do not match supported native policy.")
+    report = current.get("character_compatibility")
+    if decision.get("character_compatibility_sha256") or decision.get("animation_conversion"):
+        policy = character_policy()
+        if report is None or decision.get("character_compatibility_sha256") != policy.compatibility.digest(report):
+            raise TransferAIError("The character compatibility report has stale source or target evidence.")
+        if decision.get("animation_conversion") is not None:
+            policy.selected(report, decision["animation_conversion"])
     return expected

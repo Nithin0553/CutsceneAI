@@ -73,6 +73,7 @@ def _native_level_inventory():
             counts[label] = counts.get(label, 0) + 1
         return {
             'available': True,
+            'character_compatibility_probe': True,
             'actor_count': len(actors),
             'class_counts': dict(sorted(counts.items())[:32]),
             'native_capabilities': {
@@ -183,6 +184,7 @@ def _execute(job):
     # the job's approved hash BEFORE any native editor mutation.
     ai_decision = candidate_dir / 'ai-conversion-decision.json'
     ai_sha = job.get('ai_conversion_decision_sha256') or ''
+    decision = {}
     if ai_sha or ai_decision.exists():
         if not (isinstance(ai_sha, str) and len(ai_sha) == 64
                 and ai_decision.is_file() and not ai_decision.is_symlink()
@@ -206,6 +208,10 @@ def _execute(job):
     import studio_collider_shapes
     import unreal_compat
     checked_plan = _load(candidate_dir / 'transfer-plan.json')
+    character = None
+    animation_choice = decision.get('animation_conversion')
+    if bool(animation_choice) != ('ai_character_animation' in checked_plan) or (animation_choice and not job.get('automatic_setup')):
+        raise RuntimeError('AI character animation requires its verified decision and automatic staging.')
     unreal_compat.validate_component_versions(checked_plan['actions'])
     collider_actions = studio_collider_shapes.from_plan(checked_plan)
     if collider_actions and not job.get('automatic_setup'):
@@ -225,6 +231,13 @@ def _execute(job):
         if not inspected.get('ready'):
             raise RuntimeError('Prepared source setup is not ready: ' +
                                '; '.join(inspected.get('blockers', [])[:8]))
+        if animation_choice:
+            import studio_character_execution
+            character = studio_character_execution.preflight(
+                unreal, job, decision, mapped, checked_plan, inspected,
+                worker={'connected': True, 'project': _loaded_project(), 'level': _loaded_level(),
+                        'worker_version': WORKER_PROTOCOL, 'scene_inventory': _native_level_inventory()},
+            )
     job['execution_stage'] = 'PREPARING_DESTINATION_LEVEL'
     _ensure_target_level(job)
     if job.get('automatic_setup'):
@@ -277,6 +290,14 @@ def _execute(job):
     except Exception:
         job['bindings_created_count'] = None
     job['generated_sequence'] = result.get_path_name()
+    if character is not None:
+        proof = studio_character_execution.record(unreal, job, checked_plan, character, result)
+        job['character_native_readback_status'] = proof['status']
+        if proof['status'] != 'PASS':
+            job['status'] = 'GENERATED_ANIMATION_VERIFICATION_FAILED_REVIEW_REQUIRED'
+            job['generation_status'] = 'NATIVE_ANIMATION_READBACK_FAILED'
+            job['error'] = 'Character asset or Sequencer timing readback did not pass. Preserve and inspect this candidate.'
+            return job
     if job.get('automatic_setup'):
         # The builder may change camera poses, root alignment and attachments
         # after the initial staging save. Persist those scene changes too.
@@ -503,10 +524,17 @@ def _tick(_delta):
         _save(WORKSPACE / 'unreal-worker.json', {
             'heartbeat': _now(), 'project': _loaded_project(),
             'level': _loaded_level(), 'worker': WORKER_PROTOCOL,
+            'editor_pid': os.getpid(),
             'checkout_root': str(ROOT.resolve()),
             'worker_source_sha256': WORKER_SOURCE_SHA256,
             'scene_inventory': _native_level_inventory(),
         })
+        if (WORKSPACE / 'character-probe-request.json').is_file():
+            try:
+                import studio_character_probe
+                studio_character_probe.service(WORKSPACE, unreal, project=_loaded_project(), level=_loaded_level(), save=_save)
+            except (ValueError, RuntimeError, OSError) as probe_error:
+                unreal.log_warning('[CutSceneAI Studio] Character probe unavailable: ' + str(probe_error))
         try:
             _update_destination_readiness()
         except Exception as readiness_error:

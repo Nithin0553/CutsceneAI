@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CutSceneAI evidence-bound animation conversion decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schema_version", "action_id", "version", "choice_id", "capability_id", "motion_ownership", "source_entity_id", "evidence_ids", "compatibility_report_sha256"],
+  "properties": {
+    "kind": {"const": "cutsceneai.studio.ai_animation_conversion_decision"},
+    "schema_version": {"const": "1"},
+    "version": {"const": "1"},
+    "action_id": {"const": "use_approved_ik_retarget_profile"},
+    "capability_id": {"const": "unreal.ik_retarget.batch"},
+    "choice_id": {"type": "string", "pattern": "^character-(0[1-9]|1[0-2])$"},
+    "motion_ownership": {"const": "IN_PLACE_NATIVE_SKELETAL_CLIP"},
+    "source_entity_id": {"type": "string", "minLength": 1},
+    "compatibility_report_sha256": {"$ref": "#/$defs/sha256"},
+    "evidence_ids": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "clips", "motion", "target", "materials"],
+      "properties": {
+        "model": {"$ref": "#/$defs/sha256"},
+        "clips": {"$ref": "#/$defs/sha256"},
+        "motion": {"$ref": "#/$defs/sha256"},
+        "target": {"$ref": "#/$defs/sha256"},
+        "materials": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
+}
