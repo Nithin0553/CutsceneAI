@@ -32,7 +32,7 @@ PARTIAL, UNSUPPORTED, or INSUFFICIENT_EVIDENCE.
 | AI planner | OpenAI Responses structured choice, redacted counts and registered strategies; Friday's one-approved-IK-retarget action | Implement typed, independently validated strategies for moving actor/root motion and multi-character/other supported domains |
 | Native conversion | Immutable transfer plan, source-provenanced import/retarget/material/camera/track adapters, no-overwrite checks | Extend supported asset types, time-varying root/actor ownership, tested non-humanoid/humanoid policy, and never silently promise equivalent simulation |
 | Native execution | Same-project/level verification, automatic staging, native builder receipt, safe rollback for narrow cases | Make failure/restart idempotence and partially imported candidate recovery fully explicit, no unsafe retry |
-| AI evaluation and correction | CineTwin actor/root measurements, LangGraph analysis, native physical camera FOV comparison, native camera cut binding/section audit and narrow source-bound repair strategies | Animated joint orientation/bind-basis coverage, exact rendered projection/cut parity and additional *registered* safe repair adapters |
+| AI evaluation and correction | CineTwin actor/root, mapped joint angular-motion magnitude diagnostics, LangGraph analysis, physical camera FOV comparison, native cut binding/section audit and narrow source-bound repair strategies | Calibrated joint orientation-axis/bind-basis parity, exact rendered projection/cut parity and additional *registered* safe repair adapters |
 | Review UI | Dark minimal Studio, single-click transfer, AI planning progress, optional feedback, provenance audit, pre-native cancellation | Show all supported/partial domains and completed native results; end-user setup/recovery guidance |
 | Release evaluation | Canonical per-job release gate, exact native readback, AI/IK and reopened temporal checks, recomputation of source-bound actor/rig/camera comparison | Complete visual/audio/physics/event/held-out acceptance artifacts and sign-off criteria |
 | CI and packaging | Python tests, UI contract, compile/syntax, Ruff, repository hygiene | End-to-end code-only smoke workflow, Windows dependency/companion install checks and reproducible local build package |
@@ -118,6 +118,12 @@ deferred until software freeze.
   Sequencer camera-cut track/binding readback, including native FrameNumber
   values. Missing, overlapping, subframe, ambiguous and changed cuts cannot
   claim exact timing parity.
+- Added source-matched skeletal **joint angular-motion profiles** for
+  uniquely mapped native bones. Each sampled frame compares stepwise and
+  first-frame-relative angular displacement magnitudes, which do not require
+  guessing an absolute cross-rig orientation basis. Missing or ambiguous bone
+  correspondence stays INCOMPLETE; mismatched motion magnitudes are reported
+  and tested. This is **not** calibrated joint axis/bind orientation parity.
 - Post-reopen acceptance and the canonical release gate now separate actor/root,
   camera lens and authored cut timing outcomes. The release gate recomputes the
   whole behavior comparison from exact saved source and target samples and
