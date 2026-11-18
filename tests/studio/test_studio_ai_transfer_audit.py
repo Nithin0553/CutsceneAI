@@ -102,6 +102,7 @@ def _native_diagnostic(candidate: Path, job: dict) -> str:
     report_file = candidate / "CineTwin_WorldPose_Diagnosis_20261118.json"
     _write(report_file, {
         "kind": "cutsceneai.cinetwin.unreal_world_pose_diagnostic",
+        "status": "DIAGNOSTIC_NOT_FIDELITY_VERIFIED",
         "target": {"project": job["expected_project"],
                    "sequence_path": job["sequence_path"] + ".LS_Benchmark"},
         "source": {"csir_sha256": "source-proof", "capture_sha256": "capture-proof",
