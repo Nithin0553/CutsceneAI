@@ -75,6 +75,12 @@ def scene(tmp_path):
             "available": True, "actor_count": 6,
             "class_counts": {"CineCameraActor": 2, "SkeletalMeshActor": 2,
                              "DirectionalLight": 2},
+            "native_capabilities": {
+                "fbx_asset_import": True,
+                "sequencer_visibility_track": True,
+                "sequencer_skeletal_animation_track": True,
+                "cine_camera_actor": True,
+            },
             "truncated": False,
         },
     }
@@ -91,6 +97,7 @@ def test_ai_analyzes_both_projects_and_gates_partial_native_adapter(scene):
     assert summary["target_connected"] is True
     assert summary["target_level_actor_count"] == 6
     assert summary["target_level_actor_class_counts"]["CineCameraActor"] == 2
+    assert summary["target_native_capabilities"]["fbx_asset_import"] is True
     assert summary["safe_partial_visibility_adapter_available"] is True
     assert "visual_activation_partial" in evidence["allowed_strategies"]
     decision = ai.decide(config, census, worker, reasoner=lambda _: {
@@ -156,6 +163,32 @@ def test_partial_adapter_requires_actually_valid_activation_clips(scene):
         ai.decide(config, census, worker, reasoner=lambda _: {
             "strategy": "visual_activation_partial", "reason": "Ignore eligibility"
         })
+
+
+def test_ai_rejects_unreal_unsupported_native_conversion_options(scene):
+    config, census, worker = scene
+    disabled = dict(worker, scene_inventory={
+        **worker["scene_inventory"],
+        "native_capabilities": {
+            **worker["scene_inventory"]["native_capabilities"],
+            "sequencer_visibility_track": False,
+        },
+    })
+    data = ai.inspect(config, census, disabled)
+    assert "visual_activation_partial" not in data["allowed_strategies"]
+    with pytest.raises(ai.TransferAIError, match="not supported"):
+        ai.decide(config, census, disabled, reasoner=lambda _: {
+            "strategy": "visual_activation_partial", "reason": "Unsupported"
+        })
+    no_importer = dict(worker, scene_inventory={
+        **worker["scene_inventory"],
+        "native_capabilities": {
+            **worker["scene_inventory"]["native_capabilities"],
+            "fbx_asset_import": False,
+        },
+    })
+    with pytest.raises(ai.TransferAIError, match="FBX import capability"):
+        ai.inspect(config, census, no_importer)
 
 
 def test_source_only_redacted_summary_passed_to_llm(scene, monkeypatch):
