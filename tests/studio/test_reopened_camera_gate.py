@@ -1,6 +1,7 @@
 """Independent release-gate source/native camera evidence verification."""
 from __future__ import annotations
 
+import json
 import math
 import sys
 from pathlib import Path
@@ -21,6 +22,11 @@ from test_release_gate import fixture, put
 def _reopened(tmp_path):
     work, candidate, job = fixture(tmp_path)
     plan, source, target = _fixtures()
+    # The live acceptance path builds its sampling plan from the exact CSIR.
+    # Bind the synthetic fixture to that same prepared source checksum.
+    source_sha256 = gate._sha(Path(job["csir"]))
+    for record in (plan, source, target):
+        record["source"]["csir_sha256"] = source_sha256
     plan["camera_cuts"] = [{
         "source_entity_id": "camera", "source_section_id": "shot-1",
         "start_frame": 0, "end_frame": 4,
@@ -39,6 +45,12 @@ def _reopened(tmp_path):
         }
     capture = tmp_path / "source.capture.json"
     put(capture, source)
+    session_file = candidate / "session.json"
+    session = json.loads(session_file.read_text())
+    session["source_capture"] = {
+        "path": str(capture), "sha256": gate._sha(capture),
+    }
+    put(session_file, session)
     job.update(
         generation_editor_pid=101, expected_project=str(tmp_path / "Unreal/Staging.uproject"),
         expected_level="/Game/Stage/L_Test", capture=str(capture),
