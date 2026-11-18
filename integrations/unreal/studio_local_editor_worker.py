@@ -63,7 +63,9 @@ def _native_level_inventory():
         actors = unreal.get_editor_subsystem(
             unreal.EditorActorSubsystem).get_all_level_actors()
         counts = {}
-        for actor in actors[:5000]:
+        for index, actor in enumerate(actors):
+            if index >= 5000:
+                break
             try:
                 label = str(actor.get_class().get_name())[:72]
             except Exception:
