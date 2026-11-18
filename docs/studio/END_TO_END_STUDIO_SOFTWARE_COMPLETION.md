@@ -67,10 +67,12 @@ PARTIAL, UNSUPPORTED, or INSUFFICIENT_EVIDENCE.
 8. **Automated freeze**: entire Python/JS/contract suite green; the code-only
    integrated transfer scenario and negative security/identity cases pass;
    no TODO claiming an unsupported feature is transferred.
-9. **Live engine bridge continuity**: after explicit initial opt-in, Unity
+9. **Live editor/Studio continuity**: after explicit initial opt-in, Unity
    reconnects after ordinary C# domain reload; the already-open Unreal Editor
    refreshes trusted Python worker/adapters only when native execution is
-   idle. Stale/wrong-project/invalid heartbeats must refuse native work;
+   idle; the supervised Studio localhost server automatically rotates after
+   stable host Python updates while preserving persistent transfer state.
+   Stale/wrong-project/invalid heartbeats must refuse native work;
    changed source must not resubmit a queued, running or uncertain candidate.
    Compiled native engine changes may still require an editor restart.
 
@@ -212,6 +214,18 @@ scope and companion setup gates must be reviewed first.
   whitelisted native Studio adapter/planner modules after local checkout
   updates. Broken code, stale checkout, and an active or orphaned native job
   fail closed; neither bridge automatically replays a native candidate.
+- The Windows `tools/start_studio.ps1` launcher now supervises Studio's
+  **localhost host-only** Python rotation after stable, syntax-valid edits
+  to bounded trusted Python source files. The watcher defers while a native
+  job is queued/running/orphaned or active preparation is in progress;
+  syntax errors block new mutating HTTP actions without closing the existing
+  host. The process resumes on the same localhost port, restores durable
+  state from disk, and the browser re-obtains its session token. **No editor
+  restart, asset mutation, queue replay, or transfer approval** occurs
+  during source refresh. A detached direct Python server must opt in to
+  `--watch` and use the supervising launcher for automatic relaunch.
+  [Host/reconnection CI 44421508286](https://github.com/Nithin0553/CutsceneAI/actions/runs/44421508286):
+  **1,114 passed, 7 skipped**, Windows bootstrap and 14 UI contracts passed.
 - Studio's minimalist dark UI reports the live Unity and Unreal bridge
   states, and the connection/recovery guidance no longer demands routine
   Unreal Editor restarts for Python-only code changes. Legacy workers may
