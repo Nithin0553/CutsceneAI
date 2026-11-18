@@ -127,6 +127,12 @@ def attempt(api: Any, workspace: Path, job: dict, request: dict) -> dict:
         if not check.get("passed"):
             raise ValueError("Post-repair actor/root motion did not meet 2 cm: "
                              + str(check))
+        # Sequencer restores the previous editor time after readback; ensure
+        # that process did not revert the actor's base location before saving.
+        live = actor.get_actor_location()
+        live_cm = (float(live.x), float(live.y), float(live.z))
+        if math.dist(live_cm, corrected) > 0.1:
+            raise ValueError("Sequencer restored a different actor location; do not save.")
         import studio_auto_scene
         studio_auto_scene._save_level(api, job["expected_level"])
         saved = True
