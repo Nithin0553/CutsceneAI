@@ -11,6 +11,7 @@ use a handful of source-authored times before attempting a full recording.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sys
 from datetime import datetime, timezone
@@ -213,6 +214,8 @@ class _TickSession:
             analyze_motion_layers(self.plan, self.samples, self.rigs)
             if self.capture_motion_layers else None
         )
+        project = Path(unreal.Paths.get_project_file_path()).resolve()
+        project_bytes = project.read_bytes()
         capture = {
             "schema_version": "0.1.0",
             "kind": "cinetwin.target_behavior_observation",
@@ -223,6 +226,8 @@ class _TickSession:
                 "engine_version": unreal.SystemLibrary.get_engine_version(),
                 "sequence_asset_path": self.sequence.get_path_name(),
                 "editor_pid": os.getpid(),
+                "project_file_sha256": hashlib.sha256(project_bytes).hexdigest(),
+                "project_identity_sha256": hashlib.sha256(str(project).encode('utf-8') + b'\0' + project_bytes).hexdigest(),
             },
             "coverage": {
                 "sample_count": len(self.samples),

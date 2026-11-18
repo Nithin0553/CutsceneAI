@@ -180,6 +180,46 @@ def _joint_positions(samples_source, samples_target, source_rig, target_rig,
     }
 
 
+def _skeletal_root_world(source_samples, target_samples, source_rig, target_rig, joints, tolerance_cm):
+    """Pair root positions only when the matched hierarchy establishes correspondence."""
+    roots = [bone["bone_id"] for bone in source_rig["bones"] if not bone.get("parent_bone_id")]
+    native = [bone["bone_name"] for bone in target_rig["native_target_bones"] if not bone.get("parent_bone_name")]
+    if len(roots) != 1 or not native:
+        return {"status": "INSUFFICIENT_EVIDENCE", "reason": "MISSING_OR_AMBIGUOUS_NATIVE_ROOT"}
+    source_root, = roots
+    pairing = next((bone for bone in joints.get("bones", []) if bone["source_bone_id"] == source_root), None)
+    if pairing is None and len(native) != 1:
+        return {"status": "INSUFFICIENT_EVIDENCE", "reason": "NO_PROVEN_ROOT_CORRESPONDENCE"}
+    target_root = pairing["target_bone_name"] if pairing is not None else native[0]
+    identifier = source_rig["entity_id"]
+    measured = []
+    for left, right in zip(source_samples, target_samples):
+        src_pose = next(item for item in left["skeletal_poses"] if item["entity_id"] == identifier)
+        tgt_pose = next(item for item in right["skeletal_poses"] if item["entity_id"] == identifier)
+        src = next((bone["world_transform"] for bone in src_pose["bones"] if bone["bone_id"] == source_root), None)
+        tgt = next((bone for bone in tgt_pose["bones"] if bone["bone_name"] == target_root), None)
+        if src is None or tgt is None or tgt.get("unreal_world_rotation_xyzw") is None:
+            return {"status": "INSUFFICIENT_EVIDENCE", "reason": "ROOT_TRANSFORM_SAMPLES_UNAVAILABLE"}
+        measured.append((left["time_seconds"], _position(src, "source root"),
+                         _vector(tgt["world_position_m"], 3, "target root"),
+                         _vector(src["rotation_xyzw"], 4, "source root rotation"),
+                         _vector(tgt["unreal_world_rotation_xyzw"], 4, "target root rotation")))
+    start = measured[0]
+    return {
+        "status": ("WITHIN_POSITION_TOLERANCE" if pairing["max_error_cm"] <= tolerance_cm else "POSITION_MISMATCH")
+                  if pairing is not None else "ROOT_CORRESPONDENCE_UNVERIFIED",
+        "sample_count": len(measured), "source_root_bone_id": source_root, "target_root_bone_name": target_root,
+        "max_world_position_error_cm": pairing["max_error_cm"] if pairing is not None else None,
+        "worst_time_seconds": pairing["worst_time_seconds"] if pairing is not None else None,
+        "source_world_excursion_cm": 100 * max(_distance_m(start[1], item[1]) for item in measured),
+        "target_world_excursion_cm": 100 * max(_distance_m(start[2], item[2]) for item in measured),
+        "source_world_rotation_excursion_degrees": max(_rotation_error_degrees(start[3], i[3]) for i in measured),
+        "target_world_rotation_excursion_degrees": max(_rotation_error_degrees(start[4], i[4]) for i in measured),
+        "rotation_basis": "PER_ENGINE_NATIVE_WORLD_ROTATION_EXCURSIONS",
+        "absolute_root_rotation_error_degrees": None,
+    }
+
+
 def _check_identity(
     plan: dict[str, Any],
     source: dict[str, Any],
@@ -400,6 +440,9 @@ def compare(
             "source": src_motion, "target": tgt_motion,
             "flags": flags,
             "joint_positions": joints,
+            "skeletal_root_world": _skeletal_root_world(
+                source_samples, target_samples, source_rigs[eid], native_rigs[eid], joints, position_limit,
+            ),
             "comparison_policy": "MATCHED_JOINT_POSITIONS_AND_MOTION_PRESENCE",
         })
     # A large absolute difference can be a fixed world-space placement

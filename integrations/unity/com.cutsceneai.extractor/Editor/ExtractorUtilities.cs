@@ -283,6 +283,25 @@ namespace CutsceneAI.UnityExtractor
             return builder.ToString();
         }
 
+        internal static string SourceFileSha256(string assetPath)
+        {
+            if (string.IsNullOrEmpty(assetPath) || !assetPath.StartsWith("Assets/", StringComparison.Ordinal)
+                || Array.Exists(assetPath.Replace('\\', '/').Split('/'), part => part == ".." || part == "."))
+                return string.Empty;
+            try
+            {
+                var path = Path.Combine(Directory.GetParent(Application.dataPath).FullName, assetPath);
+                var file = new FileInfo(path);
+                if (!file.Exists || file.Length > 512L * 1024 * 1024)
+                    return string.Empty;
+                using var stream = File.OpenRead(path);
+                using var sha = SHA256.Create();
+                return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+            }
+            catch (IOException) { return string.Empty; }
+            catch (UnauthorizedAccessException) { return string.Empty; }
+        }
+
         internal static string ProjectFingerprint()
         {
             var projectRoot = Directory.GetParent(Application.dataPath)?.FullName ?? Application.dataPath;

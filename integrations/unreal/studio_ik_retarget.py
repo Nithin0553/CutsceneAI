@@ -51,7 +51,10 @@ def prepare(api, manifest):
         if _class(retargeter) != 'IKRetargeter' or _path(retargeter) != profile['retargeter_path']:
             raise RetargetError('Cannot resolve approved Unreal IK Retargeter for ' + character)
         controller = api.IKRetargeterController.get_controller(retargeter)
-        if controller is None or any(controller.get_ik_rig(role) is None for role in (roles.SOURCE, roles.TARGET)):
+        if controller is None:
+            raise RetargetError('The approved IK Retargeter needs authored source and target rigs: ' + character)
+        source_rig, target_rig = (controller.get_ik_rig(role) for role in (roles.SOURCE, roles.TARGET))
+        if source_rig is None or target_rig is None:
             raise RetargetError('The approved IK Retargeter needs authored source and target rigs: ' + character)
         source = controller.get_preview_mesh(roles.SOURCE)
         target = controller.get_preview_mesh(roles.TARGET)
@@ -59,7 +62,8 @@ def prepare(api, manifest):
                 or _path(source) != profile['source_mesh_path'] or _path(target) != profile['target_mesh_path']
                 or not _path(_skeleton(source)) or not _path(_skeleton(target))):
             raise RetargetError('Approved IK Retargeter preview meshes no longer match ' + character)
-        resolved[character] = {'retargeter': retargeter, 'source': source, 'target': target}
+        resolved[character] = {'retargeter': retargeter, 'source': source, 'target': target,
+                               'source_rig': source_rig, 'target_rig': target_rig}
     return resolved
 
 

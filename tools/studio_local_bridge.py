@@ -142,7 +142,7 @@ def worker_connected(folder: Path = WORKSPACE) -> dict[str, Any]:
                 'level': data.get('level'), 'worker_version': data.get('worker'),
                 'worker_source_sha256': data.get('worker_source_sha256'),
                 'checkout_root': data.get('checkout_root'),
-                'scene_inventory': data.get('scene_inventory'),
+                'scene_inventory': data.get('scene_inventory'), 'editor_pid': data.get('editor_pid'),
                 'age_seconds': round(age, 1)}
     except (ValueError, KeyError, OSError):
         return {'connected': False}
@@ -277,7 +277,8 @@ def review_flags(config: dict[str, Any], action_counts: dict[str, int]) -> list[
     return flags
 
 
-def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> dict[str, Any]:
+def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None, *,
+            character_selection: tuple[dict, dict] | None = None) -> dict[str, Any]:
     """Call the existing, source-authenticated transfer backend; never overwrite."""
     config = load_json(folder / 'connection.json')
     config_check(config)  # Recheck input files, target existence and source identity.
@@ -301,6 +302,8 @@ def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> 
     new_sequence = old_sequence + '_STUDIO_' + candidate_id[-8:].upper()
     if config.get('capture'):
         extra = {'transfer_options': overrides} if overrides else {}
+        if character_selection is not None:
+            extra['character_selection'] = character_selection
         mapping_copy, session = prepare_candidate(
             Path(config['csir']), Path(config['mapping']), Path(config['capture']),
             new_sequence, candidate_dir,
@@ -359,6 +362,9 @@ def prepare(folder: Path = WORKSPACE, options: dict[str, Any] | None = None) -> 
             immutable_setup = studio_auto_assets.inspect(
                 config['csir'], str(mapping_copy), str(candidate_dir / 'transfer-plan.json'),
                 config['unity_project'], config['source_scope'], namespace)
+            if character_selection is not None:
+                import animation_conversion_policy
+                animation_conversion_policy.verify_plan(*character_selection, load_json(mapping_copy), plan, immutable_setup)
             atomic_json(candidate_dir / 'automatic-setup.json', immutable_setup)
             automatic = {**immutable_setup, 'available': True,
                          'blockers': list(immutable_setup['blockers'])}
@@ -525,6 +531,7 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     )
     conversion_record = candidate_dir / 'ai-conversion-decision.json'
     conversion_sha = ''
+    character_record_sha = ''
     if conversion_record.is_file():
         if not selected_agent:
             raise ValueError('AI conversion evidence requires explicit AI consent.')
@@ -533,14 +540,29 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         prepared = load_json(candidate_record).get('prepared_options') or {}
         import studio_transfer_ai
         decision = load_json(conversion_record)
+        native_evidence = {}
+        if decision.get('character_compatibility_sha256'):
+            policy = studio_transfer_ai.character_policy()
+            report_file = candidate_dir / policy.REPORT_FILE
+            character_report = policy.compatibility.read_json(report_file)
+            if policy.compatibility.digest(character_report) != decision['character_compatibility_sha256']:
+                raise ValueError('Prepared character compatibility evidence was changed.')
+            _, probe = studio_transfer_ai.target_probe(config, heartbeat, folder, decision['character_probe_run_id'])
+            native_evidence['native_character_probe'] = probe
+            character_record_sha = policy.compatibility.file_digest(report_file)
         expected_opts = studio_transfer_ai.verify(
             decision, config, str(prepared.get('source_feature_surface_path') or ''),
-            heartbeat,
+            heartbeat, **native_evidence,
         )
         copied_mapping = load_json(Path(session['target']['mapping_path']))
         for key, value in expected_opts.items():
             if bool(copied_mapping.get(key)) != value:
                 raise ValueError('Prepared transfer mapping differs from AI-verified strategy: ' + key)
+        if decision.get('animation_conversion'):
+            if not automatic_requested:
+                raise ValueError('AI retargeting must stage fresh actors and clips through automatic setup.')
+            policy.verify_plan(character_report, decision['animation_conversion'], copied_mapping,
+                               load_json(candidate_dir / 'transfer-plan.json'), manifest)
         conversion_sha = hashlib.sha256(conversion_record.read_bytes()).hexdigest()
     job_id = uuid.uuid4().hex
     job = {'kind': 'cutsceneai.studio.local_unreal_job', 'schema_version': '0.1.0',
@@ -558,6 +580,9 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
            'ai_agents_enabled': selected_agent,
            'ai_conversion_decision_sha256': conversion_sha,
            'generation_status': 'NOT_STARTED', 'fidelity_verified': False}
+    if character_record_sha:
+        job['character_compatibility_sha256'] = character_record_sha
+        job['character_original_mapping'] = config['mapping']
     atomic_json(folder / 'jobs' / (job_id + '.json'), job)
     atomic_json(folder / 'active-job.json', {'job_id': job_id})
     return {'job_id': job_id, 'status': 'QUEUED',

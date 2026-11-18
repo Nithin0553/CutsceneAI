@@ -511,9 +511,29 @@ namespace CutsceneAI.UnityExtractor
                         asset_type = asset.GetType().FullName ?? asset.GetType().Name,
                         guid = guid ?? string.Empty,
                         local_file_id = localId,
+                        animation_clip = CaptureClipMetadata(asset as AnimationClip, path),
+                        source_sha256 = asset is AnimationClip ? ExtractorUtilities.SourceFileSha256(path) : string.Empty,
+                        source_meta_sha256 = asset is AnimationClip ? ExtractorUtilities.SourceFileSha256(path + ".meta") : string.Empty,
                     },
                 };
                 return id;
+            }
+
+            private static AnimationClipMetadata CaptureClipMetadata(AnimationClip clip, string path)
+            {
+                if (clip == null)
+                    return null;
+                var importer = string.IsNullOrEmpty(path) ? null : AssetImporter.GetAtPath(path) as ModelImporter;
+                return new AnimationClipMetadata
+                {
+                    duration_seconds = clip.length,
+                    frame_rate = clip.frameRate,
+                    is_looping = clip.isLooping,
+                    is_humanoid = clip.humanMotion,
+                    default_single_fbx_take = importer != null && importer.clipAnimations.Length == 0
+                        && importer.defaultClipAnimations.Length == 1
+                        && string.Equals(importer.defaultClipAnimations[0].name, clip.name, StringComparison.Ordinal),
+                };
             }
 
             private static SectionPayload CreateEmptyPayload(string displayName, string assetId)
