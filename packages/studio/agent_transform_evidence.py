@@ -6,7 +6,11 @@ shared by actor and skeletal root can be eligible for a native correction.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+import os
+from pathlib import Path
 from typing import Any
 
 TOLERANCE_CM = 2.0
@@ -129,3 +133,26 @@ def within_tolerance(report: dict, entity: str) -> dict[str, Any]:
         }
     except (KeyError, IndexError, TypeError, ValueError, OverflowError) as exc:
         return {"passed": False, "reason": str(exc)[:350]}
+
+
+def source_bound_report(job: dict, candidate: Path) -> dict:
+    """Bind immutable native diagnostic to this job and current input bytes."""
+    path = Path(str(job.get("diagnostic_file") or "")).resolve()
+    if path.parent != candidate.resolve() or not path.is_file() or path.is_symlink():
+        raise ValueError("Job-scoped original CineTwin diagnostic is unavailable.")
+    result = json.loads(path.read_text(encoding="utf-8-sig"))
+    origin = result.get("source") or {}
+    for key, field in (("csir", "csir_sha256"),
+                       ("mapping", "mapping_sha256"),
+                       ("capture", "capture_sha256")):
+        source_path = Path(str(job.get(key) or "")).resolve()
+        if (not source_path.is_file() or
+                origin.get(field) != hashlib.sha256(source_path.read_bytes()).hexdigest()):
+            raise ValueError("CineTwin source provenance changed: " + key)
+    target = result.get("target") or {}
+    expected_project = os.path.normcase(str(Path(job["expected_project"]).resolve()))
+    target_project = os.path.normcase(str(Path(str(target.get("project") or "")).resolve()))
+    if (target_project != expected_project or
+            target.get("sequence_path") != job.get("sequence_path")):
+        raise ValueError("CineTwin diagnostic targets a different project or sequence.")
+    return result
