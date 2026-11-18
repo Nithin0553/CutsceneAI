@@ -98,6 +98,11 @@ def test_native_sequencer_camera_cut_reader_uses_real_section_bounds_and_binding
     actual = cinetwin_camera_cuts.inspect(object(), api)
     assert actual == _native()
     assert actual["binding_provenance"] == "NATIVE_SEQUENCE_CAMERA_BINDING_ID"
+    # Unreal's get_start_frame/get_end_frame can return FFrameNumber
+    # value objects rather than Python integer scalars.
+    api.MovieSceneSectionExtensions.get_start_frame = lambda _: NS(value=0)
+    api.MovieSceneSectionExtensions.get_end_frame = lambda _: NS(value=4)
+    assert cinetwin_camera_cuts.inspect(object(), api) == _native()
 
 
 def test_missing_native_binding_id_fails_closed_without_guessing():
