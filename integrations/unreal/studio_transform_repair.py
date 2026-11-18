@@ -98,6 +98,15 @@ def attempt(api: Any, workspace: Path, job: dict, request: dict) -> dict:
     if len(actors) != 1 or actors[0].get_attach_parent_actor() is not None:
         raise ValueError("New actor label or hierarchy changed before correction.")
     actor = actors[0]
+    # Do not silently translate attached props or other descendants.
+    all_actors = api.get_editor_subsystem(
+        api.EditorActorSubsystem).get_all_level_actors()
+    for other in all_actors:
+        if other is actor:
+            continue
+        parent = other.get_attach_parent_actor()
+        if parent is not None and str(parent.get_actor_label()) == label:
+            raise ValueError("Actor has attached children; translation scope is not isolated.")
     start = actor.get_actor_location()
     first = fresh["frames"][target_name]["actor"][0]["target_cm"]
     old = (float(start.x), float(start.y), float(start.z))
