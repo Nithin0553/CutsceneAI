@@ -53,8 +53,19 @@ def rig(tmp_path, monkeypatch):
         "unity_project": str(project), "level_path": "/Game/Trial",
     })
     import studio_ui_features
+    import studio_transfer_ai
     monkeypatch.setattr(studio_ui_features, "validate_options",
                         lambda config, opts: opts)
+    monkeypatch.setattr(studio_transfer_ai, "decide", lambda config, census, worker: {
+        "kind": studio_transfer_ai.SCHEMA,
+        "schema_version": "1",
+        "strategy": "source_materials",
+        "conversion_options": {"enable_fbx_embedded_material_import": True,
+                               "enable_actor_visibility_fallback": False},
+    })
+    monkeypatch.setattr(studio_transfer_ai, "verify",
+                        lambda decision, config, census, worker:
+                        decision["conversion_options"])
 
     def read(path):
         return json.loads(Path(path).read_text())
@@ -65,10 +76,13 @@ def rig(tmp_path, monkeypatch):
 
     def prepare(workspace, opts):
         assert opts["require_complete_source_features"] is False
-        candidate = {"candidate_id": "candidate1", "automatic_setup": {
+        candidate = {"candidate_id": "candidate1",
+                     "candidate_dir": str(workspace / "candidates" / "candidate1"),
+                     "automatic_setup": {
             "available": True, "ready": True, "blockers": [],
         }}
         save(workspace / "active-candidate.json", candidate)
+        (workspace / "candidates" / "candidate1").mkdir(parents=True, exist_ok=True)
         return candidate
 
     def approve(candidate, workspace, *, enable_ai_agents):
@@ -131,8 +145,11 @@ def test_one_transfer_advances_through_all_stages_without_extra_user_calls(rig, 
                         })
     assert studio_autopilot.advance(workspace, service=service)["status"] == "WAITING_FOR_UNITY_CAPTURE"
     assert studio_autopilot.advance(workspace, service=service)["status"] == "CONNECTING"
+    assert studio_autopilot.advance(workspace, service=service)["status"] == "ANALYZING_PROJECTS"
     assert studio_autopilot.advance(workspace, service=service)["status"] == "PREPARING"
     assert studio_autopilot.advance(workspace, service=service)["status"] == "WAITING_FOR_UNREAL"
+    assert json.loads((workspace / "candidates" / "candidate1" /
+                       "ai-conversion-decision.json").read_text())["strategy"] == "source_materials"
     assert studio_autopilot.advance(workspace, service=service)["status"] == "UNREAL_RUNNING"
     state["job_status"] = "GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED"
     complete = studio_autopilot.advance(workspace, service=service)
