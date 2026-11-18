@@ -136,6 +136,43 @@ def within_tolerance(report: dict, entity: str) -> dict[str, Any]:
         return {"passed": False, "reason": str(exc)[:350]}
 
 
+def same_unreal_sequence(expected: str, observed: str) -> bool:
+    """Match a package path with the matching native Unreal object path.
+
+    A package '/Game/Foo/Seq' is equivalent ONLY to '/Game/Foo/Seq.Seq',
+    not to a different object, subobject, class-qualified path or package.
+    """
+    def package(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        match = re.fullmatch(
+            r"(/Game/(?:[A-Za-z0-9_]+/)*([A-Za-z0-9_]+))(?:\.([A-Za-z0-9_]+))?",
+            value,
+        )
+        if not match or (match.group(3) is not None
+                         and match.group(3) != match.group(2)):
+            return None
+        return match.group(1)
+
+    expected_pkg = package(expected)
+    return expected_pkg is not None and expected_pkg == package(observed)
+
+
+def same_unreal_project(expected: str, observed: str) -> bool:
+    """Require the same resolved absolute .uproject, not a name-only match."""
+    if not isinstance(expected, str) or not isinstance(observed, str):
+        return False
+    if not expected or not observed:
+        return False
+    a, b = Path(expected).resolve(), Path(observed).resolve()
+    return (
+        a.is_absolute() and b.is_absolute()
+        and a.suffix.lower() == ".uproject"
+        and b.suffix.lower() == ".uproject"
+        and os.path.normcase(str(a)) == os.path.normcase(str(b))
+    )
+
+
 def source_bound_report(job: dict, candidate: Path) -> dict:
     """Bind immutable native diagnostic to this job and current input bytes."""
     path = Path(str(job.get("diagnostic_file") or "")).resolve()
@@ -151,11 +188,10 @@ def source_bound_report(job: dict, candidate: Path) -> dict:
                 origin.get(field) != hashlib.sha256(source_path.read_bytes()).hexdigest()):
             raise ValueError("CineTwin source provenance changed: " + key)
     target = result.get("target") or {}
-    expected_project = os.path.normcase(str(Path(job["expected_project"]).resolve()))
-    target_project = os.path.normcase(str(Path(str(target.get("project") or "")).resolve()))
-    if (target_project != expected_project or
-            target.get("sequence_path") != job.get("sequence_path")):
-        raise ValueError("CineTwin diagnostic targets a different project or sequence.")
+    if not same_unreal_project(job.get("expected_project"), target.get("project")):
+        raise ValueError("CineTwin diagnostic targets a different Unreal project.")
+    if not same_unreal_sequence(job.get("sequence_path"), target.get("sequence_path")):
+        raise ValueError("CineTwin diagnostic targets a different Level Sequence.")
     return result
 
 
