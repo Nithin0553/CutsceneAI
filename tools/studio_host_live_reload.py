@@ -35,7 +35,7 @@ def source_snapshot(root: Path) -> dict[str, str]:
         for file in sorted(folder.glob("*.py")):
             if len(snapshot) >= MAX_FILES or file.is_symlink() or not file.is_file():
                 raise HostReloadError("Studio live-reload source inventory is unsafe.")
-            if not 0 < file.stat().st_size <= MAX_BYTES:
+            if not 0 <= file.stat().st_size <= MAX_BYTES:
                 raise HostReloadError("Studio live-reload source file is empty or oversized.")
             relative = file.relative_to(root).as_posix()
             snapshot[relative] = hashlib.sha256(file.read_bytes()).hexdigest()
