@@ -252,6 +252,14 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                     "require_complete_source_features": False,
                 })
                 worker = service.worker_connected(workspace)
+                if not worker.get("connected"):
+                    state["message"] = (
+                        "Unreal disconnected during read-only AI project analysis. "
+                        "Reconnect the same editor project and level; no native job "
+                        "has been submitted."
+                    )
+                    _write(file, state)
+                    return status(workspace)
                 requested, probe = studio_transfer_ai.target_probe(config, worker, workspace, state["run_id"], write=_write)
                 if requested and probe is None:
                     state["message"] = "Waiting for Unreal to inspect the mapped animation packages and approved rigs."
@@ -284,6 +292,14 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                 config = service.load_json(workspace / "connection.json")
                 decision = _load(workspace / "ai-conversion-decision.json")
                 worker = service.worker_connected(workspace)
+                if not worker.get("connected"):
+                    state["message"] = (
+                        "Unreal disconnected before immutable AI plan preparation. "
+                        "Reconnect the same project; the approved model decision "
+                        "is preserved and will be revalidated."
+                    )
+                    _write(file, state)
+                    return status(workspace)
                 native_evidence = {}
                 character_report = None
                 if decision.get("character_compatibility_sha256"):
