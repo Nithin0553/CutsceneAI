@@ -100,6 +100,19 @@ deferred until software freeze.
   retarget receipts and source-bound post-reopen temporal measurements.
 - Added source-hash, wrong candidate, plan tampering, no receipt, offline and
   cancellation regression tests.
+- Added the integrated software-only synthetic transfer regression
+  `tests/studio/test_studio_software_e2e_synthetic.py`: validates the canonical
+  Unity capture sampling grid, native Unreal target inspection, production
+  OpenAI Responses schema via mocked transport, new immutable candidate and
+  queue handoff, mocked native skeleton/clip readback, AI transfer audit,
+  independent release gate and tampered-decision refusal. Even its synthetic
+  successful native receipt is **not** a real-engine fidelity pass.
+  Reviewed first green integrated CI: commit `ca1496ce`,
+  [960 Python tests passed, 7 skipped, Windows bootstrap and UI/ruff green](https://github.com/Nithin0553/CutsceneAI/actions/runs/44399720465).
+- Moving-character native adapter development is delegated to Friday under
+  [F-003 issue #129](https://github.com/Nithin0553/CutsceneAI/issues/129);
+  his isolated branch `agent/friday-moving-character-motion-v0.1` is based
+  on the release candidate. No work from that assignment is yet accepted.
 - Added bounded (60-minute) source Play Mode capture and (180-second) read-only
   Unreal character-probe waits. Expired requests report a safe terminal failure;
   they never invent samples or submit a native job.
