@@ -814,3 +814,44 @@ def test_worker_rejects_an_explicitly_deferred_or_broken_live_reload():
         **stable, "live_reload_state": "BLOCKED",
         "live_reload_error": "invalid Python update",
     })
+
+
+
+def test_host_source_update_blocks_new_mutations_without_disconnecting_engine_markers(
+    service, monkeypatch, tmp_path,
+):
+    import importlib.util
+
+    base, _ = service
+    reload_path = ROOT / "tools/studio_host_live_reload.py"
+    spec = importlib.util.spec_from_file_location("_studio_host_reload_api_test", reload_path)
+    assert spec is not None and spec.loader is not None
+    watch_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(watch_module)
+    repo = tmp_path / "checkout"
+    for relative in watch_module.DIRECTORIES:
+        (repo / relative).mkdir(parents=True)
+    code = repo / "tools/studio_local_bridge.py"
+    code.write_text("VERSION = 1\n", encoding="utf-8")
+    watcher = watch_module.HostCodeWatcher(repo, tmp_path / "runs")
+    monkeypatch.setattr(bridge, "SOURCE_WATCHER", watcher)
+    before, response = call(base + "/api/status")
+    assert before == 200
+    assert response["host_reload"]["status"] == "CURRENT"
+    assert response["host_reload"]["engine_restart_required"] is False
+    secret = response["token"]
+
+    # Syntax-invalid updates must not be executed or permitted to create an
+    # immutable transfer job. The HTTP process stays up to report diagnostics.
+    code.write_text("def invalid(:\n", encoding="utf-8")
+    status, rejected = call(base + "/api/connect", {"bad": "input"}, secret)
+    assert status == 503
+    assert "source changed" in rejected["error"].lower()
+    assert call(base + "/api/status")[1]["host_reload"]["status"] == "BLOCKED_INVALID_CODE"
+
+    # Once corrected, the watcher waits for a stable version before returning
+    # its special exit signal; no engine processes are restarted by this API.
+    code.write_text("VERSION = 2\n", encoding="utf-8")
+    assert watcher.observe() is False
+    assert watcher.observe() is True
+    assert watcher.status()["native_job_replayed"] is False
