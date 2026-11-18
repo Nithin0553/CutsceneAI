@@ -12,14 +12,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "packages" / "cinetwin"))
 
-from camera_optics import (  # noqa: E402
-    CameraOpticsError,
+from behavior_compare import compare
+from camera_optics import (
     NATIVE_BASIS,
+    CameraOpticsError,
     compare_camera_optics,
     observe_native_camera,
 )
-from behavior_compare import compare  # noqa: E402
-from test_behavior_compare import _fixtures  # noqa: E402
+from test_behavior_compare import _fixtures
 
 
 def _lens(fov=40.0, focal=50.0):
