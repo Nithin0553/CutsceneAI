@@ -140,6 +140,27 @@ def _execute(job):
         raise RuntimeError('Prepared evidence does not match submitted job.')
     if prepared['target']['sequence_asset_path'] != job['sequence_path']:
         raise RuntimeError('Sequence identity mismatch.')
+    # A host AI conversion choice is a measured, source-bound option record,
+    # not authority to write arbitrary Unreal commands. Match its bytes to
+    # the job's approved hash BEFORE any native editor mutation.
+    ai_decision = candidate_dir / 'ai-conversion-decision.json'
+    ai_sha = job.get('ai_conversion_decision_sha256') or ''
+    if ai_sha or ai_decision.exists():
+        if not (isinstance(ai_sha, str) and len(ai_sha) == 64
+                and ai_decision.is_file() and not ai_decision.is_symlink()
+                and hashlib.sha256(ai_decision.read_bytes()).hexdigest() == ai_sha
+                and job.get('ai_agents_enabled') is True):
+            raise RuntimeError('AI conversion provenance is missing or stale; do not import assets.')
+        decision = _load(ai_decision)
+        mapped = _load(Path(job['mapping']))
+        options = decision.get('conversion_options') or {}
+        if decision.get('kind') != 'cutsceneai.studio.ai_conversion_decision':
+            raise RuntimeError('Unexpected AI conversion decision format.')
+        for option in ('enable_fbx_embedded_material_import',
+                       'enable_actor_visibility_fallback'):
+            if (type(options.get(option)) is not bool
+                    or bool(mapped.get(option)) != options[option]):
+                raise RuntimeError('Unreal mapping no longer matches AI-approved option: ' + option)
     # Import the engine generator BEFORE creating a level, importing any FBX,
     # or spawning any actor. A missing/circular module must not leave behind
     # a saved but unusable automatic setup.
