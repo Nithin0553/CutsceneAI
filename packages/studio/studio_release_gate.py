@@ -357,6 +357,16 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
         camera_checks = []
         camera_plan = _read(sampling_file)
         if camera_plan.get("kind") == "cinetwin.sampling_plan":
+            # The supplied plan and Unity capture must be the immutable inputs
+            # of this exact queued candidate, not a self-consistent foreign pair.
+            saved_session = _read(session_path)
+            captured = saved_session.get("source_capture") or {}
+            if (camera_plan.get("source", {}).get("csir_sha256") != _sha(csir_path)
+                    or captured.get("path") != str(capture_path)
+                    or captured.get("sha256") != _sha(capture_path)):
+                raise ReleaseEvidenceError(
+                    "Reopened camera evidence does not match the prepared Unity source and capture."
+                )
             try:
                 recomputed = compare(
                     camera_plan, _read(capture_path), _read(target_file)
