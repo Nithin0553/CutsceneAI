@@ -31,6 +31,7 @@ class Asset:
 class Task:
     def __init__(self): self.props={}
     def set_editor_property(self,name,value): self.props[name]=value
+    def get_editor_property(self,name): return self.props[name]
 
 
 class Actor:
@@ -63,7 +64,8 @@ class FakeUnreal:
         self.Paths=SimpleNamespace(get_project_file_path=lambda:self.project)
         self.UnrealEditorSubsystem=object()
         self.EditorActorSubsystem=object()
-        self.EditorAssetLibrary=SimpleNamespace(does_asset_exist=lambda p:p in self.assets)
+        self.EditorAssetLibrary=SimpleNamespace(does_asset_exist=lambda p:p in self.assets,
+                                               duplicate_asset=self.duplicate_asset)
         self.AssetToolsHelpers=SimpleNamespace(get_asset_tools=lambda:self.asset_tools)
         self.AssetImportTask=Task
         self.FbxImportUI=Task
@@ -84,6 +86,15 @@ class FakeUnreal:
         if kind is self.LevelEditorSubsystem: return self.levelsaver
         raise AssertionError('Unknown subsystem')
     def load_asset(self,path): return self.assets.get(path)
+    def duplicate_asset(self,source,dest):
+        if source not in self.assets or dest in self.assets:
+            return None
+        original=self.assets[source]
+        copy=Asset(original.klass,dest)
+        copy.skeleton=original.skeleton
+        self.assets[dest]=copy
+        return copy
+
     def imports(self,tasks):
         for task in tasks:
             opt=task.props.get('options')
@@ -497,3 +508,78 @@ def test_unsupported_source_light_type_is_source_asset_blocker(tmp_path):
     )
     assert stage["ready"] is False
     assert any("Unsupported Unity light type" in v for v in stage["blockers"])
+
+
+
+def test_multimesh_tree_fbx_promotes_only_source_lod0_and_records_unverified_lods(tmp_path):
+    fake = FakeUnreal(str(tmp_path / 'NewProject.uproject'))
+    source = tmp_path / 'Tree_02.fbx'
+    source.write_bytes(b'source-tree-fbx')
+    target = '/Game/Stage/Props/CSAI_ENV_TREE_LEFT'
+    stage = scene._static_import_stage(target)
+    task = scene._task(fake, source, stage, 'StaticMesh')
+    folder = stage.rsplit('/', 1)[0]
+    a, b = folder + '/Tree_02_LOD0', folder + '/Tree_02_LOD1'
+    fake.assets[a] = Asset('StaticMesh', a)
+    fake.assets[b] = Asset('StaticMesh', b)
+    task.props['imported_object_paths'] = [a + '.Tree_02_LOD0', b + '.Tree_02_LOD1']
+
+    canonical, trace = scene._materialize_static_mesh(fake, task, source, target, stage)
+    assert canonical.path == target
+    assert canonical is not fake.assets[a]
+    assert trace['source_mesh_path'] == a
+    assert trace['separate_unverified_lod_meshes'] == [b]
+    assert trace['lod_chain_verified'] is False
+    assert fake.assets[b].path == b  # no destructive mutation of source LOD1
+
+    # A second prop from the SAME FBX uses a distinct isolated stage folder.
+    right = '/Game/Stage/Props/CSAI_ENV_TREE_RIGHT'
+    right_stage = scene._static_import_stage(right)
+    assert right_stage.rsplit('/', 1)[0] != folder
+    other = scene._task(fake, source, right_stage, 'StaticMesh')
+    another_folder = right_stage.rsplit('/', 1)[0]
+    names = [
+        another_folder + '/Tree_02_LOD0',
+        another_folder + '/Tree_02_LOD1',
+    ]
+    for path in names:
+        fake.assets[path] = Asset('StaticMesh', path)
+    other.props['imported_object_paths'] = [path + '.' + path.rsplit('/', 1)[-1] for path in names]
+    second, trace2 = scene._materialize_static_mesh(fake, other, source, right, right_stage)
+    assert second.path == right and second is not canonical
+    assert trace2['source_mesh_path'] == names[0]
+
+
+def test_unidentified_multi_mesh_fbx_fails_closed_without_copying_or_guessing(tmp_path):
+    fake = FakeUnreal(str(tmp_path / 'NewProject.uproject'))
+    source = tmp_path / 'Tree_02.fbx'
+    target = '/Game/Stage/Props/CSAI_ENV_TREE_LEFT'
+    stage = scene._static_import_stage(target)
+    folder = stage.rsplit('/', 1)[0]
+    task = scene._task(fake, source, stage, 'StaticMesh')
+    only_lod1 = folder + '/Tree_02_LOD1'
+    fake.assets[only_lod1] = Asset('StaticMesh', only_lod1)
+    task.props['imported_object_paths'] = [only_lod1 + '.Tree_02_LOD1']
+    with pytest.raises(scene.AutomaticSetupError, match='source LOD0'):
+        scene._materialize_static_mesh(fake, task, source, target, stage)
+    assert target not in fake.assets
+
+    unexpected = folder + '/Some_Other_Mesh'
+    fake.assets[unexpected] = Asset('StaticMesh', unexpected)
+    task.props['imported_object_paths'] = [only_lod1, unexpected]
+    with pytest.raises(scene.AutomaticSetupError, match='unrecognized separate mesh'):
+        scene._materialize_static_mesh(fake, task, source, target, stage)
+    assert target not in fake.assets
+
+
+def test_static_mesh_staging_refuses_preexisting_planned_target(tmp_path):
+    fake = FakeUnreal(str(tmp_path / 'NewProject.uproject'))
+    source = tmp_path / 'Tree_02.fbx'
+    target = '/Game/Stage/Props/CSAI_ENV_TREE_LEFT'
+    stage = scene._static_import_stage(target)
+    fake.assets[stage] = Asset('StaticMesh', stage)
+    fake.assets[target] = Asset('StaticMesh', target)
+    task = scene._task(fake, source, stage, 'StaticMesh')
+    with pytest.raises(scene.AutomaticSetupError, match='Refusing to overwrite'):
+        scene._materialize_static_mesh(fake, task, source, target, stage)
+    assert fake.assets[target].path == target
