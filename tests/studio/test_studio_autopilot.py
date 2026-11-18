@@ -391,6 +391,35 @@ def test_crash_after_unreal_job_submission_recovers_without_requeue(rig):
     assert len(list((workspace / "jobs").glob("*.json"))) == 1
 
 
+def test_native_job_recovery_rejects_wrong_level_after_crash(rig):
+    workspace, project, target, service, _ = rig
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    active = workspace / studio_autopilot.ACTIVE
+    record = json.loads(active.read_text())
+    record.update(status="WAITING_FOR_UNREAL", candidate_id="candidate1")
+    active.write_text(json.dumps(record))
+    candidate_dir = workspace / "candidates" / "candidate1"
+    candidate_dir.mkdir(parents=True)
+    metadata = _recovery_evidence(workspace, project, target, candidate_dir)
+    metadata["expected_level"] = "/Game/WrongTarget"
+    job_id = "d" * 32
+    jobs = workspace / "jobs"
+    jobs.mkdir()
+    (jobs / (job_id + ".json")).write_text(json.dumps({
+        "kind": "cutsceneai.studio.local_unreal_job",
+        "job_id": job_id, "candidate_id": "candidate1",
+        "candidate_dir": str(candidate_dir), **metadata,
+    }))
+    service.queue_trial = lambda *_: pytest.fail("Never requeue a tampered job")
+    result = studio_autopilot.advance(workspace, service=service)
+    assert result["status"] == "BLOCKED"
+    assert "source, target or mapping changed" in result["error"]
+    assert not (workspace / "active-job.json").exists()
+
+
 def test_crash_recovery_refuses_duplicate_jobs_and_conflicting_pointer(rig):
     workspace, project, target, service, _ = rig
     studio_autopilot.begin(
