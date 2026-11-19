@@ -134,12 +134,24 @@ def _mapping_actor(mapping: dict[str, Any], entity_name: str) -> str:
 
 
 def _curve_map(section: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Only root-bound Unity curves can drive an Unreal actor transform.
+
+    Nested bone/child curves retain their CSIR path and must be handled by
+    skeletal conversion. Flattening paths corrupts actor placement and facing.
+    """
     curves = section.get("payload", {}).get("animation", {}).get("curves", [])
     result: dict[str, dict[str, Any]] = {}
     for curve in curves:
+        if not isinstance(curve, dict):
+            raise PlanError("Animation contains a non-object source curve.")
+        if str(curve.get("path") or "").strip():
+            continue
         semantic = curve.get("canonical_semantic") or curve.get("property_name")
         if semantic:
-            result[str(semantic)] = curve
+            name = str(semantic)
+            if name in result:
+                raise PlanError("Ambiguous duplicate root-level animation curve: " + name)
+            result[name] = curve
     return result
 
 
@@ -179,7 +191,22 @@ def _curve_value(curve: dict[str, Any] | None, time_seconds: float, default: flo
     """
     if not curve or not curve.get("keys"):
         return default
+    if not math.isfinite(float(time_seconds)):
+        raise PlanError("Non-finite source animation sample time.")
     keys = curve["keys"]
+    previous_time = -math.inf
+    for key in keys:
+        try:
+            timestamp, value = float(key["time_seconds"]), float(key["value"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PlanError("Source curve has an invalid time or value.") from exc
+        if not math.isfinite(timestamp) or not math.isfinite(value):
+            raise PlanError("Non-finite source animation key.")
+        if timestamp <= previous_time:
+            raise PlanError("Source animation key times must be strictly increasing.")
+        if curve.get("native_keys") and int(key.get("weighted_mode", 0)):
+            raise PlanError("Weighted Unity curve tangents require a dedicated evaluator.")
+        previous_time = timestamp
     if time_seconds <= float(keys[0]["time_seconds"]):
         return float(keys[0]["value"])
     if time_seconds >= float(keys[-1]["time_seconds"]):
@@ -213,9 +240,8 @@ def _source_root_delta_unreal_cm(
 ) -> tuple[float, float, float] | None:
     """Resolve Unity Animator RootT displacement into Unreal world-axis centimeters."""
     curves = {
-        str(curve.get("property_name")): curve
-        for curve in section.get("payload", {}).get("animation", {}).get("curves", [])
-        if str(curve.get("property_name", "")).startswith("RootT.")
+        name: curve for name, curve in _curve_map(section).items()
+        if name.startswith("RootT.")
     }
     required = ("RootT.x", "RootT.y", "RootT.z")
     if not all(name in curves for name in required):
@@ -243,9 +269,8 @@ def _source_root_samples_unreal_cm(
 ) -> list[dict[str, Any]]:
     """Sample source RootT displacement at authored key times in Unreal world axes."""
     curves = {
-        str(curve.get("property_name")): curve
-        for curve in section.get("payload", {}).get("animation", {}).get("curves", [])
-        if str(curve.get("property_name", "")).startswith("RootT.")
+        name: curve for name, curve in _curve_map(section).items()
+        if name.startswith("RootT.")
     }
     required = ("RootT.x", "RootT.y", "RootT.z")
     if not all(name in curves for name in required):
@@ -305,9 +330,8 @@ def _source_root_profile_unreal_cm(
     section so a jump-like clip is not misclassified from a near-zero end displacement.
     """
     curves = {
-        str(curve.get("property_name")): curve
-        for curve in section.get("payload", {}).get("animation", {}).get("curves", [])
-        if str(curve.get("property_name", "")).startswith("RootT.")
+        name: curve for name, curve in _curve_map(section).items()
+        if name.startswith("RootT.")
     }
     required = ("RootT.x", "RootT.y", "RootT.z")
     if not all(name in curves for name in required):
@@ -709,7 +733,8 @@ def _section_curve_channels(section: dict[str, Any]) -> tuple[
     quaternion = {axis: curves.get("transform.rotation." + axis) for axis in "xyzw"}
     euler = {
         axis: next((c for c in section.get("payload", {}).get("animation", {}).get("curves", [])
-                    if str(c.get("property_name", "")).lower() in {
+                    if not str(c.get("path") or "").strip()
+                    and str(c.get("property_name", "")).lower() in {
                         "localeuleranglesraw." + axis,
                         "m_localeulerangleshint." + axis,
                     }), None)
@@ -759,8 +784,9 @@ def _sample_section_transform(
             if section_start <= timeline_time <= section_end:
                 sample_source_times.add(source_start + (timeline_time - section_start) * time_scale)
         sample_source_times.update((source_start, source_end))
-    if not sample_source_times:
-        return [], False
+    # Unity holds endpoint values for trimmed clips, even when no authored
+    # key falls within their source-time window.
+    sample_source_times.update((source_start, source_end))
 
     track_position = _vector_offset(curves, "transform.track_offset.position")
     infinite_position = _vector_offset(curves, "transform.infinite_offset.position")
