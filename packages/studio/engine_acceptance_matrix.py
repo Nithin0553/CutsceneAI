@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -31,8 +30,12 @@ class MatrixError(ValueError):
 
 
 def _json_bound(path: Path, root: Path) -> dict:
+    # Inspect links *before* resolution; checking is_symlink after resolve
+    # silently loses the evidence that a file was redirected elsewhere.
+    if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+        raise MatrixError("Acceptance evidence cannot pass through symlinks.")
     path = path.resolve()
-    if not path.is_relative_to(root.resolve()) or not path.is_file() or path.is_symlink():
+    if not path.is_relative_to(root.resolve()) or not path.is_file():
         raise MatrixError("Acceptance evidence must be a regular file inside the selected workspace.")
     if path.stat().st_size > 64 * 1024 * 1024:
         raise MatrixError("Acceptance evidence exceeds the bounded file limit.")
