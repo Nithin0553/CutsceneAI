@@ -178,3 +178,56 @@ def test_trimmed_clip_holds_source_endpoint_even_with_no_key_in_window():
     assert len(keys) == 1
     assert [key["frame"] for key in keys[0]] == [0, 30]
     assert all(abs(key["location_cm"][1] - 300.0) < 1e-8 for key in keys[0])
+
+
+
+@pytest.mark.parametrize("resolution", [
+    [0, 1080], [1920, -1], [1920.0, 1080], [True, 1080],
+    [16385, 1080], [1280], "1920x1080",
+])
+def test_invalid_explicit_target_resolution_cannot_fall_back_silently(resolution):
+    mapping = _mapping()
+    mapping["output_resolution"] = resolution
+    with pytest.raises(csir_plan.PlanError, match="output_resolution"):
+        csir_plan.build_plan(_source(), mapping)
+
+
+def test_valid_explicit_target_resolution_is_used_exactly():
+    mapping = _mapping()
+    mapping["output_resolution"] = [2048, 858]
+    plan = csir_plan.build_plan(_source(), mapping)
+    assert plan["output_resolution"] == [2048, 858]
+    assert plan["output_profile_source"] == "mapping.output_resolution"
+
+
+@pytest.mark.parametrize("bad_time", [
+    0.0, float("nan"), float("inf"), -1.0, 9999999.0,
+])
+def test_invalid_or_unbounded_source_timeline_refuses_before_mapping(bad_time):
+    source = _source()
+    source["timing"]["duration_seconds"] = bad_time
+    with pytest.raises(csir_plan.PlanError, match="source timeline"):
+        csir_plan.build_plan(source, _mapping())
+
+
+def test_partial_authored_quaternion_offset_cannot_guess_unrecorded_axes():
+    source = _with_transform([
+        _curve(1.0),
+        {"path": "", "canonical_semantic": "transform.track_offset.rotation.x",
+         "keys": [{"time_seconds": 0, "value": 0.2}]},
+    ])
+    with pytest.raises(csir_plan.PlanError, match="Partial source orientation offset"):
+        _transform_keys(source)
+
+
+def test_incomplete_quaternion_offset_time_samples_refuse():
+    curves = [_curve(1.0)]
+    for axis, value in zip("xyzw", [0.0, 0.0, 0.0, 1.0]):
+        curves.append({
+            "path": "",
+            "canonical_semantic": "transform.track_offset.rotation." + axis,
+            "keys": ([{"time_seconds": 0.0, "value": value}]
+                     if axis != "w" else []),
+        })
+    with pytest.raises(csir_plan.PlanError, match="one key per quaternion"):
+        _transform_keys(_with_transform(curves))
