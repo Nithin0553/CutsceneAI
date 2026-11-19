@@ -186,8 +186,11 @@ def test_prop_relative_keys_are_resolved_against_infinite_offset() -> None:
         item for item in plan["actions"] if item.get("track_name") == "MOVING_PROP_Movement"
     )
 
-    assert action["keys"][0]["frame"] == 120
+    # The Unity clip is active from frame 0, but its first authored value
+    # begins at frame 120. Preserve the held initial pose through that gap.
+    assert action["keys"][0]["frame"] == 0
     assert action["keys"][0]["location_cm"] == (500.0, -200.0, 50.0)
+    assert any(key["frame"] == 120 for key in action["keys"])
     assert action["keys"][-1]["frame"] == 420
     assert action["keys"][-1]["location_cm"] == (500.0, 200.0, 50.0)
 
