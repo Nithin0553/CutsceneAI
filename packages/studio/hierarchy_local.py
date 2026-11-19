@@ -128,10 +128,9 @@ def bake_parent_local(
         parent = entities[parent_id]["world_transform"]
         child = entities[child_id]["world_transform"]
         position, quat = _relative(parent, child)
-        roll, pitch, yaw = csir_plan.canonical_quat_to_unreal_rotator(quat)
-        rpy = (roll, pitch, yaw)
-        if previous is not None:
-            rpy = tuple(_unwrap(a,b) for a,b in zip(previous,rpy))
+        rpy = csir_plan.continuous_unreal_rotator(
+            previous, csir_plan.canonical_quat_to_unreal_rotator(quat)
+        )
         previous = rpy
         keys.append({
             "frame": frame,
