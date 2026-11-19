@@ -26,6 +26,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--csir", type=Path, required=True)
     parser.add_argument("--mapping", type=Path, required=True)
+    parser.add_argument(
+        "--trained-ced-policy", type=Path,
+        help="Optional immutable CED pretrained model for read-only mapping suggestions",
+    )
     parser.add_argument("--out", type=Path, help="New report file; existing files are never overwritten")
     parser.add_argument(
         "--discovery-registry", type=Path,
@@ -42,6 +46,48 @@ def main(argv: list[str] | None = None) -> int:
         mapping = json.loads(args.mapping.read_text(encoding="utf-8-sig"))
         report = ced_preflight.audit(csir, mapping)
         report["source_csir_sha256"] = hashlib.sha256(source_bytes).hexdigest()
+        if args.trained_ced_policy is not None:
+            learning = str(ROOT / "packages" / "learning")
+            if learning not in sys.path:
+                sys.path.insert(0, learning)
+            import ced_pretraining
+            model_path = args.trained_ced_policy
+            if (model_path.is_symlink() or not model_path.is_file()
+                    or model_path.stat().st_size > 16 * 1024 * 1024):
+                raise ced_preflight.CEDPreflightError("Unsafe or missing trained CED model.")
+            model = ced_pretraining.validate(
+                json.loads(model_path.read_text(encoding="utf-8-sig"))
+            )
+            suggestions = []
+            seen = set()
+            for finding in report["findings"]:
+                if not (finding.get("active") is True
+                        and finding.get("state")
+                        in {"UNKNOWN_CED", "UNKNOWN_NATIVE", "NEEDS_EVIDENCE"}):
+                    continue
+                fingerprint = finding["feature_fingerprint"]
+                if fingerprint in seen:
+                    continue
+                seen.add(fingerprint)
+                source_term = str(finding.get("native_type") or finding.get("ced") or "")
+                if not source_term:
+                    continue
+                # Retrieved semantics are proposals only: no target mapping,
+                # resolver, conversion or native asset is modified.
+                candidates = ced_pretraining.suggest(
+                    model, source_term, engine="unity", limit=3)
+                suggestions.append({
+                    "feature_fingerprint": fingerprint,
+                    "candidates": candidates,
+                    "proposal_only": True,
+                    "native_conversion_authorized": False,
+                })
+            report["trained_ced_policy"] = {
+                "payload_sha256": model["payload_sha256"],
+                "training_kind": model["training_type"],
+                "native_conversion_authorized": False,
+                "candidate_groups": suggestions,
+            }
         if args.out:
             if args.out.exists():
                 raise ced_preflight.CEDPreflightError(
