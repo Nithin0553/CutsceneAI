@@ -169,3 +169,100 @@ def export_policy(experiences_file: str | Path, output_file: str | Path,
         json.dump(policy, handle, indent=2, allow_nan=False)
         handle.write("\n")
     return policy
+
+
+def record_native_experience(
+    comparison_file: str | Path,
+    sampling_plan_file: str | Path,
+    output_jsonl: str | Path,
+    *,
+    ced: str, rule_id: str, source_version: str, target_version: str,
+    human_reviewed: bool = False,
+) -> dict:
+    """Convert a source-bound native acceptance comparison into durable RL data.
+
+    Never infer a positive reward from synthetic receipts, flags or a
+    single-Editor write. Actual evidence authenticity is operator-reviewed.
+    This collector records every failure/incomplete result for future offline
+    training without promoting a mapping.
+    """
+    comp = Path(comparison_file)
+    plan = Path(sampling_plan_file)
+    output = Path(output_jsonl)
+    for file in (comp, plan):
+        if (file.is_symlink() or any(parent.is_symlink() for parent in file.parents)
+                or not file.is_file() or not 0 < file.stat().st_size < 64 * 1024 * 1024):
+            raise CEDLearningError("Source/native mapping evidence is missing or unsafe.")
+    try:
+        comparison = json.loads(comp.read_text(encoding="utf-8-sig"))
+        sampling = json.loads(plan.read_text(encoding="utf-8-sig"))
+    except (ValueError, OSError, UnicodeError) as exc:
+        raise CEDLearningError("Native experience evidence could not be decoded.") from exc
+    if (not isinstance(comparison, dict) or not isinstance(sampling, dict)
+            or comparison.get("kind") != "cinetwin.behavior_comparison"
+            or not isinstance(comparison.get("evaluation"), dict)):
+        raise CEDLearningError("Native feedback requires a comparison and source plan.")
+    source = sampling.get("source", {})
+    project = source.get("project_fingerprint")
+    source_hash = source.get("csir_sha256")
+    capture_hash = comparison.get("source_capture_sha256")
+    if (not isinstance(project, str) or not project
+            or not isinstance(source_hash, str) or not _SHA.fullmatch(source_hash)
+            or not isinstance(capture_hash, str) or not _SHA.fullmatch(capture_hash)
+            or not isinstance(comparison.get("target_observation_sha256"), str)
+            or not _SHA.fullmatch(comparison["target_observation_sha256"])):
+        raise CEDLearningError("Missing immutable source/native acceptance identity.")
+    a, b = comparison.get("generation_editor_pid"), comparison.get("observation_editor_pid")
+    independent_process = (type(a) is int and type(b) is int
+                           and a > 0 and b > 0 and a != b
+                           and comparison.get("native_persistence_status")
+                           == "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS")
+    no_differences = (comparison.get("acceptance_status")
+                      == "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE"
+                      and comparison["evaluation"].get("status") == "NO_FLAGGED_DIFFERENCES"
+                      and comparison["evaluation"].get("overall_cutscene_fidelity")
+                      == "NOT_ESTABLISHED")
+    if no_differences and independent_process and human_reviewed is True:
+        outcome = "PASS"
+    elif comparison["evaluation"].get("status") == "DIFFERENCES_DETECTED":
+        outcome = "FAIL"
+    else:
+        outcome = "INCOMPLETE"
+    case_sha = _digest([
+        source_hash, capture_hash, comparison["target_observation_sha256"],
+        ced, rule_id, hashlib.sha256(comp.read_bytes()).hexdigest(),
+    ])
+    row = {
+        "kind": "cutsceneai.ced.mapping_experience",
+        "schema_version": POLICY_VERSION,
+        "case_sha256": case_sha,
+        "project_group_sha256": hashlib.sha256(project.encode("utf-8")).hexdigest(),
+        "ced": ced, "rule_id": rule_id,
+        "source_engine": "unity", "target_engine": "unreal",
+        "source_version": source_version, "target_version": target_version,
+        "test_outcome": outcome,
+        "native_readback_verified": independent_process and no_differences,
+        "human_reviewed": human_reviewed is True,
+        "evidence_sha256": hashlib.sha256(comp.read_bytes()).hexdigest(),
+    }
+    validate_experience(row)
+    if (output.is_symlink() or any(parent.is_symlink() for parent in output.parents)
+            or not output.parent.is_dir()):
+        raise CEDLearningError("Feedback ledger path must be a local regular file.")
+    if output.exists():
+        if not output.is_file() or output.stat().st_size > 32 * 1024 * 1024:
+            raise CEDLearningError("Learning feedback ledger is invalid or oversized.")
+        events = []
+        for line in output.read_text(encoding="utf-8").splitlines():
+            try:
+                events.append(validate_experience(json.loads(line)))
+            except (ValueError, TypeError) as exc:
+                raise CEDLearningError("Existing feedback ledger is corrupted.") from exc
+        same_id = [event for event in events if event["case_sha256"] == case_sha]
+        if same_id:
+            if len(same_id) != 1 or same_id[0] != row:
+                raise CEDLearningError("Previously recorded case has conflicting feedback.")
+            return row
+    with output.open("a" if output.exists() else "x", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True, allow_nan=False) + "\n")
+    return row
