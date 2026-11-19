@@ -15,6 +15,7 @@ from camera_cut_timing import compare_camera_cut_sections
 from camera_optics import compare_camera_optics
 from joint_motion_profile import compare_joint_angular_motion
 from rig_pose_calibration import (RigCalibrationError, bind_reference, compare_reference_calibrated)
+from mesh_forward_basis import MeshForwardError, bind_profile, compare_mesh_forward
 from sampling_plan import validate_capture
 from target_observation_plan import prepare_observation
 
@@ -275,6 +276,7 @@ def compare(
     position_tolerance_cm: float = 1.0,
     orientation_tolerance_degrees: float = 2.0,
     pose_calibration: dict[str, Any] | None = None,
+    mesh_forward_approval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compare mapped native actors in common canonical world coordinates.
 
@@ -470,6 +472,23 @@ def compare(
                 ) from exc
             if absolute_orientation["status"] == "FAIL":
                 flags.append("CALIBRATED_SKELETAL_JOINT_ORIENTATION_MISMATCH")
+        anatomical_forward = {
+            "status": "INCOMPLETE",
+            "reason": "SOURCE_TARGET_ANATOMICAL_MESH_FORWARD_NOT_INDEPENDENTLY_APPROVED",
+        }
+        if mesh_forward_approval is not None:
+            try:
+                profile = bind_profile(mesh_forward_approval, plan, target, eid)
+                anatomical_forward = compare_mesh_forward(
+                    source_samples, target_samples, eid, profile,
+                    tolerance_degrees=orientation_limit,
+                )
+            except MeshForwardError as exc:
+                raise BehavioralComparisonError(
+                    "Cannot trust native mesh forward approval: " + str(exc)
+                ) from exc
+            if anatomical_forward["status"] == "FAIL":
+                flags.append("CHARACTER_MESH_ANATOMICAL_FORWARD_MISMATCH")
         rig_diagnostics.append({
             "entity_id": eid, "source_name": by_id[eid].get("name", ""),
             "source": src_motion, "target": tgt_motion,
@@ -477,6 +496,7 @@ def compare(
             "joint_positions": joints,
             "joint_angular_motion": angular,
             "joint_reference_orientation": absolute_orientation,
+            "anatomical_mesh_forward": anatomical_forward,
             "skeletal_root_world": _skeletal_root_world(
                 source_samples, target_samples, source_rigs[eid], native_rigs[eid], joints, position_limit,
             ),
@@ -559,6 +579,11 @@ def compare(
                 rig["joint_reference_orientation"]["status"] != "PASS"
                 for rig in rig_diagnostics
             ) else "skeletal_skin_deformation_and_unverified_reference_authenticity",
+            "character_anatomical_mesh_forward"
+            if mesh_forward_approval is None or any(
+                rig["anatomical_mesh_forward"]["status"] != "PASS"
+                for rig in rig_diagnostics
+            ) else "mesh_surface_rendered_forward_appearance",
             "camera_optics" if lens["status"] != "PASS" else "camera_projection_and_rendered_frame",
             "camera_cut_timing" if cuts["status"] != "PASS" else "rendered_camera_cut_compositing",
             "light_appearance",
