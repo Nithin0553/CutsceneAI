@@ -23,7 +23,6 @@ import readback_math
 import scene_prep
 import transfer_backend
 
-
 RATE = {"numerator": 30, "denominator": 1}
 
 
