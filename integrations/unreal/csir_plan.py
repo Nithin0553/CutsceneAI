@@ -149,6 +149,11 @@ def _curve_map(section: dict[str, Any]) -> dict[str, dict[str, Any]]:
         semantic = curve.get("canonical_semantic") or curve.get("property_name")
         if semantic:
             name = str(semantic)
+            # The extractor intentionally gives Unity Euler X/Y/Z ONE
+            # placeholder semantic. Their native property names are resolved
+            # axis-by-axis below, so this placeholder is not a unique channel.
+            if name == "transform.rotation.euler_native":
+                continue
             if name in result:
                 raise PlanError("Ambiguous duplicate root-level animation curve: " + name)
             result[name] = curve
