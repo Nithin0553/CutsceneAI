@@ -11,6 +11,7 @@ Stable semantic layers:
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from typing import Any, Iterable, Mapping
 
 
@@ -252,12 +253,23 @@ def resolve_dictionary(
     if not isinstance(rules, list):
         raise MappingResolutionError("rule_set.rules must be an array")
 
-    known_evidence = (
-        _profile_evidence_ids(source_profile)
-        | _profile_evidence_ids(target_profile)
-        | _context_evidence_ids(source_context)
-        | _context_evidence_ids(target_context)
-    )
+    # An identifier from the wrong project must not certify a conversion.
+    # Earlier revisions merged source and target evidence into one set, so
+    # e.g. a target-only "source.coordinate_basis" could make a rule READY.
+    source_evidence = _profile_evidence_ids(source_profile) | _context_evidence_ids(source_context)
+    target_evidence = _profile_evidence_ids(target_profile) | _context_evidence_ids(target_context)
+    known_evidence = source_evidence | target_evidence
+
+    def evidence_present(identifier: str) -> bool:
+        if identifier.startswith("source."):
+            return identifier in source_evidence
+        if identifier.startswith("target."):
+            return identifier in target_evidence
+        # Non-engine-specific transfer evidence is intentionally not
+        # auto-certified by claiming a source/target engine capability.
+        if identifier.startswith("transfer."):
+            return False
+        return identifier in known_evidence
 
     entries: list[dict[str, Any]] = []
     for ced_id in sorted({str(value) for value in ced_ids}):
@@ -291,7 +303,11 @@ def resolve_dictionary(
                 (
                     str(rule.get("resolution", {}).get("outcome", "")),
                     str(rule.get("resolution", {}).get("resolver", "")),
-                    repr(rule.get("resolution", {}).get("parameters", {})),
+                    json.dumps(
+                        rule.get("resolution", {}).get("parameters", {}),
+                        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                    ),
+                    tuple(sorted(str(e) for e in rule.get("resolution", {}).get("required_evidence", []))),
                 )
                 for rule in tied
             }
@@ -303,8 +319,8 @@ def resolve_dictionary(
 
         resolution = best.get("resolution", {})
         required_evidence = [str(item) for item in resolution.get("required_evidence", [])]
-        observed_required = [item for item in required_evidence if item in known_evidence]
-        missing_evidence = [item for item in required_evidence if item not in known_evidence]
+        observed_required = [item for item in required_evidence if evidence_present(item)]
+        missing_evidence = [item for item in required_evidence if not evidence_present(item)]
         confidence = 1.0 if not required_evidence else len(observed_required) / len(required_evidence)
 
         outcome = str(resolution.get("outcome", "BLOCKED"))
