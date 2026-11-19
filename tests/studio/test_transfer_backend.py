@@ -633,3 +633,15 @@ def test_moving_animated_character_does_not_get_competing_static_transform():
                    a.get("entity_name") == "A" for a in plan["actions"])
     assert any(a["kind"] == "skeletal_animation" and
                a.get("entity_name") == "A" for a in plan["actions"])
+
+
+
+def test_two_independent_transform_tracks_cannot_compete_for_one_target_actor():
+    src = source()
+    duplicate = copy.deepcopy(src["tracks"][0])
+    duplicate["track_id"] = "second-independent-actor-writer"
+    duplicate["name"] = "Second Actor Position"
+    src["tracks"].append(duplicate)
+    with pytest.raises(transfer_backend.TransferBackendError,
+                       match="Multiple independent source transform tracks"):
+        transfer_backend.compose(src, mapping())
