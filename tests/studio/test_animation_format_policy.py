@@ -57,7 +57,7 @@ def test_native_unity_skeletal_anim_keeps_verified_hash_but_requires_pose_bake(m
     assert called == [".anim"]
     assert decision["source_format"] == ".anim"
     assert decision["status"] == formats.SKELETAL_BAKE
-    assert "native skeletal pose" in decision["next_step"].casefold()
+    assert "registered sampled-bone" in decision["next_step"].casefold()
 
 
 @pytest.mark.parametrize("extension", [".anim", ".bvh", ".glb", ".blend"])
