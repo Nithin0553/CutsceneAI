@@ -159,7 +159,7 @@ def test_duplicate_root_curve_mapping_refuses_rather_than_last_writer_wins():
     [{"time_seconds": 0.0, "value": float("inf")}],
 ])
 def test_malformed_scalar_key_timing_or_value_never_reconstructs_silently(keys):
-    with pytest.raises(csir_plan.PlanError, match="Source animation"):
+    with pytest.raises(csir_plan.PlanError, match="Source animation|Non-finite"):
         csir_plan._curve_value({"keys": keys}, 0.5)
 
 
