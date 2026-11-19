@@ -8,7 +8,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "packages" / "learning"))
+sys.path.insert(0, str(ROOT / "packages" / "studio"))
 
+import ced_preflight
 import ced_pretraining
 
 
@@ -71,3 +73,31 @@ def test_preflight_refuses_modified_trained_policy(tmp_path):
     ], capture_output=True, text=True, check=False)
     assert proc.returncode == 2
     assert "modified" in proc.stderr
+
+
+def test_normal_studio_preflight_uses_fitted_ced_model_without_executing_mapping():
+    source = {
+        "cutscene_id": "novel-studio-feature",
+        "source": {"engine": "unity"},
+        "entities": [], "assets": [],
+        "tracks": [{
+            "track_id": "unknown", "ced_type": "timeline.track",
+            "metadata": {"native_type": "GameObject"},
+            "sections": [{"section_id": "s", "ced_type": "timeline.clip",
+                          "native_payload": {"native_asset_type": "NovelXYZPlayable"},
+                          "payload": {}}],
+        }],
+    }
+    report = ced_preflight.audit(source, {"entities": {}, "assets": {}})
+    assert report["status"] == "REVIEW_REQUIRED"
+    assert report["strict_transfer_allowed"] is False
+    proposals = report["trained_ced_proposals"]
+    assert proposals["proposal_only"] is True
+    assert proposals["native_conversion_authorized"] is False
+    assert any(
+        "entity.actor" in {item["ced"] for item in row["suggestions"]}
+        for row in proposals["groups"]
+    )
+    assert all(all(candidate["native_conversion_authorized"] is False
+                   for candidate in row["suggestions"])
+               for row in proposals["groups"])
