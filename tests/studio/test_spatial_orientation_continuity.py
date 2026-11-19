@@ -102,8 +102,8 @@ def test_quaternion_equivalent_euler_keys_cross_pitch_pole_continuously():
 def test_world_bake_preserves_continuous_character_facing():
     source = _csir()
     character = {"entity_id": "character", "name": "Guard"}
-    keys = transfer_backend._world_keys(source, _capture([89.0, 91.0, 93.0]), character)
-    assert [row["frame"] for row in keys] == [0, 1, 2]
+    keys = transfer_backend._world_keys(source, _capture([89.0, 91.0, 93.0, 95.0]), character)
+    assert [row["frame"] for row in keys] == [0, 1, 2, 3]
     assert keys[0]["location_cm"] == [200.0, 0.0, 0.0]
     _check_continuity(keys)
 
@@ -119,7 +119,7 @@ def test_moving_actor_trajectory_preserves_continuous_facing():
 
 def test_parented_child_local_facing_preserves_pitch_continuity():
     source = _csir()
-    captured = _capture([89.0, 91.0, 93.0], parent=True)
+    captured = _capture([89.0, 91.0, 93.0, 95.0], parent=True)
     action = hierarchy_local.bake_parent_local(
         source, captured, child_id="character", parent_id="parent",
         child_name="Guard", actor_label="Guard_Target",
