@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
@@ -247,12 +248,36 @@ def resolve_dictionary(
     target_context: JsonObject | None = None,
     transfer_context: JsonObject | None = None,
     ced_version: str = "0.1.0",
+    rulebook_store: str | Path | None = None,
 ) -> dict[str, Any]:
     """Resolve CED concepts using project analysis plus cutscene-specific evidence."""
 
     rules = rule_set.get("rules", [])
     if not isinstance(rules, list):
         raise MappingResolutionError("rule_set.rules must be an array")
+    rules = list(rules)
+
+    # The local CED rulebook is *never* a source of arbitrary executable code.
+    # Only registered, independently reviewed approvals are eligible, and each
+    # resolved conversion still requires the ordinary source/target evidence,
+    # native preflight and immutable execution receipts.
+    active_store = (Path(rulebook_store) if rulebook_store is not None
+                    else Path.cwd() / ".cutsceneai-studio" / "ced-knowledge")
+    if rulebook_store is not None or active_store.exists():
+        try:
+            try:
+                from .ced_rulebook import approved_rules
+            except ImportError:
+                from ced_rulebook import approved_rules
+            learned = approved_rules(active_store)
+        except (OSError, ValueError) as error:
+            raise MappingResolutionError(
+                "Persistent CED mapping rulebook failed integrity review."
+            ) from error
+        known_rule_ids = {row.get("rule_id") for row in rules}
+        if any(row["rule_id"] in known_rule_ids for row in learned):
+            raise MappingResolutionError("A learned CED rule collides with an existing rule.")
+        rules.extend(learned)
 
     # An identifier from the wrong project must not certify a conversion.
     # Earlier revisions merged source and target evidence into one set, so
