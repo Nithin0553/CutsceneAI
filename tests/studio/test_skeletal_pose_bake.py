@@ -240,7 +240,18 @@ def test_native_writer_fail_closed_after_possible_asset_creation(tmp_path):
         def save_loaded_asset(asset):
             raise AssertionError("Unverified controller must not reach native save")
 
+    rest = NS(
+        translation=NS(x=0, y=0, z=0),
+        rotation=NS(x=0, y=0, z=0, w=1),
+        scale3d=NS(x=1, y=1, z=1),
+    )
+    pose_api = NS(
+        get_reference_pose=lambda _: object(),
+        get_bone_names=lambda _: ["pelvis"],
+        get_bone_pose=lambda _pose, _name: rest,
+    )
     api = NS(
+        AnimPoseExtensions=pose_api,
         Paths=NS(get_project_file_path=lambda: str(project)),
         SystemLibrary=NS(get_engine_version=lambda: "5.8.1"),
         load_asset=lambda path: skeleton,
