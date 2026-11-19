@@ -49,6 +49,18 @@ def _read_bake(path):
     for bone in bones:
         if not isinstance(bone.get("bone_name"), str) or not bone["bone_name"]:
             raise NativePoseBakeError("Target bone has no identity.")
+        ref = bone.get("approved_target_local_reference")
+        if not isinstance(ref, dict) or set(ref) != {
+            "position_cm", "rotation_xyzw", "scale_xyz"
+        }:
+            raise NativePoseBakeError("Native bone must carry its complete approved bind reference.")
+        for name, length in (("position_cm", 3), ("rotation_xyzw", 4), ("scale_xyz", 3)):
+            value = ref.get(name)
+            if (not isinstance(value, (list, tuple)) or len(value) != length
+                    or any(type(x) not in (int, float) or not math.isfinite(x) for x in value)):
+                raise NativePoseBakeError("Approved target skeletal reference contains invalid values.")
+            if length == 4 and abs(sum(v*v for v in value)-1) > 0.02:
+                raise NativePoseBakeError("Approved target bone rest quaternion must be normalized.")
         for key, size in (
             ("position_keys_cm", 3), ("rotation_keys_xyzw", 4),
             ("scale_keys_xyz", 3),
@@ -104,6 +116,48 @@ def execute(
     skeleton = api.load_asset(skeleton_path)
     if _class(skeleton) != "Skeleton" or _path(skeleton) != skeleton_path:
         raise NativePoseBakeError("Approved target skeleton asset is missing or has the wrong native class.")
+    # The compiler's reviewed target rest pose is NOT sufficient evidence:
+    # compare it with the actual current Unreal Skeleton *before* touching
+    # any asset. A changed bone, bind transform or unavailable native pose
+    # API blocks the transfer rather than baking onto a different skeleton.
+    native_pose_api = getattr(api, "AnimPoseExtensions", None)
+    if not all(callable(getattr(native_pose_api, name, None)) for name in (
+            "get_reference_pose", "get_bone_names", "get_bone_pose")):
+        raise NativePoseBakeError("Unreal native reference-pose API unavailable.")
+    try:
+        pose = native_pose_api.get_reference_pose(skeleton)
+        observed_bones = {str(name) for name in native_pose_api.get_bone_names(pose)}
+        planned_bones = {row["bone_name"] for row in baked["bone_tracks"]}
+        if not planned_bones.issubset(observed_bones):
+            raise NativePoseBakeError("Approved target bone mapping is not in current native skeleton.")
+        for row in baked["bone_tracks"]:
+            ref = row["approved_target_local_reference"]
+            native = native_pose_api.get_bone_pose(pose, row["bone_name"])
+            for key, observed, expected, tol in (
+                ("position", native.translation, ref["position_cm"], 0.02),
+                ("scale", native.scale3d, ref["scale_xyz"], 0.0001),
+            ):
+                values = (float(observed.x), float(observed.y), float(observed.z))
+                if any(abs(a - float(b)) > tol for a, b in zip(values, expected)):
+                    raise NativePoseBakeError(
+                        "Native target skeleton " + key
+                        + " bind pose changed for bone " + row["bone_name"]
+                    )
+            q = native.rotation
+            current = (float(q.x), float(q.y), float(q.z), float(q.w))
+            ref_q = ref["rotation_xyzw"]
+            dot = abs(sum(a * float(b) for a, b in zip(current, ref_q)))
+            if not math.isfinite(dot) or dot < 0.999999:
+                raise NativePoseBakeError(
+                    "Native target skeleton orientation bind pose changed for bone "
+                    + row["bone_name"]
+                )
+    except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+        if isinstance(error, NativePoseBakeError):
+            raise
+        raise NativePoseBakeError(
+            "Could not independently verify native skeleton rest pose before baking."
+        ) from error
     library = api.EditorAssetLibrary
     if library.does_asset_exist(output_path):
         raise NativePoseBakeError("Refusing to overwrite or reuse a target AnimSequence.")
@@ -140,7 +194,8 @@ def execute(
         assigned = asset.get_editor_property("skeleton")
         if _path(assigned) != skeleton_path:
             raise NativePoseBakeError("Created animation is not assigned to the approved target skeleton.")
-        controller = asset.get_editor_property("controller")
+        get_controller = getattr(asset, "get_controller", None)
+        controller = get_controller() if callable(get_controller) else asset.get_editor_property("controller")
         for name in ("set_frame_rate", "set_number_of_frames",
                      "add_bone_track", "set_bone_track_keys"):
             if not callable(getattr(controller, name, None)):
@@ -150,7 +205,8 @@ def execute(
         controller.set_number_of_frames(api.FrameNumber(baked["sampled_frames"]), False)
         for row in baked["bone_tracks"]:
             bone = row["bone_name"]
-            if controller.add_bone_track(bone, False) is False:
+            added = controller.add_bone_track(bone, False)
+            if added is False or (type(added) is int and added < 0):
                 raise NativePoseBakeError("Unreal rejected new skeletal track " + bone)
             positions = [api.Vector(*v) for v in row["position_keys_cm"]]
             rotations = [api.Quat(*v) for v in row["rotation_keys_xyzw"]]
