@@ -201,9 +201,14 @@ def _world_keys(
             raise TransferBackendError("Ambiguous repeated source timestamp in actor world capture.")
         by_time[timestamp] = sample
     count = int(math.floor((end - start) * hz + 1e-7))
+    if count <= 0:
+        raise TransferBackendError("No complete source display frame to bake.")
     last_rpy = None
     result = []
-    for frame in range(count):
+    # The CineTwin grid includes the observed exclusive playback-end boundary.
+    # Its final key is necessary to interpolate the last active frame interval,
+    # especially when a character or camera is still turning.
+    for frame in range(count + 1):
         time_seconds = start + frame / hz
         sample = by_time.get(round(time_seconds, 8))
         if sample is None:
