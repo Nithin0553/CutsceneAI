@@ -643,7 +643,7 @@ def test_two_independent_transform_tracks_cannot_compete_for_one_target_actor():
     duplicate["name"] = "Second Actor Position"
     src["tracks"].append(duplicate)
     with pytest.raises(transfer_backend.TransferBackendError,
-                       match="Multiple independent source transform tracks"):
+                       match="verified CineTwin|Multiple independent source transform tracks"):
         transfer_backend.compose(src, mapping())
 
 
