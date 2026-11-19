@@ -232,3 +232,61 @@ def test_project_config_changes_invalidate_prepared_ai_decision(scene):
     project.write_text('{"EngineAssociation": "5.9"}', encoding="utf-8")
     with pytest.raises(ai.TransferAIError, match="stale"):
         ai.verify(decision, config, census, worker)
+
+
+
+def test_large_verified_cinetwin_capture_uses_same_limit_as_unity_bridge():
+    """Regression: native source captures around 88 MiB previously failed AI."""
+    class SimulatedEvidence:
+        def __init__(self, size: int, *, symlink: bool = False):
+            self.size = size
+            self.symlink = symlink
+            self.reads = 0
+
+        def is_file(self):
+            return True
+
+        def is_symlink(self):
+            return self.symlink
+
+        def stat(self):
+            return SimpleNamespace(st_size=self.size)
+
+        def read_text(self, *, encoding):
+            assert encoding == "utf-8-sig"
+            self.reads += 1
+            return '{"kind":"cinetwin.behavior_capture","samples":[]}'
+
+    actual_size = int(88.28 * 1024 * 1024)
+    capture = SimulatedEvidence(actual_size)
+    assert ai._read(capture, kind="CineTwin capture")["kind"] == (
+        "cinetwin.behavior_capture")
+    assert capture.reads == 1
+    with pytest.raises(ai.TransferAIError, match="project evidence.*64 MiB"):
+        ai._read(SimulatedEvidence(actual_size))
+    with pytest.raises(ai.TransferAIError, match="CineTwin capture exceeds the 128 MiB"):
+        ai._read(SimulatedEvidence(129 * 1024 * 1024),
+                 kind="CineTwin capture")
+    with pytest.raises(ai.TransferAIError, match="missing or unsafe"):
+        ai._read(SimulatedEvidence(actual_size, symlink=True),
+                 kind="CineTwin capture")
+
+
+def test_ai_inspection_passes_large_capture_only_to_bounded_capture_reader(
+        scene, monkeypatch):
+    config, census, worker = scene
+    original = ai._read
+    seen = []
+
+    def checked_read(path, *, kind="project evidence"):
+        seen.append((Path(path).name, kind))
+        return original(path, kind=kind)
+
+    monkeypatch.setattr(ai, "_read", checked_read)
+    evidence = ai.inspect(config, census, worker)
+    assert evidence["summary"]["source_capture_sample_count"] == 1
+    assert ("unity.capture.json", "CineTwin capture") in seen
+    assert ("unity.csir.json", "Unity CSIR") in seen
+    assert ("unity.census.json", "Unity source census") in seen
+    assert ("target.mapping.json", "Target mapping") in seen
+    assert ("Target.uproject", "project evidence") in seen
