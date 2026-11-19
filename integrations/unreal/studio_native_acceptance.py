@@ -39,7 +39,8 @@ def _character_metrics(report, identifier):
     }
 
 
-def start(workspace=None, *, job_id=None, baseline_target=None, rig_calibration_path=None):
+def start(workspace=None, *, job_id=None, baseline_target=None,
+          rig_calibration_path=None, mesh_forward_approval_path=None):
     """Run after opening the generated map in a different Unreal process."""
     root = Path(workspace).resolve() if workspace is not None else Path.home() / '.cutsceneai-studio' / 'runs'
     if job_id is None:
@@ -75,6 +76,15 @@ def start(workspace=None, *, job_id=None, baseline_target=None, rig_calibration_
             raise ValueError('Native rig calibration evidence is missing, linked or too large.')
         calibration = persistence._json(calibration_file)
         calibration_sha = persistence._sha(calibration_file)
+    forward_approval = None
+    forward_approval_sha = None
+    if mesh_forward_approval_path is not None:
+        forward_file = Path(mesh_forward_approval_path)
+        if (forward_file.is_symlink() or not forward_file.is_file()
+                or forward_file.stat().st_size > 4 * 1024 * 1024):
+            raise ValueError('Mesh forward approval is missing, linked or too large.')
+        forward_approval = persistence._json(forward_file)
+        forward_approval_sha = persistence._sha(forward_file)
     folder = Path(tempfile.mkdtemp(prefix='native-acceptance-', dir=candidate))
     sampling_path = folder / 'sampling-plan.json'
     plan = plan_file(job['csir'], sampling_path)
@@ -94,8 +104,12 @@ def start(workspace=None, *, job_id=None, baseline_target=None, rig_calibration_
                 or target['target']['sequence_asset_path'].split('.', 1)[0] != job['sequence_path']
                 or persistence._loaded_level(unreal) != job['expected_level']):
             raise ValueError('Unreal observations do not belong to the reopened Studio scene.')
-        comparison = (compare(plan, source, target, pose_calibration=calibration)
-                      if calibration is not None else compare(plan, source, target))
+        extra_evidence = {}
+        if calibration is not None:
+            extra_evidence['pose_calibration'] = calibration
+        if forward_approval is not None:
+            extra_evidence['mesh_forward_approval'] = forward_approval
+        comparison = compare(plan, source, target, **extra_evidence)
         character_proof = None
         if job.get('character_native_readback_status') == 'PASS':
             import animation_conversion_policy as policy
@@ -140,6 +154,10 @@ def start(workspace=None, *, job_id=None, baseline_target=None, rig_calibration_
             row.get('joint_reference_orientation', {}).get('status', 'INCOMPLETE')
             for row in comparison['rig_motion_diagnostics']
         ]
+        forward_results = [
+            row.get('anatomical_mesh_forward', {}).get('status', 'INCOMPLETE')
+            for row in comparison['rig_motion_diagnostics']
+        ]
         character_status = character_proof['reopened_character_readback_status'] if character_proof else 'PASS'
         lens_status = comparison.get('camera_optics', {}).get('status')
         cuts_status = comparison.get('camera_cut_timing', {}).get('status')
@@ -149,6 +167,7 @@ def start(workspace=None, *, job_id=None, baseline_target=None, rig_calibration_
         elif (not native['restart_verified'] or evaluation['unmapped_entity_count']
               or 'INCOMPLETE' in joints
               or (calibration is not None and (not calibration_results or 'INCOMPLETE' in calibration_results))
+              or (forward_approval is not None and (not forward_results or 'INCOMPLETE' in forward_results))
               or target['quality']['status'] == 'SUSPECT' or character_status != 'PASS'
               or lens_status == 'INCOMPLETE' or cuts_status == 'INCOMPLETE'):
             status = 'INCOMPLETE_MEASURED_SCOPE'
@@ -164,6 +183,8 @@ def start(workspace=None, *, job_id=None, baseline_target=None, rig_calibration_
             'sampling_plan_sha256': persistence._sha(sampling_path),
             'rig_calibration_sha256': calibration_sha,
             'rig_calibration_statuses': calibration_results,
+            'mesh_forward_approval_sha256': forward_approval_sha,
+            'mesh_forward_statuses': forward_results,
             **({'character_conversion': character_proof} if character_proof else {}),
         })
         unreal.log('[CutSceneAI Studio] ' + status + ' — ' + str(output))
