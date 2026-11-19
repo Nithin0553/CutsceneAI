@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,33 @@ def evaluate(matrix: dict[str, Any], workspace: str | Path) -> dict[str, Any]:
                 or not native.get("samples") or
                 len(native["samples"]) != coverage.get("sample_count")):
             raise MatrixError("Native observation does not cover the full source grid.")
+        # An all-true coverage flag and matching counts do not prove that
+        # native observations were sampled on the exact Unity time grid.
+        # Require every planned frame, in order, including the final frame.
+        planned_samples = plan.get("samples")
+        observed_samples = native.get("samples")
+        if (not isinstance(planned_samples, list) or len(planned_samples) < 2
+                or len(planned_samples) != len(observed_samples)):
+            raise MatrixError("Native acceptance lacks the complete Unity sampling time grid.")
+        previous_time = None
+        for index, (planned_row, observed_row) in enumerate(
+                zip(planned_samples, observed_samples)):
+            if not isinstance(planned_row, dict) or not isinstance(observed_row, dict):
+                raise MatrixError("Invalid source/target acceptance sample at frame "
+                                  + str(index))
+            try:
+                source_time = float(planned_row["time_seconds"])
+                target_time = float(observed_row["time_seconds"])
+            except (KeyError, ValueError, TypeError) as error:
+                raise MatrixError("Acceptance sample time is missing or malformed.") from error
+            if (not math.isfinite(source_time) or not math.isfinite(target_time)
+                    or abs(source_time - target_time) > 1e-6
+                    or (previous_time is not None and source_time <= previous_time)):
+                raise MatrixError(
+                    "Reopened Unreal time samples differ from the exact Unity source grid."
+                )
+            previous_time = source_time
+
         if (comparison.get("kind") != "cinetwin.behavior_comparison"
                 or comparison.get("acceptance_status") != "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE"
                 or comparison.get("evaluation", {}).get("status") != "NO_FLAGGED_DIFFERENCES"
