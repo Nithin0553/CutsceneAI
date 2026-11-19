@@ -766,6 +766,9 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
     tools_dir = str(ROOT / 'tools')
     if tools_dir not in sys.path:
         sys.path.insert(0, tools_dir)
+    readiness_dir = str(ROOT / 'packages' / 'readiness')
+    if readiness_dir not in sys.path:
+        sys.path.insert(0, readiness_dir)
     import studio_project_discovery
     class StudioHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -813,6 +816,22 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                     return self.reply(200, studio_agent_feedback.conversation(folder, job))
                 except (ValueError, OSError, KeyError, TypeError) as exc:
                     return self.reply(409, {'error': 'Agent conversation unavailable: ' + str(exc)})
+            if path == '/api/ced-rulebook':
+                import ced_rulebook
+                try:
+                    knowledge_store = folder.parent / 'ced-knowledge'
+                    approved = ced_rulebook.approved_rules(knowledge_store)
+                    inventory = ced_rulebook.coverage(approved)
+                    return self.reply(200, {
+                        'kind': inventory['kind'], 'schema_version': inventory['schema_version'],
+                        'total_concepts': inventory['total_concepts'],
+                        'concepts_with_candidate_rules': inventory['concepts_with_candidate_rules'],
+                        'unmapped_concepts': inventory['unmapped_concepts'],
+                        'approved_user_rules': len(approved),
+                        'user_submissions_are_not_automatically_executable': True,
+                    })
+                except (ValueError, OSError) as exc:
+                    return self.reply(409, {'error': 'CED mapping knowledge unavailable: ' + str(exc)})
             if path == '/api/capabilities':
                 import studio_ui_features
                 return self.reply(200, studio_ui_features.capabilities())
@@ -985,6 +1004,27 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         atomic_json(folder / 'connection.json', result)
                         for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json', 'destination-readiness.json', 'one-click-approval.json'):
                             (folder / name).unlink(missing_ok=True)
+                    elif route == '/api/ced-rulebook/propose':
+                        # A new mapping can be suggested directly from Studio,
+                        # but never approved, executed or learned into a live
+                        # adapter by an unverified user HTTP request.
+                        import ced_rulebook
+                        raw_rule = data.get('rule')
+                        if not isinstance(raw_rule, dict):
+                            raise ValueError('Submit a structured CED mapping rule object.')
+                        canonical = json.dumps(
+                            raw_rule, sort_keys=True, separators=(',', ':'),
+                            allow_nan=False, ensure_ascii=False)
+                        fingerprint = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+                        candidate_id = ced_rulebook.propose(
+                            folder.parent / 'ced-knowledge', raw_rule,
+                            origin='USER', feature_sha256=fingerprint)
+                        result = {
+                            'candidate_id': candidate_id,
+                            'status': 'PROPOSED_NOT_EXECUTABLE',
+                            'next_step': 'Independent engine validation, registered adapter and human QA approval required.',
+                            'used_for_live_transfer': False,
+                        }
                     elif route == '/api/agent-feedback':
                         import studio_agent_feedback
                         active = folder / 'active-job.json'
