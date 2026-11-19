@@ -894,7 +894,7 @@ def test_ced_rulebook_api_refuses_untrusted_executable_mapping(service):
             'source': {'engine': 'unity'}, 'target': {'engine': 'unreal'},
             'resolution': {
                 'outcome': 'CONVERTED',
-                'resolver': 'exec(__import__(\'os\'))',
+                'resolver': "exec(__import__('os'))",
                 'required_evidence': ['source.coordinate_basis'],
             },
         },
