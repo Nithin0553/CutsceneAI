@@ -220,7 +220,10 @@ def execute(
         receipt["native_target_readback_verified"] = False
         receipt["saved_bone_count"] = len(baked["bone_tracks"])
         receipt["saved_key_count_per_bone"] = baked["sampled_keys"]
-    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+    except Exception as exc:
+        # The native Unreal Python API may raise provider-specific errors
+        # (including OSError/KeyError) after asset creation. All exceptions
+        # leave a terminal never-replay receipt; do not retry blindly.
         receipt["status"] = ("PARTIAL_NATIVE_WRITE_NO_AUTORETRY" if native_started
                               else "FAILED_BEFORE_NATIVE_MUTATION")
         receipt["error"] = type(exc).__name__ + ": " + str(exc)[:500]
