@@ -115,6 +115,22 @@ learner is `packages/learning/ced_reinforcement.py`:
   exact version isolation, no train/holdout project overlap per action,
   conservative minimum-case threshold, and fail-closed evidence validation.
 
+Record the measured outcome of an actual native acceptance into the
+append-only local feedback ledger, with operator review explicitly indicated
+when warranted. The collector derives the project group from the source
+sampling plan, verifies source/target SHA identities and preserves independent
+Editor PID evidence:
+
+```powershell
+python tools/ced_rulebook.py record-feedback --comparison comparison.json --sampling-plan sampling-plan.json --feedback ced-feedback.jsonl --ced camera.fov --rule-id unity-unreal-camera-fov --source-version 6000.3 --target-version 5.8 --human-reviewed
+```
+
+The absence of a real independent readback or the review flag yields
+`INCOMPLETE` rather than a positive reward; measured differences yield
+`FAIL`. Duplicate case feedback is idempotent, while conflicting replays
+are refused. A fabricated file is not genuine native evidence: the human
+review still must inspect original engine logs and provenance.
+
 Run a prepared, independently reviewed feedback JSONL:
 
 ```powershell
