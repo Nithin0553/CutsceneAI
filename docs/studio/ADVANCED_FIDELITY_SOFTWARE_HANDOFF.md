@@ -66,3 +66,21 @@ The matrix rejects changed/missing evidence, PID reuse, stale source project ide
 **Implemented in the release-candidate software:** independent calibration/forward verification routines, native component basis observation, actor/camera blend capture-based planning, animation-format inventory/refusal, separately approved skeletal bone pose compiler + native writer pilot, and native evidence matrix/CLI.
 
 **Not established by software tests:** native skeleton and AnimSequence API behavior in the real Unreal 5.8 editor, actual calibration reference authenticity, arbitrary Humanoid/multi-take/third-party format import, all skeletal Timeline blend types, final rendered/source cutscene parity or full end-to-end production-readiness. Neither `main` merge nor `SOFTWARE_READY_FOR_ENGINE_TEST` follows automatically from the current results.
+
+## 6. Independent saved AnimSequence raw-key readback (code-only, not native accepted)
+
+The operator-approved writer now binds its immutable write receipt to the **generating Unreal Editor PID**. After saving, use a **different** Unreal Editor 5.8 process with the exact same approved target project to call the new read-only verifier:
+
+```python
+from studio_skeletal_pose_readback import verify
+result = verify(
+    r"C:\\evidence\\pose-bake.json",
+    r"C:\\evidence\\native-write.json",
+    r"C:\\evidence\\native-readback.json",
+)
+print(result["status"])
+```
+
+Import from the project's `integrations/unreal` Python integration directory. This verifier **does not create or edit assets**. It refuses a partial/stale write receipt, same Editor PID, changed `.uproject`, wrong asset class/skeleton, missing native track APIs, wrong frame rate/key counts, missing/extra bones, incomplete native key channels, altered quaternions or translations, and reuse of the output file. It separately measures every saved position, rotation and scale key on every approved bone through Unreal's **raw animation track read API** and records a hash-bound result.
+
+Only `NATIVE_SAVED_BONE_KEY_READBACK_PASS` verifies this narrow, saved native raw-key stream. `NATIVE_SAVED_BONE_KEY_READBACK_FAIL` records above-tolerance key differences. Neither status establishes evaluated animation playback, target skin deformation, approved cross-rig silhouette matching, Timeline linkage, camera projection or full cutscene fidelity. The verifier has synthetic Python API tests in `tests/studio/test_skeletal_pose_readback.py`; execution against a genuinely reopened Unreal 5.8 Editor **remains untested**. This readback is not automatically wired into AI transfer scheduling or the final release gate.
