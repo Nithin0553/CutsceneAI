@@ -128,9 +128,10 @@ def _mapping_asset(mapping: dict[str, Any], source_name: str) -> str:
 
 def _mapping_actor(mapping: dict[str, Any], entity_name: str) -> str:
     entry = mapping.get("entities", {}).get(entity_name)
-    if not isinstance(entry, dict) or not entry.get("actor_label"):
-        raise PlanError(f"No Unreal actor mapping for source entity: {entity_name}")
-    return str(entry["actor_label"])
+    label = entry.get("actor_label") if isinstance(entry, dict) else None
+    if not isinstance(label, str) or not label.strip() or label != label.strip():
+        raise PlanError(f"No unambiguous Unreal actor label for source entity: {entity_name}")
+    return label
 
 
 def _curve_map(section: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -177,6 +178,12 @@ def _vector_offset(curves: dict[str, dict[str, Any]], prefix: str) -> tuple[floa
 
 
 def _quat_offset(curves: dict[str, dict[str, Any]], prefix: str) -> tuple[float, float, float, float]:
+    names = [prefix + "." + axis for axis in "xyzw"]
+    present = [name in curves for name in names]
+    if any(present) and not all(present):
+        raise PlanError(f"Partial source orientation offset for {prefix}; cannot infer missing axes.")
+    if any(present) and any(len(curves[name].get("keys", [])) != 1 for name in names):
+        raise PlanError(f"Source orientation offset for {prefix} requires one key per quaternion axis.")
     return _normalize_quat(
         (
             _single_value(curves, prefix + ".x", 0.0),
@@ -427,13 +434,14 @@ def select_actor_root_motion_alignments(
 
 def _target_output_profile(mapping: dict[str, Any]) -> tuple[int, int, str]:
     value = mapping.get("output_resolution")
-    if isinstance(value, (list, tuple)) and len(value) == 2:
-        width = int(value[0])
-        height = int(value[1])
-        if width > 0 and height > 0:
-            return width, height, "mapping.output_resolution"
-    # Benchmark validation needs a stable output gate. Do not reuse Unity Camera.aspect:
-    # it is commonly derived from the current editor/game view rather than camera intent.
+    if value is not None:
+        if (not isinstance(value, (list, tuple)) or len(value) != 2
+                or any(type(dimension) is not int for dimension in value)
+                or any(dimension < 1 or dimension > 16384 for dimension in value)):
+            raise PlanError("Explicit output_resolution must contain two positive integer pixels <= 16384.")
+        return value[0], value[1], "mapping.output_resolution"
+    # Only an omitted output gate uses the benchmark default. An explicitly
+    # invalid mapping cannot silently change camera framing/aspect.
     return 1920, 1080, "benchmark_default_1920x1080"
 
 
@@ -884,6 +892,10 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
     fps_n = int(source_rate["numerator"])
     fps_d = int(source_rate["denominator"])
     duration = float(csir["timing"]["duration_seconds"])
+    if (fps_n <= 0 or fps_d <= 0 or not math.isfinite(duration)
+            or duration <= 0 or duration > 36000
+            or not (1 <= seconds_to_frame(duration, fps_n, fps_d) <= 100_000)):
+        raise PlanError("Invalid or unbounded source timeline duration/display rate.")
     validate_mapping_identity(csir, mapping)
     assets = _asset_index(csir)
     entities = _entity_index(csir)
