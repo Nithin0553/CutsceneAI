@@ -799,6 +799,24 @@ def compose(
             character_motion.apply_plan(plan, mapping, csir, capture)
         except (ValueError, KeyError, TypeError) as exc:
             raise TransferBackendError(str(exc)) from exc
+    # Sequencer gives independently added absolute 3D transform tracks no
+    # well-defined source blending order. Never let two independently planned
+    # writers compete over one character/camera/prop position and facing.
+    # Source-authenticated world baking and AI-owned moving-character plans
+    # replace their original tracks above before reaching this invariant.
+    transform_owner: dict[str, str] = {}
+    for action in plan["actions"]:
+        if action.get("kind") != "transform":
+            continue
+        label = str(action.get("actor_label") or "")
+        owner = str(action.get("track_name") or action.get("entity_name") or "")
+        if label in transform_owner:
+            raise TransferBackendError(
+                f"Multiple independent source transform tracks target Unreal actor {label!r} "
+                f"({transform_owner[label]!r} and {owner!r}); explicit composition "
+                "or measured-source single-owner baking is required."
+            )
+        transform_owner[label] = owner
     counts = dict(Counter(row["outcome"] for row in ledger))
     entity_coverage = [{
         "entity_id": str(e.get("entity_id", "")),
