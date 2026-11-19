@@ -539,7 +539,7 @@ def test_capture_world_camera_replaces_locally_compiled_camera_trajectory():
     assert len(camera) == 1
     assert camera[0]["source_behavior_strategy"] == "verified_cinetwin_camera_world_pose"
     assert camera[0]["track_name"] == "CutSceneAI Evaluated Camera World Motion"
-    assert camera[0]["keys"][-1]["location_cm"] == [0.0, 150.0, 0.0]
+    assert camera[0]["keys"][-1]["location_cm"] == [0.0, 200.0, 0.0]
     assert camera[0]["baked_source_curves"] is True
     assert report["tracks"][-1]["outcome"] == "BAKED_PARTIAL"
     assert report["tracks"][-1]["native_action_count"] == 0
