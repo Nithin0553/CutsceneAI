@@ -7,10 +7,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "studio"))
-from studio_agent_graph import _approved_precedents
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "readiness"))
+
 import ced_rulebook
-from studio_agent_graph import _approved_ced_rulebook_precedents
+from studio_agent_graph import _approved_ced_rulebook_precedents, _approved_precedents
 
 
 def _case(source_project: str):
