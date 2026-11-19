@@ -185,6 +185,10 @@ class _TickSession:
         self.samples.append({
             "time_seconds": time_seconds,
             "entities": entities,
+            "skeletal_mesh_component_bases": [
+                base._mesh_component_basis(self.components[rig_id], rig_id)
+                for rig_id in self.rig_bones
+            ],
             "skeletal_poses": poses,
             **({"motion_layers": motion_layers} if motion_layers is not None else {}),
             # Diagnostic only. Editor API reports playhead as a playback-params
