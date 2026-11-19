@@ -130,6 +130,11 @@ def _fit(concepts: list[str], extra: Mapping[str, list[str]] | None = None) -> t
 def _rank(idf: Mapping[str, float], vectors: Mapping[str, dict],
           native: str, *, limit: int = 5) -> list[tuple[str, float]]:
     query = Counter(_tokens(native))
+    # A shared generic word such as "native" or "actor" is not enough to
+    # assert a new semantic mapping for an otherwise unseen component name.
+    in_vocabulary = sum(count for term, count in query.items() if term in idf)
+    if in_vocabulary * 2 < sum(query.values()):
+        return []
     raw = {term: count * idf[term]
            for term, count in query.items() if term in idf}
     norm = math.sqrt(sum(v * v for v in raw.values()))
