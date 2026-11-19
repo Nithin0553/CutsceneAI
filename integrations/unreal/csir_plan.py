@@ -360,9 +360,11 @@ def canonical_position_to_unreal_cm(position: tuple[float, float, float]) -> tup
 
 
 def _normalize_quat(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    if len(q) != 4 or not all(math.isfinite(v) for v in q):
+        raise PlanError("Canonical rotation quaternion must have four finite components.")
     length = math.sqrt(sum(component * component for component in q))
     if length <= 1e-12:
-        return (0.0, 0.0, 0.0, 1.0)
+        raise PlanError("Zero-length source quaternion cannot determine facing direction.")
     return tuple(component / length for component in q)  # type: ignore[return-value]
 
 
@@ -557,9 +559,21 @@ def canonical_quat_to_unreal_rotator(
     Unreal Pitch is positive when looking up, so a Unity camera with +X=25°
     (looking down) correctly becomes Unreal Pitch=-25°.
     """
+    # An invalid source rotation must never silently become "facing forward".
+    # Unity's serialized capture is normalized; allow only small float error.
+    try:
+        raw = tuple(float(v) for v in q)
+    except (TypeError, ValueError) as exc:
+        raise PlanError("Canonical rotation quaternion is not numeric.") from exc
+    if len(raw) != 4 or not all(math.isfinite(v) for v in raw):
+        raise PlanError("Canonical rotation quaternion must have four finite components.")
+    norm = math.sqrt(sum(v * v for v in raw))
+    if not 0.95 <= norm <= 1.05:
+        raise PlanError("Canonical source facing quaternion is not unit length.")
+
     # Canonical +X -> UE +Y, +Y -> UE +Z, +Z -> UE -X.
     basis = [[0.0, 0.0, -1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
-    rotation = _mat_mul(_mat_mul(basis, _quat_to_matrix(q)), _transpose(basis))
+    rotation = _mat_mul(_mat_mul(basis, _quat_to_matrix(raw)), _transpose(basis))
 
     # Matrix columns are the rotated Unreal local X/Y/Z axes in world space.
     forward = (rotation[0][0], rotation[1][0], rotation[2][0])
@@ -587,6 +601,40 @@ def canonical_quat_to_unreal_rotator(
     roll = math.atan2(right_dot_up, right_dot_right)
 
     return (math.degrees(roll), math.degrees(pitch), math.degrees(yaw))
+
+
+def continuous_unreal_rotator(
+    previous: tuple[float, float, float] | None,
+    current: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    """Choose equivalent Roll/Pitch/Yaw angles closest to the previous key.
+
+    Unreal's standard decomposition restricts pitch to [-90, 90]. Crossing
+    that pole changes *both* roll and yaw by 180 degrees. Unwrapping each
+    channel independently creates a false half-turn between two neighboring
+    keys even though the source direction changed only a few degrees.
+
+    The alternate (roll+180, 180-pitch, yaw+180) represents the SAME 3D
+    orientation. Choose the closest equivalent triple; no source orientation
+    or native actor basis is guessed or calibrated.
+    """
+    if len(current) != 3 or not all(math.isfinite(float(v)) for v in current):
+        raise PlanError("Cannot bake a non-finite Unreal facing rotation.")
+    values = tuple(float(v) for v in current)
+    if previous is None:
+        return values
+    if len(previous) != 3 or not all(math.isfinite(float(v)) for v in previous):
+        raise PlanError("Previous native facing direction is invalid.")
+
+    def near(value: float, old: float) -> float:
+        return old + (value - old + 180.0) % 360.0 - 180.0
+
+    alternatives = (values, (values[0] + 180.0, 180.0 - values[1], values[2] + 180.0))
+    candidates = [tuple(near(v, float(p)) for v, p in zip(option, previous))
+                  for option in alternatives]
+    return min(candidates, key=lambda option: sum(
+        (v - float(p)) ** 2 for v, p in zip(option, previous)
+    ))
 
 
 def _section_curve_channels(section: dict[str, Any]) -> tuple[
@@ -681,7 +729,17 @@ def _sample_section_transform(
             "location_cm": canonical_position_to_unreal_cm(world_position),
             "rotation_rpy_degrees": canonical_quat_to_unreal_rotator(world_rotation),
         }
-    return [by_frame[frame] for frame in sorted(by_frame)], bake
+    # Preserve a continuous native facing trajectory across pitch poles.
+    # The keys' original quaternion-equivalent directions remain unchanged.
+    previous_rpy = None
+    result = []
+    for frame in sorted(by_frame):
+        key = by_frame[frame]
+        current_rpy = continuous_unreal_rotator(previous_rpy, key["rotation_rpy_degrees"])
+        key["rotation_rpy_degrees"] = current_rpy
+        previous_rpy = current_rpy
+        result.append(key)
+    return result, bake
 
 
 def _transform_action(
