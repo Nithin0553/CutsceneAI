@@ -291,3 +291,86 @@ def test_inputs_are_not_modified_by_comparison() -> None:
     before = copy.deepcopy((plan, source, target))
     compare(plan, source, target)
     assert (plan, source, target) == before
+
+
+
+def _approved_orientation_evidence(plan, target):
+    target["target"] = {
+        "engine_version": "5.8.1",
+        "project_identity_sha256": "a" * 64,
+        "sequence_asset_path": "/Game/Acceptance/LS_Independent",
+    }
+    target["skeletal_bone_maps"] = {"character": {"hips": "pelvis"}}
+    return {
+        "kind": "cutsceneai.rig_pose_calibration",
+        "schema_version": "1",
+        "reference_kind": "INDEPENDENT_APPROVED_REST_POSE",
+        "source_identity": {k: plan["source"][k] for k in (
+            "csir_sha256", "sequence_ref", "project_fingerprint",
+        )},
+        "target_identity": dict(target["target"]),
+        "rigs": {"character": {
+            "bone_map": {"hips": "pelvis"},
+            "reference": {"hips": {
+                "source_world_rotation_xyzw": [0, 0, 0, 1],
+                "target_unreal_world_rotation_xyzw": [0, 0, 0, 1],
+                "axis_alignment_xyzw": [0, 0, 0, 1],
+            }},
+        }},
+    }
+
+
+def test_independent_approved_joint_axis_calibration_detects_orientation_mismatch():
+    import math
+
+    plan, source, target = _fixtures()
+    evidence = _approved_orientation_evidence(plan, target)
+    for index, (src_frame, dst_frame) in enumerate(zip(source["samples"], target["samples"])):
+        radians = math.radians(index * 10.0) / 2
+        source_rotation = [0, 0, math.sin(radians), math.cos(radians)]
+        target_rotation = [math.sin(radians), 0, 0, math.cos(radians)]
+        src_frame["skeletal_poses"][0]["bones"][0]["world_transform"]["rotation_xyzw"] = source_rotation
+        dst_frame["skeletal_poses"][0]["bones"][0]["unreal_world_rotation_xyzw"] = target_rotation
+    result = compare(plan, source, target, pose_calibration=evidence)
+    calibrated = result["rig_motion_diagnostics"][0]["joint_reference_orientation"]
+    assert calibrated["status"] == "PASS"
+    assert calibrated["max_orientation_delta_error_degrees"] == pytest.approx(0)
+    assert result["evaluation"]["status"] == "NO_FLAGGED_DIFFERENCES"
+    assert result["evaluation"]["overall_cutscene_fidelity"] == "NOT_ESTABLISHED"
+
+    # Identical root positions and joint angular excursion are insufficient:
+    # a 30-degree wrong target joint orientation must fail this independent gate.
+    target["samples"][3]["skeletal_poses"][0]["bones"][0][
+        "unreal_world_rotation_xyzw"
+    ] = [0, 0, 0, 1]
+    result = compare(plan, source, target, pose_calibration=evidence)
+    calibrated = result["rig_motion_diagnostics"][0]["joint_reference_orientation"]
+    assert calibrated["status"] == "FAIL"
+    assert calibrated["max_orientation_delta_error_degrees"] >= 29.9
+    assert "CALIBRATED_SKELETAL_JOINT_ORIENTATION_MISMATCH" in (
+        result["rig_motion_diagnostics"][0]["flags"]
+    )
+
+
+@pytest.mark.parametrize("tamper", ["wrong_source", "wrong_target", "wrong_map", "missing_axis"])
+def test_calibration_requires_exact_independently_approved_evidence(tamper):
+    plan, source, target = _fixtures()
+    evidence = _approved_orientation_evidence(plan, target)
+    if tamper == "wrong_source":
+        evidence["source_identity"]["csir_sha256"] = "e" * 64
+    elif tamper == "wrong_target":
+        evidence["target_identity"]["project_identity_sha256"] = "b" * 64
+    elif tamper == "wrong_map":
+        evidence["rigs"]["character"]["bone_map"]["hips"] = "not_pelvis"
+    else:
+        del evidence["rigs"]["character"]["reference"]["hips"]["axis_alignment_xyzw"]
+    with pytest.raises(BehavioralComparisonError, match="calibration"):
+        compare(plan, source, target, pose_calibration=evidence)
+
+
+def test_without_calibration_absolute_joint_orientation_remains_incomplete():
+    plan, source, target = _fixtures()
+    target["skeletal_bone_maps"] = {"character": {"hips": "pelvis"}}
+    diagnostic = compare(plan, source, target)["rig_motion_diagnostics"][0]
+    assert diagnostic["joint_reference_orientation"]["status"] == "INCOMPLETE"
+    assert diagnostic["joint_positions"]["status"] == "PASS"
