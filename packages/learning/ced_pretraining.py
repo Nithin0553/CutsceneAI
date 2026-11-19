@@ -292,9 +292,15 @@ def validate(model: Any, *, folder: str | Path = CONTRACT_DIR,
     if model.get("native_conversion_authorized") is not False:
         raise CEDPretrainingError("Semantic training cannot authorize engine writes.")
     if require_current_inputs:
-        _, hashes = read_sources(folder)
+        inputs, hashes = read_sources(folder)
         if hashes != model.get("training_input_sha256"):
             raise CEDPretrainingError("Trained CED model is stale for current rulebook.")
+        # A plain SHA256 is not a signature; anyone can rehash a forged
+        # checkpoint. Require the model to reproduce from the pinned,
+        # checked-in CED and mapping contracts before offering suggestions.
+        if fit(inputs, input_hashes=hashes) != model:
+            raise CEDPretrainingError(
+                "Trained CED model does not reproduce from trusted rule sources.")
     return model
 
 
