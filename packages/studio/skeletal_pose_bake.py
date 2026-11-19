@@ -177,9 +177,20 @@ def compile_baked_pose(
                 or not 0 < factor <= 100
                 or any(abs(v) < 1e-8 for v in (*src_ref_s, *target_s))):
             raise PoseBakeError("Invalid approved per-bone translation scale.")
-        native = {"bone_name": bone_map[source_bone_id], "source_bone_id": source_bone_id,
-                  "position_keys_cm": [], "rotation_keys_xyzw": [],
-                  "scale_keys_xyz": []}
+        native = {
+            "bone_name": bone_map[source_bone_id],
+            "source_bone_id": source_bone_id,
+            # The Unreal editor must independently compare this approved
+            # bind transform with its actual native Skeleton reference pose
+            # BEFORE the first asset mutation.
+            "approved_target_local_reference": {
+                "position_cm": list(target_p),
+                "rotation_xyzw": list(_quat(tr.get("rotation_xyzw"), "approved target rest quaternion")),
+                "scale_xyz": list(target_s),
+            },
+            "position_keys_cm": [], "rotation_keys_xyzw": [],
+            "scale_keys_xyz": [],
+        }
         for frame in samples:
             pose = frame[source_bone_id]
             actual_p = _vector(pose.get("position_m"), 3, "Source bone local position")
