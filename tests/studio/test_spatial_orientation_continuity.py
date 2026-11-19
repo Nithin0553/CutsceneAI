@@ -16,11 +16,11 @@ for folder in (ROOT / "integrations/unreal", ROOT / "packages/studio"):
     if str(folder) not in sys.path:
         sys.path.insert(0, str(folder))
 
+import character_motion
 import csir_plan
+import hierarchy_local
 import readback_math
 import scene_prep
-import character_motion
-import hierarchy_local
 import transfer_backend
 
 
