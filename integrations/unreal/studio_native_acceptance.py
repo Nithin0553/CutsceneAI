@@ -94,7 +94,8 @@ def start(workspace=None, *, job_id=None, baseline_target=None, rig_calibration_
                 or target['target']['sequence_asset_path'].split('.', 1)[0] != job['sequence_path']
                 or persistence._loaded_level(unreal) != job['expected_level']):
             raise ValueError('Unreal observations do not belong to the reopened Studio scene.')
-        comparison = compare(plan, source, target, pose_calibration=calibration)
+        comparison = (compare(plan, source, target, pose_calibration=calibration)
+                      if calibration is not None else compare(plan, source, target))
         character_proof = None
         if job.get('character_native_readback_status') == 'PASS':
             import animation_conversion_policy as policy
@@ -136,7 +137,7 @@ def start(workspace=None, *, job_id=None, baseline_target=None, rig_calibration_
         evaluation = comparison['evaluation']
         joints = [row['joint_positions']['status'] for row in comparison['rig_motion_diagnostics']]
         calibration_results = [
-            row['joint_reference_orientation']['status']
+            row.get('joint_reference_orientation', {}).get('status', 'INCOMPLETE')
             for row in comparison['rig_motion_diagnostics']
         ]
         character_status = character_proof['reopened_character_readback_status'] if character_proof else 'PASS'
