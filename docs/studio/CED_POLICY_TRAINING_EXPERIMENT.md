@@ -58,9 +58,15 @@ python tools/ced_preflight.py --csir source.csir.json --mapping mapping.json --t
 ```
 
 Unknown native features receive **read-only** semantic suggestions keyed by
-their discovery fingerprints. Existing CED status, strict transfer gates,
-source hashes and candidate immutability are not changed; a suggested
-mapping remains `proposal_only=true` and cannot authorize any Unreal write.
+their discovery fingerprints. Studio's normal `ced_preflight.audit()` also
+fits the checked-in model once per host process and automatically includes
+bounded (up to 32 unique signatures) advisory suggestions, without requiring
+the operator to copy a model checkpoint into a project. Saved policy artifacts
+are useful for reproducibility and independent replay.
+
+Existing CED status, strict transfer gates, source hashes and candidate
+immutability are not changed; a suggested mapping remains
+`proposal_only=true` and cannot authorize any Unreal write.
 For an actual new adapter, human review, source/target contract evidence,
 registered converter code, native readback and held-out engine acceptance are
 still required.
