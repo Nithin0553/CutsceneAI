@@ -112,10 +112,19 @@ def compile_baked_pose(
     target = approved.get("target", {})
     skeleton_path = target.get("skeleton_asset_path")
     asset_path = target.get("animation_asset_path")
-    if (not isinstance(skeleton_path, str) or not skeleton_path.startswith("/Game/")
-            or not isinstance(asset_path, str) or not asset_path.startswith("/Game/")
-            or skeleton_path == asset_path or ".." in skeleton_path or ".." in asset_path):
-        raise PoseBakeError("Skeletal bake target must have isolated Unreal skeleton/animation asset paths.")
+    import re
+    approved_path = re.compile(r"/Game(?:/[A-Za-z0-9_]+)+")
+    project_hash = target.get("unreal_project_identity_sha256")
+    if (not isinstance(project_hash, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", project_hash)
+            or not isinstance(skeleton_path, str)
+            or not approved_path.fullmatch(skeleton_path)
+            or not isinstance(asset_path, str)
+            or not approved_path.fullmatch(asset_path)
+            or skeleton_path == asset_path):
+        raise PoseBakeError(
+            "Skeletal bake needs exact target project identity and new /Game skeleton/animation paths."
+        )
 
     rate = csir["timing"].get("display_rate") or csir["timing"]["source_rate"]
     numerator, denominator = int(rate["numerator"]), int(rate["denominator"])
@@ -165,7 +174,8 @@ def compile_baked_pose(
         axis = _quat(conf["axis_alignment_canonical_xyzw"], "Approved local axis alignment")
         factor = conf["translation_scale"]
         if (type(factor) not in (int, float) or not math.isfinite(factor)
-                or not 0 < factor <= 100 or any(abs(v) < 1e-8 for v in target_s)):
+                or not 0 < factor <= 100
+                or any(abs(v) < 1e-8 for v in (*src_ref_s, *target_s))):
             raise PoseBakeError("Invalid approved per-bone translation scale.")
         native = {"bone_name": bone_map[source_bone_id], "source_bone_id": source_bone_id,
                   "position_keys_cm": [], "rotation_keys_xyzw": [],
