@@ -140,7 +140,10 @@ def test_invalid_source_facing_refuses_instead_of_generating_identity(invalid):
     source = _csir(1)
     capture = _capture([89.0])
     capture["samples"][0]["entities"][0]["world_transform"]["rotation_xyzw"] = invalid
-    with pytest.raises(csir_plan.PlanError, match="quaternion"):
+    # The baked-actor layer can refuse nonfinite samples before the planner
+    # gets to its separate unit-quaternion guard; both are safe refusals.
+    with pytest.raises((csir_plan.PlanError, transfer_backend.TransferBackendError),
+                       match="quaternion|Non-finite"):
         transfer_backend._world_keys(source, capture, {"entity_id": "character", "name": "Guard"})
 
 
