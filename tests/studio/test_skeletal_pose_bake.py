@@ -34,7 +34,8 @@ def _transform(x: float = 0.0, angle: float = 0.0):
 def _fixture():
     csir = {
         "schema_version": "0.1.0", "cutscene_id": "blend-test",
-        "source": {"engine": "unity", "sequence_ref": "Assets/Timeline.playable",
+        "source": {"engine": "unity", "engine_version": "6000.3.10f1",
+                   "sequence_ref": "Assets/Timeline.playable",
                    "project_fingerprint": "test-fingerprint"},
         "timing": {
             "source_rate": {"numerator": 2, "denominator": 1},
