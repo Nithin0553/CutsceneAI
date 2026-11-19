@@ -93,6 +93,35 @@ def _actor_transform(actor: Any) -> dict[str, list[float]]:
     )
 
 
+def _mesh_component_basis(component: Any, entity_id: str) -> dict[str, Any]:
+    """Observe the actual target component world basis, never guess mesh facing."""
+    result = {"entity_id": entity_id, "status": "UNAVAILABLE"}
+    get_transform = getattr(component, "get_world_transform", None)
+    if not callable(get_transform):
+        get_transform = getattr(component, "get_component_transform", None)
+    try:
+        if not callable(get_transform):
+            return {**result, "reason": "TARGET_COMPONENT_WORLD_TRANSFORM_API_UNAVAILABLE"}
+        transform = get_transform()
+        rotation = transform.rotation
+        quaternion = [float(rotation.x), float(rotation.y),
+                      float(rotation.z), float(rotation.w)]
+        if (not all(math.isfinite(value) for value in quaternion)
+                or abs(sum(value * value for value in quaternion) - 1.0) > 0.02):
+            return {**result, "reason": "INVALID_TARGET_COMPONENT_QUATERNION"}
+        mesh = component.get_skeletal_mesh_asset()
+        name = str(mesh.get_path_name()).split(".", 1)[0] if mesh is not None else ""
+        if not name.startswith("/Game/"):
+            return {**result, "reason": "NO_INDEPENDENT_TARGET_MESH_IDENTITY"}
+        return {
+            "entity_id": entity_id, "status": "OBSERVED",
+            "target_mesh_asset_path": name,
+            "unreal_component_world_rotation_xyzw": quaternion,
+        }
+    except (AttributeError, TypeError, RuntimeError, ValueError) as error:
+        return {**result, "reason": "NATIVE_MESH_BASIS_READBACK_FAILED: " + str(error)[:128]}
+
+
 def _bone_state(component: Any, bone_name: str) -> dict[str, Any]:
     # Capture native Unreal orientation explicitly; a Unity/Unreal bone retarget
     # mapping is required before angular pose equivalence can be asserted.
@@ -233,6 +262,10 @@ def run(
             observations.append({
                 "time_seconds": time_seconds,
                 "entities": entities,
+                "skeletal_mesh_component_bases": [
+                    _mesh_component_basis(skeletal_components[rig_id], rig_id)
+                    for rig_id in rig_names
+                ],
                 "skeletal_poses": skeletal_poses,
             })
 
