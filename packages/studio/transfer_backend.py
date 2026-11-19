@@ -31,6 +31,7 @@ import component_capability_ledger
 import scalar_property_adapter
 import character_motion
 import timeline_blend_policy
+import animation_format_policy
 
 NATIVE_GAPS = {
     "event.trigger": "Preserves event timestamp/identity as a marked frame, NOT executable payload.",
@@ -353,6 +354,18 @@ def compose(
             raise TransferBackendError(
                 "Unity Timeline blended actor " + feature["entity_name"]
                 + " needs a verified CineTwin evaluated-world capture before transfer."
+            )
+    animation_formats = animation_format_policy.inventory(csir)
+    for item in animation_formats["sections"]:
+        if not item["character_skeletal_animation"]:
+            continue
+        if item["policy"] in (
+                animation_format_policy.SKELETAL_BAKE,
+                animation_format_policy.EXTERNAL):
+            raise TransferBackendError(
+                "Source character clip " + item["source_asset_id"]
+                + " uses format " + item["format"] + " and requires a verified "
+                "native skeletal pose-baking/import adapter before Unreal transfer."
             )
     # CED analysis MUST precede source-to-target action generation. Membership
     # in CED does not prove the Unreal adapter can execute that semantic.
@@ -927,6 +940,7 @@ def compose(
         "feature_dispatch": feature_dispatch.audit(csir, plan, handlers=handlers),
         "hierarchy_reconstruction": hierarchy_results,
         "timeline_blend_analysis": blend_analysis,
+        "animation_format_inventory": animation_formats,
         "source_parent_resolution": source_parent_resolution.analyze(
             csir, mapping, plan["actions"]
         ),
