@@ -396,3 +396,41 @@ def test_native_writer_refuses_stale_approved_skeleton_without_creating_asset(tm
     with pytest.raises(writer.NativePoseBakeError, match="bone mapping"):
         writer.execute(path, receipt, api=api, explicit_native_approval=True)
     assert not receipt.exists()
+
+
+
+def test_skeletal_pose_cli_binds_actual_source_capture_bytes_and_refuses_reuse(tmp_path):
+    import importlib.util
+
+    path = ROOT / "tools" / "studio_compile_skeletal_pose.py"
+    spec = importlib.util.spec_from_file_location("studio_compile_skeletal_pose", path)
+    entry = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(entry)
+    source, capture, approved = _fixture()
+    source_file = tmp_path / "unity.csir.json"
+    capture_file = tmp_path / "unity.behavior.json"
+    approval_file = tmp_path / "approved-reference.json"
+    output_file = tmp_path / "skeletal-bake.json"
+    source_file.write_text(json.dumps(source), encoding="utf-8")
+    actual_source_hash = hashlib.sha256(source_file.read_bytes()).hexdigest()
+    capture["source"]["csir_sha256"] = actual_source_hash
+    capture_file.write_text(json.dumps(capture), encoding="utf-8")
+    actual_capture_hash = hashlib.sha256(capture_file.read_bytes()).hexdigest()
+    approved["source_identity"]["csir_sha256"] = actual_source_hash
+    approved["source_capture_sha256"] = actual_capture_hash
+    approval_file.write_text(json.dumps(approved), encoding="utf-8")
+    compiled = entry.compile_files(source_file, capture_file, approval_file, output_file)
+    assert compiled["source_identity"]["csir_sha256"] == actual_source_hash
+    assert compiled["source_capture_sha256"] == actual_capture_hash
+    assert writer._read_bake(output_file)["sampled_keys"] == 3
+    with pytest.raises(bake.PoseBakeError, match="nonexistent output"):
+        entry.compile_files(source_file, capture_file, approval_file, output_file)
+
+    capture["samples"][0]["skeletal_poses"][0]["bones"][0][
+        "world_transform"]["position_m"][0] = 12.0
+    capture_file.write_text(json.dumps(capture))
+    with pytest.raises(bake.PoseBakeError, match="stale"):
+        entry.compile_files(
+            source_file, capture_file, approval_file, tmp_path / "another-bake.json",
+        )
