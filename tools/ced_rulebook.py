@@ -44,6 +44,16 @@ def main(argv=None):
 
     commands.add_parser("list-approved", help="Show persistent, QA-approved rules")
 
+    feedback = commands.add_parser("record-feedback", help="Save a native QA trial outcome as RL feedback")
+    feedback.add_argument("--comparison", type=Path, required=True)
+    feedback.add_argument("--sampling-plan", type=Path, required=True)
+    feedback.add_argument("--feedback", type=Path, required=True)
+    feedback.add_argument("--ced", required=True)
+    feedback.add_argument("--rule-id", required=True)
+    feedback.add_argument("--source-version", required=True)
+    feedback.add_argument("--target-version", required=True)
+    feedback.add_argument("--human-reviewed", action="store_true")
+
     train = commands.add_parser("train", help="Train offline one-step RL suggestions")
     train.add_argument("--feedback", type=Path, required=True)
     train.add_argument("--output", type=Path, required=True)
@@ -68,6 +78,12 @@ def main(argv=None):
         rules = ced_rulebook.approved_rules(args.store)
         result = {"approved_rule_ids": [row["rule_id"] for row in rules],
                   "count": len(rules)}
+    elif args.command == "record-feedback":
+        result = ced_reinforcement.record_native_experience(
+            args.comparison, args.sampling_plan, args.feedback,
+            ced=args.ced, rule_id=args.rule_id,
+            source_version=args.source_version, target_version=args.target_version,
+            human_reviewed=args.human_reviewed)
     else:
         result = ced_reinforcement.export_policy(
             args.feedback, args.output, minimum_cases=args.minimum_cases)
