@@ -104,3 +104,65 @@ def test_rl_keeps_engine_versions_separate_and_never_extrapolates():
     assert len(result["actions"]) == 2
     assert all(x["policy"] == "INSUFFICIENT_VALIDATION_NO_PROMOTION"
                for x in result["actions"])
+
+
+def _native_trial(tmp_path, *, status="NO_FLAGGED_DIFFERENCES", separate=True):
+    comparison_file = tmp_path / "native-comparison.json"
+    sampling_file = tmp_path / "sampling-plan.json"
+    plan = {"source": {"project_fingerprint": "unity-sample",
+                       "csir_sha256": "a" * 64}}
+    comparison = {
+        "kind": "cinetwin.behavior_comparison",
+        "source_capture_sha256": "b" * 64,
+        "target_observation_sha256": "c" * 64,
+        "generation_editor_pid": 100, "observation_editor_pid": 200 if separate else 100,
+        "native_persistence_status": "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS",
+        "acceptance_status": "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE",
+        "evaluation": {"status": status, "overall_cutscene_fidelity": "NOT_ESTABLISHED"},
+    }
+    sampling_file.write_text(json.dumps(plan))
+    comparison_file.write_text(json.dumps(comparison))
+    return comparison_file, sampling_file
+
+
+def _record(tmp_path, *, reviewed=True, status="NO_FLAGGED_DIFFERENCES",
+            separate=True):
+    comparison, sampling = _native_trial(tmp_path, status=status, separate=separate)
+    return learner.record_native_experience(
+        comparison, sampling, tmp_path / "feedback.jsonl",
+        ced="camera.fov", rule_id="camera-lens-conversion",
+        source_version="6000.3", target_version="5.8", human_reviewed=reviewed)
+
+
+def test_native_feedback_collector_rewards_only_reviewed_distinct_process_success(tmp_path):
+    row = _record(tmp_path)
+    assert row["test_outcome"] == "PASS"
+    assert row["native_readback_verified"] is True
+    assert len((tmp_path / "feedback.jsonl").read_text().splitlines()) == 1
+    assert _record(tmp_path) == row
+    assert len((tmp_path / "feedback.jsonl").read_text().splitlines()) == 1
+
+
+def test_unreviewed_native_observation_stays_incomplete_feedback(tmp_path):
+    row = _record(tmp_path, reviewed=False)
+    assert row["test_outcome"] == "INCOMPLETE"
+    assert row["native_readback_verified"] is True
+    assert row["human_reviewed"] is False
+
+
+def test_same_editor_pid_cannot_gain_positive_rl_reward(tmp_path):
+    row = _record(tmp_path, separate=False)
+    assert row["test_outcome"] == "INCOMPLETE"
+    assert row["native_readback_verified"] is False
+
+
+def test_failed_native_comparison_yields_negative_reward(tmp_path):
+    row = _record(tmp_path, reviewed=True, status="DIFFERENCES_DETECTED")
+    assert row["test_outcome"] == "FAIL"
+    assert row["native_readback_verified"] is False
+
+
+def test_native_reward_conflicting_replay_is_rejected(tmp_path):
+    _record(tmp_path, reviewed=False)
+    with pytest.raises(learner.CEDLearningError, match="conflicting"):
+        _record(tmp_path, reviewed=True)
