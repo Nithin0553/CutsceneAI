@@ -16,12 +16,9 @@ import csir_plan
 
 
 def _curve_map(section: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    result: dict[str, dict[str, Any]] = {}
-    for curve in section.get("payload", {}).get("animation", {}).get("curves", []):
-        semantic = curve.get("canonical_semantic")
-        if semantic:
-            result[str(semantic)] = curve
-    return result
+    # Keep scene placement and Sequencer conversion on the same root-only
+    # binding policy: a child bone cannot substitute for actor clip offsets.
+    return csir_plan._curve_map(section)
 
 
 def _single(curves: dict[str, dict[str, Any]], semantic: str, default: float) -> float:
