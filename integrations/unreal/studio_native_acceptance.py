@@ -39,7 +39,7 @@ def _character_metrics(report, identifier):
     }
 
 
-def start(workspace=None, *, job_id=None, baseline_target=None):
+def start(workspace=None, *, job_id=None, baseline_target=None, rig_calibration_path=None):
     """Run after opening the generated map in a different Unreal process."""
     root = Path(workspace).resolve() if workspace is not None else Path.home() / '.cutsceneai-studio' / 'runs'
     if job_id is None:
@@ -66,6 +66,15 @@ def start(workspace=None, *, job_id=None, baseline_target=None):
             or job.get('sequence_path') != session['target']['sequence_asset_path']):
         raise ValueError('Studio job does not use the prepared source, capture, mapping and sequence.')
     source = persistence._json(Path(capture['path']))
+    calibration = None
+    calibration_sha = None
+    if rig_calibration_path is not None:
+        calibration_file = Path(rig_calibration_path)
+        if (calibration_file.is_symlink() or not calibration_file.is_file()
+                or calibration_file.stat().st_size > 4 * 1024 * 1024):
+            raise ValueError('Native rig calibration evidence is missing, linked or too large.')
+        calibration = persistence._json(calibration_file)
+        calibration_sha = persistence._sha(calibration_file)
     folder = Path(tempfile.mkdtemp(prefix='native-acceptance-', dir=candidate))
     sampling_path = folder / 'sampling-plan.json'
     plan = plan_file(job['csir'], sampling_path)
@@ -85,7 +94,7 @@ def start(workspace=None, *, job_id=None, baseline_target=None):
                 or target['target']['sequence_asset_path'].split('.', 1)[0] != job['sequence_path']
                 or persistence._loaded_level(unreal) != job['expected_level']):
             raise ValueError('Unreal observations do not belong to the reopened Studio scene.')
-        comparison = compare(plan, source, target)
+        comparison = compare(plan, source, target, pose_calibration=calibration)
         character_proof = None
         if job.get('character_native_readback_status') == 'PASS':
             import animation_conversion_policy as policy
@@ -126,6 +135,10 @@ def start(workspace=None, *, job_id=None, baseline_target=None):
                 character_proof['baseline_sha256'] = persistence._sha(Path(baseline_target))
         evaluation = comparison['evaluation']
         joints = [row['joint_positions']['status'] for row in comparison['rig_motion_diagnostics']]
+        calibration_results = [
+            row['joint_reference_orientation']['status']
+            for row in comparison['rig_motion_diagnostics']
+        ]
         character_status = character_proof['reopened_character_readback_status'] if character_proof else 'PASS'
         lens_status = comparison.get('camera_optics', {}).get('status')
         cuts_status = comparison.get('camera_cut_timing', {}).get('status')
@@ -133,7 +146,9 @@ def start(workspace=None, *, job_id=None, baseline_target=None):
                 or character_status == 'FAIL' or lens_status == 'FAIL' or cuts_status == 'FAIL'):
             status = 'DIFFERENCES_DETECTED'
         elif (not native['restart_verified'] or evaluation['unmapped_entity_count']
-              or 'INCOMPLETE' in joints or target['quality']['status'] == 'SUSPECT' or character_status != 'PASS'
+              or 'INCOMPLETE' in joints
+              or (calibration is not None and (not calibration_results or 'INCOMPLETE' in calibration_results))
+              or target['quality']['status'] == 'SUSPECT' or character_status != 'PASS'
               or lens_status == 'INCOMPLETE' or cuts_status == 'INCOMPLETE'):
             status = 'INCOMPLETE_MEASURED_SCOPE'
         else:
@@ -146,6 +161,8 @@ def start(workspace=None, *, job_id=None, baseline_target=None):
             'target_observation_sha256': persistence._sha(observed_path),
             'persistence_sha256': persistence._sha(native_path),
             'sampling_plan_sha256': persistence._sha(sampling_path),
+            'rig_calibration_sha256': calibration_sha,
+            'rig_calibration_statuses': calibration_results,
             **({'character_conversion': character_proof} if character_proof else {}),
         })
         unreal.log('[CutSceneAI Studio] ' + status + ' — ' + str(output))
