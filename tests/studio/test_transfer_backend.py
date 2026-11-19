@@ -645,3 +645,90 @@ def test_two_independent_transform_tracks_cannot_compete_for_one_target_actor():
     with pytest.raises(transfer_backend.TransferBackendError,
                        match="Multiple independent source transform tracks"):
         transfer_backend.compose(src, mapping())
+
+
+
+def test_eased_unity_actor_timeline_requires_verified_source_evaluation():
+    src = source()
+    src["tracks"][0]["sections"][0]["native_payload"] = {
+        "blend_in_seconds": 0.5, "blend_out_seconds": 0.0,
+    }
+    with pytest.raises(transfer_backend.TransferBackendError, match="verified CineTwin"):
+        transfer_backend.compose(src, mapping())
+    plan, report = transfer_backend.compose(src, mapping(), capture=fake_capture(src))
+    transforms = [a for a in plan["actions"]
+                  if a["kind"] == "transform" and a.get("entity_name") == "MOVING_PROP"]
+    assert len(transforms) == 1
+    assert transforms[0]["source_behavior_strategy"] == "verified_unity_blend_evaluated_actor_world"
+    assert [k["frame"] for k in transforms[0]["keys"]] == [0, 1, 2, 3, 4]
+    assert report["tracks"][0]["outcome"] == "BAKED_PARTIAL"
+    assert report["timeline_blend_analysis"]["source_feature_count"] == 1
+
+
+def test_overlapping_unity_actor_sections_bake_once_not_last_writer_wins():
+    src = source()
+    original = src["tracks"][0]["sections"][0]
+    copy_section = copy.deepcopy(original)
+    copy_section["section_id"] = "overlapping-clip"
+    copy_section["start"], copy_section["end"] = rt(1), rt(2)
+    src["tracks"][0]["sections"].append(copy_section)
+    plan, report = transfer_backend.compose(src, mapping(), capture=fake_capture(src))
+    transforms = [a for a in plan["actions"]
+                  if a["kind"] == "transform" and a.get("entity_name") == "MOVING_PROP"]
+    assert len(transforms) == 1
+    assert transforms[0]["source_behavior_strategy"] == "verified_unity_blend_evaluated_actor_world"
+    assert "OVERLAPPING_SECTIONS" in (
+        report["timeline_blend_analysis"]["requires_capture"][0]["reason_codes"]
+    )
+
+
+def test_multiple_unity_actor_writers_need_capture_for_source_composition():
+    src = source()
+    extra = copy.deepcopy(src["tracks"][0])
+    extra["track_id"] = "second-movement"
+    extra["name"] = "Second Movement"
+    src["tracks"].append(extra)
+    plan, report = transfer_backend.compose(src, mapping(), capture=fake_capture(src))
+    transformed = [a for a in plan["actions"]
+                   if a["kind"] == "transform" and a.get("entity_name") == "MOVING_PROP"]
+    assert len(transformed) == 1
+    assert report["tracks"][0]["outcome"] == report["tracks"][-1]["outcome"] == "BAKED_PARTIAL"
+
+
+def test_blended_character_bones_refused_even_with_actor_world_capture():
+    src = source()
+    src["entities"][0]["ced_type"] = "entity.character"
+    src["tracks"][0]["sections"][0]["native_payload"] = {
+        "blend_in_seconds": 0.5, "blend_out_seconds": 0,
+    }
+    with pytest.raises(transfer_backend.TransferBackendError,
+                       match="skeletal-pose native baking"):
+        transfer_backend.compose(src, mapping(), capture=fake_capture(src))
+
+
+def test_blended_camera_observes_both_world_motion_and_evaluated_fov():
+    src = source()
+    src["tracks"].append({
+        "track_id": "camera-eased", "name": "Camera Eased",
+        "ced_type": "camera.transform", "binding_entity_id": "lens",
+        "sections": [{
+            "section_id": "camera-eased-clip", "start": rt(0), "end": rt(2),
+            "source_offset": rt(0), "time_scale": 1.0,
+            "native_payload": {"blend_in_seconds": 0.25, "blend_out_seconds": 0.25},
+            "payload": {"animation": {"curves": [{
+                "canonical_semantic": "transform.position.x",
+                "keys": [{"time_seconds": 0, "value": 1},
+                         {"time_seconds": 2, "value": 3}],
+            }]}}
+        }]
+    })
+    plan, report = transfer_backend.compose(src, mapping(), capture=fake_capture(src))
+    transforms = [a for a in plan["actions"]
+                  if a["kind"] == "transform" and a.get("entity_name") == "CAM"]
+    fovs = [a for a in plan["actions"]
+            if a["kind"] == "camera_fov" and a.get("entity_name") == "CAM"]
+    assert len(transforms) == len(fovs) == 1
+    assert transforms[0]["source_behavior_strategy"] == "verified_unity_blend_evaluated_actor_world"
+    assert fovs[0]["source_behavior_strategy"] == "verified_unity_blend_evaluated_lens"
+    assert all(k["value"] == 55 for k in fovs[0]["keys"])
+    assert report["tracks"][-1]["outcome"] == "BAKED_PARTIAL"
