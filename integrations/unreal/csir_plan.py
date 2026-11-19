@@ -55,12 +55,68 @@ def seconds_to_frame(seconds: float, numerator: int, denominator: int) -> int:
     return int(round(seconds * numerator / denominator))
 
 
+def _unique_source_index(csir: dict[str, Any], collection: str, field: str) -> dict[str, dict[str, Any]]:
+    """Prevent duplicate native source identities from silently replacing evidence."""
+    result: dict[str, dict[str, Any]] = {}
+    for row in csir.get(collection, []):
+        identifier = row.get(field)
+        if not isinstance(identifier, str) or not identifier.strip() or identifier in result:
+            raise PlanError(f"Missing or duplicated source {field} in {collection}.")
+        result[identifier] = row
+    return result
+
+
 def _asset_index(csir: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {asset["asset_id"]: asset for asset in csir.get("assets", [])}
+    return _unique_source_index(csir, "assets", "asset_id")
 
 
 def _entity_index(csir: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {entity["entity_id"]: entity for entity in csir.get("entities", [])}
+    return _unique_source_index(csir, "entities", "entity_id")
+
+
+def validate_mapping_identity(
+    csir: dict[str, Any], mapping: dict[str, Any]
+) -> None:
+    """An actor label or asset name must never stand for two source identities.
+
+    The current mapping format keys source objects by name. A repeated mapped
+    source name cannot be distinguished by the editor or receipt, and two
+    mapped entities sharing a target label create competing Sequencer writers.
+    Unsupported source names are allowed to repeat when they are not mapped.
+    """
+    source_entities = csir.get("entities", [])
+    source_assets = csir.get("assets", [])
+    actor_map = mapping.get("entities", {})
+    asset_map = mapping.get("assets", {})
+    if not isinstance(actor_map, dict) or not isinstance(asset_map, dict):
+        raise PlanError("Target entity and asset mappings must be objects.")
+    _entity_index(csir)
+    _asset_index(csir)
+    by_name: dict[str, int] = {}
+    for entity in source_entities:
+        name = str(entity.get("name", ""))
+        if name in actor_map:
+            by_name[name] = by_name.get(name, 0) + 1
+    repeated = sorted(name for name, count in by_name.items() if count != 1)
+    if repeated:
+        raise PlanError("Ambiguous mapped source entity name(s): " + ", ".join(repeated))
+    target_owners: dict[str, str] = {}
+    for name in sorted(by_name):
+        label = _mapping_actor(mapping, name)
+        if label in target_owners:
+            raise PlanError(
+                f"Two source entities {target_owners[label]!r} and {name!r} "
+                f"map to the same Unreal actor label {label!r}."
+            )
+        target_owners[label] = name
+    asset_counts: dict[str, int] = {}
+    for asset in source_assets:
+        name = str(asset.get("name", ""))
+        if name in asset_map:
+            asset_counts[name] = asset_counts.get(name, 0) + 1
+    repeated_assets = sorted(name for name, count in asset_counts.items() if count != 1)
+    if repeated_assets:
+        raise PlanError("Ambiguous mapped source asset name(s): " + ", ".join(repeated_assets))
 
 
 def _mapping_asset(mapping: dict[str, Any], source_name: str) -> str:
@@ -797,6 +853,7 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
     fps_n = int(source_rate["numerator"])
     fps_d = int(source_rate["denominator"])
     duration = float(csir["timing"]["duration_seconds"])
+    validate_mapping_identity(csir, mapping)
     assets = _asset_index(csir)
     entities = _entity_index(csir)
     output_width, output_height, output_profile_source = _target_output_profile(mapping)
