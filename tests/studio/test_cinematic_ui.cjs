@@ -521,6 +521,77 @@ async function testSimpleAIAnalysisStageAndPreNativeCancel(){
 }
 
 
+async function testSimpleNewTransferFromCompletedProjects() {
+  const x=boot({simple:true});
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('source-rights',null,true);
+  await x.click('autopilot-start');
+  assert.equal(x.requests.filter(r=>r.url==='/api/autopilot/start').length,1);
+  x.completeAutopilot();
+  await x.poll();
+  await x.click('projects');
+  assert.match(x.app.innerHTML,/data-action="autopilot-start"[^>]*>New Transfer/);
+  assert.match(x.app.innerHTML,/data-action="quick-results"[^>]*>Open Transferred Cutscene/);
+  await x.click('quick-results');
+  assert.match(x.app.innerHTML,/Generated sequence:/);
+  await x.click('projects');
+  // The latest result remains viewable until the user explicitly starts again.
+  assert.match(x.app.innerHTML,/Open Transferred Cutscene/);
+  await x.click('autopilot-start');
+  assert.equal(x.requests.filter(r=>r.url==='/api/autopilot/start').length,2,
+    'New Transfer creates exactly one new server-owned transfer');
+  assert.match(x.app.innerHTML,/AI Transfer/);
+  assert.match(x.app.innerHTML,/WAITING_FOR_UNITY/);
+  await x.poll();
+  assert.match(x.app.innerHTML,/WAITING_FOR_UNITY/,
+    'the previous completed job must not redirect the new run to Results');
+  assert.doesNotMatch(x.app.innerHTML,/Optional AI follow-up/,
+    'new transfer cannot display the previous transfer result');
+  await x.click('projects');
+  assert.match(x.app.innerHTML,/View Transfer/);
+  assert.doesNotMatch(x.app.innerHTML,/data-action="autopilot-start"/,
+    'an in-flight transfer cannot start a second run');
+}
+
+async function testSimpleNewTransferFromResultsStartsImmediately() {
+  const x=boot({simple:true});
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('source-rights',null,true);
+  await x.click('autopilot-start');
+  x.completeAutopilot();
+  await x.poll();
+  assert.match(x.app.innerHTML,/data-action="autopilot-start"[^>]*>New Transfer/,
+    'New Transfer on Results must submit a fresh transfer, not navigate to Projects');
+  assert.match(x.app.innerHTML,/data-action="projects"[^>]*>Back to Projects/);
+  await x.click('autopilot-start');
+  assert.equal(x.requests.filter(r=>r.url==='/api/autopilot/start').length,2);
+  assert.match(x.app.innerHTML,/AI Transfer/);
+  await x.poll();
+  assert.match(x.app.innerHTML,/WAITING_FOR_UNITY/);
+}
+
+async function testSimpleBlockedTransferOffersNewTransfer() {
+  const x=boot({simple:true});
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  await x.change('source-rights',null,true);
+  x.setAutopilot('BLOCKED');
+  await x.poll();
+  assert.match(x.app.innerHTML,/data-action="autopilot-start"[^>]*>New Transfer/,
+    'blocked runs may be replaced by a fresh source request, never replayed');
+  await x.click('autopilot-start');
+  assert.equal(x.requests.filter(r=>r.url==='/api/autopilot/start').length,1);
+  assert.match(x.app.innerHTML,/WAITING_FOR_UNITY/);
+}
+
 async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
   const x=boot({simple:true});
   await x.pause();
@@ -556,6 +627,9 @@ async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
 }
 
 (async()=>{
+  await testSimpleNewTransferFromCompletedProjects();
+  await testSimpleNewTransferFromResultsStartsImmediately();
+  await testSimpleBlockedTransferOffersNewTransfer();
   await testSimpleOneClickFlowAndNaturalLanguageCorrections();
   await testSimpleAIAnalysisStageAndPreNativeCancel();
   await testSelectionLayoutContract();
@@ -571,5 +645,5 @@ async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
   await testMissingSelectedCensusFailsClosed();
-  console.log('Cinematic UI backend contract: 14 scenarios including actionable Start Transfer recovery, native errors, responsive selectors and Home-first startup passed.');
+  console.log('Cinematic UI backend contract: 17 scenarios including fresh-transfer restart from Projects and Results, native errors, and Home-first startup passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
