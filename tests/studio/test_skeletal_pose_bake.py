@@ -267,3 +267,132 @@ def test_native_writer_fail_closed_after_possible_asset_creation(tmp_path):
     assert recorded["native_asset_writes_possible"] is True
     with pytest.raises(writer.NativePoseBakeError, match="receipt"):
         writer.execute(source, receipt, api=api, explicit_native_approval=True)
+
+
+
+def test_native_writer_saved_animation_stays_pending_readback(tmp_path):
+    csir, capture, approved = _fixture()
+    project = tmp_path / "Test.uproject"
+    project.write_text("{}", encoding="utf-8")
+    approved["target"]["unreal_project_identity_sha256"] = hashlib.sha256(
+        str(project.resolve()).encode() + b"\0" + project.read_bytes()
+    ).hexdigest()
+    staged = _compile(csir, capture, approved)
+    path = tmp_path / "approved.json"
+    path.write_text(json.dumps(staged), encoding="utf-8")
+    receipt = tmp_path / "receipt.json"
+    calls = []
+
+    class Asset:
+        def __init__(self, path, kind, skeleton=None, controller=None):
+            self.path, self.kind = path, kind
+            self.skeleton, self.controller = skeleton, controller
+
+        def get_path_name(self):
+            return self.path + "." + self.path.rsplit("/", 1)[-1]
+
+        def get_class(self):
+            return NS(get_name=lambda: self.kind)
+
+        def get_editor_property(self, name):
+            return self.skeleton if name == "skeleton" else self.controller
+
+        def get_controller(self):
+            return self.controller
+
+    class Controller:
+        def set_frame_rate(self, rate, notify):
+            calls.append(("rate", rate))
+
+        def set_number_of_frames(self, frames, notify):
+            calls.append(("frame_count", frames))
+
+        def add_bone_track(self, bone, notify):
+            calls.append(("bone", bone))
+            return 0  # Valid native track index, not a failure.
+
+        def set_bone_track_keys(self, bone, positions, rotations, scales, notify):
+            calls.append(("keys", bone, len(positions), len(rotations), len(scales)))
+            return True
+
+    skeleton = Asset("/Game/Rigs/Sk_Test", "Skeleton")
+    rest = NS(translation=NS(x=0, y=0, z=0),
+              rotation=NS(x=0, y=0, z=0, w=1),
+              scale3d=NS(x=1, y=1, z=1))
+    extensions = NS(
+        get_reference_pose=lambda _: object(),
+        get_bone_names=lambda _: ["pelvis"],
+        get_bone_pose=lambda _pose, _name: rest,
+    )
+    anim = Asset("/Game/Staging/AS_Baked", "AnimSequence", skeleton, Controller())
+
+    class Tools:
+        def create_asset(self, name, folder, cls, factory):
+            calls.append(("created", name, folder))
+            return anim
+
+    class Library:
+        @staticmethod
+        def does_asset_exist(path):
+            return False
+
+        @staticmethod
+        def save_loaded_asset(asset):
+            calls.append(("saved", asset.path))
+            return True
+
+    api = NS(
+        Paths=NS(get_project_file_path=lambda: str(project)),
+        SystemLibrary=NS(get_engine_version=lambda: "5.8.1"),
+        AnimPoseExtensions=extensions,
+        load_asset=lambda path: skeleton,
+        EditorAssetLibrary=Library,
+        AssetToolsHelpers=NS(get_asset_tools=lambda: Tools()),
+        AnimSequenceFactory=lambda: NS(set_editor_property=lambda *args: None),
+        AnimSequence=object,
+        FrameRate=lambda n, d: (n, d),
+        FrameNumber=lambda n: n,
+        Vector=lambda *v: v, Quat=lambda *q: q,
+    )
+    result = writer.execute(path, receipt, api=api, explicit_native_approval=True)
+    assert result["status"] == "NATIVE_SAVED_PENDING_INDEPENDENT_READBACK"
+    assert result["native_target_readback_verified"] is False
+    assert result["fidelity_verified"] is False
+    assert ("keys", "pelvis", 3, 3, 3) in calls
+    assert ("created", "AS_Baked", "/Game/Staging") in calls
+    assert ("saved", "/Game/Staging/AS_Baked") in calls
+    with pytest.raises(writer.NativePoseBakeError, match="receipt"):
+        writer.execute(path, receipt, api=api, explicit_native_approval=True)
+
+
+def test_native_writer_refuses_stale_approved_skeleton_without_creating_asset(tmp_path):
+    csir, capture, approved = _fixture()
+    project = tmp_path / "Test.uproject"
+    project.write_text("{}")
+    approved["target"]["unreal_project_identity_sha256"] = hashlib.sha256(
+        str(project.resolve()).encode() + b"\0" + project.read_bytes()
+    ).hexdigest()
+    path = tmp_path / "approved.json"
+    path.write_text(json.dumps(_compile(csir, capture, approved)))
+    receipt = tmp_path / "receipt.json"
+
+    class Asset:
+        def get_path_name(self):
+            return "/Game/Rigs/Sk_Test.Sk_Test"
+
+        def get_class(self):
+            return NS(get_name=lambda: "Skeleton")
+
+    api = NS(
+        Paths=NS(get_project_file_path=lambda: str(project)),
+        SystemLibrary=NS(get_engine_version=lambda: "5.8.1"),
+        load_asset=lambda _path: Asset(),
+        AnimPoseExtensions=NS(
+            get_reference_pose=lambda _: object(),
+            get_bone_names=lambda _: ["wrong_bone"],
+            get_bone_pose=lambda *args: None,
+        ),
+    )
+    with pytest.raises(writer.NativePoseBakeError, match="bone mapping"):
+        writer.execute(path, receipt, api=api, explicit_native_approval=True)
+    assert not receipt.exists()
