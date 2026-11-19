@@ -233,3 +233,99 @@ def test_csir_context_promotes_observed_root_motion_capability() -> None:
         "RootT.y",
         "RootT.z",
     ]
+
+
+
+def test_wrong_engine_evidence_cannot_certify_mapping_readiness() -> None:
+    source = _profile("source", "unity", "6000.3", [], [])
+    target = _profile("target", "unreal", "5.8", [], [
+        "source.coordinate_basis", "target.rotation_semantics",
+    ])
+    rules = {"rules": [{
+        "rule_id": "bound", "ced": "transform.rotation", "priority": 100,
+        "source": {"engine": "unity"}, "target": {"engine": "unreal"},
+        "resolution": {"outcome": "CONVERTED", "resolver": "safe",
+                       "required_evidence": [
+                           "source.coordinate_basis", "target.rotation_semantics",
+                       ]},
+    }]}
+    entry = adaptive_mapping.resolve_dictionary(
+        ["transform.rotation"], source, target, rules,
+    )["entries"][0]
+    assert entry["status"] == "NEEDS_EVIDENCE"
+    assert entry["parameters"]["missing_evidence"] == ["source.coordinate_basis"]
+
+
+def test_evidence_from_source_cannot_pretend_to_verify_target_engine() -> None:
+    source = _profile("source", "unity", "6000.3", [], [
+        "source.coordinate_basis", "target.rotation_semantics",
+    ])
+    target = _profile("target", "unreal", "5.8", [], [])
+    rules = {"rules": [{
+        "rule_id": "bound", "ced": "transform.rotation",
+        "source": {"engine": "unity"}, "target": {"engine": "unreal"},
+        "resolution": {"outcome": "CONVERTED", "resolver": "safe",
+                       "required_evidence": [
+                           "source.coordinate_basis", "target.rotation_semantics",
+                       ]},
+    }]}
+    entry = adaptive_mapping.resolve_dictionary(
+        ["transform.rotation"], source, target, rules,
+    )["entries"][0]
+    assert entry["status"] == "NEEDS_EVIDENCE"
+    assert entry["parameters"]["missing_evidence"] == ["target.rotation_semantics"]
+
+
+def test_equal_priority_rules_with_different_evidence_must_refuse_ambiguity() -> None:
+    import pytest
+
+    source = _profile("source", "unity", "6000.3", [], [])
+    target = _profile("target", "unreal", "5.8", [], [])
+    base = {
+        "ced": "transform.rotation",
+        "source": {"engine": "unity"}, "target": {"engine": "unreal"},
+        "resolution": {"outcome": "CONVERTED", "resolver": "safe",
+                       "parameters": {"roll": "roll", "pitch": "pitch"}},
+    }
+    first = json.loads(json.dumps(base))
+    first["rule_id"] = "first"
+    first["resolution"]["required_evidence"] = ["source.coordinate_basis"]
+    second = json.loads(json.dumps(base))
+    second["rule_id"] = "second"
+    second["resolution"]["required_evidence"] = ["target.rotation_semantics"]
+    with pytest.raises(adaptive_mapping.MappingResolutionError, match="Ambiguous adaptive"):
+        adaptive_mapping.resolve_dictionary(
+            ["transform.rotation"], source, target, {"rules": [first, second]},
+        )
+
+
+def test_equal_priority_rules_with_reordered_parameters_agree() -> None:
+    source = _profile("source", "unity", "6000.3", [], [])
+    target = _profile("target", "unreal", "5.8", [], [])
+    a = {"rule_id": "a", "ced": "transform.rotation", "priority": 2,
+         "source": {"engine": "unity"}, "target": {"engine": "unreal"},
+         "resolution": {"outcome": "CONVERTED", "resolver": "safe",
+                        "parameters": {"roll": "roll", "pitch": "pitch"}}}
+    b = json.loads(json.dumps(a))
+    b["rule_id"] = "b"
+    b["resolution"]["parameters"] = {"pitch": "pitch", "roll": "roll"}
+    resolved = adaptive_mapping.resolve_dictionary(
+        ["transform.rotation"], source, target, {"rules": [a, b]},
+    )
+    assert resolved["entries"][0]["status"] == "RESOLVED"
+    assert resolved["entries"][0]["rule_id"] == "a"
+
+
+def test_transfer_evidence_needs_external_transfer_gate_not_engine_claim() -> None:
+    source = _profile("source", "unity", "6000.3", [], ["transfer.output_resolution"])
+    target = _profile("target", "unreal", "5.8", [], [])
+    rules = {"rules": [{
+        "rule_id": "camera", "ced": "camera.fov",
+        "source": {"engine": "unity"}, "target": {"engine": "unreal"},
+        "resolution": {"outcome": "CONVERTED", "resolver": "camera.safe",
+                       "required_evidence": ["transfer.output_resolution"]},
+    }]}
+    entry = adaptive_mapping.resolve_dictionary(
+        ["camera.fov"], source, target, rules,
+    )["entries"][0]
+    assert entry["status"] == "NEEDS_EVIDENCE"
