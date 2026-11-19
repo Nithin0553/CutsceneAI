@@ -43,6 +43,33 @@ def test_zero_shot_alias_evaluation_is_not_mistaken_for_native_fidelity(trained)
     assert quality["accuracy_is_not_native_conversion_success"] is True
 
 
+def test_training_uses_real_preflight_refusals_not_just_ced_names(trained):
+    assert trained["stats"]["preflight_domain_labels"] >= 20
+    assert trained["stats"]["preflight_partial_or_unsupported_labels"] >= 8
+    assert trained["preflight_capability_states"]["tracks"]["event.state"] == (
+        "KNOWN_UNSUPPORTED")
+    assert trained["preflight_capability_states"]["tracks"]["audio.track"] == (
+        "KNOWN_PARTIAL")
+    assert trained["preflight_capability_states"]["tracks"]["animation.track"] == (
+        "SUPPORTED_UNVERIFIED")
+    matched = trainer.suggest(trained,
+                              "UnityEngine.Timeline.AnimationPlayableAsset",
+                              engine="unity")
+    assert matched[0]["ced"] == "animation.section"
+    assert matched[0]["preflight_states"]["sections"] == "SUPPORTED_UNVERIFIED"
+    assert matched[0]["native_conversion_authorized"] is False
+
+
+def test_trained_mapping_cannot_forge_unsupported_to_supported(trained):
+    forged = copy.deepcopy(trained)
+    forged["preflight_capability_states"]["tracks"]["event.state"] = (
+        "SUPPORTED_UNVERIFIED")
+    forged["payload_sha256"] = trainer._sha({
+        key: value for key, value in forged.items() if key != "payload_sha256"})
+    with pytest.raises(trainer.CEDPretrainingError, match="reproduce"):
+        trainer.validate(forged)
+
+
 def test_approved_rule_associations_are_restricted_to_registered_ids(trained):
     assert trained["registered_rule_ids"]["transform.rotation"] == [
         "unity-unreal-transform-rotation-semantic-fields"]
