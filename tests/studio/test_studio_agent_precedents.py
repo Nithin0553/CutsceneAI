@@ -8,6 +8,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "studio"))
 from studio_agent_graph import _approved_precedents
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "readiness"))
+import ced_rulebook
+from studio_agent_graph import _approved_ced_rulebook_precedents
 
 
 def _case(source_project: str):
@@ -81,3 +84,40 @@ def test_unapproved_or_tampered_record_never_reaches_model(tmp_path):
         "entities": [{"ced_type": "entity.prop"}], "tracks": [],
     }))
     assert _approved_precedents(workspace, {"csir": str(csir)}) == []
+
+
+def test_agent_exposes_only_qa_approved_native_rule_id_without_private_params(tmp_path):
+    workspace = tmp_path / "runs"
+    workspace.mkdir()
+    store = tmp_path / "ced-knowledge"
+    baseline = json.loads(ced_rulebook.BASE_RULES.read_text())["rules"][0]
+    rule = dict(baseline)
+    rule["rule_id"] = "verified-rotated-pose-rule"
+    rule["ced"] = "transform.quaternion"
+    candidate_id = ced_rulebook.propose(
+        store, rule, origin="USER", feature_sha256="b" * 64)
+    source = tmp_path / "source.csir.json"
+    source.write_text(json.dumps({
+        "source": {"engine": "unity"},
+        "entities": [{"ced_type": "transform.quaternion"}], "tracks": [],
+    }))
+    # Candidate is never shown as approved, even after persistence.
+    assert _approved_ced_rulebook_precedents(workspace, {"csir": str(source)}) == []
+    evidence = {
+        "kind": "cinetwin.behavior_comparison",
+        "acceptance_status": "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE",
+        "native_persistence_status": "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS",
+        "generation_editor_pid": 11, "observation_editor_pid": 22,
+        "evaluation": {"status": "NO_FLAGGED_DIFFERENCES",
+                       "overall_cutscene_fidelity": "NOT_ESTABLISHED"},
+    }
+    (store / "native_evidence" / "pass.json").write_text(json.dumps(evidence))
+    ced_rulebook.promote(
+        store, candidate_id, evidence_name="pass.json", reviewer="qa_user",
+        held_out_passed=True, regression_passed=True)
+    results = _approved_ced_rulebook_precedents(workspace, {"csir": str(source)})
+    assert len(results) == 1
+    assert results[0]["ced"] == "transform.quaternion"
+    assert results[0]["no_automatic_native_permission"] is True
+    assert "parameters" not in json.dumps(results)
+    assert "native_evidence" not in json.dumps(results)
