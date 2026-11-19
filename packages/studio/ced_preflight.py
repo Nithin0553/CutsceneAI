@@ -371,6 +371,10 @@ def audit(
             advisor, learned_model = _trained_ced_advisor()
             observed = set()
             for finding in newly_discovered:
+                # Learned suggestions are advisory; bound extra scoring work
+                # even when a large Unity scene contains thousands of unknowns.
+                if len(trained_candidates) >= 32:
+                    break
                 fingerprint = finding["feature_fingerprint"]
                 if fingerprint in observed:
                     continue
@@ -427,6 +431,9 @@ def audit(
             "proposal_only": True,
             "native_conversion_authorized": False,
             "groups": trained_candidates,
+            "max_suggestion_groups": 32,
+            "total_discovery_signatures": len(fingerprints),
+            "suggestions_truncated": len(fingerprints) > len(trained_candidates),
         },
         "findings": findings,
         "note": (
