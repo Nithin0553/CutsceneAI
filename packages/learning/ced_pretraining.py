@@ -26,6 +26,7 @@ SOURCES = {
     "rules": "adaptive-rules-v0.1.json",
     "unity": "unity-mappings-v0.1.json",
     "unreal": "unreal-mappings-v0.1.json",
+    "preflight": "unity-unreal-preflight-v0.2.json",
 }
 CONTRACT_DIR = Path(__file__).resolve().parents[1] / "contracts" / "dictionary"
 
@@ -150,6 +151,35 @@ def _rank(idf: Mapping[str, float], vectors: Mapping[str, dict],
                   key=lambda row: (-row[1], row[0]))[:limit]
 
 
+
+def _preflight_supervision(document: dict, concepts: list[str]) -> tuple[dict, dict]:
+    """Fit capability/refusal labels without treating them as native test rewards."""
+    if (document.get("source_engine") != "unity"
+            or document.get("target_engine") != "unreal"):
+        raise CEDPretrainingError("Wrong source/target engine in preflight labels.")
+    known = set(concepts)
+    valid = {"SUPPORTED_UNVERIFIED", "KNOWN_PARTIAL", "KNOWN_UNSUPPORTED"}
+    policy = {}
+    for domain in ("tracks", "sections", "curve_semantics"):
+        values = document.get(domain)
+        if not isinstance(values, dict):
+            raise CEDPretrainingError("Missing preflight domain " + domain)
+        policy[domain] = {}
+        for ced, value in sorted(values.items()):
+            state = (value.get("state") if isinstance(value, dict) else value)
+            if ced not in known or state not in valid:
+                raise CEDPretrainingError("Invalid CED capability state.")
+            policy[domain][ced] = state
+    generics = defaultdict(set)
+    for domain in ("generic_native_tracks", "generic_native_sections"):
+        for native, value in document.get(domain, {}).items():
+            if (not isinstance(value, dict) or value.get("ced") not in known
+                    or value.get("state") not in valid or not _tokens(native)):
+                raise CEDPretrainingError("Invalid generic native mapping evidence.")
+            generics[native.casefold()].add(value["ced"])
+    return policy, {k: sorted(v) for k, v in sorted(generics.items())}
+
+
 def fit(inputs: Mapping[str, dict], *, input_hashes: Mapping[str, str]) -> dict:
     """Train CED semantic/native association policy with real source labels.
 
@@ -174,6 +204,14 @@ def fit(inputs: Mapping[str, dict], *, input_hashes: Mapping[str, str]) -> dict:
             top1 += bool(ranked and ranked[0] in expected)
             top3 += bool(set(ranked) & set(expected))
 
+    capability_states, generic_aliases = _preflight_supervision(
+        inputs["preflight"], concepts)
+    for native, ids in generic_aliases.items():
+        aliases["unity"][native] = sorted(
+            set(aliases["unity"].get(native, [])) | set(ids))
+        for ced in ids:
+            native_tokens[ced] = sorted(
+                set(native_tokens.get(ced, [])) | set(_tokens(native)))
     idf, vectors = _fit(concepts, native_tokens)
     unity_concepts = {ced for items in aliases["unity"].values() for ced in items}
     unreal_concepts = {ced for items in aliases["unreal"].values() for ced in items}
@@ -192,6 +230,11 @@ def fit(inputs: Mapping[str, dict], *, input_hashes: Mapping[str, str]) -> dict:
             "ced_concepts_with_both_native_draft_mappings":
                 len(unity_concepts & unreal_concepts),
             "independent_native_reward_examples": 0,
+            "preflight_domain_labels": sum(len(v) for v in capability_states.values()),
+            "preflight_partial_or_unsupported_labels": sum(
+                state != "SUPPORTED_UNVERIFIED"
+                for labels in capability_states.values() for state in labels.values()),
+            "generic_native_aliases": len(generic_aliases),
         },
         "evaluation": {
             "method": "CED_ONLY_ZERO_SHOT_NATIVE_ALIAS_RETRIEVAL",
@@ -203,6 +246,7 @@ def fit(inputs: Mapping[str, dict], *, input_hashes: Mapping[str, str]) -> dict:
         "idf": idf,
         "concept_vectors": vectors,
         "native_alias_index": aliases,
+        "preflight_capability_states": capability_states,
         "registered_rule_ids": dict(sorted(registered.items())),
         "unmapped_concepts_need_new_adapter": True,
         "native_conversion_authorized": False,
@@ -269,6 +313,10 @@ def suggest(model: dict, native_name: str, *, engine: str, limit: int = 5) -> li
             "ced": ced, "match": "DRAFT_NATIVE_ALIAS",
             "score": 1.0, "registered_rule_ids":
                 model["registered_rule_ids"].get(ced, []),
+            "preflight_states": {
+                domain: labels[ced] for domain, labels
+                in model["preflight_capability_states"].items() if ced in labels
+            },
             "native_conversion_authorized": False,
         })
     for ced, score in ranked:
@@ -278,6 +326,10 @@ def suggest(model: dict, native_name: str, *, engine: str, limit: int = 5) -> li
             "ced": ced, "match": "TRAINED_LEXICAL_SIMILARITY",
             "score": score, "registered_rule_ids":
                 model["registered_rule_ids"].get(ced, []),
+            "preflight_states": {
+                domain: labels[ced] for domain, labels
+                in model["preflight_capability_states"].items() if ced in labels
+            },
             "native_conversion_authorized": False,
         })
     return result[:limit]
