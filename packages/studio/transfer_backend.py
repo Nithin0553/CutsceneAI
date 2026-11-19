@@ -194,10 +194,12 @@ def _world_keys(
     end = csir_plan.rational_seconds(csir["timing"]["playback_end"])
     samples = capture["samples"]
     entity_id = entity["entity_id"]
-    by_time = {
-        round(float(sample["time_seconds"]), 8): sample
-        for sample in samples
-    }
+    by_time = {}
+    for sample in samples:
+        timestamp = round(float(sample["time_seconds"]), 8)
+        if timestamp in by_time:
+            raise TransferBackendError("Ambiguous repeated source timestamp in actor world capture.")
+        by_time[timestamp] = sample
     count = int(math.floor((end - start) * hz + 1e-7))
     last_rpy = None
     result = []
@@ -209,8 +211,12 @@ def _world_keys(
                 f"Missing exact evaluated source frame for {entity['name']} "
                 f"at t={time_seconds:.9f}s; cannot bake reliably."
             )
-        poses = {x["entity_id"]: x for x in sample["entities"]}
-        pose = poses.get(entity_id)
+        matches = [item for item in sample["entities"] if item.get("entity_id") == entity_id]
+        if len(matches) != 1:
+            raise TransferBackendError(
+                f"Missing or ambiguous source world pose for {entity['name']} at frame {frame}."
+            )
+        pose = matches[0]
         if pose is None:
             raise TransferBackendError(f"No evaluated world pose for {entity['name']}.")
         transform = pose["world_transform"]
@@ -221,9 +227,7 @@ def _world_keys(
             raise TransferBackendError(f"Non-finite evaluated pose for {entity['name']}.")
         # Unreal expects ROLL/PITCH/YAW in its three rotation channels.
         roll, pitch, yaw = csir_plan.canonical_quat_to_unreal_rotator(rotation)
-        rpy = (roll, pitch, yaw)
-        if last_rpy is not None:
-            rpy = tuple(_unwrap(p, c) for p, c in zip(last_rpy, rpy))
+        rpy = csir_plan.continuous_unreal_rotator(last_rpy, (roll, pitch, yaw))
         last_rpy = rpy
         result.append({
             "frame": frame,
