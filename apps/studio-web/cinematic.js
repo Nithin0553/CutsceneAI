@@ -148,8 +148,10 @@
       (run.status==='BLOCKED'?'<p class="warning" role="alert">'+esc(run.error||run.message)+'</p>':'')+
       '<div class="center-actions">'+
       (working?button('View Transfer','quick-transfer',false,'secondary'):
-        complete?button('Open Transferred Cutscene','quick-results'):
-        button('Transfer '+ico('arrow'),'autopilot-start',state.busy||!valid))+
+        complete?button('New Transfer '+ico('arrow'),'autopilot-start',state.busy||!valid)+
+          button('Open Transferred Cutscene','quick-results',false,'secondary'):
+        button((run.status==='BLOCKED'||run.status==='CANCELLED'?'New Transfer ':'Transfer ')+
+          ico('arrow'),'autopilot-start',state.busy||!valid))+
       '</div>'+
       '<p class="subnote">Keep Unity and Unreal Editors open with the CutSceneAI companions enabled. Studio never overwrites the existing cutscene. If several Timelines are loaded, select the one to transfer in Unity.</p>'+
       '</main>';
@@ -240,7 +242,11 @@
           esc(state.feedbackDraft)+'</textarea>'+
         button('Send to AI Agent','send-feedback',state.busy||!state.feedbackDraft.trim())+
         '</section>':'')+
-      '<div class="center-actions">'+button('New Transfer','projects',false,'secondary')+'</div>'+
+      '<div class="center-actions">'+
+      button('New Transfer '+ico('arrow'),'autopilot-start',state.busy||
+        !state.folders.unity||!state.folders.unreal||!state.sourceRights)+
+      button('Back to Projects','projects',false,'secondary')+
+      '</div>'+
       '</main>';
   }
 
@@ -581,11 +587,21 @@
       try{state.learningStatus=await api('learning');}catch{state.learningStatus=null;}
     }
     if(!state.running)state.candidate=s.candidate||null;
-    if(s.active_job){
+    // Before a new run has submitted its job, /api/status can still refer
+    // to the previous completed job. Never present it as the new result.
+    const currentRun=state.autopilot||{};
+    const previousJobPending=Boolean(simpleMode&&currentRun.active&&
+      ['WAITING_FOR_UNITY','WAITING_FOR_UNITY_CAPTURE','CONNECTING',
+       'ANALYZING_PROJECTS','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING']
+        .includes(currentRun.status)&&
+      (!currentRun.job_id||currentRun.job_id!==s.active_job));
+    if(s.active_job&&!previousJobPending){
       state.job=await api('jobs/'+s.active_job);
       try{state.aiTransferAudit=await api('ai-transfer-audit');}
       catch(e){state.aiTransferAudit={available:false,status:'AUDIT_UNAVAILABLE',error:String(e.message||e)};}
-    }else state.aiTransferAudit=null;
+    }else{
+      state.job=null;state.aiTransferAudit=null;
+    }
     if(state.aiAgentsEnabled||state.job?.ai_agents_enabled){
       try{state.agentStatus=await api('agents');}catch(e){
         state.agentStatus={enabled:true,status:'AGENT_STATUS_UNAVAILABLE',failure:String(e.message||e)};
@@ -737,7 +753,10 @@
         }
       }
       if(state.running&&state.phase!=='BLOCKED'&&!state.job&&state.candidate)await advance();
-      if(state.running&&terminal(state.job)&&state.screen==='transfer')state.screen='results';
+      // The simple UI follows the current autopilot run only. A terminal
+      // job from the previous transfer cannot redirect a fresh run to Results.
+      if(!simpleMode&&state.running&&terminal(state.job)&&state.screen==='transfer')
+        state.screen='results';
       if(simpleMode&&state.screen==='transfer'&&state.autopilot?.status==='GENERATED_UNVERIFIED')
         state.screen='results';
       render();
@@ -762,11 +781,18 @@
       if(state.busy)return;
       state.busy=true;render();
       try{
-        state.autopilot=await api('autopilot/start',{
+        // An explicit click requests exactly one new server-owned transfer.
+        // Existing completed job files and Unreal sequences are not replayed.
+        const newRun=await api('autopilot/start',{
           unity_folder:state.folders.unity,unreal_folder:state.folders.unreal,
           unreal_project:state.unrealProject,
           source_rights_confirmed:state.sourceRights,
         });
+        state.autopilot=newRun;
+        state.job=null;state.candidate=null;state.verification=null;
+        state.diagnosis=null;state.feedback=null;state.releaseReadiness=null;
+        state.aiTransferAudit=null;state.agentConversation=null;state.feedbackDraft='';
+        state.running=false;state.phase='WAITING_FOR_UNITY';
         state.screen='transfer';state.error='';state.info='';
       }catch(e){state.error=e.message;}
       finally{state.busy=false;render();}
