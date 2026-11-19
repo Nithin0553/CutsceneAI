@@ -14,6 +14,7 @@ from typing import Any
 from camera_cut_timing import compare_camera_cut_sections
 from camera_optics import compare_camera_optics
 from joint_motion_profile import compare_joint_angular_motion
+from rig_pose_calibration import (RigCalibrationError, bind_reference, compare_reference_calibrated)
 from sampling_plan import validate_capture
 from target_observation_plan import prepare_observation
 
@@ -273,6 +274,7 @@ def compare(
     *,
     position_tolerance_cm: float = 1.0,
     orientation_tolerance_degrees: float = 2.0,
+    pose_calibration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compare mapped native actors in common canonical world coordinates.
 
@@ -444,12 +446,37 @@ def compare(
         )
         if angular["status"] == "FAIL":
             flags.append("SKELETAL_JOINT_ANGULAR_MOTION_PROFILE_MISMATCH")
+        absolute_orientation = {
+            "status": "INCOMPLETE",
+            "reason": "INDEPENDENT_BIND_POSE_AND_BONE_AXIS_CALIBRATION_NOT_PROVIDED",
+        }
+        if pose_calibration is not None:
+            # A mapped pose is not calibrated by simply subtracting first
+            # animation-frame orientations. Exact native rest references and
+            # an explicitly approved axis basis are required for every bone.
+            try:
+                if len(joints.get("bones", [])) != len(source_rigs[eid]["bones"]):
+                    raise RigCalibrationError("Calibrated rig needs complete matched bone hierarchy.")
+                paired = {bone["source_bone_id"]: bone["target_bone_name"]
+                          for bone in joints["bones"]}
+                reference = bind_reference(pose_calibration, plan, target, eid, paired)
+                absolute_orientation = compare_reference_calibrated(
+                    source_samples, target_samples, eid, paired, reference,
+                    tolerance_degrees=orientation_limit,
+                )
+            except RigCalibrationError as exc:
+                raise BehavioralComparisonError(
+                    "Cannot trust native rig orientation calibration: " + str(exc)
+                ) from exc
+            if absolute_orientation["status"] == "FAIL":
+                flags.append("CALIBRATED_SKELETAL_JOINT_ORIENTATION_MISMATCH")
         rig_diagnostics.append({
             "entity_id": eid, "source_name": by_id[eid].get("name", ""),
             "source": src_motion, "target": tgt_motion,
             "flags": flags,
             "joint_positions": joints,
             "joint_angular_motion": angular,
+            "joint_reference_orientation": absolute_orientation,
             "skeletal_root_world": _skeletal_root_world(
                 source_samples, target_samples, source_rigs[eid], native_rigs[eid], joints, position_limit,
             ),
@@ -527,7 +554,11 @@ def compare(
             "NO_AUTOMATIC_ROOT_MOTION_REPAIR"
         ),
         "unverified_domains": [
-            "skeletal_joint_absolute_orientation_and_bind_pose",
+            "skeletal_joint_absolute_orientation_and_bind_pose"
+            if pose_calibration is None or any(
+                rig["joint_reference_orientation"]["status"] != "PASS"
+                for rig in rig_diagnostics
+            ) else "skeletal_skin_deformation_and_unverified_reference_authenticity",
             "camera_optics" if lens["status"] != "PASS" else "camera_projection_and_rendered_frame",
             "camera_cut_timing" if cuts["status"] != "PASS" else "rendered_camera_cut_compositing",
             "light_appearance",
