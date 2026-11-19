@@ -431,17 +431,25 @@ def parent_world_transform(
     tuple[float, float, float],
 ]:
     """Return the source parent's canonical world transform, or identity."""
-    parent = entities.get(str(entity.get("parent_entity_id", "")))
-    if not parent:
+    parent_id = entity.get("parent_entity_id")
+    if not parent_id:
         return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
+    parent = entities.get(str(parent_id))
+    if parent is None:
+        raise PlanError("Parent entity is missing; cannot reconstruct child world position or facing.")
 
     transform = parent.get("metadata", {}).get("world_transform")
     if not isinstance(transform, dict):
-        return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
+        raise PlanError("Parent world transform is missing; cannot assume an identity parent.")
 
-    position = transform.get("position", {})
-    rotation = transform.get("rotation", {})
-    scale = transform.get("scale", {})
+    position = transform.get("position")
+    rotation = transform.get("rotation")
+    scale = transform.get("scale")
+    if not all(isinstance(part, dict) for part in (position, rotation, scale)):
+        raise PlanError("Incomplete parent world transform; cannot place the attached child.")
+    if any(axis not in position or axis not in scale or axis not in rotation
+           for axis in "xyz") or "w" not in rotation:
+        raise PlanError("Missing parent position, scale or facing component.")
     return (
         (
             float(position.get("x", 0.0)),
