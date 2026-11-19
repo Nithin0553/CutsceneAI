@@ -855,3 +855,50 @@ def test_host_source_update_blocks_new_mutations_without_disconnecting_engine_ma
     assert watcher.observe() is False
     assert watcher.observe() is True
     assert watcher.status()["native_job_replayed"] is False
+
+
+def test_ced_rulebook_api_persists_user_proposal_without_auto_approval(service):
+    base, temp = service
+    code, overview = call(base + '/api/ced-rulebook')
+    assert code == 200
+    assert overview['total_concepts'] > 150
+    assert overview['unmapped_concepts'] > 0
+    assert overview['approved_user_rules'] == 0
+
+    baseline = json.loads((ROOT / 'packages/contracts/dictionary/adaptive-rules-v0.1.json').read_text())
+    rule = dict(baseline['rules'][0])
+    rule['rule_id'] = 'studio-user-proposed-quaternion'
+    rule['ced'] = 'transform.quaternion'
+    payload = {'rule': rule}
+    code, denied = call(base + '/api/ced-rulebook/propose', payload)
+    assert code == 403 and 'token' in denied['error'].lower()
+    token = call(base + '/api/status')[1]['token']
+    code, proposed = call(base + '/api/ced-rulebook/propose', payload, token)
+    assert code == 200
+    assert proposed['status'] == 'PROPOSED_NOT_EXECUTABLE'
+    assert proposed['used_for_live_transfer'] is False
+    identifier = proposed['candidate_id']
+    assert len(identifier) == 64
+    assert (temp / 'ced-knowledge' / 'candidates' / (identifier + '.json')).is_file()
+    assert call(base + '/api/ced-rulebook/propose', payload, token)[1]['candidate_id'] == identifier
+    assert not list((temp / 'ced-knowledge' / 'approvals').glob('*.json'))
+    assert call(base + '/api/ced-rulebook')[1]['approved_user_rules'] == 0
+
+
+def test_ced_rulebook_api_refuses_untrusted_executable_mapping(service):
+    base, _ = service
+    token = call(base + '/api/status')[1]['token']
+    suspicious = {
+        'rule': {
+            'rule_id': 'unsafe-code', 'ced': 'transform.position',
+            'source': {'engine': 'unity'}, 'target': {'engine': 'unreal'},
+            'resolution': {
+                'outcome': 'CONVERTED',
+                'resolver': 'exec(__import__(\'os\'))',
+                'required_evidence': ['source.coordinate_basis'],
+            },
+        },
+    }
+    code, response = call(base + '/api/ced-rulebook/propose', suspicious, token)
+    assert code == 422
+    assert 'conversion resolution' in response['error']
