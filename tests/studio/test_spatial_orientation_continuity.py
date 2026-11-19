@@ -18,6 +18,7 @@ for folder in (ROOT / "integrations/unreal", ROOT / "packages/studio"):
 
 import csir_plan
 import readback_math
+import scene_prep
 import character_motion
 import hierarchy_local
 import transfer_backend
@@ -166,3 +167,37 @@ def test_quaternion_sign_does_not_change_facing():
     neg = csir_plan.canonical_quat_to_unreal_rotator([-v for v in q])
     assert _rotation_distance(readback_math.unreal_rpy_to_canonical_quat(*pos),
                               readback_math.unreal_rpy_to_canonical_quat(*neg)) < 0.0001
+
+
+
+@pytest.mark.parametrize("parents", [
+    {},
+    {"parent": {"entity_id": "parent"}},
+    {"parent": {"entity_id": "parent", "metadata": {
+        "world_transform": {
+            "position": {"x": 2.0, "y": 0.0, "z": 1.0},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+        }
+    }}},
+])
+def test_missing_parent_position_or_facing_never_defaults_to_world_origin(parents):
+    child = {"entity_id": "character", "name": "Guard", "parent_entity_id": "parent"}
+    with pytest.raises(csir_plan.PlanError, match="Parent|parent"):
+        csir_plan.parent_world_transform(child, parents)
+
+
+@pytest.mark.parametrize("missing", ["position", "rotation", "scale"])
+def test_incomplete_source_static_actor_cannot_be_silently_placed(missing):
+    metadata = {"world_transform": {
+        "position": {"x": 2.0, "y": 0.0, "z": -1.0},
+        "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+        "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+    }}
+    del metadata["world_transform"][missing]
+    source = {"entities": [{
+        "entity_id": "prop", "name": "Prop", "ced_type": "entity.prop",
+        "metadata": metadata,
+    }], "tracks": []}
+    mapping = {"entities": {"Prop": {"actor_label": "Target_Prop"}}}
+    with pytest.raises(csir_plan.PlanError, match="Missing position|Incomplete world"):
+        scene_prep.build_scene_prep(source, mapping)
