@@ -11,6 +11,7 @@ from pathlib import Path
 
 import csir_plan
 import character_motion
+import animation_format_policy
 import sampling_plan
 from studio_source_identity import GUID, resolve
 
@@ -235,11 +236,26 @@ def _motion(capture: dict, entity: dict, usable: bool) -> dict:
 def _clip(context: dict, section: dict, asset: dict, mapping: dict) -> dict:
     meta = asset.get("metadata") or {}
     clip = meta.get("animation_clip") or {}
-    origin = _asset(context, meta, ".fbx")
+    format_choice = animation_format_policy.classify(asset, skeletal=True)
+    source_format = format_choice["format"]
+    origin = _asset(
+        context, meta, source_format if source_format in {".fbx", ".anim"} else ".fbx"
+    )
     asset_id = asset.get("asset_id")
     target = (mapping.get("assets") or {}).get(asset.get("name"))
     result = {"section_id": section.get("section_id"), "asset_id": asset_id, "source": origin,
-              "unity_local_file_id": meta.get("local_file_id"), "planned_target_clip": target}
+              "unity_local_file_id": meta.get("local_file_id"), "planned_target_clip": target,
+              "source_format": source_format, "format_policy": format_choice["policy"]}
+    if source_format != ".fbx":
+        # Keep the existing provenance verification but NEVER convert a
+        # Unity .anim rig track by pretending the input is an FBX take.
+        if origin.get("status") != "EXACT":
+            return {**result, "status": origin["status"]}
+        if (meta.get("source_sha256") != origin["sha256"]
+                or meta.get("source_meta_sha256") != origin["meta_sha256"]):
+            return {**result, "status": "UNITY_CLIP_EXPORT_HASH_MISSING_OR_STALE"}
+        return {**result, "status": format_choice["policy"],
+                "next_step": format_choice.get("next_step")}
     if origin["status"] != "EXACT":
         return {**result, "status": origin["status"]}
     if meta.get("source_sha256") != origin["sha256"] or meta.get("source_meta_sha256") != origin["meta_sha256"]:
