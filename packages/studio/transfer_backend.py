@@ -451,6 +451,18 @@ def compose(
                     "Installed CED adapter rejected source track: " + str(exc)
                 ) from exc
             except (ValueError, KeyError, TypeError, IndexError, ZeroDivisionError) as exc:
+                # A missing parent world transform must never silently erase
+                # an independently animated attached child's track. Without
+                # evaluated parent/child poses, this would create a falsely
+                # motionless actor at the wrong world position/facing.
+                if (capture is None and entity is not None
+                        and entity.get("parent_entity_id")
+                        and entity.get("name") in mapping.get("entities", {})
+                        and track.get("ced_type") in {"animation.track", "camera.transform"}):
+                    raise TransferBackendError(
+                        f"{entity['name']}: parented animation requires verified CineTwin "
+                        "capture to preserve world placement and facing direction."
+                    ) from exc
                 reasons.append(f"Native converter cannot represent track: {type(exc).__name__}: {exc}")
         if status == "SKIPPED" and capture is not None and entity is not None:
             if (entity.get("name") in mapping.get("entities", {})
