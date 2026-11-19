@@ -37,7 +37,9 @@ def _case(workspace, scenario, index):
         "samples": [{"time_seconds": 0}, {"time_seconds": 1}],
     }
     target_sha = _write(folder / "target-behavior.json", native)
-    plan_sha = _write(folder / "sampling-plan.json", {"source": source})
+    plan_sha = _write(folder / "sampling-plan.json", {"source": source,
+                                                        "samples": [{"time_seconds": 0},
+                                                                    {"time_seconds": 1}]})
     persistence_sha = _write(folder / "persistence.json", {"status": "NATIVE_EDITOR_OBSERVED"})
     comparison = {
         "kind": "cinetwin.behavior_comparison", "acceptance_status":
@@ -147,4 +149,33 @@ def test_symlinked_evidence_is_not_accepted(tmp_path):
     except (OSError, NotImplementedError):
         pytest.skip("This test environment does not support symbolic links.")
     with pytest.raises(matrix.MatrixError, match="symlinks"):
+        matrix.evaluate(manifest, tmp_path)
+
+def test_native_frame_timestamps_cannot_be_shifted_even_with_matching_counts(tmp_path):
+    manifest = _manifest(tmp_path)
+    row = manifest["cases"][0]
+    comparison_path = tmp_path / row["evidence_path"]
+    folder = comparison_path.parent
+    native = json.loads((folder / "target-behavior.json").read_text())
+    native["samples"][-1]["time_seconds"] = 0.75
+    observed_hash = _write(folder / "target-behavior.json", native)
+    comparison = json.loads(comparison_path.read_text())
+    comparison["target_observation_sha256"] = observed_hash
+    row["evidence_sha256"] = _write(comparison_path, comparison)
+    with pytest.raises(matrix.MatrixError, match="source grid"):
+        matrix.evaluate(manifest, tmp_path)
+
+
+def test_native_sample_grid_must_contain_the_real_plan_frames(tmp_path):
+    manifest = _manifest(tmp_path)
+    row = manifest["cases"][0]
+    comparison_path = tmp_path / row["evidence_path"]
+    folder = comparison_path.parent
+    plan = json.loads((folder / "sampling-plan.json").read_text())
+    plan["samples"] = [{"time_seconds": 0}]
+    plan_hash = _write(folder / "sampling-plan.json", plan)
+    comparison = json.loads(comparison_path.read_text())
+    comparison["sampling_plan_sha256"] = plan_hash
+    row["evidence_sha256"] = _write(comparison_path, comparison)
+    with pytest.raises(matrix.MatrixError, match="complete Unity sampling"):
         matrix.evaluate(manifest, tmp_path)
