@@ -84,9 +84,18 @@ def _world_transform(entity: dict[str, Any], actor_label: str) -> dict[str, Any]
     transform = entity.get("metadata", {}).get("world_transform")
     if not isinstance(transform, dict):
         return None
-    position = transform.get("position", {})
-    rotation = transform.get("rotation", {})
-    scale = transform.get("scale", {})
+    position = transform.get("position")
+    rotation = transform.get("rotation")
+    scale = transform.get("scale")
+    if not all(isinstance(part, dict) for part in (position, rotation, scale)):
+        raise csir_plan.PlanError(
+            f"Missing position, orientation or scale for source actor {entity['name']}."
+        )
+    if any(axis not in position or axis not in rotation or axis not in scale
+           for axis in "xyz") or "w" not in rotation:
+        raise csir_plan.PlanError(
+            f"Incomplete world placement for source actor {entity['name']}; no default facing."
+        )
     return _transform_operation(
         entity["name"],
         actor_label,
