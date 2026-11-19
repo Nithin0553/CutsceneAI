@@ -84,9 +84,9 @@ def trajectory(csir, capture, identifier):
         pose = poses[0]["world_transform"]
         conjugate(pose["rotation_xyzw"])
         position = csir_plan.canonical_position_to_unreal_cm(pose["position_m"])
-        rotation = csir_plan.canonical_quat_to_unreal_rotator(pose["rotation_xyzw"])
-        if previous is not None:
-            rotation = [old + (new - old + 180) % 360 - 180 for old, new in zip(previous, rotation)]
+        rotation = csir_plan.continuous_unreal_rotator(
+            previous, csir_plan.canonical_quat_to_unreal_rotator(pose["rotation_xyzw"])
+        )
         if not all(math.isfinite(v) for v in (*position, *rotation)):
             raise MotionError("NONFINITE_SOURCE_ACTOR_FRAME")
         previous = rotation
