@@ -257,7 +257,7 @@ def promote(store: str | Path, candidate_id: str, *,
             or held_out_passed is not True or regression_passed is not True):
         raise CEDRulebookError("Independent held-out validation, regressions and reviewer required.")
     if (not isinstance(evidence_name, str) or
-            not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}\\.json", evidence_name)):
+            not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}\.json", evidence_name)):
         raise CEDRulebookError("Evidence must use a safe file in the local evidence directory.")
     path = evidence / evidence_name
     data = _read(path, max_bytes=64 * 1024 * 1024)
@@ -310,7 +310,7 @@ def approved_rules(store: str | Path) -> list[dict]:
                 or approval.get("native_render_fidelity_certified") is not False
                 or approval.get("candidate_sha256")
                 != hashlib.sha256(source.read_bytes()).hexdigest()
-                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}\\.json",
+                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}\.json",
                                     str(approval.get("native_evidence_name", "")))
                 or approval.get("native_evidence_sha256")
                 != hashlib.sha256(_read_file(native_path)).hexdigest()
