@@ -329,3 +329,37 @@ def test_transfer_evidence_needs_external_transfer_gate_not_engine_claim() -> No
         ["camera.fov"], source, target, rules,
     )["entries"][0]
     assert entry["status"] == "NEEDS_EVIDENCE"
+
+
+
+def test_camera_mapping_requires_validated_transfer_resolution_evidence() -> None:
+    source = _profile("source", "unity", "6000.3", [], [
+        "source.camera_fov_axis",
+    ])
+    target = _profile("target", "unreal", "5.8", [], [
+        "target.camera_lens_model",
+    ])
+    rules = {"rules": [{
+        "rule_id": "camera", "ced": "camera.fov", "priority": 1,
+        "source": {"engine": "unity"}, "target": {"engine": "unreal"},
+        "resolution": {"outcome": "CONVERTED", "resolver": "camera.safe",
+                       "required_evidence": [
+                           "source.camera_fov_axis", "target.camera_lens_model",
+                           "transfer.output_resolution",
+                       ]},
+    }]}
+    missing = adaptive_mapping.resolve_dictionary(
+        ["camera.fov"], source, target, rules,
+    )["entries"][0]
+    assert missing["status"] == "NEEDS_EVIDENCE"
+    invalid = adaptive_mapping.resolve_dictionary(
+        ["camera.fov"], source, target, rules,
+        transfer_context={"output_resolution": [0, 1080]},
+    )["entries"][0]
+    assert invalid["status"] == "NEEDS_EVIDENCE"
+    valid = adaptive_mapping.resolve_dictionary(
+        ["camera.fov"], source, target, rules,
+        transfer_context={"output_resolution": [2048, 858]},
+    )["entries"][0]
+    assert valid["status"] == "RESOLVED"
+    assert valid["confidence"] == 1.0
