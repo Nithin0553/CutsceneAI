@@ -262,7 +262,7 @@ def resolve_dictionary(
     # resolved conversion still requires the ordinary source/target evidence,
     # native preflight and immutable execution receipts.
     active_store = (Path(rulebook_store) if rulebook_store is not None
-                    else Path.cwd() / ".cutsceneai-studio" / "ced-knowledge")
+                    else Path.home() / ".cutsceneai-studio" / "ced-knowledge")
     if rulebook_store is not None or active_store.exists():
         try:
             try:
