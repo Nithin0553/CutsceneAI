@@ -144,8 +144,8 @@ def test_capture_bakes_unknown_actor_track_and_avoids_double_transform_animation
     transforms = [x for x in plan["actions"] if x["kind"] == "transform"]
     assert len(transforms) == 1
     assert transforms[0]["track_name"] == "CutSceneAI Evaluated World Motion"
-    assert [x["frame"] for x in transforms[0]["keys"]] == [0, 1, 2, 3]
-    assert transforms[0]["keys"][-1]["location_cm"] == [0.0, 150.0, 0.0]
+    assert [x["frame"] for x in transforms[0]["keys"]] == [0, 1, 2, 3, 4]
+    assert transforms[0]["keys"][-1]["location_cm"] == [0.0, 200.0, 0.0]
 
 
 def test_invalid_capture_rejected_before_bake(tmp_path):
@@ -464,9 +464,9 @@ def test_parented_independently_animated_child_gets_local_keys_from_capture():
     assert len(child) == 1
     assert child[0]["transform_space"] == "PARENT_LOCAL"
     assert child[0]["source_parent_entity_id"] == "moving"
-    assert [k["frame"] for k in child[0]["keys"]] == [0, 1, 2, 3]
+    assert [k["frame"] for k in child[0]["keys"]] == [0, 1, 2, 3, 4]
     assert child[0]["keys"][0]["location_cm"] == [0.0, 200.0, 0.0]
-    assert child[0]["keys"][-1]["location_cm"] == [0.0, 350.0, 0.0]
+    assert child[0]["keys"][-1]["location_cm"] == [0.0, 400.0, 0.0]
     assert report["hierarchy_reconstruction"][0]["outcome"] == (
         "CAPTURED_PARENT_LOCAL_BEST_EFFORT"
     )
