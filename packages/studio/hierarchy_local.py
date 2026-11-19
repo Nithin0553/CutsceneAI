@@ -117,7 +117,9 @@ def bake_parent_local(
     }
     keys: list[dict[str, Any]] = []
     previous = None
-    for frame in range(count):
+    # Also bake the measured exclusive end boundary: the final interval of a
+    # moving/turning attached child cannot be inferred from the last active key.
+    for frame in range(count + 1):
         time = start + frame/hz
         sample = by_time.get(round(time, 8))
         if sample is None:
