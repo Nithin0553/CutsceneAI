@@ -7,6 +7,7 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 - [CED-first pre-conversion discovery](architecture/CED_FIRST_PREFLIGHT_V0_1.md)
 - [CED local discovery registry](architecture/CED_DISCOVERY_REGISTRY_V0_1.md) — opt-in, redacted, deduplicated unknown-element observations
 - [CED mapping rules book and offline RL feedback](studio/CED_MAPPING_RULEBOOK_AND_REINFORCEMENT_LEARNING.md) — complete semantic coverage, persistent approved user rules, candidate review and version-specific policy suggestions
+- [Executed CED semantic mapping pretraining](studio/CED_POLICY_TRAINING_EXPERIMENT.md) — reproducible model fit, native-alias holdout metrics, and non-executable transfer suggestions
 - [Executable CED adapter contract](architecture/CED_ADAPTER_EXECUTION.md) — source-bound handlers, native actions and verification gates
 - [Native component adapter handoff](handoffs/COMPONENT_ADAPTER_DEVELOPMENT.md) — implementation branches and remaining editor evidence
 - [Integrated Studio smoke-test and merge audit (#93)](studio/ISSUE_93_INTEGRATED_SMOKE_TEST.md) — unified source, CED, agent and release gates
