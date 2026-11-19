@@ -461,8 +461,13 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
     track = binding.add_track(unreal.MovieScene3DTransformTrack)
     track.set_display_name(action.get("track_name", "CutSceneAI Transform"))
     section = track.add_section()
-    boundary = 1 if action.get("source_behavior_strategy") == "cinetwin_verified_actor_world_trajectory_v1" else 0
-    section.set_range(0, sequence.get_playback_end() + boundary)
+    end_frame = int(sequence.get_playback_end())
+    # A frame-matched capture can carry an observed key at the exclusive
+    # playback-end boundary. Extend the section by one display frame so this
+    # real key drives interpolation in the last active interval rather than
+    # accidentally holding the prior pose.
+    boundary = 1 if any(int(k["frame"]) == end_frame for k in action["keys"]) else 0
+    section.set_range(0, end_frame + boundary)
     channels = unreal_compat.get_section_channels(section)
     if len(channels) < 6:
         raise UnrealBuildError("Unexpected Unreal transform channel layout; expected at least 6 channels.")
