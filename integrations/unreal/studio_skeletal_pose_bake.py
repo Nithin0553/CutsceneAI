@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 
 
@@ -171,7 +172,8 @@ def execute(
             raise NativePoseBakeError("Unreal native pose-bake API unavailable: " + name)
     receipt = {
         "kind": "cutsceneai.studio.native_skeletal_pose_bake_receipt",
-        "schema_version": "1", "source_sha256": hashlib.sha256(Path(pose_bake_path).read_bytes()).hexdigest(),
+        "schema_version": "1", "generation_editor_pid": os.getpid(),
+        "source_sha256": hashlib.sha256(Path(pose_bake_path).read_bytes()).hexdigest(),
         "source_entity_id": baked["source_entity_id"], "target_project_identity_sha256": project_identity,
         "target_skeleton_asset_path": skeleton_path, "target_animation_asset_path": output_path,
         "status": "PREFLIGHT_PASSED_NOT_GENERATED", "native_asset_writes_possible": False,
