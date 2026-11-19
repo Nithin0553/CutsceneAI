@@ -21,18 +21,35 @@ KINDS = frozenset({"native_source", "source_materials", "visual_activation_parti
 SCHEMA = "cutsceneai.studio.ai_conversion_decision"
 VERSION = "1"
 ROOT = Path(__file__).resolve().parents[1]
+# Keep small project documents bounded independently of source behavior data.
+# The Unity source bridge already validates CineTwin captures up to 128 MiB;
+# applying the generic 64 MiB cap again rejected valid 88 MiB captures.
+PROJECT_EVIDENCE_MAX_BYTES = 64 * 1024 * 1024
+CINETWIN_CAPTURE_MAX_BYTES = 128 * 1024 * 1024
 
 
 class TransferAIError(ValueError):
     pass
 
 
-def _read(path: Path) -> dict[str, Any]:
-    if not path.is_file() or path.is_symlink() or path.stat().st_size > 64 * 1024 * 1024:
-        raise TransferAIError("Required local source/target evidence is unavailable.")
+def _read(path: Path, *, kind: str = "project evidence") -> dict[str, Any]:
+    limit = (
+        CINETWIN_CAPTURE_MAX_BYTES if kind == "CineTwin capture"
+        else PROJECT_EVIDENCE_MAX_BYTES
+    )
+    if path.is_symlink() or not path.is_file():
+        raise TransferAIError(
+            f"{kind} is missing or unsafe; verify the selected project's evidence export."
+        )
+    if path.stat().st_size > limit:
+        raise TransferAIError(
+            f"{kind} exceeds the {limit // (1024 * 1024)} MiB evidence limit. "
+            "The source file was not modified; use a supported fresh export "
+            "rather than truncating animation evidence."
+        )
     result = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(result, dict):
-        raise TransferAIError("Malformed project evidence.")
+        raise TransferAIError(f"Malformed {kind} JSON evidence.")
     return result
 
 
@@ -160,9 +177,11 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
     mapping = Path(config["mapping"]).resolve()
     target = Path(config["target_project"]).resolve()
     census = Path(census_path).resolve()
-    docs = {key: _read(path) for key, path in (
-        ("csir", source), ("capture", capture), ("mapping", mapping),
-        ("census", census)
+    docs = {key: _read(path, kind=label) for key, path, label in (
+        ("csir", source, "Unity CSIR"),
+        ("capture", capture, "CineTwin capture"),
+        ("mapping", mapping, "Target mapping"),
+        ("census", census, "Unity source census"),
     )}
     csir, scene_mapping = docs["csir"], docs["mapping"]
     if (csir.get("source", {}).get("engine") != "unity"
