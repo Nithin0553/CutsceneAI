@@ -573,8 +573,8 @@ def test_completed_unity_capture_is_accepted_even_after_wait_limit(rig, monkeypa
 
 def test_model_disconnect_recovers_only_before_unreal_submission(rig, monkeypatch):
     workspace, project, target, service, _ = rig
-    import studio_transfer_ai
     import studio_recovery_policy
+    import studio_transfer_ai
     studio_autopilot.begin(
         workspace, unity_folder=str(project), unreal_folder=str(target),
         source_rights_confirmed=True, service=service,
