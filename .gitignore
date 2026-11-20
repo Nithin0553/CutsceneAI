@@ -56,6 +56,11 @@ Saved/
 *.VC.db
 *.VC.opendb
 
+# Local acceptance sandbox copied beside this checkout's source tree.
+# Preserve its test projects, screenshots, native receipts and user work;
+# do not accidentally stage that private snapshot into the repository.
+/CutsceneAI-Acceptance/
+
 # Local assets, experiment plans, captures and receipts
 # Versioned benchmark SPEC JSON and frozen manifest files are intentionally tracked.
 research/artifacts/
