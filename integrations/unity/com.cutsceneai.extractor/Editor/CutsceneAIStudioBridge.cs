@@ -54,7 +54,7 @@ namespace CutsceneAI.UnityExtractor
             public int editor_pid;
             public bool source_bridge_enabled;
             public string editor_mode;
-            public string bridge_version = "unity-editor-v0.2";
+            public string bridge_version = "unity-editor-v0.3";
         }
 
         // Every assembly/domain reload re-runs InitializeOnLoad and registers
