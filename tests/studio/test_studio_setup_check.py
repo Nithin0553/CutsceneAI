@@ -75,3 +75,14 @@ def test_local_ollama_setup_does_not_require_openai_sdk(tmp_path, monkeypatch):
     assert result["ready_to_launch_localhost"] is True
     assert result["model_provider_configured"] == "ollama"
     assert result["model_runtime_connected"] is False
+
+
+
+def test_invalid_provider_fails_setup_preflight(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTSCENEAI_MODEL_PROVIDER", "untrusted_remote")
+    result = check_studio_setup.diagnose(
+        checkout(tmp_path), python_version=(3, 12, 0),
+        module_exists=lambda _: True,
+    )
+    assert not result["ready_to_launch_localhost"]
+    assert "CUTSCENEAI_MODEL_PROVIDER" in " ".join(result["issues"])
