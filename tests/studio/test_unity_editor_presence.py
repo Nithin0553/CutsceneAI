@@ -29,7 +29,7 @@ def _heartbeat(project, **changes):
         "schema_version": "1", "project_root": str(project.resolve()),
         "heartbeat": datetime.now(UTC).isoformat(),
         "editor_pid": 12345, "source_bridge_enabled": True,
-        "editor_mode": "EDIT_MODE", "bridge_version": "unity-editor-v0.2",
+        "editor_mode": "EDIT_MODE", "bridge_version": "unity-editor-v0.3",
     }
     record.update(changes)
     marker.write_text(json.dumps(record))
@@ -134,11 +134,11 @@ def test_missing_heartbeat_explains_how_to_connect_exact_unity_project(project):
 
 
 def test_invalid_version_is_reported_as_package_mismatch(project):
-    _heartbeat(project, bridge_version="unity-editor-v0.1")
+    _heartbeat(project, bridge_version="unity-editor-v0.2")
     status = editor_status(project)
     assert status["connected"] is False
     assert status["status"] == "UNSUPPORTED_UNITY_BRIDGE_VERSION"
-    assert status["bridge_version"] == "unity-editor-v0.1"
+    assert status["bridge_version"] == "unity-editor-v0.2"
     assert "Package Manager" in status["next_action"]
 
 
