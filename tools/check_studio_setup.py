@@ -53,9 +53,9 @@ def diagnose(
     provider = os.environ.get("CUTSCENEAI_MODEL_PROVIDER", "").strip().lower()
     if not provider:
         provider = "openai" if os.environ.get("OPENAI_API_KEY") else "ollama"
-    required = REQUIRED_MODULES + (
+    required = (
         (("openai", "openai"),) if provider == "openai" else ()
-    )
+    ) + REQUIRED_MODULES
     missing_modules = [
         package for module, package in required
         if not module_exists(module)
