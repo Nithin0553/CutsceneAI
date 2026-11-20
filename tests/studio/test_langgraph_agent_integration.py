@@ -178,6 +178,7 @@ def test_unreal_executor_denies_unapproved_llm_action_before_mutation(tmp_path):
 def test_missing_model_configuration_is_reported(tmp_path, monkeypatch):
     workspace, candidate, job, _ = staged(tmp_path)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("CUTSCENEAI_MODEL_PROVIDER", "openai")
     result = graph.run_once(workspace, job)
     assert result["status"] == "AGENT_REASONING_UNAVAILABLE"
     assert "OPENAI_API_KEY" in result["failure"]
