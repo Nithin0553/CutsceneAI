@@ -402,8 +402,12 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
     if (decision.get("kind") != SCHEMA
             or decision.get("schema_version") != VERSION
             or decision.get("input_sha256") != current["fingerprints"]
-            or decision.get("strategy") not in current["allowed_strategies"]):
-        raise TransferAIError("AI decision is stale or belongs to another source/target.")
+            or decision.get("strategy") not in current["allowed_strategies"]
+            or decision.get("ced_knowledge_sha256") !=
+            current["ced_knowledge"]["knowledge_sha256"]):
+        raise TransferAIError(
+            "AI decision or CED knowledge is stale or belongs to another source/target."
+        )
     strategy = decision["strategy"]
     opts = decision.get("conversion_options")
     expected = {
