@@ -301,3 +301,30 @@ def test_reopened_native_comparison_is_scoped_and_not_full_parity(tmp_path):
     put(folder / "comparison.json", comparison)
     with pytest.raises(gate.ReleaseEvidenceError, match="foreign source"):
         gate.assess(workspace, job["job_id"])
+
+
+
+def test_local_ollama_recorded_choice_is_not_fidelity_certification(tmp_path):
+    workspace, candidate, job = fixture(tmp_path)
+    decision = candidate / "ai-conversion-decision.json"
+    put(decision, {
+        "kind": "cutsceneai.studio.ai_conversion_decision",
+        "model_invoked": True, "model_provider": "OLLAMA_LOCAL",
+        "model_name": "qwen2.5:7b-instruct",
+        "model_response_sha256": "a" * 64,
+    })
+    job["ai_conversion_decision_sha256"] = gate._sha(decision)
+    put(workspace / "jobs" / (job["job_id"] + ".json"), job)
+    result = gate.assess(workspace, job["job_id"])
+    assert result["checks"]["ai_pretransfer_planning"]["status"] == "PASS"
+    assert result["release_ready"] is False
+    put(decision, {
+        "kind": "cutsceneai.studio.ai_conversion_decision",
+        "model_invoked": True, "model_provider": "OLLAMA_LOCAL",
+        "model_name": "qwen2.5:7b-instruct",
+        "model_response_sha256": "wrong",
+    })
+    job["ai_conversion_decision_sha256"] = gate._sha(decision)
+    put(workspace / "jobs" / (job["job_id"] + ".json"), job)
+    assert gate.assess(workspace, job["job_id"])["checks"][
+        "ai_pretransfer_planning"]["status"] == "INCOMPLETE"

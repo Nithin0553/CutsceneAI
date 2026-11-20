@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Callable
@@ -30,7 +31,6 @@ REQUIRED_MODULES = (
     ("pydantic", "pydantic"),
     ("yaml", "pyyaml"),
     ("jsonschema", "jsonschema"),
-    ("openai", "openai"),
     ("langgraph", "langgraph"),
 )
 
@@ -48,12 +48,22 @@ def diagnose(
         module_exists = lambda name: importlib.util.find_spec(name) is not None
     root = Path(repo).resolve()
     missing_files = [name for name in REQUIRED_FILES if not (root / name).is_file()]
+    # Local Ollama uses the Python standard library HTTP transport and never
+    # requires an OpenAI SDK or an API key. The OpenAI path still does.
+    provider = os.environ.get("CUTSCENEAI_MODEL_PROVIDER", "").strip().lower()
+    if not provider:
+        provider = "openai" if os.environ.get("OPENAI_API_KEY") else "ollama"
+    required = (
+        (("openai", "openai"),) if provider == "openai" else ()
+    ) + REQUIRED_MODULES
     missing_modules = [
-        package for module, package in REQUIRED_MODULES
+        package for module, package in required
         if not module_exists(module)
     ]
     python_ok = tuple(python_version[:2]) >= (3, 11)
     issues = []
+    if provider not in {"ollama", "openai"}:
+        issues.append("CUTSCENEAI_MODEL_PROVIDER must be ollama or openai.")
     if not python_ok:
         issues.append("Studio requires Python 3.11 or newer.")
     if missing_files:
@@ -71,6 +81,8 @@ def diagnose(
         "missing_files": missing_files,
         "missing_python_packages": missing_modules,
         "ready_to_launch_localhost": not issues,
+        "model_provider_configured": provider,
+        "model_runtime_connected": False,
         "engine_companions_validated": False,
         "engine_fidelity_verified": False,
         "issues": issues,

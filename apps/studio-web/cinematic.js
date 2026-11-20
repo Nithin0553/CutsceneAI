@@ -125,7 +125,7 @@
   }
   function quickProjects(){
     const run=state.autopilot||{status:'IDLE'},working=[
-      'WAITING_FOR_UNITY','WAITING_FOR_UNITY_CAPTURE','CONNECTING','ANALYZING_PROJECTS','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING'
+      'WAITING_FOR_UNITY','WAITING_FOR_UNITY_CAPTURE','CONNECTING','ANALYZING_PROJECTS','WAITING_FOR_MODEL','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING'
     ].includes(run.status),complete=run.status==='GENERATED_UNVERIFIED';
     const targetOptions=state.discovery?.unreal?.project_options||[];
     const valid=Boolean(state.folders.unity&&state.folders.unreal&&
@@ -315,7 +315,7 @@
       '<div class="ai-agents-option"><label><input type="checkbox" name="ai-agents" '+
       (state.aiAgentsEnabled?'checked':'')+
       ' /> Enable AI agents</label>'+
-      '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local agent dependencies and an API key; usage may incur model charges.</p>'+
+      '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local Ollama or a configured cloud provider; cloud usage may incur charges.</p>'+
       (state.learningStatus?'<p class="subnote">Continual learning: '+
        esc(state.learningStatus.completed_trials_recorded)+' trial records · '+
        esc(state.learningStatus.verified_mapping_cases)+' approved mapping cases · '+
@@ -592,7 +592,7 @@
     const currentRun=state.autopilot||{};
     const previousJobPending=Boolean(simpleMode&&currentRun.active&&
       ['WAITING_FOR_UNITY','WAITING_FOR_UNITY_CAPTURE','CONNECTING',
-       'ANALYZING_PROJECTS','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING']
+       'ANALYZING_PROJECTS','WAITING_FOR_MODEL','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING']
         .includes(currentRun.status)&&
       (!currentRun.job_id||currentRun.job_id!==s.active_job));
     if(s.active_job&&!previousJobPending){

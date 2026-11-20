@@ -128,16 +128,29 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
     else:
         decision = _read(decision_file)
         animation_selected = decision.get("animation_conversion")
-        genuine = bool(
-            decision.get("kind") == "cutsceneai.studio.ai_conversion_decision"
-            and decision.get("model_invoked") is True
-            and decision.get("model_provider") == "OPENAI_RESPONSES"
+        openai_recorded = (
+            decision.get("model_provider") == "OPENAI_RESPONSES"
             and isinstance(decision.get("model_response_id"), str)
             and decision["model_response_id"].startswith("resp_")
         )
-        record("ai_pretransfer_planning", "PASS" if genuine else "INCOMPLETE",
-               "Genuine source-bound OpenAI planning requires provider response evidence; "
-               "mocked selections are insufficient.")
+        digest = decision.get("model_response_sha256")
+        local_recorded = (
+            decision.get("model_provider") == "OLLAMA_LOCAL"
+            and isinstance(decision.get("model_name"), str)
+            and 0 < len(decision["model_name"]) <= 128
+            and isinstance(digest, str) and len(digest) == 64
+            and all(ch in "0123456789abcdef" for ch in digest)
+        )
+        invocation_recorded = bool(
+            decision.get("kind") == "cutsceneai.studio.ai_conversion_decision"
+            and decision.get("model_invoked") is True
+            and (openai_recorded or local_recorded)
+        )
+        record("ai_pretransfer_planning",
+               "PASS" if invocation_recorded else "INCOMPLETE",
+               "A job-bound model response was recorded from OpenAI or local "
+               "Ollama; injected choices and missing provider evidence are "
+               "insufficient. This is not proof of native cinematic fidelity.")
     if animation_selected is None:
         record("ai_native_character_conversion", "NOT_APPLICABLE",
                "No approved AI character retargeting action was selected.")

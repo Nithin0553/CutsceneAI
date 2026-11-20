@@ -217,6 +217,7 @@ def test_source_only_redacted_summary_passed_to_llm(scene, monkeypatch):
 def test_missing_api_key_blocks_ai_pretransfer_not_silent_native_fallback(scene, monkeypatch):
     config, census, worker = scene
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("CUTSCENEAI_MODEL_PROVIDER", "openai")
     with pytest.raises(ai.TransferAIError, match="OPENAI_API_KEY"):
         ai.decide(config, census, worker)
 

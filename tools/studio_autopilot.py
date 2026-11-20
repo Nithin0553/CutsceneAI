@@ -12,7 +12,7 @@ import os
 import re
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,7 @@ _LOCK = threading.RLock()
 ACTIVE = "autopilot-active.json"
 STAGES = frozenset({
     "WAITING_FOR_UNITY", "WAITING_FOR_UNITY_CAPTURE", "CONNECTING",
-    "ANALYZING_PROJECTS", "PREPARING",
+    "ANALYZING_PROJECTS", "WAITING_FOR_MODEL", "PREPARING",
     "WAITING_FOR_UNREAL", "UNREAL_RUNNING",
 })
 FINISHED = frozenset({"GENERATED_UNVERIFIED", "BLOCKED", "CANCELLED"})
@@ -76,6 +76,9 @@ def status(workspace: Path) -> dict[str, Any]:
         "ai_conversion_strategy": state.get("ai_conversion_strategy", ""),
         "ai_animation_action": state.get("ai_animation_action", ""),
         "error": state.get("error", ""),
+        "failure_category": state.get("failure_category", ""),
+        "recovery_action": state.get("recovery_action", ""),
+        "model_retry_attempts": state.get("model_retry_attempts", 0),
     }
 
 
@@ -315,6 +318,29 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                     state["message"] = str(observed.get(
                         "message", "Waiting for saved Unity Play Mode behavior capture."
                     ))[:500]
+            elif phase == "WAITING_FOR_MODEL":
+                # Only retry the pre-native AI call; there must be no candidate
+                # or queued native job to replay. The attempt budget is durable.
+                if state.get("job_id") or state.get("candidate_id"):
+                    raise AutopilotError(
+                        "Model recovery cannot repeat a submitted native candidate."
+                    )
+                import studio_recovery_policy as recovery
+                retries = int(state.get("model_retry_attempts", 0))
+                if retries >= recovery.MAX_MODEL_RETRIES:
+                    raise AutopilotError(
+                        "The local model did not recover within the safe retry budget."
+                    )
+                next_at = datetime.fromisoformat(state["next_model_retry_at"])
+                if next_at.tzinfo is None:
+                    raise AutopilotError("Model retry timestamp is invalid.")
+                if datetime.now(timezone.utc) >= next_at:
+                    state["model_retry_attempts"] = retries + 1
+                    state["status"] = "ANALYZING_PROJECTS"
+                    state["message"] = (
+                        "Retrying read-only AI conversion reasoning with the "
+                        "same source, CED knowledge and target evidence."
+                    )
             elif phase == "CONNECTING":
                 level = _pick_level(state, service, workspace)
                 if not level:
@@ -518,9 +544,29 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
             else:
                 raise AutopilotError("Unknown transfer lifecycle state.")
         except (ValueError, KeyError, OSError, RuntimeError, ImportError) as exc:
-            state["status"] = "BLOCKED"
-            state["message"] = "Transfer stopped safely; inspect the precise error."
-            state["error"] = str(exc)[:700]
+            import studio_recovery_policy as recovery
+            diagnosis = recovery.classify(
+                str(exc), phase=phase,
+                native_submitted=bool(state.get("job_id")),
+            )
+            state["failure_category"] = diagnosis["category"]
+            state["recovery_action"] = diagnosis["next_action"]
+            retries = int(state.get("model_retry_attempts", 0))
+            if (diagnosis["safe_automatic_retry"]
+                    and retries < recovery.MAX_MODEL_RETRIES
+                    and not (workspace / "active-candidate.json").is_file()
+                    and not (workspace / "active-job.json").is_file()):
+                state["status"] = "WAITING_FOR_MODEL"
+                state["next_model_retry_at"] = (
+                    datetime.now(timezone.utc)
+                    + timedelta(seconds=recovery.OLLAMA_WAIT_SECONDS * (2 ** retries))
+                ).isoformat()
+                state["message"] = diagnosis["next_action"]
+                state["pending_model_error"] = str(exc)[:500]
+            else:
+                state["status"] = "BLOCKED"
+                state["message"] = "Transfer stopped safely; inspect the precise error."
+                state["error"] = str(exc)[:700]
         _write(file, state)
         return status(workspace)
 
