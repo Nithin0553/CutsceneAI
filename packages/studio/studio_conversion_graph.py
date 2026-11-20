@@ -44,7 +44,7 @@ def _validate(evidence: dict[str, Any], answer: Any) -> dict[str, Any]:
     animation = answer.get("animation_choice_id", "keep_native")
     if animation != "keep_native" and animation not in evidence.get("animation_choices", []):
         raise ConversionAgentError(
-            "AI chose an animation action without native source/target eligibility."
+            "AI chose an animation action without eligible source/target native evidence."
         )
     if (strategy == "visual_activation_partial"
             and not evidence["summary"].get("safe_partial_visibility_adapter_available")):
