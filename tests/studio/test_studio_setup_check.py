@@ -28,7 +28,8 @@ def test_valid_local_environment_never_claims_engine_acceptance(tmp_path):
     assert result["issues"] == []
 
 
-def test_missing_python_and_dependencies_are_actionable(tmp_path):
+def test_missing_python_and_dependencies_are_actionable(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTSCENEAI_MODEL_PROVIDER", "openai")
     root = checkout(tmp_path)
     result = check_studio_setup.diagnose(
         root, python_version=(3, 10, 14),
@@ -61,3 +62,16 @@ def test_windows_launcher_has_isolated_strict_preflight_and_no_engine_commands()
     assert "studio_local_bridge.py" in launch
     assert "UnrealEditor.exe" not in install
     assert "Unity.exe" not in install
+
+
+
+def test_local_ollama_setup_does_not_require_openai_sdk(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTSCENEAI_MODEL_PROVIDER", "ollama")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    result = check_studio_setup.diagnose(
+        checkout(tmp_path), python_version=(3, 12, 0),
+        module_exists=lambda name: name != "openai",
+    )
+    assert result["ready_to_launch_localhost"] is True
+    assert result["model_provider_configured"] == "ollama"
+    assert result["model_runtime_connected"] is False
