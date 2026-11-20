@@ -38,7 +38,7 @@ def _validate(evidence: dict[str, Any], answer: Any) -> dict[str, Any]:
         raise ConversionAgentError("AI returned an unregistered conversion strategy.")
     if strategy not in evidence.get("allowed_strategies", []):
         raise ConversionAgentError("AI selected a strategy not supported by the Unity source.")
-    reason = answer.get("reason")
+    reason = answer.get("reason", "")
     if not isinstance(reason, str) or len(reason) > 1200:
         raise ConversionAgentError("AI decision must include a bounded explanation.")
     animation = answer.get("animation_choice_id", "keep_native")
