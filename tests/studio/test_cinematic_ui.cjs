@@ -602,6 +602,8 @@ async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
   assert.match(x.app.innerHTML,/Unity bridge: Waiting for running editor/);
   assert.match(x.app.innerHTML,/Unreal bridge: Waiting for running editor/);
   assert.match(x.app.innerHTML,/supported code changes reconnect without restarting the editors/);
+  assert.match(x.app.innerHTML,/WAITING_FOR_UNITY_EDITOR/,
+    'missing Unity heartbeat has a specific source-bridge diagnostic');
   assert.doesNotMatch(x.app.innerHTML,/Unity CSIR Export|Unity Source Census|Enable AI agents/,
     'CSIR, census and agent controls are internal implementation details');
   await x.click('browse-unity');
