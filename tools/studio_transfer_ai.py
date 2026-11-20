@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import sys
 from collections import Counter
@@ -269,55 +268,59 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
     return evidence
 
 
+def _agent_module(name: str):
+    location = str(ROOT / "packages" / "studio")
+    if location not in sys.path:
+        sys.path.insert(0, location)
+    return __import__(name)
+
+
 def _model_choose(summary: dict) -> dict:
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise TransferAIError("AI transfer requires OPENAI_API_KEY in the Studio server process.")
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
-        raise TransferAIError("Install the openai package in the Studio Python environment.") from exc
+    """Model reasoning with retrieved CED semantics, no raw source files."""
+    provider = _agent_module("studio_model_provider")
     properties = {"strategy": {"type": "string", "enum": summary["allowed_strategies"]},
                   "reason": {"type": "string"}}
     if summary.get("animation_choices"):
-        properties["animation_choice_id"] = {"type": "string", "enum": ["keep_native", *summary["animation_choices"]]}
-    response = OpenAI(timeout=25, max_retries=0).responses.create(
-        model=os.environ.get("CUTSCENEAI_AGENT_MODEL", "gpt-5-mini"),
+        properties["animation_choice_id"] = {
+            "type": "string",
+            "enum": ["keep_native", *summary["animation_choices"]],
+        }
+    response = provider.complete_json(
+        task="cutsceneai_pretransfer_choice",
         instructions=(
-            "You are CutSceneAI's pre-conversion planning model. Analyze ONLY the "
-            "redacted Unity and Unreal evidence. Choose ONE registered native "
-            "conversion policy. 'native_source' preserves the existing safe "
-            "planner defaults. 'source_materials' requests the built-in embedded "
-            "FBX material importer. 'visual_activation_partial' requests the "
-            "explicitly lossy Unity ActivationTrack to Unreal visibility adapter; "
-            "it does NOT reproduce scripts, physics, or activation semantics. "
-            "Use partial activation ONLY if the provided installed adapter is "
-            "eligible; otherwise prefer source_materials for material references "
-            "and native_source for remaining scenes. When animation_choice_id is available, "
-            "choose a listed character only if its saved source/target rig evidence supports the "
-            "registered approved_action shown for that character. The actor-world trajectory action "
-            "bakes measured actor translation and rotation with a proven static actor-relative root. "
-            "The in-place IK action requires in-place motion. Otherwise use keep_native. "
-            "Never invent mappings, "
-            "engine commands, new adapters, paths, imports or fidelity claims."
+            "You are CutSceneAI's conversion agent. Use the verified, redacted "
+            "Unity/Unreal capability evidence and the dynamically retrieved "
+            "CED knowledge. CED rule candidates grant NO execution permission. "
+            "Choose a registered native strategy, not a benchmark-specific "
+            "assumption. native_source uses the existing source-backed planner. "
+            "source_materials enables the registered FBX material importer. "
+            "visual_activation_partial is a deliberately lossy visibility "
+            "approximation and only eligible when registered and validated; it "
+            "does not replicate GameObject activation, scripts or physics. "
+            "Choose an animation_choice_id only for an independently validated "
+            "rig/motion action; otherwise keep_native. Explore missing mapping "
+            "candidates in the evidence but never invent commands, classes, "
+            "asset paths, adapters or fidelity claims. Return only JSON."
         ),
-        input=json.dumps({
+        payload={
             "evidence": summary["summary"],
             "allowed_strategies": summary["allowed_strategies"],
-        }, sort_keys=True),
-        text={"format": {"type": "json_schema",
-                         "name": "cutsceneai_pretransfer_choice", "strict": True,
-                         "schema": {
-                             "type": "object", "additionalProperties": False,
-                             "properties": properties,
-                             "required": list(properties),
-                         }}},
+            "animation_choices": summary.get("animation_choices", []),
+            "ced_knowledge": summary["ced_knowledge"],
+            "planning_feedback": summary.get("planning_feedback", ""),
+        },
+        schema={
+            "type": "object", "additionalProperties": False,
+            "properties": properties, "required": list(properties),
+        },
     )
-    answer = json.loads(response.output_text)
-    response_id = getattr(response, "id", None)
-    if isinstance(answer, dict) and response_id:
-        answer = {**answer, "_provider_response_id": response_id}
+    answer = dict(response.answer)
+    answer["_provider_name"] = response.provider
+    answer["_provider_model"] = response.model
+    answer["_provider_response_sha256"] = response.response_sha256
+    if response.response_id:
+        answer["_provider_response_id"] = response.response_id
     return answer
-
 
 def decide(config: dict, census_path: str, worker: dict,
            *, reasoner: Callable[[dict], dict] | None = None, native_character_probe: dict | None = None) -> dict:
