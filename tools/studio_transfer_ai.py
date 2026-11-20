@@ -333,16 +333,16 @@ def decide(config: dict, census_path: str, worker: dict,
            *, reasoner: Callable[[dict], dict] | None = None, native_character_probe: dict | None = None) -> dict:
     evidence = inspect(config, census_path, worker, native_character_probe=native_character_probe)
     try:
-        answer = (reasoner or _model_choose)(evidence)
+        # LangGraph owns evidence grounding, alternative-model proposals,
+        # registered-strategy validation, and a bounded planning retry loop.
+        graph = _agent_module("studio_conversion_graph")
+        answer = graph.select(
+            evidence, reasoner=reasoner or _model_choose,
+            attempts=1 if reasoner is not None else 2,
+        )
     except Exception as exc:
-        raise TransferAIError("Pre-transfer AI reasoning failed: " + str(exc)[:400]) from exc
-    if not isinstance(answer, dict) or answer.get("strategy") not in KINDS:
-        raise TransferAIError("AI returned an unregistered conversion strategy.")
-    if set(answer) - {"strategy", "reason", "animation_choice_id", "_provider_response_id"}:
-        raise TransferAIError("AI returned unregistered conversion data.")
+        raise TransferAIError("Pre-transfer AI reasoning failed: " + str(exc)[:500]) from exc
     strategy = answer["strategy"]
-    if strategy not in evidence["allowed_strategies"]:
-        raise TransferAIError("AI selected a strategy not supported by the Unity source.")
     summary = evidence["summary"]
     # Never let model preference disable the existing source-material import
     # guarantee when provenance documents source materials. This policy is a
@@ -359,14 +359,27 @@ def decide(config: dict, census_path: str, worker: dict,
         "input_sha256": evidence["fingerprints"],
         "summary": summary, "allowed_strategies": evidence["allowed_strategies"],
         "conversion_options": options,
-        "model_invoked": True, "model_provider": "OPENAI_RESPONSES" if reasoner is None else "INJECTED_REASONER",
+        "ced_knowledge_sha256": evidence["ced_knowledge"]["knowledge_sha256"],
+        "ced_retrieved_concepts": evidence["ced_knowledge"]["retrieved_count"],
+        "model_invoked": True,
+        "model_provider": (answer.get("_provider_name") or "INJECTED_REASONER")
+        if reasoner is None else "INJECTED_REASONER",
         "native_conversion_executed": False,
         "source_and_target_fidelity_verified": False,
         "activation_semantics_partial": options["enable_actor_visibility_fallback"],
     }
-    provider_id = answer.get("_provider_response_id")
-    if reasoner is None and isinstance(provider_id, str) and re.fullmatch(r"resp_[A-Za-z0-9_]{1,120}", provider_id):
-        decision["model_response_id"] = provider_id
+    if reasoner is None:
+        model = answer.get("_provider_model")
+        digest = answer.get("_provider_response_sha256")
+        if (isinstance(model, str) and model
+                and isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)):
+            decision["model_name"] = model
+            decision["model_response_sha256"] = digest
+        provider_id = answer.get("_provider_response_id")
+        if (decision["model_provider"] == "OPENAI_RESPONSES"
+                and isinstance(provider_id, str)
+                and re.fullmatch(r"resp_[A-Za-z0-9_]{1,120}", provider_id)):
+            decision["model_response_id"] = provider_id
     report = evidence.get("character_compatibility")
     choice = answer.get("animation_choice_id", "keep_native")
     if choice != "keep_native":
