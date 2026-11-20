@@ -76,9 +76,12 @@ assets or cross-engine fidelity.
   `import importlib, studio_local_editor_worker as w; w.stop(); importlib.reload(w); w.start()`.
   Outdated or mismatched worker/adapter code never counts as transfer-ready.
   See [Live bridge continuity](LIVE_BRIDGE_CONTINUITY.md).
-- **Model:** The real pre-transfer model requires a valid `OPENAI_API_KEY`
-  within the local server process. The offline setup diagnostic verifies only
-  the Python SDK is installed, never the key or an actual model invocation.
+- **Model:** The agent now supports local Ollama (recommended for open-weight
+  inference) or explicit OpenAI Responses. Set `CUTSCENEAI_MODEL_PROVIDER=ollama`
+  and install/start the configured Ollama model; no OpenAI API key is needed.
+  A configured `OPENAI_API_KEY` remains supported when cloud mode is selected.
+  The offline setup check does not verify a real local or cloud model call.
+  See [Agent-centric architecture](AGENT_CENTRIC_ARCHITECTURE_V1.md).
 
 **Limits:** Python-only Unreal edits can refresh without an editor restart.
 Unity can recompile/reload its C# domain in the same editor, but changes to
