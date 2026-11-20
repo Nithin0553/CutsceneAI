@@ -70,3 +70,46 @@ def test_wrong_target_blocks_even_if_actors_ready():
     actors = [{'label':'CSAI_Old_CAM_A_Wide','kind':'camera'}, {'label':'CSAI_Old_Ch26_nonPBR','kind':'skeletal'}]
     r=assess(actors, project_matches=False)
     assert r['status']=='WRONG_TARGET'
+
+
+
+def test_duplicate_prepared_bindings_refuse_even_if_both_objects_exist():
+    import pytest
+
+    candidate = plan()
+    candidate['bindings']['Ch26_nonPBR'] = 'CSAI_Old_CAM_A_Wide'
+    with pytest.raises(ValueError, match='Ambiguous'):
+        dp.assess(candidate, [], {}, sequence_exists=False,
+                  project_matches=True, level_matches=True)
+
+
+def test_native_action_cannot_write_into_another_entity_actor():
+    import pytest
+
+    candidate = plan()
+    candidate['actions'][0]['actor_label'] = 'CSAI_Old_Ch26_nonPBR'
+    with pytest.raises(ValueError, match='differs from prepared binding'):
+        dp.assess(candidate, [], {}, sequence_exists=False,
+                  project_matches=True, level_matches=True)
+
+
+def test_native_action_requires_known_source_entity_binding():
+    import pytest
+
+    candidate = plan()
+    candidate['actions'][0]['entity_name'] = 'IMPOSTER'
+    with pytest.raises(ValueError, match='unknown source binding'):
+        dp.assess(candidate, [], {}, sequence_exists=False,
+                  project_matches=True, level_matches=True)
+
+
+def test_same_asset_path_cannot_be_both_sound_and_animation():
+    import pytest
+
+    candidate = plan()
+    candidate['actions'].append({
+        'kind': 'audio', 'unreal_asset_path': '/Game/Assets/Wave',
+    })
+    with pytest.raises(ValueError, match='both animation and audio'):
+        dp.assess(candidate, [], {}, sequence_exists=False,
+                  project_matches=True, level_matches=True)

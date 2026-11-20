@@ -227,3 +227,77 @@ def test_missing_source_required_directional_light_is_a_confirmed_native_failure
     result = gate.assess(workspace, job["job_id"])
     assert result["checks"]["native_visual_prerequisites"]["status"] == "FAIL"
     assert result["status"] == "BLOCKED"
+
+
+def test_ai_release_gate_requires_genuine_provider_provenance(tmp_path):
+    workspace, candidate, job = fixture(tmp_path)
+    decision = candidate / "ai-conversion-decision.json"
+    put(decision, {
+        "kind": "cutsceneai.studio.ai_conversion_decision",
+        "model_invoked": True, "model_provider": "INJECTED_REASONER",
+    })
+    job["ai_conversion_decision_sha256"] = gate._sha(decision)
+    put(workspace / "jobs" / (job["job_id"] + ".json"), job)
+    assert gate.assess(workspace, job["job_id"])["checks"][
+        "ai_pretransfer_planning"]["status"] == "INCOMPLETE"
+    put(decision, {
+        "kind": "cutsceneai.studio.ai_conversion_decision",
+        "model_invoked": True, "model_provider": "OPENAI_RESPONSES",
+        "model_response_id": "resp_verified_provider_reference",
+    })
+    job["ai_conversion_decision_sha256"] = gate._sha(decision)
+    put(workspace / "jobs" / (job["job_id"] + ".json"), job)
+    verdict = gate.assess(workspace, job["job_id"])
+    assert verdict["checks"]["ai_pretransfer_planning"]["status"] == "PASS"
+    assert not verdict["release_ready"]
+    decision.write_text('{"tampered":true}', encoding="utf-8")
+    verdict = gate.assess(workspace, job["job_id"])
+    assert verdict["checks"]["ai_pretransfer_planning"]["status"] == "FAIL"
+
+
+def test_reopened_native_comparison_is_scoped_and_not_full_parity(tmp_path):
+    workspace, candidate, job = fixture(tmp_path)
+    job["generation_editor_pid"] = 101
+    job["expected_project"] = str(tmp_path / "Unreal" / "Staging.uproject")
+    job["expected_level"] = "/Game/AI_Test03"
+    capture = tmp_path / "source.capture.json"
+    put(capture, {"kind": "cinetwin.behavior_capture"})
+    job["capture"] = str(capture)
+    put(workspace / "jobs" / (job["job_id"] + ".json"), job)
+    folder = candidate / "native-acceptance-verified"
+    persistence = folder / "persistence.json"
+    observation = folder / "target-behavior.json"
+    sampling = folder / "sampling-plan.json"
+    put(persistence, {
+        "kind": "cutsceneai.studio.persistence_audit",
+        "expected_project": job["expected_project"],
+        "expected_level": job["expected_level"],
+        "status": "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS",
+        "restart_verified": True,
+        "native_structure_status": "PASS",
+        "provenance_status": "COMPLETE",
+    })
+    put(observation, {"kind": "cinetwin.target_behavior_observation"})
+    put(sampling, {"kind": "cinetwin.sample_plan"})
+    comparison = {
+        "job_id": job["job_id"],
+        "generation_editor_pid": 101,
+        "observation_editor_pid": 202,
+        "acceptance_status": "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE",
+        "persistence_sha256": gate._sha(persistence),
+        "target_observation_sha256": gate._sha(observation),
+        "sampling_plan_sha256": gate._sha(sampling),
+        "source_capture_sha256": gate._sha(capture),
+    }
+    put(folder / "comparison.json", comparison)
+    verdict = gate.assess(workspace, job["job_id"])
+    # A fabricated sampling-plan kind and source capture lacking actual frames
+    # can no longer certify reopen acceptance, even if its file hashes agree.
+    assert verdict["checks"]["reopened_temporal_acceptance"]["status"] == "INCOMPLETE"
+    assert verdict["checks"]["reopened_camera_optics"]["status"] == "INCOMPLETE"
+    assert not verdict["release_ready"]
+    assert "rendered_frame_parity" in verdict["incomplete"]
+    comparison["source_capture_sha256"] = "a" * 64
+    put(folder / "comparison.json", comparison)
+    with pytest.raises(gate.ReleaseEvidenceError, match="foreign source"):
+        gate.assess(workspace, job["job_id"])

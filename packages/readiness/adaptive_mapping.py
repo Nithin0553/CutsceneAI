@@ -10,7 +10,9 @@ Stable semantic layers:
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
@@ -244,20 +246,65 @@ def resolve_dictionary(
     *,
     source_context: JsonObject | None = None,
     target_context: JsonObject | None = None,
+    transfer_context: JsonObject | None = None,
     ced_version: str = "0.1.0",
+    rulebook_store: str | Path | None = None,
 ) -> dict[str, Any]:
     """Resolve CED concepts using project analysis plus cutscene-specific evidence."""
 
     rules = rule_set.get("rules", [])
     if not isinstance(rules, list):
         raise MappingResolutionError("rule_set.rules must be an array")
+    rules = list(rules)
 
-    known_evidence = (
-        _profile_evidence_ids(source_profile)
-        | _profile_evidence_ids(target_profile)
-        | _context_evidence_ids(source_context)
-        | _context_evidence_ids(target_context)
-    )
+    # The local CED rulebook is *never* a source of arbitrary executable code.
+    # Only registered, independently reviewed approvals are eligible, and each
+    # resolved conversion still requires the ordinary source/target evidence,
+    # native preflight and immutable execution receipts.
+    active_store = (Path(rulebook_store) if rulebook_store is not None
+                    else Path.home() / ".cutsceneai-studio" / "ced-knowledge")
+    if rulebook_store is not None or active_store.exists():
+        try:
+            try:
+                from .ced_rulebook import approved_rules
+            except ImportError:
+                from ced_rulebook import approved_rules
+            learned = approved_rules(active_store)
+        except (OSError, ValueError) as error:
+            raise MappingResolutionError(
+                "Persistent CED mapping rulebook failed integrity review."
+            ) from error
+        known_rule_ids = {row.get("rule_id") for row in rules}
+        if any(row["rule_id"] in known_rule_ids for row in learned):
+            raise MappingResolutionError("A learned CED rule collides with an existing rule.")
+        rules.extend(learned)
+
+    # An identifier from the wrong project must not certify a conversion.
+    # Earlier revisions merged source and target evidence into one set, so
+    # e.g. a target-only "source.coordinate_basis" could make a rule READY.
+    source_evidence = _profile_evidence_ids(source_profile) | _context_evidence_ids(source_context)
+    target_evidence = _profile_evidence_ids(target_profile) | _context_evidence_ids(target_context)
+    known_evidence = source_evidence | target_evidence
+    # Transfer-output resolution is a decision of the Studio transfer gate,
+    # not a capability of Unity or Unreal. Only explicit, validated output
+    # dimensions can satisfy the corresponding mapping requirement.
+    transfer_evidence: set[str] = set()
+    if transfer_context is not None:
+        resolution = transfer_context.get("output_resolution")
+        if (isinstance(resolution, (list, tuple))
+                and len(resolution) == 2
+                and all(type(dimension) is int and 1 <= dimension <= 16384
+                        for dimension in resolution)):
+            transfer_evidence.add("transfer.output_resolution")
+
+    def evidence_present(identifier: str) -> bool:
+        if identifier.startswith("source."):
+            return identifier in source_evidence
+        if identifier.startswith("target."):
+            return identifier in target_evidence
+        if identifier.startswith("transfer."):
+            return identifier in transfer_evidence
+        return identifier in known_evidence
 
     entries: list[dict[str, Any]] = []
     for ced_id in sorted({str(value) for value in ced_ids}):
@@ -291,7 +338,11 @@ def resolve_dictionary(
                 (
                     str(rule.get("resolution", {}).get("outcome", "")),
                     str(rule.get("resolution", {}).get("resolver", "")),
-                    repr(rule.get("resolution", {}).get("parameters", {})),
+                    json.dumps(
+                        rule.get("resolution", {}).get("parameters", {}),
+                        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                    ),
+                    tuple(sorted(str(e) for e in rule.get("resolution", {}).get("required_evidence", []))),
                 )
                 for rule in tied
             }
@@ -303,8 +354,8 @@ def resolve_dictionary(
 
         resolution = best.get("resolution", {})
         required_evidence = [str(item) for item in resolution.get("required_evidence", [])]
-        observed_required = [item for item in required_evidence if item in known_evidence]
-        missing_evidence = [item for item in required_evidence if item not in known_evidence]
+        observed_required = [item for item in required_evidence if evidence_present(item)]
+        missing_evidence = [item for item in required_evidence if not evidence_present(item)]
         confidence = 1.0 if not required_evidence else len(observed_required) / len(required_evidence)
 
         outcome = str(resolution.get("outcome", "BLOCKED"))

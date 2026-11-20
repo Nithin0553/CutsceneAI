@@ -93,6 +93,8 @@ def _load_asset(asset_path: str) -> unreal.Object:
 
 def _preflight(plan: dict[str, Any]) -> None:
     """Probe target capabilities and mappings before mutating actors or creating assets."""
+    import studio_character_motion
+    studio_character_motion.validate_staged(unreal, plan)
     required_actions = {str(action["kind"]) for action in plan.get("actions", [])}
     try:
         unreal_compat.validate_component_versions(plan["actions"])
@@ -160,7 +162,8 @@ def _preflight(plan: dict[str, Any]) -> None:
         if getattr(interp, "LINEAR", None) is None:
             raise UnrealBuildError("Sequencer linear interpolation unavailable; no level changes made.")
     if any(a.get("kind") == "skeletal_animation"
-           and float(a.get("source_offset_seconds", 0.0)) > 0
+           and (float(a.get("source_offset_seconds", 0.0)) > 0
+                or int(a.get("hold_end_frame", a["end_frame"])) > int(a["end_frame"]))
            for a in plan.get("actions", [])):
         seq_ext = getattr(unreal, "MovieSceneSequenceExtensions", None)
         if not callable(getattr(seq_ext, "get_tick_resolution", None)):
@@ -458,10 +461,23 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
     track = binding.add_track(unreal.MovieScene3DTransformTrack)
     track.set_display_name(action.get("track_name", "CutSceneAI Transform"))
     section = track.add_section()
-    section.set_range(0, sequence.get_playback_end())
+    end_frame = int(sequence.get_playback_end())
+    # A frame-matched capture can carry an observed key at the exclusive
+    # playback-end boundary. Extend the section by one display frame so this
+    # real key drives interpolation in the last active interval rather than
+    # accidentally holding the prior pose.
+    boundary = 1 if any(int(k["frame"]) == end_frame for k in action["keys"]) else 0
+    section.set_range(0, end_frame + boundary)
     channels = unreal_compat.get_section_channels(section)
     if len(channels) < 6:
         raise UnrealBuildError("Unexpected Unreal transform channel layout; expected at least 6 channels.")
+    if action.get("source_behavior_strategy") == "cinetwin_verified_actor_world_trajectory_v1":
+        import studio_character_motion
+        section.set_is_active(True)
+        section.set_blend_type(unreal.MovieSceneBlendType.ABSOLUTE)
+        channels = studio_character_motion.transform_channels(unreal, section, initialize=True)
+        for channel in channels[6:]:
+            channel.set_default(1.0)
 
     # Sequencer 3D transform channel order: Location X/Y/Z, Rotation X/Y/Z, Scale X/Y/Z.
     for key in action["keys"]:
@@ -527,15 +543,20 @@ def _add_skeletal_animation(
     hold_end_frame = int(action.get("hold_end_frame", action["end_frame"]))
     post_roll_frames = max(0, hold_end_frame - int(action["end_frame"]))
     if post_roll_frames:
+        # MovieSceneSection stores pre/post-roll in native tick resolution;
+        # the immutable source plan expresses its hold in display frames.
+        frequency = unreal.MovieSceneSequenceExtensions.get_tick_resolution(sequence)
+        ticks_per_second = float(frequency.numerator) / float(frequency.denominator)
+        post_roll_ticks = math.ceil(post_roll_frames * ticks_per_second / frames_per_second)
         try:
             hold_strategy = unreal_compat.set_section_post_roll_frames(
-                section, post_roll_frames
+                section, post_roll_ticks
             )
         except unreal_compat.UnrealCompatibilityError as exc:
             raise UnrealBuildError(str(exc)) from exc
         unreal.log(
             "[CutSceneAI] Animation final-pose hold "
-            f"{action['entity_name']}: post_roll_frames={post_roll_frames}, "
+            f"{action['entity_name']}: display_frames={post_roll_frames}, native_ticks={post_roll_ticks}, "
             f"strategy={hold_strategy}"
         )
 

@@ -1,0 +1,14 @@
+{
+  "kind": "cutsceneai.ced.mapping_rulebook",
+  "schema_version": "1",
+  "ced_taxonomy": "cutscene-elements-v0.2.json",
+  "baseline_rules": "adaptive-rules-v0.1.json",
+  "semantics": "CED identifies engine-neutral meaning; a CED concept is not a promise that a native conversion exists.",
+  "unknown_policy": "UNMAPPED_REQUIRES_CANDIDATE",
+  "candidate_policy": "USER_TRAINING_TESTING_PROPOSALS_ARE_NOT_EXECUTABLE",
+  "promotion_policy": "INDEPENDENT_NATIVE_EVIDENCE_PLUS_EXPLICIT_REVIEW_AND_REGISTERED_ADAPTER",
+  "runtime_policy": "PINNED_APPROVED_RULES_PLUS_PER_JOB_PREFLIGHT; MODEL_RANKINGS_NEVER_AUTHORIZE_NATIVE_WRITES",
+  "learning_policy": "OFFLINE_CONTEXTUAL_BANDIT_SUGGESTIONS_ONLY_NO_AUTOMATIC_PROMOTION",
+  "provenance_policy": "LOCAL_APPEND_ONLY_EVIDENCE_HASHED_NO_PRIVATE_PROJECT_DATA_IN_SHARED_CATALOG",
+  "status_scope": "SOFTWARE_IMPLEMENTED_UNVERIFIED_IN_ENGINES"
+}

@@ -16,12 +16,9 @@ import csir_plan
 
 
 def _curve_map(section: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    result: dict[str, dict[str, Any]] = {}
-    for curve in section.get("payload", {}).get("animation", {}).get("curves", []):
-        semantic = curve.get("canonical_semantic")
-        if semantic:
-            result[str(semantic)] = curve
-    return result
+    # Keep scene placement and Sequencer conversion on the same root-only
+    # binding policy: a child bone cannot substitute for actor clip offsets.
+    return csir_plan._curve_map(section)
 
 
 def _single(curves: dict[str, dict[str, Any]], semantic: str, default: float) -> float:
@@ -84,9 +81,18 @@ def _world_transform(entity: dict[str, Any], actor_label: str) -> dict[str, Any]
     transform = entity.get("metadata", {}).get("world_transform")
     if not isinstance(transform, dict):
         return None
-    position = transform.get("position", {})
-    rotation = transform.get("rotation", {})
-    scale = transform.get("scale", {})
+    position = transform.get("position")
+    rotation = transform.get("rotation")
+    scale = transform.get("scale")
+    if not all(isinstance(part, dict) for part in (position, rotation, scale)):
+        raise csir_plan.PlanError(
+            f"Missing position, orientation or scale for source actor {entity['name']}."
+        )
+    if any(axis not in position or axis not in rotation or axis not in scale
+           for axis in "xyz") or "w" not in rotation:
+        raise csir_plan.PlanError(
+            f"Incomplete world placement for source actor {entity['name']}; no default facing."
+        )
     return _transform_operation(
         entity["name"],
         actor_label,

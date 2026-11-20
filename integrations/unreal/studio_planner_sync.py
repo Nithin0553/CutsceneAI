@@ -24,6 +24,7 @@ MODULES = (
     ("visual_activation", "packages/studio"),
     ("collider_shape_adapter", "packages/studio"),
     ("adaptive_components", "packages/studio"),
+    ("character_motion", "packages/studio"),
     ("transfer_backend", "packages/studio"),
     ("prepared_transfer", "packages/studio"),
     # The automatic asset manifest is created by the Studio host Python
@@ -36,6 +37,7 @@ MODULES = (
     ("character_compatibility", "packages/studio"),
     ("animation_conversion_policy", "packages/studio"),
     ("studio_ik_retarget", "integrations/unreal"),
+    ("studio_character_motion", "integrations/unreal"),
     ("studio_character_probe", "integrations/unreal"),
     ("studio_transfer_ai", "tools"),
     ("studio_character_execution", "integrations/unreal"),

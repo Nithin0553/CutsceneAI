@@ -181,6 +181,48 @@ def _approved_precedents(workspace: Path, job: dict[str, Any]) -> list[dict[str,
     return precedents
 
 
+
+def _approved_ced_rulebook_precedents(workspace: Path, job: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expose only redacted, QA-approved CED mapping identities to the agent.
+
+    These are informative precedents. They grant no native execution authority
+    and never include user source paths, rule parameters or evidence files.
+    """
+    store = workspace.parent / "ced-knowledge"
+    if not store.exists():
+        return []
+    package = str(Path(__file__).resolve().parents[1] / "readiness")
+    if package not in sys.path:
+        sys.path.insert(0, package)
+    from ced_rulebook import approved_rules
+
+    try:
+        rules = approved_rules(store)
+        source = _json(Path(str(job["csir"])))
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise AgentError("QA-approved CED mapping book failed integrity review.") from exc
+    known = set()
+    for category in ("entities", "assets", "tracks"):
+        for row in source.get(category, []):
+            if not isinstance(row, dict):
+                continue
+            known.add(str(row.get("ced_type") or ""))
+            for section in row.get("sections", []):
+                if isinstance(section, dict):
+                    known.add(str(section.get("ced_type") or ""))
+    choices = []
+    for rule in sorted(rules, key=lambda x: x["rule_id"]):
+        if rule["ced"] not in known:
+            continue
+        choices.append({
+            "ced": rule["ced"], "rule_id": rule["rule_id"],
+            "resolver": rule["resolution"]["resolver"],
+            "quality_gate": "QA_APPROVED_WITH_PER_JOB_PREFLIGHT",
+            "no_automatic_native_permission": True,
+        })
+    return choices[:12]
+
+
 def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
     if not os.environ.get("OPENAI_API_KEY"):
         raise AgentError("OPENAI_API_KEY is not configured in the local Studio process.")
@@ -380,6 +422,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "remaining_repairs": MAX_REPAIRS - state.get("iterations", 0),
             "issues": state["issues"][:30],
             "verified_ced_precedents": _approved_precedents(workspace, job),
+            "approved_ced_rulebook_precedents": _approved_ced_rulebook_precedents(workspace, job),
             "verified_transform_candidate": state.get("transform_candidate", {}),
         }
         try:

@@ -9,8 +9,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+# Independent pure-Python comparison replays persisted source/target evidence.
+# It never invokes a native engine or treats a synthetic receipt as real data.
+_CINETWIN = Path(__file__).resolve().parents[1] / "cinetwin"
+if str(_CINETWIN) not in sys.path:
+    sys.path.insert(0, str(_CINETWIN))
+
+from behavior_compare import BehavioralComparisonError, compare
 
 
 class ReleaseEvidenceError(ValueError):
@@ -100,6 +109,73 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
             "Source and native target must match the original prepared hashes and sequence.",
             csir_sha256=source_digest, plan_sha256=plan_digest,
         )
+
+    # An LLM strategy is part of conversion only when its exact candidate
+    # decision is bound to the submitted job. Synthetic reasoning does not
+    # count as a genuine model invocation.
+    decision_file = candidate / "ai-conversion-decision.json"
+    recorded_decision = job.get("ai_conversion_decision_sha256")
+    animation_selected = None
+    if not recorded_decision:
+        record("ai_pretransfer_planning", "INCOMPLETE",
+               "No job-bound AI conversion decision is recorded.")
+    elif not decision_file.is_file() or decision_file.is_symlink():
+        record("ai_pretransfer_planning", "FAIL",
+               "AI decision file is unavailable or unsafe.")
+    elif recorded_decision != _sha(decision_file):
+        record("ai_pretransfer_planning", "FAIL",
+               "AI conversion decision differs from the submitted job bytes.")
+    else:
+        decision = _read(decision_file)
+        animation_selected = decision.get("animation_conversion")
+        genuine = bool(
+            decision.get("kind") == "cutsceneai.studio.ai_conversion_decision"
+            and decision.get("model_invoked") is True
+            and decision.get("model_provider") == "OPENAI_RESPONSES"
+            and isinstance(decision.get("model_response_id"), str)
+            and decision["model_response_id"].startswith("resp_")
+        )
+        record("ai_pretransfer_planning", "PASS" if genuine else "INCOMPLETE",
+               "Genuine source-bound OpenAI planning requires provider response evidence; "
+               "mocked selections are insufficient.")
+    if animation_selected is None:
+        record("ai_native_character_conversion", "NOT_APPLICABLE",
+               "No approved AI character retargeting action was selected.")
+    else:
+        character_file = candidate / "character-native-execution.json"
+        char_sha = job.get("character_compatibility_sha256")
+        comp_file = candidate / "character-compatibility.json"
+        if not character_file.is_file():
+            record("ai_native_character_conversion", "INCOMPLETE",
+                   "Selected character has no native skeleton/clip readback.")
+        elif not comp_file.is_file() or not char_sha or _sha(comp_file) != char_sha:
+            record("ai_native_character_conversion", "FAIL",
+                   "Character compatibility evidence is missing or modified.")
+        else:
+            readback = _read(character_file)
+            okay = bool(
+                readback.get("kind") == "cutsceneai.studio.character_native_readback"
+                and readback.get("job_id") == job_id
+                and readback.get("source_entity_id") == animation_selected.get("source_entity_id")
+                and readback.get("decision_file_sha256") == recorded_decision
+                and readback.get("compatibility_file_sha256") == char_sha
+                and readback.get("status") == "PASS"
+                and job.get("character_native_readback_status") == "PASS"
+                and (readback.get("skeleton") or {}).get("status") == "PASS"
+                and readback.get("duration_match") is True
+                and bool(readback.get("observed_sections"))
+                and bool(readback.get("expected_sections"))
+                and readback.get("fidelity_verified") is False
+            )
+            if animation_selected.get("action_id") == "bake_verified_actor_world_trajectory":
+                import character_motion
+                okay = okay and character_motion.receipt_matches(readback, plan)
+            record(
+                "ai_native_character_conversion",
+                "PASS" if okay else "FAIL",
+                "Native retargeting readback must match this exact AI choice, "
+                "job, source evidence and clip sections.",
+            )
 
     generation = (
         job.get("generation_status") == "GENERATED_UNVERIFIED"
@@ -220,6 +296,149 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
                "INCOMPLETE" if not measured else "FAIL" if errors else "PASS",
                "Measured actor/root motion only; other temporal domains require their own tests.",
                motion_or_coverage_issues=errors)
+
+    # Friday's exact CineTwin acceptance lives in an immutable nested folder
+    # produced after a *different* Unreal editor process reopens the map.
+    # This supplements the legacy closed-loop readback rather than pretending
+    # the latest same-editor diagnostic proves saved behavioral parity.
+    accepted = [
+        p for p in candidate.glob("native-acceptance-*/comparison.json")
+        if p.is_file() and not p.is_symlink()
+        and p.resolve().parent.parent == candidate
+        and p.parent.name.startswith("native-acceptance-")
+    ]
+    if not accepted:
+        record("reopened_temporal_acceptance", "INCOMPLETE",
+               "No source-bound post-reopen CineTwin comparison has completed.")
+        record("reopened_camera_optics", "INCOMPLETE",
+               "No independent post-reopen physical camera lens observations exist.")
+        record("reopened_camera_cut_timing", "INCOMPLETE",
+               "No independent post-reopen native camera binding/section readback exists.")
+    else:
+        chosen = max(accepted, key=lambda p: (p.stat().st_mtime_ns, p.name))
+        comparison = _read(chosen)
+        folder = chosen.parent
+        persistence_file = folder / "persistence.json"
+        target_file = folder / "target-behavior.json"
+        sampling_file = folder / "sampling-plan.json"
+        capture_path = Path(str(job.get("capture") or "")).resolve()
+        expected_files = (
+            ("persistence_sha256", persistence_file),
+            ("target_observation_sha256", target_file),
+            ("sampling_plan_sha256", sampling_file),
+            ("source_capture_sha256", capture_path),
+        )
+        if (comparison.get("job_id") != job_id
+                or not all(path.is_file() and not path.is_symlink()
+                           and comparison.get(key) == _sha(path)
+                           for key, path in expected_files)):
+            raise ReleaseEvidenceError(
+                "Reopened comparison has changed or foreign source/target evidence."
+            )
+        reopened = _read(persistence_file)
+        generation_pid = comparison.get("generation_editor_pid")
+        observation_pid = comparison.get("observation_editor_pid")
+        same_job = (
+            type(generation_pid) is int and generation_pid > 0
+            and type(observation_pid) is int and observation_pid > 0
+            and generation_pid != observation_pid
+            and generation_pid == job.get("generation_editor_pid")
+            and reopened.get("kind") == "cutsceneai.studio.persistence_audit"
+            and reopened.get("expected_project") == job.get("expected_project")
+            and reopened.get("expected_level") == job.get("expected_level")
+        )
+        if not same_job:
+            raise ReleaseEvidenceError(
+                "Reopened native measurement has mismatched editor or project identity."
+            )
+        compared = comparison.get("acceptance_status")
+
+        # A comparison JSON is not itself sufficient proof of camera parity.
+        # Re-evaluate exact source and observed target bytes whenever a proper
+        # source sampling plan requests camera coverage. This detects invented
+        # PASS values even when all file SHA-256 references are correct.
+        camera_checks = []
+        camera_plan = _read(sampling_file)
+        if camera_plan.get("kind") == "cinetwin.sampling_plan":
+            # The supplied plan and Unity capture must be the immutable inputs
+            # of this exact queued candidate, not a self-consistent foreign pair.
+            saved_session = _read(session_path)
+            captured = saved_session.get("source_capture") or {}
+            if (camera_plan.get("source", {}).get("csir_sha256") != _sha(csir_path)
+                    or captured.get("path") != str(capture_path)
+                    or captured.get("sha256") != _sha(capture_path)):
+                raise ReleaseEvidenceError(
+                    "Reopened camera evidence does not match the prepared Unity source and capture."
+                )
+            try:
+                recomputed = compare(
+                    camera_plan, _read(capture_path), _read(target_file)
+                )
+            except (BehavioralComparisonError, KeyError, TypeError,
+                    ValueError, IndexError, ZeroDivisionError) as exc:
+                raise ReleaseEvidenceError(
+                    "Camera evidence cannot be recomputed from independent native samples."
+                ) from exc
+            # Do not accept a plausible-looking comparison JSON with correctly
+            # hashed input files but fabricated actor/root/joint measurements.
+            for field in ("evaluation", "entities", "rig_motion_diagnostics",
+                          "unmapped_source_entities"):
+                if comparison.get(field) != recomputed[field]:
+                    raise ReleaseEvidenceError(
+                        "Reopened behavior metrics differ from source-target samples: " + field
+                    )
+            if (recomputed["evaluation"]["status"] == "DIFFERENCES_DETECTED"
+                    and compared != "DIFFERENCES_DETECTED"):
+                raise ReleaseEvidenceError(
+                    "Reopened acceptance claimed success despite verified source-target differences."
+                )
+            for domain, check_name, explanation in (
+                ("camera_optics", "reopened_camera_optics",
+                 "Sampled native CineCamera sensor height and focal length versus Unity vertical FOV."),
+                ("camera_cut_timing", "reopened_camera_cut_timing",
+                 "Source-authored cut sections versus native Sequencer camera binding IDs and ranges."),
+            ):
+                if comparison.get(domain) != recomputed[domain]:
+                    raise ReleaseEvidenceError(
+                        "Reopened camera comparison differs from measured native evidence: " + domain
+                    )
+                check_status = recomputed[domain]["status"]
+                camera_checks.append(check_status)
+                record(check_name, check_status, explanation)
+        else:
+            record("reopened_camera_optics", "INCOMPLETE",
+                   "No valid source sampling-plan contract was attached.")
+            record("reopened_camera_cut_timing", "INCOMPLETE",
+                   "No valid source sampling-plan contract was attached.")
+
+        full_native_scope = bool(
+            compared == "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE"
+            and reopened.get("restart_verified") is True
+            and reopened.get("native_structure_status") == "PASS"
+            and reopened.get("provenance_status") == "COMPLETE"
+            and reopened.get("status")
+            == "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS"
+        )
+        full_native_scope = full_native_scope and all(
+            status in {"PASS", "NOT_APPLICABLE"} for status in camera_checks
+        ) and bool(camera_checks)
+        if job.get("character_native_readback_status") == "PASS":
+            native_character = comparison.get("character_conversion") or {}
+            full_native_scope = full_native_scope and (
+                native_character.get("action_id") == (animation_selected or {}).get("action_id")
+                and native_character.get("action_id") in (
+                    "use_approved_ik_retarget_profile", "bake_verified_actor_world_trajectory"
+                )
+                and native_character.get("reopened_character_readback_status") == "PASS"
+            )
+        record(
+            "reopened_temporal_acceptance",
+            "PASS" if full_native_scope else
+            "FAIL" if compared == "DIFFERENCES_DETECTED" else "INCOMPLETE",
+            "Distinct-editor native structure and matched-frame actor/root "
+            "motion only. Rendering/audio/physics remain separate release domains.",
+            native_status=compared,
+        )
 
     for domain, explanation in {
         "rendered_frame_parity": "Matched-time source and target images/camera projections are not independently compared.",

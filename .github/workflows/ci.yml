@@ -29,3 +29,33 @@ jobs:
         run: python -m ruff check tests
       - name: Repository hygiene and docs navigation
         run: python tools/repo_check.py
+      - name: Train and integrity-verify CED semantic mapping model
+        run: |
+          mkdir -p ced-training-output
+          python tools/train_ced_policy.py train --output ced-training-output/ced-mapping-model-v1.json --summary ced-training-output/ced-training-report-v1.json
+          python tools/train_ced_policy.py verify --model ced-training-output/ced-mapping-model-v1.json
+      - name: Publish trained CED policy and source-bound report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ced-trained-policy-${{ github.sha }}
+          path: ced-training-output/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  studio-windows-bootstrap:
+    name: Windows Studio dependency bootstrap (no engine)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Create isolated Studio environment and verify localhost prerequisites
+        shell: pwsh
+        run: |
+          .\tools\install_studio.ps1 -Python python
+          if ($LASTEXITCODE -ne 0) { throw "Studio installation failed." }
+          & .\.venv-studio\Scripts\python.exe .\tools\check_studio_setup.py --strict --json
+          if ($LASTEXITCODE -ne 0) { throw "Studio diagnostics failed." }

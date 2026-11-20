@@ -465,7 +465,9 @@ def test_actor_and_root_rotation_ownership_is_measured_separately(case, moving_r
     _json(Path(case.config["capture"]), case.capture)
     evidence = ai.inspect(case.config, case.census, case.worker, native_character_probe=_probe(case))
     row, = evidence["character_compatibility"]["characters"]
-    assert row["motion"]["owner"] == ("SKELETAL_ROOT" if moving_root else "ACTOR_WITH_STABLE_WORLD_OFFSET")
+    # A turning actor with a world-stationary root has counter-rotation in
+    # actor space. It is compound motion, not a rigid actor-owned trajectory.
+    assert row["motion"]["owner"] == ("SKELETAL_ROOT" if moving_root else "COMPOUND_OR_UNRESOLVED")
     assert row["motion"]["root_rotation_degrees" if moving_root else "actor_rotation_degrees"] == 180
     assert not evidence["animation_choices"]
 

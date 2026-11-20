@@ -291,3 +291,153 @@ def test_inputs_are_not_modified_by_comparison() -> None:
     before = copy.deepcopy((plan, source, target))
     compare(plan, source, target)
     assert (plan, source, target) == before
+
+
+
+def _approved_orientation_evidence(plan, target):
+    target["target"] = {
+        "engine_version": "5.8.1",
+        "project_identity_sha256": "a" * 64,
+        "sequence_asset_path": "/Game/Acceptance/LS_Independent",
+    }
+    target["skeletal_bone_maps"] = {"character": {"hips": "pelvis"}}
+    return {
+        "kind": "cutsceneai.rig_pose_calibration",
+        "schema_version": "1",
+        "reference_kind": "INDEPENDENT_APPROVED_REST_POSE",
+        "source_identity": {k: plan["source"][k] for k in (
+            "csir_sha256", "sequence_ref", "project_fingerprint",
+        )},
+        "target_identity": dict(target["target"]),
+        "rigs": {"character": {
+            "bone_map": {"hips": "pelvis"},
+            "reference": {"hips": {
+                "source_world_rotation_xyzw": [0, 0, 0, 1],
+                "target_unreal_world_rotation_xyzw": [0, 0, 0, 1],
+                "axis_alignment_xyzw": [0, 0, 0, 1],
+            }},
+        }},
+    }
+
+
+def test_independent_approved_joint_axis_calibration_detects_orientation_mismatch():
+    import math
+
+    plan, source, target = _fixtures()
+    evidence = _approved_orientation_evidence(plan, target)
+    for index, (src_frame, dst_frame) in enumerate(zip(source["samples"], target["samples"])):
+        radians = math.radians(index * 10.0) / 2
+        source_rotation = [0, 0, math.sin(radians), math.cos(radians)]
+        target_rotation = [math.sin(radians), 0, 0, math.cos(radians)]
+        src_frame["skeletal_poses"][0]["bones"][0]["world_transform"]["rotation_xyzw"] = source_rotation
+        dst_frame["skeletal_poses"][0]["bones"][0]["unreal_world_rotation_xyzw"] = target_rotation
+    result = compare(plan, source, target, pose_calibration=evidence)
+    calibrated = result["rig_motion_diagnostics"][0]["joint_reference_orientation"]
+    assert calibrated["status"] == "PASS"
+    assert calibrated["max_orientation_delta_error_degrees"] == pytest.approx(0)
+    assert result["evaluation"]["status"] == "NO_FLAGGED_DIFFERENCES"
+    assert result["evaluation"]["overall_cutscene_fidelity"] == "NOT_ESTABLISHED"
+
+    # Identical root positions and joint angular excursion are insufficient:
+    # a 30-degree wrong target joint orientation must fail this independent gate.
+    target["samples"][3]["skeletal_poses"][0]["bones"][0][
+        "unreal_world_rotation_xyzw"
+    ] = [0, 0, 0, 1]
+    result = compare(plan, source, target, pose_calibration=evidence)
+    calibrated = result["rig_motion_diagnostics"][0]["joint_reference_orientation"]
+    assert calibrated["status"] == "FAIL"
+    assert calibrated["max_orientation_delta_error_degrees"] >= 29.9
+    assert "CALIBRATED_SKELETAL_JOINT_ORIENTATION_MISMATCH" in (
+        result["rig_motion_diagnostics"][0]["flags"]
+    )
+
+
+@pytest.mark.parametrize("tamper", ["wrong_source", "wrong_target", "wrong_map", "missing_axis"])
+def test_calibration_requires_exact_independently_approved_evidence(tamper):
+    plan, source, target = _fixtures()
+    evidence = _approved_orientation_evidence(plan, target)
+    if tamper == "wrong_source":
+        evidence["source_identity"]["csir_sha256"] = "e" * 64
+    elif tamper == "wrong_target":
+        evidence["target_identity"]["project_identity_sha256"] = "b" * 64
+    elif tamper == "wrong_map":
+        evidence["rigs"]["character"]["bone_map"]["hips"] = "not_pelvis"
+    else:
+        del evidence["rigs"]["character"]["reference"]["hips"]["axis_alignment_xyzw"]
+    with pytest.raises(BehavioralComparisonError, match="calibration"):
+        compare(plan, source, target, pose_calibration=evidence)
+
+
+def test_without_calibration_absolute_joint_orientation_remains_incomplete():
+    plan, source, target = _fixtures()
+    target["skeletal_bone_maps"] = {"character": {"hips": "pelvis"}}
+    diagnostic = compare(plan, source, target)["rig_motion_diagnostics"][0]
+    assert diagnostic["joint_reference_orientation"]["status"] == "INCOMPLETE"
+    assert diagnostic["joint_positions"]["status"] == "PASS"
+
+
+
+def _approved_mesh_anatomy(plan, target, *, target_direction=(-1, 0, 0)):
+    target["target"] = {
+        "engine_version": "5.8.1", "project_identity_sha256": "a"*64,
+        "sequence_asset_path": "/Game/Acceptance/LS_Independent",
+    }
+    for frame in target["samples"]:
+        frame["skeletal_mesh_component_bases"] = [{
+            "entity_id": "character", "status": "OBSERVED",
+            "target_mesh_asset_path": "/Game/Characters/Alice",
+            "unreal_component_world_rotation_xyzw": [0, 0, 0, 1],
+        }]
+    return {
+        "kind": "cutsceneai.mesh_forward_approval", "schema_version": "1",
+        "reviewed_anatomical_axes": True,
+        "source_identity": {k: plan["source"][k] for k in (
+            "csir_sha256", "sequence_ref", "project_fingerprint",
+        )},
+        "target_identity": dict(target["target"]),
+        "characters": {"character": {
+            "source_forward_actor_local_canonical_xyz": [0, 0, 1],
+            "target_forward_mesh_local_unreal_xyz": list(target_direction),
+            "target_mesh_asset_path": "/Game/Characters/Alice",
+        }},
+    }
+
+
+def test_approved_anatomical_forward_matches_actual_native_mesh_component():
+    plan, source, target = _fixtures()
+    approved = _approved_mesh_anatomy(plan, target)
+    report = compare(plan, source, target, mesh_forward_approval=approved)
+    observation = report["rig_motion_diagnostics"][0]["anatomical_mesh_forward"]
+    assert observation["status"] == "PASS"
+    assert observation["max_world_forward_error_degrees"] == pytest.approx(0)
+    assert observation["suggestion_applied"] is False
+
+
+def test_reversed_unreal_mesh_forward_reports_error_and_never_applies_yaw():
+    plan, source, target = _fixtures()
+    approved = _approved_mesh_anatomy(plan, target, target_direction=(1, 0, 0))
+    report = compare(plan, source, target, mesh_forward_approval=approved)
+    result = report["rig_motion_diagnostics"][0]
+    forward = result["anatomical_mesh_forward"]
+    assert forward["status"] == "FAIL"
+    assert forward["max_world_forward_error_degrees"] == pytest.approx(180)
+    assert abs(forward["suggested_target_actor_yaw_correction_degrees"]) == pytest.approx(180)
+    assert forward["suggestion_applied"] is False
+    assert "CHARACTER_MESH_ANATOMICAL_FORWARD_MISMATCH" in result["flags"]
+    assert report["evaluation"]["status"] == "DIFFERENCES_DETECTED"
+
+
+@pytest.mark.parametrize("tamper", ["wrong_source", "wrong_mesh", "no_component", "no_review"])
+def test_mesh_forward_requires_independent_approved_axes_and_real_component(tamper):
+    plan, source, target = _fixtures()
+    approval = _approved_mesh_anatomy(plan, target)
+    if tamper == "wrong_source":
+        approval["source_identity"]["csir_sha256"] = "e"*64
+    elif tamper == "wrong_mesh":
+        target["samples"][0]["skeletal_mesh_component_bases"][0]["target_mesh_asset_path"] = "/Game/Wrong"
+    elif tamper == "no_component":
+        target["samples"][0].pop("skeletal_mesh_component_bases")
+    else:
+        approval["reviewed_anatomical_axes"] = False
+    with pytest.raises(BehavioralComparisonError, match="mesh forward"):
+        compare(plan, source, target, mesh_forward_approval=approval)

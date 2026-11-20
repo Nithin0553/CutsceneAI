@@ -1,3 +1,13 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# The research Studio runs from a checkout, not an installed import package.
+# Build metadata installs exact declared dependencies without sweeping up
+# unrelated repo directories (apps, tools, tests and engine integrations).
+[tool.setuptools]
+packages = []
+
 [project]
 name = "cutsceneai"
 version = "0.1.0"

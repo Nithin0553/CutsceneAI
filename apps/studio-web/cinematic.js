@@ -45,6 +45,23 @@
     const d=readiness();return Boolean(validEditor()&&state.candidate&&!state.job&&
       ((d.ready&&d.candidate_id===state.candidate.candidate_id)||canAutoSetup()));
   }
+  function liveEngineStatus(){
+    const source=state.status?.unity_editor||{},dest=worker(),c=connection();
+    const unityPath=c?.unity_project||state.discovery?.unity?.folder||state.folders.unity;
+    const targetPath=c?.target_project||state.unrealProject||state.discovery?.unreal?.project;
+    const unityReady=Boolean(source.connected&&unityPath&&norm(source.project_root)===norm(unityPath));
+    const unrealReady=Boolean(dest.connected&&targetPath&&norm(dest.project)===norm(targetPath));
+    const host=state.status?.host_reload||{};
+    const updating=host.status&&!['CURRENT','NOT_ENABLED'].includes(host.status);
+    const hostState=host.status==='BLOCKED_INVALID_CODE'?'Studio code needs review':
+      host.status==='DEFERRED_ACTIVE_TRANSFER'?'Studio update deferred during transfer':
+      'Studio reconnecting after code update';
+    return '<p class="subnote" role="status" aria-label="Live editor connections">'+
+      'Unity bridge: '+esc(unityReady?'Connected · '+source.editor_mode:'Waiting for running editor')+
+      ' &nbsp;·&nbsp; Unreal bridge: '+esc(unrealReady?'Connected':'Waiting for running editor')+
+      (updating?' &nbsp;·&nbsp; '+esc(hostState):'')+
+      '. Once enabled, supported code changes reconnect without restarting the editors.</p>';
+  }
   function progress(){
     const selected=state.screen==='results'?3:state.screen==='transfer'?2:state.candidate?1:0;
     return '<div class="steps" aria-label="Transfer workflow">'+
@@ -108,7 +125,7 @@
   }
   function quickProjects(){
     const run=state.autopilot||{status:'IDLE'},working=[
-      'WAITING_FOR_UNITY','WAITING_FOR_UNITY_CAPTURE','CONNECTING','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING'
+      'WAITING_FOR_UNITY','WAITING_FOR_UNITY_CAPTURE','CONNECTING','ANALYZING_PROJECTS','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING'
     ].includes(run.status),complete=run.status==='GENERATED_UNVERIFIED';
     const targetOptions=state.discovery?.unreal?.project_options||[];
     const valid=Boolean(state.folders.unity&&state.folders.unreal&&
@@ -119,6 +136,7 @@
       '<div class="engine-pair">'+card('unity',state.folders.unity,Boolean(state.folders.unity))+
       line(Boolean(state.folders.unity&&state.folders.unreal))+
       card('unreal',state.folders.unreal,Boolean(state.folders.unreal))+'</div>'+
+      liveEngineStatus()+
       '<div class="simple-connections">'+
       '<div>'+button(state.folders.unity?'Change Unity Project':'Connect Unity','browse-unity',state.busy,'secondary')+'</div>'+
       '<div>'+button(state.folders.unreal?'Change Unreal Project':'Connect Unreal','browse-unreal',state.busy,'secondary')+'</div></div>'+
@@ -130,8 +148,10 @@
       (run.status==='BLOCKED'?'<p class="warning" role="alert">'+esc(run.error||run.message)+'</p>':'')+
       '<div class="center-actions">'+
       (working?button('View Transfer','quick-transfer',false,'secondary'):
-        complete?button('Open Transferred Cutscene','quick-results'):
-        button('Transfer '+ico('arrow'),'autopilot-start',state.busy||!valid))+
+        complete?button('New Transfer '+ico('arrow'),'autopilot-start',state.busy||!valid)+
+          button('Open Transferred Cutscene','quick-results',false,'secondary'):
+        button((run.status==='BLOCKED'||run.status==='CANCELLED'?'New Transfer ':'Transfer ')+
+          ico('arrow'),'autopilot-start',state.busy||!valid))+
       '</div>'+
       '<p class="subnote">Keep Unity and Unreal Editors open with the CutSceneAI companions enabled. Studio never overwrites the existing cutscene. If several Timelines are loaded, select the one to transfer in Unity.</p>'+
       '</main>';
@@ -139,17 +159,20 @@
 
   function quickTransfer(){
     const run=state.autopilot||{};
-    const finished=['GENERATED_UNVERIFIED','BLOCKED'].includes(run.status);
+    const finished=['GENERATED_UNVERIFIED','BLOCKED','CANCELLED'].includes(run.status);
     return '<main class="transfer-view simple-studio">'+
       '<h1>AI Transfer</h1><p class="simple-intro">'+esc(run.message||'Connecting to your engines…')+'</p>'+
       '<div class="transfer-progress"><div class="indeterminate '+(!finished?'working':'')+
       '" role="progressbar" aria-label="Transfer status" aria-valuetext="'+esc(run.status||'STARTING')+'"><i></i></div>'+
       '<span>'+esc(run.status||'STARTING')+'</span></div>'+
+      (run.ai_animation_action?'<p class="subnote">Approved character conversion: '+esc(run.ai_animation_action)+'</p>':'')+
       (run.error?'<p class="warning" role="alert">'+esc(run.error)+'</p>':'')+
       (run.status==='BLOCKED'?'<p class="subnote">The agent stopped safely. The original projects were not overwritten. Resolve the reported editor or source dependency before starting a fresh transfer.</p>':'')+
+      (run.status==='CANCELLED'?'<p class="subnote">Cancelled before Unreal execution; no native job was interrupted.</p>':'')+
       '<div class="center-actions">'+
       (run.status==='GENERATED_UNVERIFIED'?button('Review Cutscene','quick-results'):
-        run.status==='BLOCKED'?button('Back to Projects','projects',false,'secondary'):'')+
+        ['BLOCKED','CANCELLED'].includes(run.status)?button('Back to Projects','projects',false,'secondary'):
+        run.status==='UNREAL_RUNNING'?'':button('Cancel before Unreal','autopilot-cancel',state.busy,'secondary'))+
       '</div></main>';
   }
 
@@ -160,7 +183,7 @@
         return '<p class="warning" role="alert">AI transfer provenance could not be verified. Inspect the local Studio AI transfer audit before treating this result as an AI-guided conversion.</p>';
       return '';
     }
-    const cine=audit.cinetwin||{};
+    const cine=audit.cinetwin||{},character=audit.character_conversion||{};
     const err=v=>typeof v==='number' && Number.isFinite(v)?v.toFixed(2)+' cm':'Not measured';
     const generated=audit.native_builder_completed===true;
     const material=Boolean(audit.conversion_options?.enable_fbx_embedded_material_import);
@@ -174,6 +197,15 @@
       ' · model-selected from registered conversion options</p>'+
       '<p><strong>Conversion plan:</strong> FBX material mode '+(material?'enabled':'disabled')+
       ' · '+esc(visibility)+' visual-only activation action(s) planned</p>'+
+      (character.compatibility_recorded?'<p><strong>Character compatibility:</strong> '+
+        esc(character.character_count||0)+' inspected · '+
+        Object.entries(character.compatibility_outcomes||{}).map(([name,n])=>
+          esc(name.replaceAll('_',' '))+' '+esc(n)).join(' · ')+
+        '</p>':'')+
+      (character.selected?'<p><strong>AI animation choice:</strong> approved IK Retargeter · native readback '+
+        esc(character.native_readback_status||'NOT_EXECUTED')+
+        (character.native_readback_passed===true?' (skeleton and clip sections checked)':' (not confirmed successful)')+
+        '</p>':'')+
       '<p><strong>Native execution:</strong> '+esc(generated?
         'Unreal sequence generated (fidelity unverified)':audit.native_status||'Not executed')+'</p>'+
       (generated?'<p><strong>CineTwin measured positions:</strong> actor max '+
@@ -199,8 +231,8 @@
       '<p class="subnote">Conversion and AI corrections are limited to supported and independently checked native operations. Unverified or unsupported behavior is never silently called correct.</p>'+
       aiConversionSummary()+
       (run.status==='GENERATED_UNVERIFIED'?'<section class="simple-chat" aria-label="Talk to the AI agent">'+
-        '<h2>Tell the AI what to correct</h2>'+
-        '<p class="subnote">For example: “The character is facing the wrong direction” or “The wall texture is missing.”</p>'+
+        '<h2>Optional AI follow-up</h2>'+
+        '<p class="subnote">AI is already part of pre-transfer analysis. Use this chat to report a remaining issue; only source-verified corrections are executable. For example: “The character is facing the wrong direction.”</p>'+
         messages+
         (reply.feedback_id?'<div class="simple-chat-agent"><strong>CutSceneAI Agent — '+
           esc(reply.status||'REVIEWING')+'</strong><p>'+esc(reply.reasoning||reply.failure||
@@ -210,7 +242,11 @@
           esc(state.feedbackDraft)+'</textarea>'+
         button('Send to AI Agent','send-feedback',state.busy||!state.feedbackDraft.trim())+
         '</section>':'')+
-      '<div class="center-actions">'+button('New Transfer','projects',false,'secondary')+'</div>'+
+      '<div class="center-actions">'+
+      button('New Transfer '+ico('arrow'),'autopilot-start',state.busy||
+        !state.folders.unity||!state.folders.unreal||!state.sourceRights)+
+      button('Back to Projects','projects',false,'secondary')+
+      '</div>'+
       '</main>';
   }
 
@@ -351,6 +387,7 @@
     return progress()+'<main class="transfer-view"><div class="engine-pair">'+
       card('unity',connection()?.unity_project||state.folders.unity,true)+line(true)+
       card('unreal',connection()?.target_project||state.folders.unreal,true)+'</div>'+
+      liveEngineStatus()+
       (['RUNNING','QUEUED'].includes(j.status)?movement():'')+
       '<h2>'+esc(label)+'</h2>'+
       (state.censusSelection?.source_snapshot_partial_count?
@@ -550,11 +587,21 @@
       try{state.learningStatus=await api('learning');}catch{state.learningStatus=null;}
     }
     if(!state.running)state.candidate=s.candidate||null;
-    if(s.active_job){
+    // Before a new run has submitted its job, /api/status can still refer
+    // to the previous completed job. Never present it as the new result.
+    const currentRun=state.autopilot||{};
+    const previousJobPending=Boolean(simpleMode&&currentRun.active&&
+      ['WAITING_FOR_UNITY','WAITING_FOR_UNITY_CAPTURE','CONNECTING',
+       'ANALYZING_PROJECTS','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING']
+        .includes(currentRun.status)&&
+      (!currentRun.job_id||currentRun.job_id!==s.active_job));
+    if(s.active_job&&!previousJobPending){
       state.job=await api('jobs/'+s.active_job);
       try{state.aiTransferAudit=await api('ai-transfer-audit');}
       catch(e){state.aiTransferAudit={available:false,status:'AUDIT_UNAVAILABLE',error:String(e.message||e)};}
-    }else state.aiTransferAudit=null;
+    }else{
+      state.job=null;state.aiTransferAudit=null;
+    }
     if(state.aiAgentsEnabled||state.job?.ai_agents_enabled){
       try{state.agentStatus=await api('agents');}catch(e){
         state.agentStatus={enabled:true,status:'AGENT_STATUS_UNAVAILABLE',failure:String(e.message||e)};
@@ -706,7 +753,10 @@
         }
       }
       if(state.running&&state.phase!=='BLOCKED'&&!state.job&&state.candidate)await advance();
-      if(state.running&&terminal(state.job)&&state.screen==='transfer')state.screen='results';
+      // The simple UI follows the current autopilot run only. A terminal
+      // job from the previous transfer cannot redirect a fresh run to Results.
+      if(!simpleMode&&state.running&&terminal(state.job)&&state.screen==='transfer')
+        state.screen='results';
       if(simpleMode&&state.screen==='transfer'&&state.autopilot?.status==='GENERATED_UNVERIFIED')
         state.screen='results';
       render();
@@ -716,15 +766,33 @@
   async function action(name){
     if(name==='quick-transfer'){state.screen='transfer';render();return;}
     if(name==='quick-results'){state.screen='results';render();return;}
+    if(name==='autopilot-cancel'){
+      if(state.busy||state.autopilot?.status==='UNREAL_RUNNING')return;
+      state.busy=true;render();
+      try{
+        state.autopilot=await api('autopilot/cancel',{});
+        state.screen='projects';state.error='';
+        state.info='The pre-execution transfer was cancelled safely.';
+      }catch(e){state.error=e.message;}
+      finally{state.busy=false;render();}
+      return;
+    }
     if(name==='autopilot-start'){
       if(state.busy)return;
       state.busy=true;render();
       try{
-        state.autopilot=await api('autopilot/start',{
+        // An explicit click requests exactly one new server-owned transfer.
+        // Existing completed job files and Unreal sequences are not replayed.
+        const newRun=await api('autopilot/start',{
           unity_folder:state.folders.unity,unreal_folder:state.folders.unreal,
           unreal_project:state.unrealProject,
           source_rights_confirmed:state.sourceRights,
         });
+        state.autopilot=newRun;
+        state.job=null;state.candidate=null;state.verification=null;
+        state.diagnosis=null;state.feedback=null;state.releaseReadiness=null;
+        state.aiTransferAudit=null;state.agentConversation=null;state.feedbackDraft='';
+        state.running=false;state.phase='WAITING_FOR_UNITY';
         state.screen='transfer';state.error='';state.info='';
       }catch(e){state.error=e.message;}
       finally{state.busy=false;render();}
