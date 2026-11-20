@@ -11,9 +11,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 from studio_unity_bridge import (
     BRIDGE_KIND,
-    _evidence,
     CAPTURE_ACTION,
     UnityBridgeError,
+    _evidence,
     behavior_capture_status,
     request_behavior_capture,
     request_snapshot,
