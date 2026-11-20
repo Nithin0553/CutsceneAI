@@ -89,7 +89,7 @@ def editor_status(project_root: str | Path) -> dict:
             return offline
         record = _load(marker, 4096)
         version = record.get("bridge_version")
-        if version != "unity-editor-v0.2":
+        if version != "unity-editor-v0.3":
             return {
                 "connected": False, "status": "UNSUPPORTED_UNITY_BRIDGE_VERSION",
                 "bridge_version": str(version or "UNKNOWN")[:80],
