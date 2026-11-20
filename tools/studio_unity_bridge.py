@@ -213,9 +213,15 @@ def _evidence(
             str(limit // (1024 * 1024)) + " MiB source file limit or is empty."
         )
     digest = hashlib.sha256()
+    hashed_bytes = 0
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            hashed_bytes += len(chunk)
+            if hashed_bytes > limit:
+                raise UnityBridgeError("Unity evidence grew beyond its safe size limit while hashing.")
             digest.update(chunk)
+    if hashed_bytes != size or path.stat().st_size != size:
+        raise UnityBridgeError("Unity evidence size changed during validation.")
     if digest.hexdigest() != expected_sha:
         raise UnityBridgeError("Unity evidence has changed since export.")
     return str(path.resolve())
@@ -246,13 +252,15 @@ def snapshot_status(project_root: str | Path, request_id: str) -> dict:
     census = _evidence(root, receipt.get("census_path"), receipt.get("census_sha256"), ".json")
     source_document = _load(Path(csir), limit=128 * 1024 * 1024)
     census_document = _load(Path(census), limit=128 * 1024 * 1024)
-    if (source_document.get("schema_version") != "0.1.0"
-            or source_document.get("source", {}).get("engine") != "unity"):
+    source_identity = source_document.get("source")
+    if (not isinstance(source_identity, dict)
+            or source_document.get("schema_version") != "0.1.0"
+            or source_identity.get("engine") != "unity"):
         raise UnityBridgeError("Exported CSIR is not a supported Unity source document.")
     if (census_document.get("kind") != "cutsceneai.engine.feature_surface"
             or census_document.get("engine") != "unity"):
         raise UnityBridgeError("Exported source census is not a Unity feature surface.")
-    fingerprint = source_document.get("source", {}).get("project_fingerprint")
+    fingerprint = source_identity.get("project_fingerprint")
     if (not isinstance(fingerprint, str) or not fingerprint
             or fingerprint != census_document.get("project_fingerprint")):
         raise UnityBridgeError("CSIR and census source project identity do not match.")
