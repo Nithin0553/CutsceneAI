@@ -305,3 +305,28 @@ def test_oversized_sparse_capture_rejected_before_hashing(project, monkeypatch):
             project, "CutSceneAI/StudioBridge/evidence/" + path.name,
             "0" * 64, ".cinetwin.behavior.json",
         )
+
+
+
+def test_malformed_source_identity_is_classified_without_unhandled_attribute_error(project):
+    ticket = request_snapshot(project)["request_id"]
+    directory = project / "CutSceneAI" / "StudioBridge" / "evidence"
+    directory.mkdir(exist_ok=True)
+    csir = directory / (ticket + ".csir.json")
+    census = directory / (ticket + ".census.json")
+    csir.write_text(json.dumps({
+        "schema_version": "0.1.0", "source": ["malformed", "not an identity"],
+    }))
+    census.write_text(json.dumps({
+        "kind": "cutsceneai.engine.feature_surface",
+        "engine": "unity", "project_fingerprint": "source-1",
+    }))
+    _receipt(
+        project, ticket,
+        csir_path="CutSceneAI/StudioBridge/evidence/" + csir.name,
+        csir_sha256=hashlib.sha256(csir.read_bytes()).hexdigest(),
+        census_path="CutSceneAI/StudioBridge/evidence/" + census.name,
+        census_sha256=hashlib.sha256(census.read_bytes()).hexdigest(),
+    )
+    with pytest.raises(UnityBridgeError, match="not a supported Unity source"):
+        snapshot_status(project, ticket)
