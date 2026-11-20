@@ -62,6 +62,8 @@ def diagnose(
     ]
     python_ok = tuple(python_version[:2]) >= (3, 11)
     issues = []
+    if provider not in {"ollama", "openai"}:
+        issues.append("CUTSCENEAI_MODEL_PROVIDER must be ollama or openai.")
     if not python_ok:
         issues.append("Studio requires Python 3.11 or newer.")
     if missing_files:
