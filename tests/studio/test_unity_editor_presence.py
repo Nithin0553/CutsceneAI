@@ -114,7 +114,47 @@ def test_unity_source_companion_has_opt_in_and_automatic_assembly_reload_contrac
               "CutsceneAIStudioBridge.cs").read_text()
     assert "[InitializeOnLoad]" in source
     assert "EditorApplication.update += Poll" in source
-    assert "EditorPrefs.SetBool(Preference, true)" in source
-    assert "WritePresence(true)" in source
+    assert "EditorPrefs.SetBool(PreferenceKey(), true)" in source
+    assert "EditorPrefs.GetBool(PreferenceKey(), false)" in source
+    assert "EditorPrefs.SetBool(Preference, true)" not in source
+    assert "SHA256.Create()" in source
+    assert "if (!WritePresence(true))" in source
+    assert "Source bridge heartbeat write failed" in source
     assert "File.Replace(temporary, target, null)" in source
     assert '"unity-editor.json"' in source
+
+
+
+def test_missing_heartbeat_explains_how_to_connect_exact_unity_project(project):
+    status = editor_status(project)
+    assert status["status"] == "WAITING_FOR_UNITY_EDITOR"
+    assert "unity-editor.json" in status["next_action"]
+    assert "Enable Source Bridge" in status["next_action"]
+    assert not (project / "CutSceneAI").exists()
+
+
+def test_invalid_version_is_reported_as_package_mismatch(project):
+    _heartbeat(project, bridge_version="unity-editor-v0.1")
+    status = editor_status(project)
+    assert status["connected"] is False
+    assert status["status"] == "UNSUPPORTED_UNITY_BRIDGE_VERSION"
+    assert status["bridge_version"] == "unity-editor-v0.1"
+    assert "Package Manager" in status["next_action"]
+
+
+def test_disabled_bridge_is_not_mistaken_for_old_unity_package(project):
+    _heartbeat(project, source_bridge_enabled=False)
+    status = editor_status(project)
+    assert status["connected"] is False
+    assert status["status"] == "UNITY_SOURCE_BRIDGE_DISABLED"
+    assert "project-scoped" in status["next_action"]
+
+
+def test_stale_bridge_diagnostic_identifies_console_write_errors(project):
+    _heartbeat(
+        project,
+        heartbeat=(datetime.now(UTC) - timedelta(seconds=100)).isoformat(),
+    )
+    status = editor_status(project)
+    assert status["status"] == "UNITY_COMPANION_RELOADING_OR_OFFLINE"
+    assert "Unity Console" in status["next_action"]
