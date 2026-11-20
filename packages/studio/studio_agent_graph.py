@@ -111,25 +111,34 @@ def _source_materials(candidate: Path) -> bool:
     return bool(document.get("source_albedo_material_candidates"))
 
 
-def _ced_policy() -> dict[str, Any]:
-    """Use the checked-in CED taxonomy as vocabulary, never free-form actions."""
-    path = (Path(__file__).resolve().parents[2] /
-            "packages/contracts/dictionary/cutscene-elements-v0.2.json")
-    if not path.is_file():
-        raise AgentError("CED taxonomy is unavailable.")
-    document = _json(path)
-    categories = document.get("categories") or {}
-    names = ("material", "texture", "shader", "animation", "character",
-             "transform", "camera", "light", "environment", "event",
-             "audio", "render", "scene", "relationship")
-    return {
-        "ced_version": document.get("version"),
-        "categories": {
-            name: categories.get(name, [])[:18]
-            for name in names if isinstance(categories.get(name), list)
-        },
-    }
+def _ced_knowledge_for_agent(workspace: Path, job: dict[str, Any]) -> dict[str, Any]:
+    """Retrieve job-specific CED rules; do not dump the complete taxonomy.
 
+    A missing source yields an explicit gap. It does not grant repair rights
+    or replace the independently measured CineTwin/native audit.
+    """
+    source_file = job.get("csir")
+    if not isinstance(source_file, str) or not source_file:
+        return {"status": "SOURCE_SEMANTIC_EVIDENCE_UNAVAILABLE", "entries": []}
+    import ced_agent_knowledge
+    source = _json(Path(source_file))
+    target_caps = job.get("native_capabilities")
+    if not isinstance(target_caps, dict):
+        target_caps = {}
+    result = ced_agent_knowledge.retrieve(
+        source, target_capabilities=target_caps,
+        source_version=str((source.get("source") or {}).get("engine_version") or ""),
+        target_version=str(job.get("target_engine_version") or ""),
+        approved_store=workspace.parent / "ced-knowledge",
+    )
+    # Retrieval is advisory: all native permission checks run later.
+    return {
+        "status": "RETRIEVED_CED_EVIDENCE_UNVERIFIED",
+        "knowledge_sha256": result["knowledge_sha256"],
+        "source_ced_count": result["source_ced_count"],
+        "entries": result["entries"][:12],
+        "no_native_write_permission": True,
+    }
 
 def _approved_precedents(workspace: Path, job: dict[str, Any]) -> list[dict[str, Any]]:
     """Give the reasoning model *redacted* verified CED mapping precedents.
@@ -404,7 +413,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
 
     def reason(state: AgentState) -> dict[str, Any]:
         summary = {
-            "ced_taxonomy": _ced_policy(),
+            "ced_knowledge": _ced_knowledge_for_agent(workspace, job),
             "component_adapter_catalog": state.get("component_adapter_catalog", [])[:32],
             "unreal_character_fallback_slots": state["last_fallback"],
             "source_guid_backed_albedo": _source_materials(candidate),
