@@ -568,3 +568,71 @@ def test_completed_unity_capture_is_accepted_even_after_wait_limit(rig, monkeypa
     result = studio_autopilot.advance(workspace, service=service)
     assert result["status"] == "CONNECTING"
     assert "capture_wait_started_at" not in json.loads(active.read_text())
+
+
+
+def test_model_disconnect_recovers_only_before_unreal_submission(rig, monkeypatch):
+    workspace, project, target, service, _ = rig
+    import studio_transfer_ai
+    import studio_recovery_policy
+    studio_autopilot.begin(
+        workspace, unity_folder=str(project), unreal_folder=str(target),
+        source_rights_confirmed=True, service=service,
+    )
+    state_file = workspace / "autopilot-active.json"
+    state = json.loads(state_file.read_text())
+    state.update({
+        "status": "ANALYZING_PROJECTS",
+        "csir_path": str(project / "source.csir.json"),
+        "census_path": str(project / "census.json"),
+        "capture_path": str(project / "capture.json"),
+    })
+    state_file.write_text(json.dumps(state))
+    config = {
+        "unity_project": str(project), "target_project": str(target / "Target.uproject"),
+        "csir": state["csir_path"], "capture": state["capture_path"],
+        "level_path": "/Game/Trial",
+    }
+    (workspace / "connection.json").write_text(json.dumps(config))
+
+    def unavailable(*_args, **_kwargs):
+        raise studio_transfer_ai.TransferAIError(
+            "Pre-transfer AI reasoning failed: Local Ollama is unavailable."
+        )
+
+    monkeypatch.setattr(studio_transfer_ai, "decide", unavailable)
+    waiting = studio_autopilot.advance(workspace, service=service)
+    assert waiting["status"] == "WAITING_FOR_MODEL"
+    assert waiting["failure_category"] == "MODEL_PROVIDER_UNAVAILABLE"
+    assert waiting["model_retry_attempts"] == 0
+    assert not (workspace / "active-job.json").exists()
+    assert not (workspace / "active-candidate.json").exists()
+    with pytest.raises(studio_autopilot.AutopilotError, match="already active"):
+        studio_autopilot.begin(
+            workspace, unity_folder=str(project), unreal_folder=str(target),
+            source_rights_confirmed=True, service=service,
+        )
+    state = json.loads(state_file.read_text())
+    state["next_model_retry_at"] = (datetime.now(UTC) - timedelta(seconds=2)).isoformat()
+    state_file.write_text(json.dumps(state))
+    resumed = studio_autopilot.advance(workspace, service=service)
+    assert resumed["status"] == "ANALYZING_PROJECTS"
+    assert resumed["model_retry_attempts"] == 1
+    monkeypatch.setattr(studio_transfer_ai, "decide", lambda *args, **kwargs: {
+        "kind": studio_transfer_ai.SCHEMA, "strategy": "native_source",
+        "conversion_options": {"enable_fbx_embedded_material_import": False,
+                               "enable_actor_visibility_fallback": False},
+    })
+    assert studio_autopilot.advance(workspace, service=service)["status"] == "PREPARING"
+    assert not (workspace / "active-job.json").exists()
+    assert studio_recovery_policy.MAX_MODEL_RETRIES == 3
+
+
+def test_recovery_never_replays_native_job():
+    import studio_recovery_policy as recovery
+    result = recovery.classify(
+        "Local Ollama is unavailable", phase="UNREAL_RUNNING", native_submitted=True,
+    )
+    assert result["safe_automatic_retry"] is False
+    assert result["native_replay_authorized"] is False
+    assert result["category"] == "NATIVE_JOB_NEEDS_INSPECTION"
