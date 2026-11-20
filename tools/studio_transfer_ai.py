@@ -306,7 +306,11 @@ def _model_choose(summary: dict) -> dict:
             "approximation and only eligible when registered and validated; it "
             "does not replicate GameObject activation, scripts or physics. "
             "Choose an animation_choice_id only for an independently validated "
-            "rig/motion action; otherwise keep_native. Explore missing mapping "
+            "rig/motion action; otherwise keep_native. The approved in-place "
+            "IK action needs true in-place motion. The actor-world trajectory "
+            "action bake_verified_actor_world_trajectory needs a source-backed "
+            "actor-relative root and frame-matched translation/rotation. "
+            "Explore missing mapping "
             "candidates in the evidence but never invent commands, classes, "
             "asset paths, adapters or fidelity claims. Return only JSON."
         ),
