@@ -111,6 +111,30 @@ def _source_materials(candidate: Path) -> bool:
     return bool(document.get("source_albedo_material_candidates"))
 
 
+def _ced_policy() -> dict[str, Any]:
+    """Compatibility-only taxonomy view for earlier research checks.
+
+    Model prompts now use _ced_knowledge_for_agent instead of the flat list.
+    """
+    path = Path(__file__).resolve().parents[1] / (
+        "contracts/dictionary/cutscene-elements-v0.2.json"
+    )
+    document = _json(path)
+    categories = document.get("categories") or {}
+    names = (
+        "material", "texture", "shader", "animation", "character",
+        "transform", "camera", "light", "environment", "event",
+        "audio", "render", "scene", "relationship",
+    )
+    return {
+        "ced_version": document.get("version"),
+        "categories": {
+            name: categories[name][:18] for name in names
+            if isinstance(categories.get(name), list)
+        },
+    }
+
+
 def _ced_knowledge_for_agent(workspace: Path, job: dict[str, Any]) -> dict[str, Any]:
     """Retrieve job-specific CED rules; do not dump the complete taxonomy.
 
@@ -127,7 +151,10 @@ def _ced_knowledge_for_agent(workspace: Path, job: dict[str, Any]) -> dict[str, 
         target_caps = {}
     result = ced_agent_knowledge.retrieve(
         source, target_capabilities=target_caps,
-        source_version=str((source.get("source") or {}).get("engine_version") or ""),
+        source_version=str(
+            (source.get("source") if isinstance(source.get("source"), dict) else
+             {}).get("engine_version") or ""
+        ),
         target_version=str(job.get("target_engine_version") or ""),
         approved_store=workspace.parent / "ced-knowledge",
     )
