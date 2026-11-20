@@ -224,46 +224,43 @@ def _approved_ced_rulebook_precedents(workspace: Path, job: dict[str, Any]) -> l
 
 
 def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise AgentError("OPENAI_API_KEY is not configured in the local Studio process.")
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
-        raise AgentError('Install python -m pip install "langgraph>=1.0,<2" "openai>=2,<3" in Studio Python.') from exc
-    # Only the diagnostic summary is sent, never source asset bytes, paths,
-    # API keys, user scripts or arbitrary file content.
-    response = OpenAI(timeout=25.0, max_retries=0).responses.create(
-        model=os.environ.get("CUTSCENEAI_AGENT_MODEL", "gpt-5-mini"),
+    """Use the same local/cloud model policy as the conversion planning agent."""
+    import studio_model_provider as provider
+    response = provider.complete_json(
+        task="cutsceneai_agent_choice",
         instructions=(
-            "You are a diagnostic repair selector in CutSceneAI Studio. "
-            "A user's natural-language observation is unverified until independent "
-            "native readback confirms the relevant discrepancy. Never edit a "
-            "different semantic domain merely because it has a detected issue. "
-            "Return only JSON. Choose strategy restore_source_albedo ONLY if "
-            "that strategy is eligible from independently verified source GUID "
-            "texture provenance and current Unreal character fallback slots; "
-            "otherwise choose report_only. Choose restore_constant_actor_offset ONLY "
-            "when safe_strategies includes it for a single user-named character "
-            "world-position correction; Unreal must independently remeasure it. "
-            "Do not create new commands or claim "
-            "full visual/animation/camera/audio parity. The deterministic "
-            "executor independently validates every action."
+            "You are CutSceneAI's diagnostic repair agent. Analyze the bounded "
+            "native CineTwin discrepancy, user feedback, installed adapters and "
+            "retrieved CED knowledge. The knowledge base is advisory and does "
+            "not grant engine write privileges. A user's observation is "
+            "unverified until native readback confirms it. Choose only from "
+            "the listed independently safe repair options. "
+            "restore_source_albedo requires known Unity material provenance "
+            "and measured Unreal fallback slots. "
+            "restore_constant_actor_offset requires exact one-character "
+            "source/target world-position evidence and independent native "
+            "remeasurement. If evidence is insufficient or the discrepancy "
+            "is outside an installed repair adapter, choose report_only. "
+            "Never invent engine commands, source paths, executable code, "
+            "new mapping rules, or claims of visual/skeletal parity."
         ),
-        input="Evaluate this bounded CED/CineTwin evidence and output JSON: " +
-              json.dumps(summary, sort_keys=True)[:12000],
-        text={"format": {"type": "json_schema", "name": "cutsceneai_agent_choice",
-                         "strict": True, "schema": {
-                             "type": "object", "additionalProperties": False,
-                             "properties": {
-                                 "strategy": {"type": "string", "enum": sorted(ALLOWED_STRATEGIES)},
-                                 "reason": {"type": "string"},
-                             },
-                             "required": ["strategy", "reason"],
-                         }}},
+        payload={"diagnostic_summary": summary},
+        schema={
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "strategy": {"type": "string", "enum": sorted(ALLOWED_STRATEGIES)},
+                "reason": {"type": "string"},
+            },
+            "required": ["strategy", "reason"],
+        },
     )
-    result = json.loads(response.output_text)
-    return {"strategy": result["strategy"], "reason": result["reason"]}
-
+    answer = response.answer
+    if (answer.get("strategy") not in ALLOWED_STRATEGIES
+            or not isinstance(answer.get("reason"), str)
+            or len(answer["reason"]) > 1200
+            or set(answer) != {"strategy", "reason"}):
+        raise AgentError("Model returned a malformed or unregistered repair strategy.")
+    return {"strategy": answer["strategy"], "reason": answer["reason"]}
 
 def _current_user_feedback(candidate: Path, job: dict[str, Any]) -> dict[str, Any] | None:
     """Read an immutable, job-bound user correction without authorizing execution."""
