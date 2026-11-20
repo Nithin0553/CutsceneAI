@@ -315,7 +315,7 @@
       '<div class="ai-agents-option"><label><input type="checkbox" name="ai-agents" '+
       (state.aiAgentsEnabled?'checked':'')+
       ' /> Enable AI agents</label>'+
-      '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local agent dependencies and an API key; usage may incur model charges.</p>'+
+      '<p class="subnote">Optional LangGraph diagnosis and guarded repairs only if normal transfer is incomplete. Requires local Ollama or a configured cloud provider; cloud usage may incur charges.</p>'+
       (state.learningStatus?'<p class="subnote">Continual learning: '+
        esc(state.learningStatus.completed_trials_recorded)+' trial records · '+
        esc(state.learningStatus.verified_mapping_cases)+' approved mapping cases · '+
