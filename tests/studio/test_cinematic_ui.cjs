@@ -74,6 +74,8 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
         result = {token: 'stubtoken', repo_root: 'B:/Research/CutSceneAI/CutsceneAI',
           connection: connected, candidate, active_job: currentJob?.job_id || null,
           one_click_approval: approval,
+          unity_editor: {connected:false,status:'WAITING_FOR_UNITY_EDITOR',
+            next_action:'Open the selected Unity project and enable the source bridge.'},
           unreal_worker: {connected: editorReady, project: file, level, worker_version: 'studio-editor-v0.5'},
           destination_readiness: candidate && editorReady ?
             {status: 'READY', ready:true, candidate_id:candidate.candidate_id} :
@@ -602,12 +604,14 @@ async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
   assert.match(x.app.innerHTML,/Unity bridge: Waiting for running editor/);
   assert.match(x.app.innerHTML,/Unreal bridge: Waiting for running editor/);
   assert.match(x.app.innerHTML,/supported code changes reconnect without restarting the editors/);
-  assert.match(x.app.innerHTML,/WAITING_FOR_UNITY_EDITOR/,
-    'missing Unity heartbeat has a specific source-bridge diagnostic');
   assert.doesNotMatch(x.app.innerHTML,/Unity CSIR Export|Unity Source Census|Enable AI agents/,
     'CSIR, census and agent controls are internal implementation details');
   await x.click('browse-unity');
   await x.click('browse-unreal');
+  assert.match(x.app.innerHTML,/WAITING_FOR_UNITY_EDITOR/,
+    'missing Unity heartbeat has a specific source-bridge diagnostic');
+  assert.match(x.app.innerHTML,/enable the source bridge/,
+    'a disconnected Unity bridge explains the action needed');
   await x.change('source-rights',null,true);
   assert.match(x.app.innerHTML,/data-action="autopilot-start"/);
   await x.click('autopilot-start');
