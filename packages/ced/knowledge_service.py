@@ -327,6 +327,32 @@ def redact_for_model(result: dict[str, Any]) -> dict[str, Any]:
             and isinstance(rule.get("resolution"), dict)
             and isinstance(rule["resolution"].get("resolver"), str))
     }
+    known_parameters = {
+        key for rule in baseline
+        if isinstance(rule, dict)
+        for key in ((rule.get("resolution") or {}).get("parameters") or {})
+        if isinstance(key, str)
+    }
+    known_requirements = {
+        req for rule in baseline
+        if isinstance(rule, dict)
+        for req in ((rule.get("resolution") or {}).get("required_evidence") or [])
+        if isinstance(req, str)
+    }
+    known_capabilities = {
+        cap for rule in baseline if isinstance(rule, dict)
+        for selector in ("source", "target")
+        for cap in ((rule.get(selector) or {}).get("capabilities_all") or [])
+        if isinstance(cap, str)
+    }
+    known_capabilities.update({
+        "fbx_asset_import", "sequencer_visibility_track",
+        "sequencer_skeletal_animation_track", "cine_camera_actor",
+    })
+    known_outcomes = {
+        "EXACT", "CONVERTED", "RETARGETED", "BAKED",
+        "RECONSTRUCTED", "TARGET_MAPPED", "BLOCKED",
+    }
     # Anonymous aliases are unique within the source's ordered coverage ledger
     # but reveal neither native class names nor stable cross-project hashes.
     unknown = [
@@ -358,6 +384,14 @@ def redact_for_model(result: dict[str, Any]) -> dict[str, Any]:
         return "reverse:unknown_relation" if reverse else "unknown_relation"
 
     projected = dict(result)
+    projected["observed_target_capabilities"] = sorted(
+        cap for cap in result.get("observed_target_capabilities", [])
+        if cap in known_capabilities
+    )
+    projected["unrecognized_target_capability_count"] = sum(
+        1 for cap in result.get("observed_target_capabilities", [])
+        if cap not in known_capabilities
+    )
     projected["coverage_ledger"] = [
         {"ced": safe_ced(row.get("ced")),
          "source_occurrences": row.get("source_occurrences")}
@@ -381,6 +415,22 @@ def redact_for_model(result: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(row, dict):
                 raise KnowledgeServiceError("Malformed CED rule provenance.")
             item = dict(row)
+            item["required_evidence"] = [
+                value if value in known_requirements else "private_evidence_requirement"
+                for value in item.get("required_evidence", [])
+            ]
+            item["parameter_fields"] = [
+                value if value in known_parameters else "private_parameter"
+                for value in item.get("parameter_fields", [])
+            ]
+            item["capabilities_not_observed"] = [
+                value if value in known_capabilities else "private_capability"
+                for value in item.get("capabilities_not_observed", [])
+            ]
+            item["source_capabilities_not_observed"] = [
+                value if value in known_capabilities else "private_capability"
+                for value in item.get("source_capabilities_not_observed", [])
+            ]
             native_id = item.get("rule_id")
             if native_id not in baseline_ids:
                 item["rule_id"] = "local_reviewed_rule_" + str(index + 1)
@@ -410,7 +460,8 @@ def redact_for_model(result: dict[str, Any]) -> dict[str, Any]:
                  "resolver": row.get("resolver")
                  if row.get("resolver") in baseline_resolvers
                  else "reviewed_native_resolver",
-                 "outcome": row.get("outcome")}
+                 "outcome": (row.get("outcome") if row.get("outcome")
+                             in known_outcomes else "UNVERIFIED_MAPPING_OUTCOME")}
                 for row in case.get("mapping_labels", [])
                 if isinstance(row, dict)
             ],
