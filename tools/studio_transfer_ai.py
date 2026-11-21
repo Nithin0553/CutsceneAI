@@ -319,7 +319,9 @@ def _model_choose(summary: dict) -> dict:
             "evidence": summary["summary"],
             "allowed_strategies": summary["allowed_strategies"],
             "animation_choices": summary.get("animation_choices", []),
-            "ced_knowledge": summary["ced_knowledge"],
+            "ced_knowledge": _agent_module("ced_agent_knowledge").model_projection(
+                summary["ced_knowledge"]
+            ),
             "planning_feedback": summary.get("planning_feedback", ""),
         },
         schema={
