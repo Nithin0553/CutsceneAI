@@ -18,6 +18,7 @@ import ced_rulebook as book
 import knowledge_service as service
 import semantic_graph
 import shared_review
+import strategy_recipes
 
 
 def _source():
@@ -269,3 +270,56 @@ def test_untrusted_graph_never_exposes_raw_property_or_asset_values():
     assert any(row["relation"] == "uses_asset" and row["concept"] == "material.asset"
                for row in next(x for x in result["entries"]
                                if x["ced"] == "entity.character")["related_semantics"])
+
+
+
+def test_strategy_recipe_uses_existing_actions_and_context_not_implicit_execution():
+    registered = json.loads(book.BASE_RULES.read_text())["rules"]
+    rule = next(item for item in registered if item["ced"] == "camera.fov")
+    related = [{"relation": "depends_on", "concept": "entity.camera", "count": 1},
+               {"relation": "reverse:contains", "concept": "camera.transform", "count": 1}]
+    recipe = strategy_recipes.from_rule(
+        rule, origin="BASELINE_REGISTERED_UNVERIFIED",
+        related_semantics=related, installed_actions=["camera_fov"],
+    )
+    schema = json.loads((
+        ROOT / "packages/contracts/dictionary/ced-strategy-recipe-v1.schema.json"
+    ).read_text())
+    portable = {key: value for key, value in recipe.items()
+                if key not in {"execution_authorized", "resolver_reference",
+                               "verified_case_ids", "recipe_sha256"}}
+    assert set(portable) == set(schema["required"])
+    assert recipe["recipe_id"] == rule["rule_id"]
+    assert recipe["semantic_ids"] == ["camera.fov", "entity.camera"]
+    assert recipe["alternatives"][0]["required_native_actions"] == ["camera_fov"]
+    assert recipe["alternatives"][0]["verification_domains"] == ["camera", "persistence"]
+    assert recipe["execution_authorized"] is False
+    assert recipe["provenance"]["status"] == "BASELINE_ADVISORY"
+    assert len(recipe["recipe_sha256"]) == 64
+
+    source = _source()
+    knowledge_response = knowledge.retrieve(
+        source, target_capabilities={"camera.lens_model": True},
+    )
+    retrieved = next(item for item in knowledge_response["entries"]
+                     if item["ced"] == "camera.fov")["rules"][0]
+    reference = retrieved["strategy_recipe"]
+    assert reference["recipe_id"] == recipe["recipe_id"]
+    assert reference["required_native_actions"] == ["camera_fov"]
+    assert reference["runtime_execution_authorized"] is False
+
+
+def test_strategy_recipe_rejects_unregistered_or_unsafe_source_semantic():
+    baseline = json.loads(book.BASE_RULES.read_text())["rules"][0]
+    invalid = copy.deepcopy(baseline)
+    invalid["ced"] = "Private Customer /Assets/Secret"
+    with pytest.raises(strategy_recipes.StrategyRecipeError, match="identifier"):
+        strategy_recipes.from_rule(
+            invalid, origin="BASELINE_REGISTERED_UNVERIFIED",
+            related_semantics=[], installed_actions=["transform"],
+        )
+    with pytest.raises(strategy_recipes.StrategyRecipeError, match="origin"):
+        strategy_recipes.from_rule(
+            baseline, origin="AI_ARBITRARY_CODE",
+            related_semantics=[], installed_actions=["transform"],
+        )
