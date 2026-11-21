@@ -209,7 +209,7 @@ def test_shared_review_requires_consent_and_an_existing_native_approval(tmp_path
             store, output, candidate_ids=[candidate_id],
             explicit_sharing_consent=False,
         )
-    with pytest.raises(shared_review.SharedReviewError, match="approval"):
+    with pytest.raises(shared_review.SharedReviewError, match="reviewed CED record"):
         shared_review.stage_for_review(
             store, output, candidate_ids=[candidate_id],
             explicit_sharing_consent=True,
@@ -252,7 +252,7 @@ def test_only_sanitized_approved_rules_can_be_staged_not_published(tmp_path):
 def test_review_bundle_rejects_untrusted_external_paths_and_strings():
     for bad in ("C:/Private/Scene.unity", "/Game/Hidden/Material",
                 "https://example.invalid", "Unity Secret Value"):
-        with pytest.raises(shared_review.SharedReviewError, match="private"):
+        with pytest.raises(shared_review.SharedReviewError, match="Unreviewed text"):
             shared_review._public(bad)
 
 
