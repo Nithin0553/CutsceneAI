@@ -360,3 +360,16 @@ def test_model_projection_redacts_unknown_custom_class_names_and_local_ids():
                    if x["ced"].startswith("unknown.unclassified."))
     assert unknown["native_action_candidates"] == []
     assert unknown["execution_authorized"] is False
+
+
+
+def test_sparse_agent_diagnostic_does_not_require_private_case_memory(tmp_path):
+    stored = tmp_path / "approved-cases"
+    stored.mkdir()
+    result = knowledge.retrieve(
+        {"source": "test", "tracks": [{"ced_type": "transform.rotation", "sections": []}]},
+        target_capabilities={}, case_store=stored,
+    )
+    assert result["private_verified_case_suggestions"] == []
+    assert result["entries"][0]["ced"] == "transform.rotation"
+    assert result["no_native_write_permission"] is True
