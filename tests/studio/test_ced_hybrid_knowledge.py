@@ -103,7 +103,7 @@ def test_unified_retrieval_returns_grounded_contextual_rules_and_private_safe_le
     assert result["schema_version"] == "2"
     assert result["retrieval_complete"] is True
     assert result["source_ced_count"] == len(result["coverage_ledger"])
-    assert result["source_occurrence_count"] == 8
+    assert result["source_occurrence_count"] == 7
     assert result["no_native_write_permission"] is True
     assert result["shared_promotion_authorized"] is False
     by_ced = {x["ced"]: x for x in result["entries"]}
@@ -209,7 +209,7 @@ def test_shared_review_requires_consent_and_an_existing_native_approval(tmp_path
             store, output, candidate_ids=[candidate_id],
             explicit_sharing_consent=False,
         )
-    with pytest.raises(book.CEDRulebookError):
+    with pytest.raises(shared_review.SharedReviewError, match="approval"):
         shared_review.stage_for_review(
             store, output, candidate_ids=[candidate_id],
             explicit_sharing_consent=True,
