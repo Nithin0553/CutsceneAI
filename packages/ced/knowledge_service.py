@@ -300,3 +300,127 @@ def retrieve(
     }
     result["knowledge_sha256"] = _digest(result)
     return result
+
+
+
+def redact_for_model(result: dict[str, Any]) -> dict[str, Any]:
+    """Project-local unknown semantics and local review IDs never reach an LLM.
+
+    Local Studio may inspect the full source-bound result, but both local and
+    cloud model prompts receive a strictly weaker redacted projection.
+    Arbitrary unknown CED names can encode user project/namespace identifiers.
+    """
+    if (not isinstance(result, dict)
+            or result.get("kind") != "cutsceneai.studio.ced_knowledge_retrieval"
+            or result.get("no_native_write_permission") is not True
+            or not isinstance(result.get("entries"), list)
+            or not isinstance(result.get("coverage_ledger"), list)):
+        raise KnowledgeServiceError("Model projection requires verified CED retrieval.")
+    _, known, baseline, _ = _baseline()
+    baseline_ids = {
+        rule["rule_id"] for rule in baseline
+        if isinstance(rule, dict) and isinstance(rule.get("rule_id"), str)
+    }
+    baseline_resolvers = {
+        rule["resolution"]["resolver"] for rule in baseline
+        if (isinstance(rule, dict)
+            and isinstance(rule.get("resolution"), dict)
+            and isinstance(rule["resolution"].get("resolver"), str))
+    }
+    # Anonymous aliases are unique within the source's ordered coverage ledger
+    # but reveal neither native class names nor stable cross-project hashes.
+    unknown = [
+        row.get("ced") for row in result["coverage_ledger"]
+        if isinstance(row, dict) and row.get("ced") not in known
+    ]
+    aliases = {
+        name: "unknown.unclassified." + str(i + 1)
+        for i, name in enumerate(unknown)
+        if isinstance(name, str)
+    }
+
+    def safe_ced(value: Any) -> str:
+        if not isinstance(value, str):
+            return "unknown.unclassified"
+        return value if value in known else aliases.get(value, "unknown.unclassified")
+
+    def safe_relation(value: Any) -> str:
+        if not isinstance(value, str):
+            return "unknown_relation"
+        if value in {"parent", "binds", "contains", "uses_asset",
+                     "reverse:parent", "reverse:binds", "reverse:contains",
+                     "reverse:uses_asset"}:
+            return value
+        reverse = value.startswith("reverse:")
+        core = value[8:] if reverse else value
+        if core in known:
+            return value
+        return "reverse:unknown_relation" if reverse else "unknown_relation"
+
+    projected = dict(result)
+    projected["coverage_ledger"] = [
+        {"ced": safe_ced(row.get("ced")),
+         "source_occurrences": row.get("source_occurrences")}
+        for row in result["coverage_ledger"] if isinstance(row, dict)
+    ]
+    entries = []
+    for entry in result["entries"]:
+        if not isinstance(entry, dict):
+            raise KnowledgeServiceError("Malformed CED retrieval entry.")
+        safe = dict(entry)
+        safe["ced"] = safe_ced(entry.get("ced"))
+        safe["related_semantics"] = [
+            {"relation": safe_relation(edge.get("relation")),
+             "concept": safe_ced(edge.get("concept")),
+             "count": edge.get("count")}
+            for edge in entry.get("related_semantics", [])
+            if isinstance(edge, dict)
+        ]
+        safe_rules = []
+        for index, row in enumerate(entry.get("rules", [])):
+            if not isinstance(row, dict):
+                raise KnowledgeServiceError("Malformed CED rule provenance.")
+            item = dict(row)
+            native_id = item.get("rule_id")
+            if native_id not in baseline_ids:
+                item["rule_id"] = "local_reviewed_rule_" + str(index + 1)
+            if item.get("resolver") not in baseline_resolvers:
+                item["resolver"] = "reviewed_native_resolver"
+            recipe = item.get("strategy_recipe")
+            if isinstance(recipe, dict):
+                recipe = dict(recipe)
+                recipe["recipe_id"] = item["rule_id"]
+                recipe["related_concepts"] = [
+                    safe_ced(concept) for concept in recipe.get("related_concepts", [])
+                ]
+                # Recipe SHA is for the full internal verified knowledge
+                # snapshot, not the reduced model-visible projection.
+                recipe["recipe_sha256"] = item["strategy_recipe"]["recipe_sha256"]
+                item["strategy_recipe"] = recipe
+            safe_rules.append(item)
+        safe["rules"] = safe_rules
+        entries.append(safe)
+    projected["entries"] = entries
+    projected["private_verified_case_suggestions"] = [
+        {
+            "case_id": "private_reviewed_case_" + str(i + 1),
+            "similarity": case.get("similarity"),
+            "mapping_labels": [
+                {"ced": safe_ced(row.get("ced")),
+                 "resolver": row.get("resolver")
+                 if row.get("resolver") in baseline_resolvers
+                 else "reviewed_native_resolver",
+                 "outcome": row.get("outcome")}
+                for row in case.get("mapping_labels", [])
+                if isinstance(row, dict)
+            ],
+            "scope": "PRIVATE_VERIFIED_MAPPING_ONLY",
+            "native_execution_permission": False,
+            "cross_project_fidelity_claim": False,
+        }
+        for i, case in enumerate(result.get("private_verified_case_suggestions", []))
+        if isinstance(case, dict)
+    ]
+    projected["privacy_projection"] = "MODEL_SAFE_REDACTED_UNKNOWN_CONCEPTS_AND_LOCAL_CASE_IDS"
+    projected["shared_promotion_authorized"] = False
+    return projected
