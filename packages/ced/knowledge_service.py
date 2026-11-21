@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from semantic_graph import SemanticGraphError, analyze
+from strategy_recipes import StrategyRecipeError, from_rule as recipe_from_rule
 
 PACKAGES = Path(__file__).resolve().parents[1]
 DICTIONARY = PACKAGES / "contracts" / "dictionary"
@@ -223,18 +224,37 @@ def retrieve(
     first, last = page * page_size, (page + 1) * page_size
     entries = []
     for ced, count in ordered[first:last]:
-        matches = [
-            _rule_summary(rule, origin, caps, source_caps)
-            for rule, origin in rules
-            if _rule_matches(rule, ced, source_version, target_version)
-        ]
+        native = sorted(set(actions.get(ced, ())))
+        relations = graph.relations.get(ced, [])
+        matches = []
+        for rule, origin in rules:
+            if not _rule_matches(rule, ced, source_version, target_version):
+                continue
+            item = _rule_summary(rule, origin, caps, source_caps)
+            try:
+                recipe = recipe_from_rule(
+                    rule, origin=origin,
+                    related_semantics=relations[:16], installed_actions=native,
+                )
+            except StrategyRecipeError as exc:
+                raise KnowledgeServiceError(
+                    "Installed CED conversion recipe is invalid: " + str(exc)
+                ) from exc
+            item["strategy_recipe"] = {
+                "recipe_id": recipe["recipe_id"],
+                "recipe_sha256": recipe["recipe_sha256"],
+                "related_concepts": recipe["semantic_ids"][1:],
+                "required_native_actions": recipe["alternatives"][0]["required_native_actions"],
+                "verification_domains": recipe["alternatives"][0]["verification_domains"],
+                "knowledge_status": recipe["provenance"]["status"],
+                "runtime_execution_authorized": False,
+            }
+            matches.append(item)
         matches.sort(key=lambda item: (
             item["status"] != "RULE_CANDIDATE_REQUIRES_PREFLIGHT",
             item["origin"] != "LOCAL_REVIEWED_NATIVE_MAPPING",
             str(item["rule_id"]),
         ))
-        native = sorted(set(actions.get(ced, ())))
-        relations = graph.relations.get(ced, [])
         entries.append({
             "ced": ced, "source_occurrences": count,
             "semantic_known": ced in known,
