@@ -323,3 +323,31 @@ def test_strategy_recipe_rejects_unregistered_or_unsafe_source_semantic():
             baseline, origin="AI_ARBITRARY_CODE",
             related_semantics=[], installed_actions=["transform"],
         )
+
+
+
+def test_model_projection_redacts_unknown_custom_class_names_and_local_ids():
+    source = _source()
+    source["entities"].append({
+        "entity_id": "private-component-id",
+        "ced_type": "ProprietaryClient.SecretAnimationSystem",
+        "name": "Confidential User Script",
+        "parent_entity_id": "actor-private-id",
+    })
+    result = knowledge.retrieve(source, target_capabilities={})
+    assert any(x["ced"] == "ProprietaryClient.SecretAnimationSystem"
+               for x in result["entries"]), "local inspection retains exact unknowns"
+    safe = knowledge.model_projection(result)
+    prompt = json.dumps(safe)
+    for secret in ("ProprietaryClient", "SecretAnimationSystem", "Confidential",
+                   "Customer", "actor-private-id", "PrivateCutscene"):
+        assert secret not in prompt
+    assert "unknown.unclassified." in prompt
+    assert safe["knowledge_sha256"] == result["knowledge_sha256"]
+    assert safe["no_native_write_permission"] is True
+    assert safe["shared_promotion_authorized"] is False
+    assert safe["privacy_projection"].startswith("MODEL_SAFE")
+    unknown = next(x for x in safe["entries"]
+                   if x["ced"].startswith("unknown.unclassified."))
+    assert unknown["native_action_candidates"] == []
+    assert unknown["execution_authorized"] is False
