@@ -271,6 +271,7 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
         source_version=str(csir.get("source", {}).get("engine_version") or ""),
         target_version=str(worker.get("engine_version") or ""),
         approved_store=Path.home() / ".cutsceneai-studio" / "ced-knowledge",
+        case_store=Path.home() / ".cutsceneai-studio" / "ced-cases",
     )
     evidence["ced_knowledge"] = knowledge
     return evidence
@@ -318,7 +319,9 @@ def _model_choose(summary: dict) -> dict:
             "evidence": summary["summary"],
             "allowed_strategies": summary["allowed_strategies"],
             "animation_choices": summary.get("animation_choices", []),
-            "ced_knowledge": summary["ced_knowledge"],
+            "ced_knowledge": _agent_module("ced_agent_knowledge").model_projection(
+                summary["ced_knowledge"]
+            ),
             "planning_feedback": summary.get("planning_feedback", ""),
         },
         schema={

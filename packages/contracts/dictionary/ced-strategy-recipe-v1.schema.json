@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/ced/strategy-recipe/v1",
+  "title": "CutSceneAI CED Context-Aware Conversion Recipe v1",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "recipe_id",
+    "semantic_ids",
+    "relationships",
+    "applicability",
+    "alternatives",
+    "provenance"
+  ],
+  "properties": {
+    "kind": {
+      "const": "cutsceneai.ced.strategy_recipe"
+    },
+    "schema_version": {
+      "const": "1"
+    },
+    "recipe_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+    },
+    "semantic_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "relation",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "relation": {
+            "type": "string",
+            "enum": [
+              "parent",
+              "binds",
+              "contains",
+              "uses_asset",
+              "depends_on",
+              "evaluates",
+              "contributes_to",
+              "controls",
+              "constrains"
+            ]
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "applicability": {
+      "type": "object",
+      "required": [
+        "source_engine",
+        "target_engine",
+        "required_source_evidence",
+        "required_target_capabilities"
+      ],
+      "properties": {
+        "source_engine": {
+          "const": "unity"
+        },
+        "target_engine": {
+          "const": "unreal"
+        },
+        "source_version_prefix": {
+          "type": "string",
+          "maxLength": 48
+        },
+        "target_version_prefix": {
+          "type": "string",
+          "maxLength": 48
+        },
+        "required_source_evidence": {
+          "type": "array",
+          "maxItems": 40,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        "required_target_capabilities": {
+          "type": "array",
+          "maxItems": 40,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "alternatives": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": [
+          "strategy_id",
+          "registered_rule_id",
+          "required_native_actions",
+          "limitations",
+          "verification_domains"
+        ],
+        "properties": {
+          "strategy_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "registered_rule_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "required_native_actions": {
+            "type": "array",
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "limitations": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "verification_domains": {
+            "type": "array",
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "spatial",
+                "temporal",
+                "skeletal",
+                "camera",
+                "material",
+                "lighting",
+                "audio",
+                "events",
+                "semantic",
+                "persistence"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "status",
+        "source_rulebook_version",
+        "review_evidence_sha256"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "BASELINE_ADVISORY",
+            "LOCAL_PROPOSED",
+            "LOCAL_REVIEWED",
+            "SHARED_APPROVED",
+            "DEPRECATED"
+          ]
+        },
+        "source_rulebook_version": {
+          "type": "string",
+          "maxLength": 48
+        },
+        "review_evidence_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "reviewer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "heldout_tested": {
+          "type": "boolean"
+        },
+        "native_execution_verified": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
