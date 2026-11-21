@@ -38,3 +38,15 @@ def retrieve(csir: dict[str, Any], *, target_capabilities: dict[str, Any],
         )
     except KnowledgeServiceError as exc:
         raise KnowledgeError(str(exc)) from exc
+
+
+
+def model_projection(result: dict[str, Any]) -> dict[str, Any]:
+    """Redact private/unknown source semantics before any model transport."""
+    if CED_PACKAGE not in sys.path:
+        sys.path.insert(0, CED_PACKAGE)
+    from knowledge_service import KnowledgeServiceError, redact_for_model
+    try:
+        return redact_for_model(result)
+    except KnowledgeServiceError as exc:
+        raise KnowledgeError(str(exc)) from exc
