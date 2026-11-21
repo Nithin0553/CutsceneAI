@@ -101,10 +101,20 @@ def _local_rules(store: Path | None) -> list[dict[str, Any]]:
 
 
 def _private_cases(csir: dict[str, Any], store: Path | None) -> list[dict[str, Any]]:
-    if store is None:
+    if store is None or not store.is_dir():
         return []
     local = _module("learning", "case_memory")
-    suggestions = local.suggest(csir, local.list_cases(store), limit=6)
+    cases = local.list_cases(store)
+    if not cases:
+        return []
+    source = csir.get("source")
+    if not isinstance(source, dict) or source.get("engine") != "unity":
+        # A sparse test/diagnostic CSIR cannot provide cross-project
+        # private precedents. It must not break unrelated native repair.
+        return []
+    suggestions = local.suggest(
+        csir, cases, source_engine="unity", limit=6,
+    )
     # Internal local case summaries can contain user-specific property names.
     # Only safe stable rule metadata is permitted into agent retrieval JSON.
     results = []
