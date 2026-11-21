@@ -1,6 +1,6 @@
 # Element 2 — Hybrid CED Knowledge Base v1
 
-**Development branch:** \`feature/ced-hybrid-knowledge-service-v0.1\`,
+**Development branch:** `feature/ced-hybrid-knowledge-service-v0.1`,
 stacked on Element 1 (Unity Source Intelligence) and the agent-centric
 architecture work. **Native engine validation, complete cross-domain
 planning, and signed shared knowledge distribution are NOT certified.**
@@ -26,23 +26,23 @@ context for the agent, rather than selecting the conversion strategy itself.
 
 | Location | Responsibility |
 | --- | --- |
-| \`packages/contracts/dictionary/ced-shared-manifest-v1.json\` | Pinned, read-only shared baseline policy and declared source files |
-| \`packages/contracts/dictionary/ced-strategy-recipe-v1.schema.json\` | Versioned bounded recipe schema: semantics, relationships, applicability, alternatives, verification domains and provenance |
-| \`packages/ced/semantic_graph.py\` | Full occurrence accounting and read-only parent/binding/containment/dependency graph from source CSIR |
-| \`packages/ced/knowledge_service.py\` | Unified, paginated read-only retrieval across shared rules, reviewed local rules, native action candidates and private verified cases |
-| \`packages/ced/strategy_recipes.py\` | Constructs source-relevant typed recipe candidates from existing registered rules, never code or native write permissions |
-| \`packages/ced/shared_review.py\` | Explicit consent and privacy screening for a non-executable shared review bundle |
-| \`packages/studio/ced_agent_knowledge.py\` | Compatibility façade delegating to the **single** CED knowledge service |
-| \`tools/ced_knowledge.py\` | Read-only page inspection and local approved-rule review staging commands |
+| `packages/contracts/dictionary/ced-shared-manifest-v1.json` | Pinned, read-only shared baseline policy and declared source files |
+| `packages/contracts/dictionary/ced-strategy-recipe-v1.schema.json` | Versioned bounded recipe schema: semantics, relationships, applicability, alternatives, verification domains and provenance |
+| `packages/ced/semantic_graph.py` | Full occurrence accounting and read-only parent/binding/containment/dependency graph from source CSIR |
+| `packages/ced/knowledge_service.py` | Unified, paginated read-only retrieval across shared rules, reviewed local rules, native action candidates and private verified cases |
+| `packages/ced/strategy_recipes.py` | Constructs source-relevant typed recipe candidates from existing registered rules, never code or native write permissions |
+| `packages/ced/shared_review.py` | Explicit consent and privacy screening for a non-executable shared review bundle |
+| `packages/studio/ced_agent_knowledge.py` | Compatibility façade delegating to the **single** CED knowledge service |
+| `tools/ced_knowledge.py` | Read-only page inspection and local approved-rule review staging commands |
 
-The existing \`ced_rulebook.py\`, \`adaptive_mapping.py\`,
-\`case_memory.py\`, \`ced_pretraining.py\`, \`ced_reinforcement.py\`,
-\`ced_discovery_registry.py\` and native \`feature_dispatch.py\`
+The existing `ced_rulebook.py`, `adaptive_mapping.py`,
+`case_memory.py`, `ced_pretraining.py`, `ced_reinforcement.py`,
+`ced_discovery_registry.py` and native `feature_dispatch.py`
 are retained. There is no second approval authority.
 
 ## Retrieval and dependency relationships
 
-\`\`\`text
+```text
 Unity CSIR + scene graph + optional local approved cases
        |
        v
@@ -72,21 +72,27 @@ LangGraph conversion agent
   - chooses only installed conversion options
   - retains independent source and target provenance gates
   - no arbitrary Python/Unreal code or invented adapters
-\`\`\`
+```
 
-Retrieval returns \`source_ced_count\`, \`source_occurrence_count\`,
-\`relationship_count\`, \`coverage_ledger\`, \`coverage_ledger_sha256\`,
-\`page\`, \`page_count\`, \`next_page\`, and \`retrieval_complete\`.
+Retrieval returns `source_ced_count`, `source_occurrence_count`,
+`relationship_count`, `coverage_ledger`, `coverage_ledger_sha256`,
+`page`, `page_count`, `next_page`, and `retrieval_complete`.
 The detailed page size is between 1 and 48; the full ledger still accounts
 for every encountered semantic even when a second retrieval is necessary.
 It **does not** claim a model has analyzed every omitted detail. Model
 payload limits continue to apply, and full multi-page reasoning is an
 outstanding improvement.
 
-Unknown semantics remain \`UNKNOWN_SEMANTIC_INVESTIGATE\`. They do not
-become \`EXACT\`, \`RESOLVED\`, or executable because of lexical similarity.
+Unknown semantics remain `UNKNOWN_SEMANTIC_INVESTIGATE`. They do not
+become `EXACT`, `RESOLVED`, or executable because of lexical similarity.
 Relationship output is aggregated by semantic concept, never raw Unity
 GameObject ID, project path, asset name, or script/source code.
+Before any LLM request, including a locally hosted model, the agent uses
+`ced_agent_knowledge.model_projection`. It replaces unknown/custom source
+concept names with ephemeral aliases, anonymizes locally reviewed rule and
+case identifiers, filters unfamiliar rule parameter/evidence identifiers,
+and drops unregistered target capability strings. The original source-bound
+retrieval remains private for Studio's independent validation.
 
 ### Source and target capability interpretation
 
@@ -98,7 +104,7 @@ a verified capability. Native preflight remains the final guard.
 
 **Recipe trust:** A recipe is only a source-contextual representation of
 an already registered rule, with native *candidate* action names and required
-verification domains. The embedded \`execution_authorized\` value is always
+verification domains. The embedded `execution_authorized` value is always
 false. The recipe SHA can support provenance, but not authenticity,
 runtime authority, or cinematic fidelity.
 
@@ -106,31 +112,35 @@ runtime authority, or cinematic fidelity.
 
 The checked-in CED baseline is not modified by transfers or model responses.
 The pretransfer planner now optionally reads verified mapping-only cases at
-\`~/.cutsceneai-studio/ced-cases/\` and locally approved rules at
-\`~/.cutsceneai-studio/ced-knowledge/\`.
+`~/.cutsceneai-studio/ced-cases/` and locally approved rules at
+`~/.cutsceneai-studio/ced-knowledge/`.
 Both stores remain on the user workstation. Missing directories are treated
 as empty; altered/malformed approvals fail safe.
 
-Existing case memory \`build_case\`, \`save_case\`, and \`suggest\` still
+Only reviewed and verified mapping cases become private experience
+suggestions; a missing case store is safely empty, even in sparse diagnostic
+scenarios. Similarity never grants native permissions.
+
+Existing case memory `build_case`, `save_case`, and `suggest` still
 require independent structural validation and explicit review before a case
-can be labeled \`MAPPING_VERIFIED\`. Suggested private cases are advisory,
+can be labeled `MAPPING_VERIFIED`. Suggested private cases are advisory,
 not generalized proof of full cutscene parity. Offline CED pretraining
 and contextual-bandit rewards remain advisory, with no unreviewed
 model training or rule promotion.
 
 The post-generation agent also maintains its existing per-workspace
-\`learning/approved-cases\` store. Converging that local path and the
+`learning/approved-cases` store. Converging that local path and the
 new persistent cross-project private case store is a further migration
 task; the two stores are **not** automatically synchronized.
 
 ## Explicit reviewed promotion
 
-Existing \`ced_rulebook.propose\` and \`ced_rulebook.promote\` still require
+Existing `ced_rulebook.propose` and `ced_rulebook.promote` still require
 an eligible registered adapter, native readback comparison evidence, separate
 held-out/regression claims and a human reviewer. JSON claims are checked for
 consistency but cannot themselves prove native evidence authenticity.
 
-\`shared_review.stage_for_review\` additionally requires:
+`shared_review.stage_for_review` additionally requires:
 
 - explicit consent for this exact operation;
 - a caller-selected list of immutable, locally approved candidate IDs;
@@ -140,8 +150,8 @@ consistency but cannot themselves prove native evidence authenticity.
   artifacts, names, paths and native capture/readback contents;
 - a new output file, no overwrite, with immutable content digest.
 
-**The resulting bundle is \`REVIEW_ONLY_NOT_TRUSTED_NOT_EXECUTABLE\`.**
-It cannot be imported by \`knowledge_service\` or installed through Studio
+**The resulting bundle is `REVIEW_ONLY_NOT_TRUSTED_NOT_EXECUTABLE`.**
+It cannot be imported by `knowledge_service` or installed through Studio
 and is not automatically sent to GitHub or a remote service. Independent
 native evidence authenticity verification, a proper code review, signed
 shared release bundles, compatibility policy and revocation/deprecation
@@ -155,26 +165,26 @@ it does **not** prove who published the file.
 Source-specific read-only retrieval (replace paths with files from your
 own approved Studio session):
 
-\`\`\`powershell
-python tools/ced_knowledge.py query \`
-  --csir "B:\Path\To\source.csir.json" \`
-  --target-capabilities "B:\Path\To\target-capabilities.json" \`
+```powershell
+python tools/ced_knowledge.py query `
+  --csir "B:\Path\To\source.csir.json" `
+  --target-capabilities "B:\Path\To\target-capabilities.json" `
   --source-version "6000.3" --target-version "5.8" --page 0
-\`\`\`
+```
 
-To inspect more than one page, increment \`--page\` while \`next_page\`
+To inspect more than one page, increment `--page` while `next_page`
 is not null. Capability input should contain observed Boolean capability
 flags, not guessed native support.
 
 Stage **only** one explicitly selected previously reviewed candidate:
 
-\`\`\`powershell
-python tools/ced_knowledge.py stage-review \`
-  --approved-store "$HOME\.cutsceneai-studio\ced-knowledge" \`
-  --candidate-id "<real-64-character-approved-candidate-hash>" \`
-  --output "$HOME\Desktop\ced-reviewed-proposal.json" \`
+```powershell
+python tools/ced_knowledge.py stage-review `
+  --approved-store "$HOME\.cutsceneai-studio\ced-knowledge" `
+  --candidate-id "<real-64-character-approved-candidate-hash>" `
+  --output "$HOME\Desktop\ced-reviewed-proposal.json" `
   --explicit-sharing-consent
-\`\`\`
+```
 
 This creates a local review artifact, not a publication or authorization.
 
