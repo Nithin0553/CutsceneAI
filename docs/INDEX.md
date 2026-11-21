@@ -4,6 +4,7 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 
 ## Start here
 
+- [Hybrid CED knowledge service (shared baseline, local learning, reviewed promotion)](studio/CED_HYBRID_KNOWLEDGE_ARCHITECTURE_V1.md) — Element 2 contracts, contextual retrieval, privacy and validation gates
 - [Agent-centric CED knowledge, LangGraph orchestration and local-model architecture](studio/AGENT_CENTRIC_ARCHITECTURE_V1.md) — active experimental refactor, explicit native safety and remaining fidelity gates
 - [CED-first pre-conversion discovery](architecture/CED_FIRST_PREFLIGHT_V0_1.md)
 - [CED local discovery registry](architecture/CED_DISCOVERY_REGISTRY_V0_1.md) — opt-in, redacted, deduplicated unknown-element observations
