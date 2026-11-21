@@ -334,15 +334,24 @@ def test_model_projection_redacts_unknown_custom_class_names_and_local_ids():
         "name": "Confidential User Script",
         "parent_entity_id": "actor-private-id",
     })
-    result = knowledge.retrieve(source, target_capabilities={})
+    result = knowledge.retrieve(
+        source, target_capabilities={"ClientOnly.SecretNativeFeature": True}
+    )
     assert any(x["ced"] == "ProprietaryClient.SecretAnimationSystem"
                for x in result["entries"]), "local inspection retains exact unknowns"
+    source_rule = next(x for x in result["entries"] if x["ced"] == "camera.fov")
+    source_rule["rules"][0]["parameter_fields"].append("PrivateCompany.TransformField")
+    source_rule["rules"][0]["required_evidence"].append("source.CustomerSecret.asset")
     safe = knowledge.model_projection(result)
     prompt = json.dumps(safe)
     for secret in ("ProprietaryClient", "SecretAnimationSystem", "Confidential",
-                   "Customer", "actor-private-id", "PrivateCutscene"):
+                   "Customer", "ClientOnly", "PrivateCompany", "actor-private-id",
+                   "PrivateCutscene"):
         assert secret not in prompt
     assert "unknown.unclassified." in prompt
+    assert "private_parameter" in prompt
+    assert "private_evidence_requirement" in prompt
+    assert safe["unrecognized_target_capability_count"] == 1
     assert safe["knowledge_sha256"] == result["knowledge_sha256"]
     assert safe["no_native_write_permission"] is True
     assert safe["shared_promotion_authorized"] is False
