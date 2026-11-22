@@ -53,9 +53,12 @@ def _snapshot(candidate: Path) -> dict | None:
     report, _ = element7._safe_json(candidate / (
         "element-workflow-" + digest + ".json"
     ))
-    if report.get("workflow_sha256") != digest or report.get(
-        "candidate_id"
-    ) != data.get("candidate_id"):
+    if (report.get("workflow_sha256") != digest
+            or report.get("candidate_id") != data.get("candidate_id")
+            or digest != _hash({
+                key: value for key, value in report.items()
+                if key != "workflow_sha256"
+            })):
         raise BoundedRepairError("Source occurrence workflow changed.")
     return report
 
@@ -166,6 +169,15 @@ def build(workspace: Path, job_id: str,
     assert candidate is not None and raw_source is not None
     assert sampling is not None and source_capture is not None
     workflow = _snapshot(candidate)
+    if workflow is not None and any(
+        not isinstance(proof.get("element_occurrence_attribution"), dict)
+        or proof["element_occurrence_attribution"].get("workflow_sha256")
+        != workflow["workflow_sha256"]
+        for proof in proofs
+    ):
+        raise BoundedRepairError(
+            "Target samples do not match the latest exact source occurrence workflow."
+        )
     outcomes = []
     recheck = None
     if workflow is not None:
@@ -397,3 +409,59 @@ def select_advisory(report: dict, occurrence_id: str,
         "native_repair_authorized": False,
         "full_cutscene_fidelity_verified": False,
     }
+
+
+
+def may_review_exact_character_offset(
+    workspace: Path, job_id: str, evidence_folders: list[Path],
+    target_entity_name: str,
+) -> bool:
+    """Check one locally named character without exposing names in reports.
+
+    A report-level 'some character offset exists' is NOT permission to apply
+    an edit to a different character selected by a model or stale UI.
+    """
+    if (not isinstance(target_entity_name, str)
+            or not target_entity_name or len(target_entity_name) > 256):
+        return False
+    report = build(workspace, job_id, evidence_folders)
+    if (report["status"] in {
+            "STOP_MEASURED_REGRESSION_OR_NO_PROGRESS",
+            "STOP_REMEASUREMENT_BUDGET_EXHAUSTED",
+        } or not report["native_repair_adapter_available_for_review"]):
+        return False
+    root, candidate, _, job = element7._bound_paths(
+        workspace, job_id, evidence_folders[0],
+    )
+    assert root == Path(workspace).resolve()
+    workflow = _snapshot(candidate)
+    if workflow is None:
+        return False
+    csir, _ = element7._safe_json(Path(job["csir"]))
+    candidates = []
+    for occurrence in workflow["element_plan"]["elements"]:
+        if occurrence.get("source_kind") != "entities":
+            continue
+        match = re.fullmatch(
+            r"entities\[(\d+)\]", str(occurrence.get("source_location") or "")
+        )
+        if match is None:
+            raise BoundedRepairError(
+                "Element 8 original source entity location has changed."
+            )
+        index = int(match.group(1))
+        if not 0 <= index < len(csir.get("entities", [])):
+            raise BoundedRepairError("Element 8 source occurrence index is invalid.")
+        native_source = csir["entities"][index]
+        if (native_source.get("name") == target_entity_name
+                and native_source.get("ced_type") == "entity.character"):
+            candidates.append(occurrence["occurrence_id"])
+    if len(candidates) != 1:
+        return False
+    record = [
+        row for row in report["per_occurrence"]
+        if row["occurrence_id"] == candidates[0]
+    ]
+    return len(record) == 1 and record[0]["advisory_strategy"] == (
+        "INSPECT_EXISTING_USER_AUTHORIZED_CHARACTER_OFFSET_POLICY"
+    )
