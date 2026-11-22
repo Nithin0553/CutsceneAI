@@ -380,8 +380,15 @@ def attempt(api: Any, workspace: Path, job: dict, request: dict) -> dict:
                 # Original frames and bindings are independently inspected
                 # after rollback. A disk-write failure still requires a
                 # separate editor reopen before claiming saved persistence.
-                first.set_range(*originals[0])
-                second.set_range(*originals[1])
+                # Rollback also shrinks before extending so a failed
+                # two-section correction never *intentionally* creates
+                # an overlapping camera cut during compensation.
+                if old_switch > new_switch:
+                    second.set_range(*originals[1])
+                    first.set_range(*originals[0])
+                else:
+                    first.set_range(*originals[0])
+                    second.set_range(*originals[1])
                 if (_section_range(api, first) != originals[0]
                         or _section_range(api, second) != originals[1]
                         or _observed(
