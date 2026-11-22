@@ -228,3 +228,41 @@ def test_large_scene_is_fully_ordered_without_truncation():
     assert len(schedule["topological_waves"][0]) == 300
     assert schedule["unscheduled_occurrences"] == []
     schedules.verify(schedule, plan, source)
+
+
+def test_muted_track_and_unbound_writer_are_not_executable_assumptions():
+    source = _scene()
+    source["tracks"][0]["muted"] = True
+    plan, _, _ = _prepared(source)
+    schedule = schedules.build(plan, source)
+    assert "MUTED_SOURCE_TRACK" in {c["kind"] for c in schedule["conflicts"]}
+    assert _status(schedule)[_by_location(plan)["tracks[0]"]] == "OWNERSHIP_CONFLICT"
+
+    source["tracks"][0]["muted"] = False
+    source["tracks"][0].pop("binding_entity_id")
+    plan, _, _ = _prepared(source)
+    schedule = schedules.build(plan, source)
+    assert "UNPROVEN_TRACK_BINDING" in {c["kind"] for c in schedule["conflicts"]}
+
+
+def test_global_camera_cuts_have_shared_sequence_ownership():
+    source = {"tracks": [
+        {"track_id": "GLOBAL-CUT-A", "ced_type": "camera.cut",
+         "sections": [{
+             "section_id": "FIRST-CUT", "ced_type": "camera.cut",
+             "start": _time(0), "end": _time(10), "payload": {},
+         }]},
+        {"track_id": "GLOBAL-CUT-B", "ced_type": "camera.cut",
+         "sections": [{
+             "section_id": "SECOND-CUT", "ced_type": "camera.cut",
+             "start": _time(6), "end": _time(12), "payload": {},
+         }]},
+    ]}
+    plan, _, _ = _prepared(source)
+    schedule = schedules.build(plan, source)
+    assert "OVERLAPPING_SECTION_WRITERS" in {c["kind"] for c in schedule["conflicts"]}
+    ids = _by_location(plan)
+    states = _status(schedule)
+    assert states[ids["tracks[0]"]] == "OWNERSHIP_CONFLICT"
+    assert states[ids["tracks[1]"]] == "OWNERSHIP_CONFLICT"
+    schedules.verify(schedule, plan, source)
