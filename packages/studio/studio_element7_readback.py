@@ -256,6 +256,10 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
                     "Unreferenced native pose/forward evidence is not allowed."
                 )
         computed = compare(sampling, source, target, **extras)
+    except Element7ReadbackError:
+        # Preserve the specific, bounded integrity diagnostic for an
+        # intentionally rejected source/mapping/approval mismatch.
+        raise
     except (SamplingPlanError, TargetPlanError, BehavioralComparisonError,
             ValueError, IndexError, TypeError, KeyError, ZeroDivisionError) as exc:
         raise Element7ReadbackError(
