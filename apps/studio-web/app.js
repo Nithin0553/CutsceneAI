@@ -398,7 +398,15 @@
     const response=await fetch('/api/'+path,{method:payload===undefined?'GET':'POST',cache:'no-store',headers:payload===undefined?{}:{'Content-Type':'application/json','X-CSAI-Token':state.status?.token||''},body:payload===undefined?undefined:JSON.stringify(payload)});
     let body={};try{body=await response.json()}catch{throw new Error('The local backend returned an invalid response.')}if(!response.ok)throw new Error(body.error||`Local API error ${response.status}`);return body;
   }
-  async function refresh(quiet=false){try{let oldId=state.status?.active_job;const status=await api('status');state.status=status;
+  async function refresh(quiet=false){try{const status=await api('status');state.status=status;
+      const activeJobId=status.active_job||'';
+      if((state.job?.job_id||'')!==activeJobId){
+        // The advanced console can observe a job switch outside this tab.
+        // Never reuse a previous job's diagnostics, CineTwin or release state.
+        state.job=null;state.jobDiagnostic=null;state.verification=null;
+        state.releaseReadiness=null;state.report=null;state.evidencePath='';
+        state.finalOutcome=null;state.finalOutcomeJobId='';state.finalOutcomeError='';
+      }
       state.candidate=status.candidate||null;
       const elementCandidate=state.candidate?.candidate_id||'';
       if(state.elementReviewCandidateId!==elementCandidate){
@@ -418,7 +426,10 @@
           state.selectedLevel=status.connection.level_path||'';
         }catch{} // Project folders may have moved; allow Browse Folder again.
       }
-      if(status.observation)state.report=status.observation;
+      // A target-only attachment is not job-bound acceptance evidence.
+      // Preserve it only while the same job remains active in this tab.
+      if(status.observation && activeJobId && state.job?.job_id===activeJobId)
+        state.report=status.observation;
       if(!state.capabilities){try{state.capabilities=await api('capabilities')}catch{}}
       const censusKey=status.connection?String(status.connection.csir||'')+'|'+String(status.connection.unity_project||''):'';
       if(status.connection && (!state.sourceSurfaces || state.censusIdentity!==censusKey)){
@@ -442,8 +453,8 @@
         try{state.verification=await api('verification')}
         catch{state.verification=null}
       } else state.verification=null;
-      if(status.active_job && (!state.job || status.active_job!==oldId || state.job.job_id!==status.active_job))state.job=await api('jobs/'+status.active_job);
-      else if(status.active_job)state.job=await api('jobs/'+status.active_job);
+      if(activeJobId)state.job=await api('jobs/'+activeJobId);
+      else state.job=null;
       if(state.job?.diagnostic_file&&!state.jobDiagnostic){try{state.jobDiagnostic=await api('diagnostic/'+state.job.job_id)}catch{}}
       state.loading=false;if(!quiet)state.info='Workspace refreshed.';render();
     }catch(err){state.loading=false;if(!quiet){state.error=err.message;render()}}}
