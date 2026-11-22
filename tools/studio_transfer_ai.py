@@ -515,6 +515,42 @@ def decide(config: dict, census_path: str, worker: dict,
         evidence["ced_knowledge"], source_csir,
         evidence["summary"]["target_native_capabilities"],
     )
+    # Element 4: independently validate the WHOLE selected source graph,
+    # including native-route eligibility, ownership and selected dependencies.
+    # An invalid global combination is not a source-bound conversion plan.
+    gate_module = _agent_module("studio_element4_validation")
+    gate = gate_module.build(
+        element_plan, element_schedule, element_strategy,
+        element_investigation, evidence["ced_knowledge"], source_csir,
+        evidence["summary"]["target_native_capabilities"],
+        global_strategy=strategy, allowed_strategies=evidence["allowed_strategies"],
+    )
+    alternative_audit = []
+    if not gate["accepted_for_source_bound_plan"]:
+        if reasoner is not None or planning_mode != "model":
+            raise TransferAIError(
+                "Element 4 rejected the selected source graph; "
+                "enable bounded per-element model review or report the limitation."
+            )
+        try:
+            provider = _agent_module("studio_model_provider")
+            (element_plan, element_schedule, element_strategy,
+             element_investigation, gate, alternative_audit) = (
+                gate_module.reason_bounded(
+                    element_plan, evidence["ced_knowledge"], source_csir,
+                    evidence["summary"]["target_native_capabilities"],
+                    global_strategy=strategy,
+                    allowed_strategies=evidence["allowed_strategies"],
+                    provider=provider,
+                )
+            )
+        except gate_module.StrategyValidationError as exc:
+            raise TransferAIError(
+                "Element 4 bounded alternative reasoning failed before "
+                "native preparation: " + str(exc)[:350]
+            ) from exc
+    if not gate["accepted_for_source_bound_plan"]:
+        raise TransferAIError("Element 4 refused an unvalidated source-bound strategy.")
     investigation_hashes = []
     investigation_mode = os.environ.get(
         "CUTSCENEAI_ELEMENT_INVESTIGATION", "inventory"
@@ -564,42 +600,16 @@ def decide(config: dict, census_path: str, worker: dict,
         evidence["ced_knowledge"], source_csir,
         evidence["summary"]["target_native_capabilities"],
     )
-    # Element 4: independently validate the WHOLE selected source graph,
-    # including native-route eligibility, ownership and selected dependencies.
-    # An invalid global combination is not a source-bound conversion plan.
-    gate_module = _agent_module("studio_element4_validation")
+    # Investigation model choices are already independently verified here.
+    # Recreate the Element 4 gate with the final investigation digest.
     gate = gate_module.build(
         element_plan, element_schedule, element_strategy,
         element_investigation, evidence["ced_knowledge"], source_csir,
         evidence["summary"]["target_native_capabilities"],
         global_strategy=strategy, allowed_strategies=evidence["allowed_strategies"],
     )
-    alternative_audit = []
     if not gate["accepted_for_source_bound_plan"]:
-        if reasoner is not None or planning_mode != "model":
-            raise TransferAIError(
-                "Element 4 rejected the selected source graph; "
-                "enable bounded per-element model review or report the limitation."
-            )
-        try:
-            provider = _agent_module("studio_model_provider")
-            (element_plan, element_schedule, element_strategy,
-             element_investigation, gate, alternative_audit) = (
-                gate_module.reason_bounded(
-                    element_plan, evidence["ced_knowledge"], source_csir,
-                    evidence["summary"]["target_native_capabilities"],
-                    global_strategy=strategy,
-                    allowed_strategies=evidence["allowed_strategies"],
-                    provider=provider,
-                )
-            )
-        except gate_module.StrategyValidationError as exc:
-            raise TransferAIError(
-                "Element 4 bounded alternative reasoning failed before "
-                "native preparation: " + str(exc)[:350]
-            ) from exc
-    if not gate["accepted_for_source_bound_plan"]:
-        raise TransferAIError("Element 4 refused an unvalidated source-bound strategy.")
+        raise TransferAIError("Element 4 final source strategy is no longer valid.")
     # Never let model preference disable the existing source-material import
     # guarantee when provenance documents source materials. This policy is a
     # deterministic safety floor, not an LLM decision.
