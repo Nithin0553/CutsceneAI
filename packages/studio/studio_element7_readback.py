@@ -29,6 +29,7 @@ import studio_element6_execution as native_guard
 import studio_element_native_execution as native_actions
 from behavior_compare import BehavioralComparisonError, compare
 from sampling_plan import SamplingPlanError, build_plan, validate_capture
+from target_observation_plan import TargetPlanError, prepare_observation
 
 KIND = "cutsceneai.studio.element7_native_cinetwin_readback"
 VERSION = "1"
@@ -206,6 +207,36 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
             raise Element7ReadbackError(
                 "Unity source capture has incomplete or incorrect sample coverage."
             )
+        expected_targets = prepare_observation(sampling, mapping)
+        exact_bindings = {
+            row["entity_id"]: row["actor_label"]
+            for row in expected_targets["bound"]
+        }
+        native_rows = (target.get("samples") or [{}])[0].get("entities", [])
+        observed_bindings = {
+            row["entity_id"]: row.get("actor_label")
+            for row in native_rows
+        }
+        expected_missing = {
+            row["entity_id"] for row in expected_targets["missing"]
+        }
+        observed_missing = {
+            row["entity_id"] for row in target.get(
+                "coverage", {},
+            ).get("unmapped_source_entities", [])
+        }
+        if (observed_bindings != exact_bindings
+                or expected_missing != observed_missing
+                or target.get("skeletal_bone_maps", {})
+                != expected_targets["skeletal_bone_maps"]
+                or target.get("coverage", {}).get("mapped_entity_count")
+                != len(exact_bindings)
+                or target.get("coverage", {}).get("source_entity_count")
+                != len(sampling["entities"])):
+            raise Element7ReadbackError(
+                "Native sampled actor labels and rigs differ from the exact "
+                "prepared target mapping; no inferred source match is allowed."
+            )
         extras: dict[str, Any] = {}
         optional = (
             ("rig_calibration_sha256", "rig-calibration.json", "pose_calibration"),
@@ -225,8 +256,8 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
                     "Unreferenced native pose/forward evidence is not allowed."
                 )
         computed = compare(sampling, source, target, **extras)
-    except (SamplingPlanError, BehavioralComparisonError, ValueError,
-            IndexError, TypeError, KeyError, ZeroDivisionError) as exc:
+    except (SamplingPlanError, TargetPlanError, BehavioralComparisonError,
+            ValueError, IndexError, TypeError, KeyError, ZeroDivisionError) as exc:
         raise Element7ReadbackError(
             "Native CineTwin source/target comparison could not be reconstructed."
         ) from exc
@@ -468,6 +499,7 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
         "prepared_session_file_sha256": session_sha,
         "prepared_plan_file_sha256": transfer_sha,
         "target_mapping_file_sha256": mapping_sha,
+        "source_target_mapping_status": "EXACT_PREPARED_MAPPING_OBSERVED",
         "sampling_file_sha256": sampling_sha,
         "target_capture_file_sha256": target_sha,
         "native_persistence_file_sha256": persistence_sha,
