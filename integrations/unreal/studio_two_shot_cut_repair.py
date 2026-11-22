@@ -202,6 +202,71 @@ def _live_staged_cameras(api: Any, created: list[dict],
         ) from exc
 
 
+def _verify_exact_bound_camera_objects(
+        api: Any, sequence: Any, sections: tuple[Any, Any],
+        shots: list[dict], staged_rows: list[dict]) -> None:
+    """Resolve camera-cut binding GUIDs to the SAME two staged UObject paths.
+
+    A display label or an independently resolved section interval does not
+    prove the native binding owner is the source-created camera. This must be
+    verified in the active editor world before any section setter.
+    """
+    ext = getattr(api, "MovieSceneSequenceExtensions", None)
+    lookup = getattr(ext, "get_bindings", None)
+    locate = getattr(ext, "locate_bound_objects", None)
+    binding_id = getattr(ext, "get_binding_id", None)
+    editor_type = getattr(api, "UnrealEditorSubsystem", None)
+    if (editor_type is None or not all(callable(x) for x in (
+            lookup, locate, binding_id))):
+        raise TwoShotNativeRepairError(
+            "Native two-shot binding-to-staged-object API is unavailable."
+        )
+    try:
+        bindings = list(lookup(sequence))
+        if not 1 <= len(bindings) <= 10000:
+            raise TwoShotNativeRepairError(
+                "Native binding-to-camera inventory is unbounded."
+            )
+        world = api.get_editor_subsystem(editor_type).get_editor_world()
+        for section, shot in zip(sections, shots):
+            expected_rows = [row for row in staged_rows
+                             if isinstance(row, dict)
+                             and row.get("kind") == "entity.camera"
+                             and row.get("name") == shot["source_camera_name"]
+                             and row.get("label") == shot["target_actor_label"]]
+            if len(expected_rows) != 1:
+                raise TwoShotNativeRepairError(
+                    "Exact source staging receipt has ambiguous camera objects."
+                )
+            expected_path = expected_rows[0].get("native_actor_path")
+            section_id = section.get_camera_binding_id()
+            matches = [row for row in bindings
+                       if binding_id(sequence, row) == section_id]
+            if len(matches) != 1:
+                raise TwoShotNativeRepairError(
+                    "Native two-shot section binding ID is ambiguous."
+                )
+            owners = list(locate(sequence, matches[0], world))
+            if len(owners) != 1:
+                raise TwoShotNativeRepairError(
+                    "Native cut binding does not resolve to one staged camera."
+                )
+            bound = owners[0]
+            if (str(bound.get_path_name()) != expected_path
+                    or str(bound.get_actor_label())
+                    != shot["target_actor_label"]
+                    or str(bound.get_class().get_name()) != "CineCameraActor"):
+                raise TwoShotNativeRepairError(
+                    "Native camera-cut GUID binds a different UObject than staged."
+                )
+    except TwoShotNativeRepairError:
+        raise
+    except (AttributeError, TypeError, RuntimeError, ValueError) as exc:
+        raise TwoShotNativeRepairError(
+            "Cannot independently resolve native two-shot binding objects."
+        ) from exc
+
+
 def attempt(api: Any, workspace: Path, job: dict, request: dict) -> dict:
     candidate = Path(job["candidate_dir"]).resolve()
     if request.get("strategy") != "restore_two_shot_camera_switch":
@@ -245,6 +310,9 @@ def attempt(api: Any, workspace: Path, job: dict, request: dict) -> dict:
     if sequence is None:
         raise TwoShotNativeRepairError("Source-bound native Level Sequence missing.")
     first, second = _native_sections(api, sequence)
+    _verify_exact_bound_camera_objects(
+        api, sequence, (first, second), proof["shots"], rows,
+    )
     originals = _observed(api, sequence, proof["shots"], expected_key="native")
     expected = (
         (proof["shots"][0]["expected_start_frame"],
