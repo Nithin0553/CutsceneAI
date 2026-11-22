@@ -40,8 +40,10 @@ MODULES = (
     ("studio_element8_repair", "packages/studio"),
     ("studio_element9_outcome", "packages/studio"),
     ("studio_camera_lens_evidence", "packages/studio"),
+    ("studio_camera_cut_evidence", "packages/studio"),
     ("studio_element_native_gate", "integrations/unreal"),
     ("studio_camera_lens_repair", "integrations/unreal"),
+    ("studio_camera_cut_repair", "integrations/unreal"),
     ("studio_agent_executor", "integrations/unreal"),
     # The automatic asset manifest is created by the Studio host Python
     # process, then re-verified by Unreal's long-lived Python process.
