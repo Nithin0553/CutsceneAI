@@ -182,7 +182,7 @@ def test_camera_position_only_keeps_original_static_world_orientation():
     (lambda csir: _camera(csir)["sections"][0]["payload"]["animation"]["curves"].append(
         _curve("unsupported.native.camera_state",[(0,1.)])), "Unrecognized"),
     (lambda csir: _camera(csir)["sections"][0]["payload"]["animation"]["curves"].append(
-        _curve("transform.position.x",[(0,1.)],property_name="m_LocalPosition.x")),
+        _curve("transform.infinite_offset.position.x",[(0,1.)],property_name="m_LocalPosition.x")),
      "Duplicate"),
     (lambda csir: _camera(csir)["sections"][0]["payload"]["animation"]["curves"].append(
         dict(_curve("transform.position.x",[(0,1.)]),path="Pivot/Child")),
@@ -221,7 +221,7 @@ def test_camera_missing_source_baseline_does_not_guess_world_origin():
             "transform.infinite_offset.position."
         )
     ]
-    with pytest.raises(csir_plan.PlanError,match="baseline"):
+    with pytest.raises(csir_plan.PlanError,match="world transform"):
         csir_plan.build_plan(csir,mapping)
 
 
@@ -248,8 +248,8 @@ def test_camera_infinite_offset_is_one_constant_authoring_value():
     lambda a:a["keys"].pop(),
     lambda a:a["keys"][100].update(frame=99),
     lambda a:a["keys"][100].update(frame=9999),
-    lambda a:a["keys"][200]["location_cm"].__setitem__(0,float("nan")),
-    lambda a:a["keys"][300]["rotation_rpy_degrees"].__setitem__(2,float("inf")),
+    lambda a:a["keys"][200].update(location_cm=(float("nan"),0,0)),
+    lambda a:a["keys"][300].update(rotation_rpy_degrees=(0,0,float("inf"))),
     lambda a:a.update(frame_grid_sample_count=2),
     lambda a:a.update(native_transform_channels_required=6),
     lambda a:a.update(baked_source_curves=False),
