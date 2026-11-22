@@ -108,7 +108,7 @@ def test_native_source_branch_disambiguates_character_vs_prop_without_native_exe
 
 
 def test_section_inherits_parent_track_routing_and_unknown_vendor_is_private():
-    scene, knowledge, caps, plan, schedule, comparison = _evidence()
+    _, _, _, plan, _, comparison = _evidence()
     actor_section = _row(comparison, "tracks[0].sections[0]", plan)
     prop_section = _row(comparison, "tracks[1].sections[0]", plan)
     assert _alternatives(actor_section)["transform"]["eligible_for_model_proposal"] is False
@@ -140,7 +140,7 @@ def test_ambiguous_non_routed_alternatives_remain_advisory():
     source = {"entities": [
         {"entity_id": "A", "ced_type": "metadata.property_descriptor"},
     ]}
-    _, knowledge, caps, plan, schedule, comparison = _evidence(source)
+    _, _, _, _, _, comparison = _evidence(source)
     item = comparison["comparisons"][0]
     assert item["suggested_action"] == "report_only"
     assert item["suggestion_reason"] == "UNDISTINGUISHED_CED_ALTERNATIVES"
@@ -153,7 +153,7 @@ def test_ambiguous_non_routed_alternatives_remain_advisory():
 def test_scheduler_conflict_propagates_to_adaptive_action_eligibility():
     scene = _scene()
     scene["tracks"][1]["binding_entity_id"] = "PRIVATE_ACTOR"
-    _, knowledge, caps, plan, schedule, comparison = _evidence(scene)
+    _, _, _, plan, _, comparison = _evidence(scene)
     actor = _row(comparison, "tracks[0]", plan)
     assert actor["source_schedule_status"] == "OWNERSHIP_CONFLICT"
     assert actor["suggested_action"] == "report_only"
@@ -162,7 +162,7 @@ def test_scheduler_conflict_propagates_to_adaptive_action_eligibility():
 
 
 def test_full_model_review_rejects_source_native_branch_mismatch_and_no_checkpoint(tmp_path):
-    scene, knowledge, caps, plan, schedule, comparison = _evidence()
+    _, _, _, plan, _, comparison = _evidence()
     actor_id = _row(comparison, "tracks[0]", plan)["occurrence_id"]
     hints = adaptive.proposal_hints(comparison)
     class MaliciousModel:
@@ -184,7 +184,7 @@ def test_full_model_review_rejects_source_native_branch_mismatch_and_no_checkpoi
 
 
 def test_model_receives_complete_ranked_options_and_can_choose_safe_report_only():
-    scene, knowledge, caps, plan, schedule, comparison = _evidence()
+    scene, knowledge, caps, plan, _, comparison = _evidence()
     hints = adaptive.proposal_hints(comparison)
     calls = []
     class Model:
@@ -235,7 +235,7 @@ def test_ced_ranking_pass_groups_and_failure_flags_are_only_signals():
     # Use the already-ranked CED service vocabulary, never create new
     # independently verified project evidence from an asserted model output.
     source = _scene()
-    _, knowledge, caps, plan, schedule, comparison = _evidence(source)
+    _, _, _, plan, _, comparison = _evidence(source)
     row = _row(comparison, "tracks[0]", plan)
     alt = _alternatives(row)["skeletal_animation"]
     assert alt["independent_evidence_level"] in {
