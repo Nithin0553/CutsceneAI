@@ -32,6 +32,7 @@ MODULES = (
     # Element 5 plan implementation after switching Studio branches.
     ("studio_element_native_execution", "packages/studio"),
     ("studio_element5_plan", "packages/studio"),
+    ("studio_element6_execution", "packages/studio"),
     ("studio_element_native_gate", "integrations/unreal"),
     # The automatic asset manifest is created by the Studio host Python
     # process, then re-verified by Unreal's long-lived Python process.
