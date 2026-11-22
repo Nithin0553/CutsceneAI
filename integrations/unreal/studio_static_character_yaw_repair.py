@@ -249,6 +249,28 @@ def attempt(api: Any, workspace: Path, job: dict, request: dict) -> dict:
         }
     finally:
         if changed and not saved:
-            actor.set_actor_rotation(api.Rotator(
-                original[1], original[2], original[0],
-            ), True)
+            # The setter or a notification hook may unexpectedly translate
+            # the actor too. Roll back the entire observed actor base, not
+            # just its yaw; an interrupted SAVE may still require manual
+            # disk inspection and is never treated as persisted rollback.
+            try:
+                actor.set_actor_rotation(api.Rotator(
+                    original[1], original[2], original[0],
+                ), True)
+                loc = actor.get_actor_location()
+                now = (float(loc.x), float(loc.y), float(loc.z))
+                if math.dist(now, original_xyz) > 0.1:
+                    actor.set_actor_location(api.Vector(*original_xyz), False, True)
+                restored = _rotator(actor.get_actor_rotation())
+                loc = actor.get_actor_location()
+                restored_xyz = (float(loc.x), float(loc.y), float(loc.z))
+                if (max(abs(a-b) for a,b in zip(restored[:2], original[:2])) > 0.1
+                        or abs(_wrap(restored[2]-original[2])) > 0.1
+                        or math.dist(restored_xyz, original_xyz) > 0.1):
+                    raise StaticCharacterYawRepairError(
+                        "Native actor base rollback did not restore its original transform."
+                    )
+            except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+                raise StaticCharacterYawRepairError(
+                    "Native yaw repair failed and rollback needs manual inspection."
+                ) from exc
