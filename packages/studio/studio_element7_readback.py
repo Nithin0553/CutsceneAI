@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import sys
 from collections import Counter
@@ -227,8 +226,8 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
                     "Unreferenced native pose/forward evidence is not allowed."
                 )
         computed = compare(sampling, source, target, **extras)
-    except (SamplingPlanError, BehavioralComparisonError, IndexError,
-            TypeError, KeyError, ZeroDivisionError) as exc:
+    except (SamplingPlanError, BehavioralComparisonError, ValueError,
+            IndexError, TypeError, KeyError, ZeroDivisionError) as exc:
         raise Element7ReadbackError(
             "Native CineTwin source/target comparison could not be reconstructed."
         ) from exc
