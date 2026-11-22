@@ -481,3 +481,29 @@ def test_adaptive_strategy_dependency_or_route_block_is_a_hard_native_gate(tmp_p
             transfer_plan_sha256="c" * 64,
             approved_action_ids=["A00000"], accept_legacy_unattributed=False,
         )
+
+
+
+def test_separate_native_action_pagination_does_not_truncate_source_occurrences(tmp_path):
+    from test_element_studio_workflow import _setup
+
+    work, worker, _target = _setup(tmp_path)
+    candidate = json.loads((work / "active-candidate.json").read_text())
+    path = work / "candidates" / candidate["candidate_id"] / "transfer-plan.json"
+    _write(path, {
+        "sequence_asset_path": candidate["sequence_path"],
+        "actions": [{"kind": "audio"} for _ in range(65)],
+    })
+    first = workflow.prepare(work, worker)
+    assert first["native_actions"]["action_count"] == 65
+    assert first["native_actions"]["unattributed_count"] == 65
+    assert len(first["native_actions"]["candidate_actions"]) == 60
+    assert first["native_actions"]["has_more_actions"] is True
+    next_page = workflow.current(work, worker, action_offset=60)
+    assert len(next_page["native_actions"]["candidate_actions"]) == 5
+    assert next_page["native_actions"]["has_more_actions"] is False
+    assert next_page["elements"] == first["elements"]
+    assert next_page["source_occurrence_count"] == first["source_occurrence_count"]
+    assert next_page["native_actions"]["candidate_actions"][0]["action_id"] == "A00060"
+    with pytest.raises(workflow.ElementWorkflowError, match="action review"):
+        workflow.current(work, worker, action_offset=-1)
