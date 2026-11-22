@@ -538,6 +538,14 @@ def test_capture_world_camera_replaces_locally_compiled_camera_trajectory():
               a["kind"] == "transform" and a.get("entity_name") == "CAM"]
     assert len(camera) == 1
     assert camera[0]["source_behavior_strategy"] == "verified_cinetwin_camera_world_pose"
+    # The full independently sampled world grid now receives the SAME
+    # nine-channel native preflight as source-authored local frame baking.
+    from studio_camera_motion_contract import validate_plan
+    native_review = validate_plan(plan)
+    assert len(native_review) == 1
+    assert native_review[0]["strategy"] == "verified_cinetwin_camera_world_pose"
+    assert native_review[0]["sample_count"] == 5
+    assert native_review[0]["rendered_shot_fidelity_verified"] is False
     assert camera[0]["track_name"] == "CutSceneAI Evaluated Camera World Motion"
     assert camera[0]["keys"][-1]["location_cm"] == [0.0, 200.0, 0.0]
     assert camera[0]["baked_source_curves"] is True
