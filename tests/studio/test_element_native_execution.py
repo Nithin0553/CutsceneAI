@@ -371,3 +371,83 @@ def test_localhost_native_action_approval_is_explicit_and_session_scoped(tmp_pat
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+
+def test_release_gate_separates_synthetic_dispatch_from_reopened_fidelity(tmp_path):
+    import hashlib
+    import studio_release_gate
+
+    work, worker, _target, summary, manifest = _manifest(tmp_path)
+    workflow.acknowledge(work, worker, summary["workflow_sha256"])
+    operator = workflow.approve_native_actions(
+        work, worker, workflow_sha256=summary["workflow_sha256"],
+        inventory_sha256=native.digest(manifest),
+        review_all=True, accept_legacy_unattributed=False,
+    )
+    connected = json.loads((work / "connection.json").read_text())
+    candidate = json.loads((work / "active-candidate.json").read_text())
+    location = work / "candidates" / candidate["candidate_id"]
+    job_id = "b" * 32
+    plan_file = location / "transfer-plan.json"
+    source_file = Path(connected["csir"])
+    _write(location / "session.json", {
+        "kind": "cutsceneai.studio.prepared_transfer",
+        "source": {"csir_path": str(source_file),
+                   "sha256": hashlib.sha256(source_file.read_bytes()).hexdigest()},
+        "target": {"sequence_asset_path": candidate["sequence_path"]},
+        "artifact_sha256": {
+            "transfer-plan.json": hashlib.sha256(plan_file.read_bytes()).hexdigest(),
+        },
+    })
+    job = {
+        "kind": "cutsceneai.studio.local_unreal_job",
+        "job_id": job_id, "candidate_id": candidate["candidate_id"],
+        "candidate_dir": str(location), "csir": connected["csir"],
+        "capture": connected["capture"], "mapping": candidate["mapping_copy"],
+        "expected_project": connected["target_project"],
+        "expected_level": connected["level_path"],
+        "sequence_path": candidate["sequence_path"],
+        "generation_status": "GENERATED_UNVERIFIED",
+        "status": "GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED",
+        "generated_sequence": candidate["sequence_path"],
+        "element_native_authorization_sha256":
+            operator["native_action_authorization_sha256"],
+    }
+    job_path = work / "jobs" / (job_id + ".json")
+    _write(job_path, job)
+    incomplete = studio_release_gate.assess(work, job_id)
+    assert incomplete["checks"]["element3_native_action_consent"]["status"] == "PASS"
+    assert incomplete["checks"]["element3_native_builder_dispatch"]["status"] == "INCOMPLETE"
+    assert incomplete["checks"]["element3_native_reopened_attribution"][
+        "status"] == "INCOMPLETE"
+    assert incomplete["release_ready"] is False
+
+    # SYNTHETIC receipt: tests the source/release-gate contract, not Unreal.
+    runtime = location / ("unreal-runtime-receipt-" + job_id + ".json")
+    _write(runtime, {
+        "kind": "cutsceneai.unreal.best_effort_receipt",
+        "status": "GENERATED_UNVERIFIED", "stage": "complete",
+        "transfer_plan_sha256": hashlib.sha256(plan_file.read_bytes()).hexdigest(),
+    })
+    workflow.record_native_job(work, job)
+    job["element_native_dispatch_status"] = (
+        "REGISTERED_BUILDER_COMPLETED_INDIVIDUAL_READBACK_UNVERIFIED"
+    )
+    job["element_native_dispatch_receipt"] = str(
+        location / ("element-native-dispatch-" + job_id + ".json")
+    )
+    _write(job_path, job)
+    accepted = studio_release_gate.assess(work, job_id)
+    assert accepted["checks"]["element3_native_action_consent"]["status"] == "PASS"
+    assert accepted["checks"]["element3_native_builder_dispatch"]["status"] == "PASS"
+    assert accepted["checks"]["element3_native_reopened_attribution"]["status"] == "INCOMPLETE"
+    assert accepted["release_ready"] is False
+    assert accepted["fidelity_verified"] is False
+    assert "rendered_frame_parity" in accepted["incomplete"]
+    changed = json.loads(runtime.read_text())
+    changed["transfer_plan_sha256"] = "f" * 64
+    _write(runtime, changed)
+    tampered = studio_release_gate.assess(work, job_id)
+    assert tampered["checks"]["element3_native_builder_dispatch"]["status"] == "FAIL"
+    assert tampered["status"] == "BLOCKED"
