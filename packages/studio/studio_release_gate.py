@@ -719,12 +719,22 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
     # EVERY source occurrence and every unverified domain. A PASS here means
     # only that the limitation report was independently reconstructed; it
     # never promotes measured parity to complete cinematic fidelity.
-    try:
-        import studio_element9_outcome
-
-        final = studio_element9_outcome.build(root, job_id)
+    if not isinstance(job.get("mapping"), str) or not job["mapping"]:
+        # Legacy/partial jobs created before source-bound mapping handoffs
+        # cannot satisfy Element 9; lack of evidence is INCOMPLETE, not an
+        # independently detected violation of a contract they never had.
         record(
-            "element9_final_outcome_accounting", "PASS",
+            "element9_final_outcome_accounting", "INCOMPLETE",
+            "Legacy native job lacks the immutable exact-target mapping needed "
+            "for a source-complete Element 9 report.",
+        )
+    else:
+        try:
+            import studio_element9_outcome
+
+            final = studio_element9_outcome.build(root, job_id)
+            record(
+                "element9_final_outcome_accounting", "PASS",
             "All original source occurrences and required unverified domains "
             "are independently enumerated. Native observation/repair gaps "
             "remain limitations, not successful conversions.",
@@ -734,15 +744,15 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
             native_observation_count=final["native_observation_count"],
             source_outcome_counts=final["source_outcome_counts"],
             automatic_native_retry_authorized=False,
-            full_cutscene_fidelity_verified=False,
-        )
-    except (ValueError, KeyError, TypeError, OSError) as exc:
-        record(
-            "element9_final_outcome_accounting", "FAIL",
-            "Final source-complete outcome could not be rebuilt from the "
-            "candidate, native observations and recovery bounds: "
-            + type(exc).__name__,
-        )
+                full_cutscene_fidelity_verified=False,
+            )
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            record(
+                "element9_final_outcome_accounting", "FAIL",
+                "Final source-complete outcome could not be rebuilt from the "
+                "candidate, native observations and recovery bounds: "
+                + type(exc).__name__,
+            )
 
     for domain, explanation in {
         "rendered_frame_parity": "Matched-time source and target images/camera projections are not independently compared.",
