@@ -213,8 +213,16 @@ def route(
             "camera_cut_repair_sha256"
         ), str)
     )
+    camera_position_request_valid = False
+    if isinstance(camera_position_repair_evidence, dict):
+        # A multi-domain message (e.g. "camera position and lens") may share
+        # the same generic domain labels. Preserve the exact native adapter
+        # intent matcher here as well as in the Unreal consent recheck.
+        from studio_camera_position_evidence import message_requests_position
+        camera_position_request_valid = message_requests_position(message)
     camera_position_eligible = bool(
-        intent["mode"] == "user_feedback"
+        camera_position_request_valid
+        and intent["mode"] == "user_feedback"
         and domains in (["camera", "transform"], ["camera"])
         and generation_complete and completed_repairs < repair_budget
         and isinstance(camera_position_repair_evidence, dict)
