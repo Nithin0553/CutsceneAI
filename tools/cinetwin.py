@@ -14,6 +14,11 @@ from behavior_compare import BehavioralComparisonError, compare_files
 from hierarchy_plan import plan_actor_hierarchy
 from hierarchy_verify import HierarchyVerificationError, verify_files
 
+# Element-level attribution reuses the already validated CineTwin comparator
+# without granting any native engine write/retry permissions.
+sys.path.insert(0, str(ROOT / "packages" / "studio"))
+import studio_element_cinetwin
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="CutSceneAI CineTwin capture preparation")
@@ -51,7 +56,73 @@ def main() -> int:
     hverify.add_argument("hierarchy", type=Path)
     hverify.add_argument("output", type=Path)
 
+    element = sub.add_parser(
+        "element-verify", help="Attribute independent CineTwin differences to exact source occurrences"
+    )
+    for label in ("csir", "element_plan", "sampling_plan",
+                  "source_capture", "target_capture", "output"):
+        element.add_argument(label, type=Path)
+
+    followup = sub.add_parser(
+        "element-remeasure", help="Read-only baseline-to-followup per-occurrence CineTwin review"
+    )
+    for label in ("csir", "element_plan", "sampling_plan", "source_capture"):
+        followup.add_argument(label, type=Path)
+    followup.add_argument("target_captures", type=Path, nargs="+",
+                          help="Baseline and one or two new native target observations")
+    followup.add_argument("--output", type=Path, required=True)
+
     args = parser.parse_args()
+    if args.command in {"element-verify", "element-remeasure"}:
+        inputs = [args.csir, args.element_plan, args.sampling_plan,
+                  args.source_capture]
+        targets = ([args.target_capture] if args.command == "element-verify"
+                   else args.target_captures)
+        inputs.extend(targets)
+        if args.output.resolve() in {path.resolve() for path in inputs}:
+            print("[CineTwin] Refusing to overwrite source/target evidence.", file=sys.stderr)
+            return 1
+        try:
+            def read(path: Path) -> dict:
+                if (not path.is_file() or path.is_symlink()
+                        or not 0 < path.stat().st_size <= 128 * 1024 * 1024):
+                    raise studio_element_cinetwin.ElementCineTwinError(
+                        "Native observation input missing, symlinked or oversized."
+                    )
+                obj = json.loads(path.read_text(encoding="utf-8-sig"))
+                if not isinstance(obj, dict):
+                    raise studio_element_cinetwin.ElementCineTwinError(
+                        "Expected a structured CineTwin evidence object."
+                    )
+                return obj
+
+            csir, conversion, sampling, source = (
+                read(path) for path in inputs[:4]
+            )
+            captures = [read(path) for path in targets]
+            if args.command == "element-verify":
+                report = studio_element_cinetwin.build(
+                    csir, conversion, sampling, source, captures[0],
+                )
+            else:
+                report = studio_element_cinetwin.remeasure(
+                    csir, conversion, sampling, source, captures,
+                )
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            with args.output.open("x", encoding="utf-8") as handle:
+                json.dump(report, handle, indent=2, ensure_ascii=False)
+        except (studio_element_cinetwin.ElementCineTwinError,
+                OSError, json.JSONDecodeError, ValueError) as exc:
+            print("[CineTwin] Element verification blocked: "
+                  + str(exc)[:350], file=sys.stderr)
+            return 1
+        key = ("occurrences" if args.command == "element-verify"
+               else "per_occurrence")
+        print("[CineTwin] Read-only element evidence:",
+              len(report[key]), "source occurrences; fidelity NOT established;",
+              "native repairs NOT authorized;", args.output)
+        return 0
+
     if args.command == "plan":
         plan = plan_file(args.csir, args.output)
         print(
