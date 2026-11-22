@@ -83,12 +83,19 @@ fails its saved-session hash comparison.
 - Held-out source-project validation and a published compatibility/capability
   matrix with independently measured supported/unsupported feature outcomes.
 
-The latest LangGraph work safely diagnoses unsupported domains, but its
-**executable repair strategy** remains limited to provably source-backed
-material fallback restoration. No arbitrary Unity script, proprietary shader,
-animation rig or camera control can be automatically recreated just because
-an LLM identifies a mismatch. Those require source-aware adapters and their
-own independent acceptance tests.
+The integrated Elements 1–9 software stack now registers **five narrowly
+bounded source-bound repair families**: material albedo fallback, one-character
+constant actor offset, static physical CineCamera lens, single camera-cut
+section boundary, and static CineCamera world placement. The native owner,
+source/CineTwin evidence, consent, preflight, direct readback and rollback
+guards differ by family. They have **synthetic/software tests only**; no real
+Unreal editor mutation, repaired sequence reopening or rendered fidelity is
+certified. General facing, retarget calibration, camera animation, audio,
+events, lighting/shader parity and unknown plugins remain diagnostic-only or
+unsupported. See [Elements 1–9 audit](ELEMENT1_TO_9_INTEGRATED_AUDIT_AND_REPAIR_EXPANSION_V01.md)
+and [Phase 10.1 gap audit](PHASE10_1_SOFTWARE_GAP_AUDIT_V01.md).
+No arbitrary Unity script, proprietary shader, animation rig or camera
+control may be reconstructed simply because an LLM identifies a mismatch.
 
 ## Release decision rules
 
