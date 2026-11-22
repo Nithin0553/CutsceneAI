@@ -376,6 +376,7 @@ def test_localhost_native_action_approval_is_explicit_and_session_scoped(tmp_pat
 
 def test_release_gate_separates_synthetic_dispatch_from_reopened_fidelity(tmp_path):
     import hashlib
+
     import studio_release_gate
 
     work, worker, _target, summary, manifest = _manifest(tmp_path)
