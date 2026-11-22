@@ -237,9 +237,9 @@ def _choose(case, monkeypatch):
     return report, decision
 
 
-def _prepare(case, tmp_path, monkeypatch):
+def _prepare(case, tmp_path, monkeypatch, *, candidate_name="candidate"):
     report, decision = _choose(case, monkeypatch)
-    root = tmp_path / "candidate"
+    root = tmp_path / candidate_name
     mapping, _ = studio_candidate.prepare_candidate(
         Path(case.config["csir"]), Path(case.config["mapping"]), Path(case.config["capture"]),
         "/Game/Staging/LS_Moving", root, character_selection=(report, decision["animation_conversion"]),
@@ -661,12 +661,28 @@ def test_real_editor_worker_executes_guarded_motion_lifecycle(moving, tmp_path, 
         pass
 
     workspace = tmp_path / "work"
-    p = _prepare(moving, workspace / "candidates", monkeypatch)
+    p = _prepare(
+        moving, workspace / "candidates", monkeypatch,
+        candidate_name="20261121T183000Z_deadbeef",
+    )
     manifest_file = _json(p.root / "automatic-setup.json", p.manifest)
-    job = {**p.job, "kind": "cutsceneai.studio.local_unreal_job", "schema_version": "0.1.0", "status": "QUEUED",
-           "candidate_id": p.root.name, "mapping": str(p.root.with_suffix(".mapping.json")),
-           "automatic_setup_manifest": str(manifest_file), "ai_agents_enabled": True}
+    job = {
+        **p.job, "kind": "cutsceneai.studio.local_unreal_job",
+        "schema_version": "0.1.0", "status": "QUEUED",
+        "candidate_id": p.root.name,
+        "mapping": str(p.root.with_suffix(".mapping.json")),
+        "automatic_setup_manifest": str(manifest_file),
+        "ai_agents_enabled": True,
+    }
     job_file = _json(workspace / "jobs" / (job["job_id"] + ".json"), job)
+    # Match the production active-candidate/active-job ownership contracts.
+    # The native worker must not run a request merely because a file named
+    # QUEUED was dropped in the jobs directory by a different process.
+    _json(workspace / "active-candidate.json", {
+        "candidate_id": p.root.name, "mapping_copy": job["mapping"],
+        "sequence_path": job["sequence_path"],
+    })
+    _json(workspace / "active-job.json", {"job_id": job["job_id"]})
     monkeypatch.setitem(sys.modules, "unreal", moving.api)
     for name in ("log", "log_warning", "log_error"):
         setattr(moving.api, name, lambda _: None)
