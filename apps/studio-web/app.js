@@ -434,6 +434,10 @@
           }
         }catch{}
       }
+      if(state.finalOutcomeJobId &&
+         state.finalOutcomeJobId!==status.active_job){
+        state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
+      }
       if(status.active_job){
         try{state.verification=await api('verification')}
         catch{state.verification=null}
@@ -494,6 +498,7 @@
       return;
     }
     if(name==='prepare'){
+      state.finalOutcome=null;state.finalOutcomeJobId='';state.finalOutcomeError='';
       state.busy=true;render();try{
         const preferences={
           enable_actor_visibility_fallback:state.visibilityFallback,
@@ -516,6 +521,22 @@
         notice('Independent native evidence checked. Incomplete domains remain unverified.');
       }catch(err){notice('Acceptance evidence unavailable: '+err.message,true)}
       finally{state.busy=false;render()}return;
+    }
+    if(name==='check-final-outcome'||name==='final-prev'||name==='final-next'){
+      if(!state.job){notice('A saved transfer is required for final source accounting.',true);return}
+      const old=state.finalOutcome;
+      const offset=name==='check-final-outcome'?0:
+        Math.max(0,(old?.page_offset||0)+
+          (name==='final-next'?(old?.page_size||50):-(old?.page_size||50)));
+      state.busy=true;render();try{
+        state.finalOutcome=await api('final-outcome?offset='+offset);
+        state.finalOutcomeJobId=state.job.job_id;
+        state.finalOutcomeError='';
+        notice('Every source occurrence accounted for. Unmeasured fidelity remains explicit.');
+      }catch(err){
+        state.finalOutcome=null;state.finalOutcomeError=err.message;
+        notice('Final evidence is incomplete: '+err.message,true);
+      }finally{state.busy=false;render()}return;
     }
     if(name==='prepare-elements'){
       state.busy=true;render();try{
@@ -581,6 +602,7 @@
     }
     if(name==='execute'){
       if(!state.candidate){notice('Prepare a verified transfer first.',true);return}
+      state.finalOutcome=null;state.finalOutcomeJobId='';state.finalOutcomeError='';
       if(state.elementReviewCandidateId &&
          (!state.elementReview?.review_acknowledged ||
           !state.elementReview.target_capability_evidence_current ||
