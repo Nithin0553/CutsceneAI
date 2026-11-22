@@ -275,6 +275,11 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
         feedback_store=Path.home() / ".cutsceneai-studio" / "ced-experiences.jsonl",
     )
     evidence["ced_knowledge"] = knowledge
+    # Every extracted CSIR occurrence is independently inventoried before
+    # any agent call. This is advisory and never overrides the native compiler.
+    evidence["element_plan"] = _agent_module("studio_element_plan").prepare(
+        csir, knowledge, native_capabilities,
+    )
     return evidence
 
 
@@ -416,6 +421,32 @@ def decide(config: dict, census_path: str, worker: dict,
         raise TransferAIError("Pre-transfer AI reasoning failed: " + str(exc)[:500]) from exc
     strategy = answer["strategy"]
     summary = evidence["summary"]
+    element_planner = _agent_module("studio_element_plan")
+    element_plan = evidence["element_plan"]
+    element_response_hashes = []
+    # Phase 3.1 rollout: the full source inventory and immutable safety
+    # contract run for everyone. Per-occurrence additional model invocations
+    # are explicitly opt-in until multi-element cost/latency UX is accepted.
+    planning_mode = os.environ.get("CUTSCENEAI_ELEMENT_PLANNING", "inventory")
+    if planning_mode not in {"inventory", "model"}:
+        raise TransferAIError("Invalid CUTSCENEAI_ELEMENT_PLANNING setting.")
+    if reasoner is None and planning_mode == "model":
+        # The real configured AI must review every occurrence, not merely the
+        # global strategy. A missing page fails before any native submission.
+        try:
+            element_plan, element_response_hashes = element_planner.review_with_model(
+                element_plan, provider=_agent_module("studio_model_provider"),
+            )
+        except Exception as exc:
+            raise TransferAIError(
+                "Per-element AI planning failed before native execution: "
+                + str(exc)[:400]
+            ) from exc
+    element_planner.verify(
+        element_plan, _read(Path(config["csir"])),
+        evidence["ced_knowledge"],
+        evidence["summary"]["target_native_capabilities"],
+    )
     # Never let model preference disable the existing source-material import
     # guarantee when provenance documents source materials. This policy is a
     # deterministic safety floor, not an LLM decision.
@@ -433,6 +464,14 @@ def decide(config: dict, census_path: str, worker: dict,
         "conversion_options": options,
         "ced_knowledge_sha256": evidence["ced_knowledge"]["knowledge_sha256"],
         "ced_retrieved_concepts": evidence["ced_knowledge"]["retrieved_count"],
+        "element_plan": element_plan,
+        "element_plan_sha256": element_plan["element_plan_sha256"],
+        "element_model_reviewed_count": element_plan["model_reviewed_count"],
+        "element_model_response_sha256s": element_response_hashes,
+        "element_planning_mode": (
+            "MODEL_REVIEWED" if element_response_hashes else "INVENTORY_ONLY"
+        ),
+        "element_decisions_advisory_only": True,
         "model_invoked": True,
         "model_provider": (answer.get("_provider_name") or "INJECTED_REASONER")
         if reasoner is None else "INJECTED_REASONER",
@@ -491,6 +530,34 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
     }
     if opts != expected:
         raise TransferAIError("AI conversion options do not match supported native policy.")
+    if (decision.get("element_decisions_advisory_only") is not True
+            or decision.get("element_plan_sha256") !=
+            (decision.get("element_plan") or {}).get("element_plan_sha256")):
+        raise TransferAIError("Per-element AI evidence or read-only guard is missing.")
+    element_planner = _agent_module("studio_element_plan")
+    try:
+        element_planner.verify(
+            decision["element_plan"], _read(Path(config["csir"])),
+            current["ced_knowledge"],
+            current["summary"]["target_native_capabilities"],
+        )
+    except element_planner.ElementPlanError as exc:
+        raise TransferAIError("Per-element AI plan is stale or tampered: " + str(exc)) from exc
+    reviewed = decision["element_plan"]["model_reviewed_count"]
+    if decision.get("element_planning_mode") != (
+            "MODEL_REVIEWED" if reviewed else "INVENTORY_ONLY"):
+        raise TransferAIError("Element agent mode contradicts verified model evidence.")
+    digests = decision.get("element_model_response_sha256s")
+    if (decision.get("element_model_reviewed_count") != reviewed
+            or not isinstance(digests, list)
+            or any(not isinstance(value, str) or
+                   not re.fullmatch(r"[0-9a-f]{64}", value) for value in digests)
+            or (not digests and reviewed != 0)
+            or (digests and reviewed != decision["element_plan"]["source_occurrence_count"])
+            or (digests and len(digests) != (
+                reviewed + element_planner.MODEL_BATCH_SIZE - 1
+            ) // element_planner.MODEL_BATCH_SIZE)):
+        raise TransferAIError("Per-element model provenance is missing or incomplete.")
     report = current.get("character_compatibility")
     if report is not None or decision.get("character_compatibility_sha256") or decision.get("animation_conversion"):
         policy = character_policy()

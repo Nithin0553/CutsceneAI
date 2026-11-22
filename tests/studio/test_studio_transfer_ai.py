@@ -291,3 +291,90 @@ def test_ai_inspection_passes_large_capture_only_to_bounded_capture_reader(
     assert ("unity.census.json", "Unity source census") in seen
     assert ("target.mapping.json", "Target mapping") in seen
     assert ("Target.uproject", "project evidence") in seen
+
+
+
+def test_default_ai_decision_reviews_all_source_elements_before_native(scene, monkeypatch):
+    config, census, worker = scene
+    import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_PLANNING", "model")
+
+    monkeypatch.setattr(ai, "_model_choose", lambda _: {
+        "strategy": "native_source", "reason": "Registered native source policy",
+    })
+    requests = []
+
+    def review(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(answer={
+            "choices": [
+                {
+                    "occurrence_id": item["occurrence_id"],
+                    "action": (item["candidate_actions"][0]
+                               if item["candidate_actions"] else "report_only"),
+                }
+                for item in kwargs["payload"]["elements"]
+            ]
+        }, response_sha256="a" * 64)
+
+    monkeypatch.setattr(studio_model_provider, "complete_json", review)
+    decision = ai.decide(config, census, worker)
+    plan = decision["element_plan"]
+    assert decision["element_decisions_advisory_only"] is True
+    assert plan["source_occurrence_count"] == 3
+    assert plan["model_reviewed_count"] == 3
+    assert decision["element_model_reviewed_count"] == 3
+    assert decision["element_model_response_sha256s"] == ["a" * 64]
+    assert requests[0]["task"] == "cutsceneai_element_conversion_choices"
+    assert config["csir"] not in json.dumps(requests[0]["payload"])
+    assert config["target_project"] not in json.dumps(requests[0]["payload"])
+    assert all(item["model_reviewed"] for item in plan["elements"])
+    assert plan["native_conversion_executed"] is False
+    assert ai.verify(decision, config, census, worker)[
+        "enable_actor_visibility_fallback"] is False
+
+
+def test_injected_global_reasoner_cannot_silently_claim_element_ai_selection(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Unit test reasoner without element review"
+    })
+    assert decision["element_model_reviewed_count"] == 0
+    assert decision["element_model_response_sha256s"] == []
+    assert all(row["selected_action"] == "report_only"
+               and row["model_reviewed"] is False
+               for row in decision["element_plan"]["elements"])
+    assert ai.verify(decision, config, census, worker)
+
+
+def test_ai_rejects_unregistered_per_occurrence_action_before_conversion(
+        scene, monkeypatch):
+    config, census, worker = scene
+    import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_PLANNING", "model")
+    monkeypatch.setattr(ai, "_model_choose", lambda _: {
+        "strategy": "native_source", "reason": "Source strategy"
+    })
+
+    def inject(**kwargs):
+        return SimpleNamespace(answer={
+            "choices": [
+                {"occurrence_id": row["occurrence_id"],
+                 "action": "arbitrary_unreal_python"}
+                for row in kwargs["payload"]["elements"]
+            ]
+        }, response_sha256="b" * 64)
+
+    monkeypatch.setattr(studio_model_provider, "complete_json", inject)
+    with pytest.raises(ai.TransferAIError, match="unregistered"):
+        ai.decide(config, census, worker)
+
+
+def test_per_occurrence_decision_tampering_blocks_stale_plan_verification(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Source plan"
+    })
+    decision["element_plan"]["elements"].pop()
+    with pytest.raises(ai.TransferAIError, match="tampered"):
+        ai.verify(decision, config, census, worker)

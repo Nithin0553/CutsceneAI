@@ -4,6 +4,7 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 
 ## Start here
 
+- [Element 3.1: Source-complete per-element AI conversion planning](studio/ELEMENT3_PER_ELEMENT_AGENT_PLANNING_V01.md) — source occurrence contracts, opt-in model review, evidence and native permission boundaries
 - [Element 2: Hybrid CED completion, signed releases and learning acceptance](studio/CED_HYBRID_COMPLETION_V02.md) — four phases, operator CLI, readback gates, security and native acceptance gaps
 - [Hybrid CED knowledge service (shared baseline, local learning, reviewed promotion)](studio/CED_HYBRID_KNOWLEDGE_ARCHITECTURE_V1.md) — Element 2 contracts, contextual retrieval, privacy and validation gates
 - [Agent-centric CED knowledge, LangGraph orchestration and local-model architecture](studio/AGENT_CENTRIC_ARCHITECTURE_V1.md) — active experimental refactor, explicit native safety and remaining fidelity gates

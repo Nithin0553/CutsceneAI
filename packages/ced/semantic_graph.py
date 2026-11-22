@@ -46,7 +46,13 @@ def analyze(csir: dict[str, Any]) -> SemanticGraph:
     def node(kind: str, item: dict[str, Any], identity: str = "") -> int:
         if len(nodes) >= MAX_OCCURRENCES:
             raise SemanticGraphError("Source exceeds the bounded semantic occurrence budget.")
-        concept = _concept(item.get("ced_type"))
+        # Canonical curve semantics live in canonical_semantic in source
+        # CSIR, not always in ced_type. Keep graph and per-occurrence
+        # planner counts aligned without inventing an unknown curve class.
+        semantic = (item.get("canonical_semantic")
+                    if kind == "curve" and item.get("canonical_semantic")
+                    else item.get("ced_type"))
+        concept = _concept(semantic)
         index = len(nodes)
         nodes[index] = (kind, concept)
         counts[concept] += 1
