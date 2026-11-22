@@ -50,26 +50,36 @@ def _no_animated_float_keys(api: Any, sequence: Any) -> None:
     """
     extensions = getattr(api, "MovieSceneSequenceExtensions", None)
     get_bindings = getattr(extensions, "get_bindings", None)
-    if not callable(get_bindings):
-        raise CameraLensRepairError("Cannot inspect native Sequencer float keys.")
+    get_root_tracks = getattr(extensions, "get_tracks", None)
+    if not callable(get_bindings) or not callable(get_root_tracks):
+        raise CameraLensRepairError(
+            "Cannot inspect all native Sequencer binding and master property keys."
+        )
     try:
         bindings = list(get_bindings(sequence))
-        if len(bindings) > 10000:
-            raise CameraLensRepairError("Native Sequencer binding list is unbounded.")
+        master = list(get_root_tracks(sequence))
+        if len(bindings) > 10000 or len(master) > 10000:
+            raise CameraLensRepairError("Native Sequencer track inventory is unbounded.")
+        observed = list(master)
         for binding in bindings:
             tracks = list(binding.get_tracks())
             if len(tracks) > 10000:
                 raise CameraLensRepairError("Native Sequencer track list is unbounded.")
-            for track in tracks:
-                kind = str(track.get_class().get_name())
-                # A float property or arbitrary property track can override
-                # a CineCamera focal length at any frame.
-                if ("Float" in kind or "Property" in kind
-                        or "Camera" in kind and "Cut" not in kind):
-                    raise CameraLensRepairError(
-                        "Animated/unknown property controls may own the lens; "
-                        "static CineCamera correction is blocked."
-                    )
+            observed.extend(tracks)
+        if len(observed) > 30000:
+            raise CameraLensRepairError("Native Sequencer property list exceeds safe limits.")
+        for track in observed:
+            kind = str(track.get_class().get_name())
+            # A float or component property can override the base focal
+            # length even if the user did not bind it to the source camera.
+            # Nested shots can switch the camera/zoom ownership entirely.
+            if ("Float" in kind or "Property" in kind
+                    or ("Camera" in kind and "Cut" not in kind)
+                    or "CinematicShot" in kind or "SubTrack" in kind):
+                raise CameraLensRepairError(
+                    "Animated/unknown property controls may own the lens; "
+                    "static CineCamera correction is blocked."
+                )
     except CameraLensRepairError:
         raise
     except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
