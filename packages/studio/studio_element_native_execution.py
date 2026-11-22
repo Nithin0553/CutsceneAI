@@ -39,7 +39,8 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def inventory(plan: dict, element_plan: dict) -> dict:
+def inventory(plan: dict, element_plan: dict,
+              strategy: dict | None = None) -> dict:
     """One immutable ledger row per installed native builder action.
 
     Source attribution is intentionally conservative. Legacy CSIR actions
@@ -59,6 +60,32 @@ def inventory(plan: dict, element_plan: dict) -> dict:
     }
     if len(locations) != element_plan["source_occurrence_count"]:
         raise ElementNativeExecutionError("Duplicated source occurrence in native action ledger.")
+    by_strategy: dict[str, dict] = {}
+    if strategy is not None:
+        if (not isinstance(strategy, dict)
+                or strategy.get("kind")
+                != "cutsceneai.studio.adaptive_element_strategy_comparison"
+                or strategy.get("element_plan_sha256")
+                != element_plan["element_plan_sha256"]
+                or strategy.get("comparison_sha256") != digest({
+                    k: v for k, v in strategy.items()
+                    if k != "comparison_sha256"
+                })
+                or strategy.get("native_execution_authorized") is not False
+                or strategy.get("source_occurrence_count") != len(locations)):
+            raise ElementNativeExecutionError(
+                "Missing exact-source adaptive strategy eligibility evidence."
+            )
+        comparisons = strategy.get("comparisons")
+        if not isinstance(comparisons, list) or len(comparisons) != len(locations):
+            raise ElementNativeExecutionError("Adaptive strategy omitted native source occurrences.")
+        by_strategy = {
+            item["occurrence_id"]: item for item in comparisons
+        }
+        if len(by_strategy) != len(locations) or set(by_strategy) != {
+            row["occurrence_id"] for row in locations.values()
+        }:
+            raise ElementNativeExecutionError("Adaptive native strategy IDs are ambiguous.")
     rows = []
     for index, action in enumerate(actions):
         kind = action["kind"]
@@ -76,6 +103,15 @@ def inventory(plan: dict, element_plan: dict) -> dict:
                 # inspecting the candidate. Record a visible hard blocker and
                 # forbid native authorization until a fresh plan is prepared.
                 blocked_reason = "SOURCE_CED_ACTION_OR_TARGET_CAPABILITY_UNAVAILABLE"
+            if by_strategy:
+                comparison = by_strategy[element["occurrence_id"]]
+                eligible = any(
+                    candidate.get("action") == kind
+                    and candidate.get("eligible_for_model_proposal") is True
+                    for candidate in comparison.get("alternatives", [])
+                )
+                if not eligible:
+                    blocked_reason = "SOURCE_STRATEGY_OR_DEPENDENCY_NOT_ELIGIBLE"
             if (action.get("source_ced") is not None
                     and action["source_ced"] != element["ced"]):
                 raise ElementNativeExecutionError(
