@@ -213,6 +213,7 @@ def build(workspace: Path, job: dict[str, Any]) -> dict[str, Any]:
         raise CameraLensEvidenceError("Source FOV cannot fit a safe native focal length.")
     snapshot = {
         "kind": KIND,
+        "eligible": True,
         "job_id_sha256": _hash(job_id),
         "source_camera_occurrence_id": camera_occurrences[0],
         "source_entity_id": entity_id,
