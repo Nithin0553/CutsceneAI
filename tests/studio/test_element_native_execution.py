@@ -313,9 +313,9 @@ def test_native_unreal_gate_keeps_host_optional_dependencies_out_of_editor_impor
 
 
 def test_localhost_native_action_approval_is_explicit_and_session_scoped(tmp_path):
+    import threading
     from datetime import UTC, datetime
     from http.server import ThreadingHTTPServer
-    import threading
 
     from test_studio_local_bridge import bridge, call
 
