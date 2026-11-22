@@ -7,3 +7,11 @@
 .readiness-issues.planned-assets li{border-bottom-color:#304052}
 /* v0.6: simple, native project folder selectors */
 .project-picker{display:flex;align-items:center;justify-content:space-between;gap:18px;border:1px solid var(--border2);border-radius:12px;background:var(--surface2);padding:19px;margin-bottom:13px}.project-folder-info{display:flex;flex-direction:column;gap:3px;min-width:0}.project-folder-info strong{font-size:14px}.project-folder-info span{color:var(--text);font-size:13px}.project-folder-info small{color:var(--muted);font-size:11px;overflow-wrap:anywhere}.project-picker .button{white-space:nowrap;flex-shrink:0}.field select{width:100%;padding:13px 14px;border:1px solid var(--border2);background:#0b1017;color:#f4f7fb;border-radius:8px;font:inherit}.field select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}@media(max-width:600px){.project-picker{align-items:flex-start;flex-direction:column}.project-picker .button{width:100%}}
+
+
+/* Element 3 source-review evidence stays compact and readable on every screen. */
+.element-list{margin:14px 0;border-top:1px solid var(--border,#303033);border-bottom:1px solid var(--border,#303033);max-height:430px;overflow:auto}
+.element-list summary{padding:12px 2px;cursor:pointer;font-weight:600;position:sticky;top:0;background:var(--surface,#141416);z-index:1}
+.element-review-row{padding:11px 2px;border-top:1px solid var(--border,#303033);overflow-wrap:anywhere}
+.element-review-row strong{font-size:.85rem}
+.element-review-row .hint{font-size:.74rem;line-height:1.5;margin:5px 0}
