@@ -46,8 +46,21 @@ def _sha(path: Path):
 
 
 def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False,
-              ai_agents_enabled=False, automatic_setup=False):
+              ai_agents_enabled=False, automatic_setup=False,
+              camera_cut=False):
     csir, _conversion, _sampling, source, target = _inputs()
+    if camera_cut:
+        tick = {"numerator": 1, "denominator": 1}
+        csir["tracks"].append({
+            "track_id": "single-camera-cut",
+            "ced_type": "camera.cut",
+            "binding_entity_id": "camera",
+            "sections": [{
+                "section_id": "opening-shot",
+                "start": {"value": 0, "rate": tick},
+                "end": {"value": 1, "rate": tick},
+            }],
+        })
     work = tmp_path / "runs"
     original = tmp_path / "source.csir.json"
     source_capture = tmp_path / "unity-capture.json"
@@ -59,6 +72,16 @@ def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False,
     source["source"] = copy.deepcopy(sampling["source"])
     target["source"] = copy.deepcopy(sampling["source"])
     target["skeletal_bone_maps"] = {"character": {"hips": "pelvis"}}
+    if camera_cut:
+        target["camera_cut_sections"] = {
+            "status": "OBSERVED",
+            "binding_provenance": "NATIVE_SEQUENCE_CAMERA_BINDING_ID",
+            "sections": [{
+                "actor_label": "CameraUnreal",
+                "start_frame": 0,
+                "end_frame": 4,
+            }],
+        }
     target["coverage"]["source_entity_count"] = len(sampling["entities"])
     target["coverage"]["mapped_entity_count"] = 2 + int(complete)
     target["target"] = {
