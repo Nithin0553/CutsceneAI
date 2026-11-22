@@ -108,9 +108,12 @@ class CameraActor:
         return SimpleNamespace(x=self.coords[0], y=self.coords[1], z=self.coords[2])
 
     def set_actor_location(self, point, sweep, teleport):
-        self.coords = [point.x + (1 if self.incorrect_set else 0),
-                       point.y, point.z]
-        if self.fail_after_set:
+        corrupt = self.incorrect_set
+        fail = self.fail_after_set
+        self.incorrect_set = False
+        self.fail_after_set = False
+        self.coords = [point.x + (1 if corrupt else 0), point.y, point.z]
+        if fail:
             raise RuntimeError("native setter failed after mutation")
 
 
@@ -226,10 +229,7 @@ def test_camera_placement_mutation_failure_rolls_back(tmp_path):
     actor.incorrect_set = True
     with pytest.raises(native.StaticCameraNativeRepairError, match="did not reach"):
         native.attempt(api, workspace, job, request)
-    # The synthetic setter is deliberately corrupting writes; remove the
-    # corruption to model a working Unreal rollback path separately.
-    actor.incorrect_set = False
-    assert math.dist(actor.coords, proof["native_world_before_cm"]) == pytest.approx(1)
+    assert actor.coords == pytest.approx(proof["native_world_before_cm"])
     api, actor, saved = _editor(proof)
     actor.fail_after_set = True
     with pytest.raises(RuntimeError, match="setter failed"):
