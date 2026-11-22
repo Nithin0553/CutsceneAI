@@ -356,6 +356,7 @@ def review_with_model(plan: dict[str, Any], *,
                       model_identity: str = "unspecified",
                       max_new_pages: int | None = None,
                       blocked_occurrences: dict[str, str] | None = None,
+                      strategy_hints: dict[str, dict[str, Any]] | None = None,
                       ) -> tuple[dict[str, Any], list[str]]:
     """Review every source occurrence in resumable, exact-membership pages.
 
@@ -392,6 +393,23 @@ def review_with_model(plan: dict[str, Any], *,
                        "UPSTREAM_BLOCKED", "OWNERSHIP_CONFLICT",
                    } for ident, reason in blockers.items())):
         raise ElementPlanError("Model blockers must be source-grounded schedule statuses.")
+    if strategy_hints is not None:
+        if (not isinstance(strategy_hints, dict)
+                or set(strategy_hints) != ids):
+            raise ElementPlanError("Adaptive strategy hints must cover every exact source ID.")
+        for item in source:
+            hint = strategy_hints[item["occurrence_id"]]
+            if (not isinstance(hint, dict)
+                    or not isinstance(hint.get("alternatives"), list)
+                    or not isinstance(hint.get("suggested_action"), str)):
+                raise ElementPlanError("Malformed adaptive strategy comparison.")
+            options = [v.get("action") for v in hint["alternatives"]
+                       if isinstance(v, dict)]
+            if (len(options) != len(hint["alternatives"])
+                    or len(options) != len(set(options))
+                    or not set(options).issubset(item["candidate_actions"])
+                    or hint["suggested_action"] not in {"report_only", *options}):
+                raise ElementPlanError("Adaptive strategy invented a native action.")
     context = (
         ReviewCheckpoint(
             checkpoint_path,
@@ -426,14 +444,25 @@ def review_with_model(plan: dict[str, Any], *,
                     "page_index": page_index,
                     "elements": [{
                         "occurrence_id": item["occurrence_id"],
-                        "ced": item["ced"],
+                        "ced": (
+                            "unknown.unclassified"
+                            if item["state"] == "UNKNOWN_SEMANTIC_INVESTIGATE"
+                            else item["ced"]
+                        ),
                         "source_kind": item["source_kind"],
                         "state": item["state"],
                         "dependencies": item["dependencies"],
                         "unresolved_dependencies": item["unresolved_dependencies"],
                         "candidate_actions": (
                             [] if item["occurrence_id"] in blockers
-                            else item["candidate_actions"]
+                            else ([a["action"] for a in
+                                   strategy_hints[item["occurrence_id"]]["alternatives"]]
+                                  if strategy_hints is not None
+                                  else item["candidate_actions"])
+                        ),
+                        "adaptive_evidence": (
+                            strategy_hints[item["occurrence_id"]]
+                            if strategy_hints is not None else None
                         ),
                         "schedule_blocker": blockers.get(item["occurrence_id"], "none"),
                         "missing_target_capabilities": item["missing_target_capabilities"],
@@ -444,7 +473,10 @@ def review_with_model(plan: dict[str, Any], *,
                     instructions=(
                         "You are a read-only Unity-to-Unreal cinematic conversion "
                         "planner. For EACH source occurrence choose exactly one "
-                        "listed candidate action or report_only. Always choose "
+                        "listed candidate action or report_only. Consider the "
+                        "evidence-ranked alternatives, observed failure groups "
+                        "and independently reviewed history as advisory, NOT "
+                        "as native conversion proof. Always choose "
                         "report_only for any schedule_blocker other than none. "
                         "Dependencies, ownership and Timeline blending are NOT "
                         "native-execution permissions. Native preflight, mapping "
@@ -485,6 +517,15 @@ def review_with_model(plan: dict[str, Any], *,
                     raise ElementPlanError(
                         "Agent proposed an action blocked by source dependency "
                         "or unverified Timeline ownership."
+                    )
+                if (strategy_hints is not None
+                        and choice["action"] != "report_only"
+                        and choice["action"] not in {
+                            option["action"] for option in strategy_hints[
+                                choice["occurrence_id"]]["alternatives"]
+                        }):
+                    raise ElementPlanError(
+                        "Agent proposed an action excluded by source-bound adaptive evidence."
                     )
             if (not isinstance(response_digest, str)
                     or not re.fullmatch(r"[0-9a-f]{64}", response_digest)):
