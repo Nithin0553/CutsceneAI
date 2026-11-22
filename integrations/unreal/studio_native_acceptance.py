@@ -86,6 +86,18 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
         forward_approval = persistence._json(forward_file)
         forward_approval_sha = persistence._sha(forward_file)
     folder = Path(tempfile.mkdtemp(prefix='native-acceptance-', dir=candidate))
+    # Preserve optional rig/forward evidence BYTE FOR BYTE so Element 7 can
+    # re-run the original calibrated comparator offline. A source filename
+    # or arbitrary JSON digest alone would not prove the same input was used.
+    for original, local_name in (
+        (rig_calibration_path, 'rig-calibration.json'),
+        (mesh_forward_approval_path, 'mesh-forward-approval.json'),
+    ):
+        if original is not None:
+            source_file = Path(original)
+            destination = folder / local_name
+            with destination.open('xb') as stream:
+                stream.write(source_file.read_bytes())
     sampling_path = folder / 'sampling-plan.json'
     plan = plan_file(job['csir'], sampling_path)
     validation = validate_capture(plan, source)
@@ -217,6 +229,19 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
             'full_cutscene_fidelity_verified': False,
             **({'character_conversion': character_proof} if character_proof else {}),
         })
+        # Element 7 independently reconstructs EVERY compared native domain
+        # from immutable source + actual reopened editor target bytes. It is
+        # read-only and does not promote builder completion to cutscene fidelity.
+        # Legacy synthetic fixture payloads (without a real sampling contract)
+        # cannot masquerade as Element 7 native readback.
+        if plan.get('kind') == 'cinetwin.sampling_plan':
+            import studio_element7_readback
+            evidence = studio_element7_readback.build(root, job_id, folder)
+            _write(folder / 'element7-readback.json', evidence)
+            unreal.log(
+                '[CutSceneAI Studio] Element 7 ' + evidence['measured_scope_status']
+                + ' — ' + str(folder / 'element7-readback.json')
+            )
         unreal.log('[CutSceneAI Studio] ' + status + ' — ' + str(output))
 
     import cinetwin_tick_evaluator
