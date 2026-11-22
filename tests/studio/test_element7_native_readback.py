@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-for section in ("packages/studio", "packages/cinetwin", "integrations/unreal",
-                "tests/studio", "tests/cinetwin"):
+for section in ("packages/studio", "packages/ced", "packages/cinetwin",
+                "integrations/unreal", "tests/studio", "tests/cinetwin"):
     sys.path.insert(0, str(ROOT / section))
 
 import ced_agent_knowledge as ced
