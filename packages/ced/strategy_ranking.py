@@ -121,7 +121,8 @@ def rank_rules(rules: list[dict[str, Any]], *, ced: str,
         prior = signal(item, ced=ced, source_version=source_version,
                        target_version=target_version, feedback=feedback)
         score = (
-            (6 if item.get("origin") == "LOCAL_REVIEWED_NATIVE_MAPPING" else 1)
+            (6 if item.get("origin") == "LOCAL_REVIEWED_NATIVE_MAPPING"
+             else 5 if item.get("origin") == "SHARED_SIGNED_APPROVED_ADVISORY" else 1)
             + (2 if item.get("status") == "RULE_CANDIDATE_REQUIRES_PREFLIGHT" else -6)
             + min(neighbor_count, 3)
             - 4 * (native_gaps + source_gaps)
