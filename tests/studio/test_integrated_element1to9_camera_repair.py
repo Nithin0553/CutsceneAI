@@ -223,6 +223,9 @@ def test_1to9_stacked_software_evidence_contract_is_complete(tmp_path):
     assert native["native_replay_allowed"] is False
     original = element7.build(workspace, job["job_id"], folder)
     assert original["native_attempt"]["native_builder_completed"]
+    # Element 9 checks the original SAVED observer output, not just a report
+    # recomputed in memory during the test.
+    _put(folder / "element7-readback.json", original)
     triage = element8.build(workspace, job["job_id"], [folder])
     assert triage["source_occurrence_count"] == plan["source_occurrence_count"]
     attributed = studio_element_cinetwin.build(
