@@ -38,6 +38,32 @@ A standalone suggestion based on any of those conditions risks confusing model d
 
 Element 8's `_recommend` now distinguishes a sole `CHARACTER_MESH_ANATOMICAL_FORWARD_MISMATCH` into the *advisory-only* registered `INSPECT_APPROVED_MESH_ANATOMICAL_FORWARD_BASIS` strategy; mixed calibrated-bone and skeletal-motion errors continue to demand broader retargeting investigation. An LLM may select that exact diagnostic label only through the existing bounded source-occurrence review. It cannot create arbitrary native actor transformations.
 
+## Cross-layer facing ownership diagnosis
+
+`packages/cinetwin/behavior_compare.py` now reports
+`facing_ownership_diagnostic` for every independently sampled rig. It
+separates measured **actor world quaternion error** from the approved mesh
+anatomical-forward error, instead of assuming that a character's actor,
+SkeletalMeshComponent, imported FBX axis and skeletal root share one rotation
+owner. Its conservative states include:
+
+- `ACTOR_ONLY_ANATOMICAL_MESH_UNMEASURED`: no approved native mesh-forward
+  basis; matching actor transforms cannot establish visual facing.
+- `ACTOR_ALIGNED_MESH_OR_COMPONENT_BASIS_DIFFERS`: actor world rotation is
+  measured within tolerance, but approved anatomical forward differs.
+- `ACTOR_ROTATION_DIFFERS_BUT_MESH_FORWARD_MATCHES`: the mesh-forward
+  direction matches despite a separate actor world-rotation error; it is
+  unsafe to adjust the actor without inspecting ownership.
+- `ACTOR_AND_ANATOMICAL_MESH_ORIENTATION_BOTH_DIFFER`: multiple measured
+  orientation layers disagree and one global yaw is insufficient evidence.
+- `MEASURED_ACTOR_AND_MESH_FORWARD_WITHIN_TOLERANCE`: only the **measured**
+  actor and anatomical forward domains match; not full skeletal/rendered parity.
+
+All cases set `native_rotation_owner_isolated: false` and
+`native_character_rotation_repair_authorized: false`. The new targeted
+Element 8 review is an investigation policy, **not** a new native edit
+permission.
+
 ## Calibrated joint orientation improvement
 
 `packages/cinetwin/rig_pose_calibration.py::compare_reference_calibrated` additionally requires each sampled source/target pair to be strictly increasing in time, finite, and matched. Repeated frames cannot be counted as a valid independent animation sequence, even when all bone references and quaternions are syntactically well formed. The separate original full-grid and approved bind-reference evidence requirements remain in force.
