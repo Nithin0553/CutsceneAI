@@ -247,8 +247,15 @@ def install_release(release_file: Path, *, trust_key_file: Path,
         raise DistributionError("Active CED release cannot be a symlink.")
     if active.exists():
         current = verify_release(read(active), trusted)
-        # Only advance along the signed predecessor chain. Any rollback must
-        # itself be published as a *new* signed revision.
+        if digest(incoming) == digest(current):
+            return {
+                "status": "SIGNED_SHARED_KNOWLEDGE_ALREADY_INSTALLED",
+                "revision": current["release_revision"],
+                "release_sha256": digest(current),
+                "native_execution_authorized": False,
+            }
+        # Only advance along the signed predecessor chain. A rollback must
+        # itself be published as a new authenticated revision.
         if (incoming["release_revision"] != current["release_revision"] + 1
                 or incoming["previous_release_sha256"] != digest(current)):
             raise DistributionError(
@@ -259,21 +266,24 @@ def install_release(release_file: Path, *, trust_key_file: Path,
         raise DistributionError("First shared CED installation must begin at revision 1.")
     saved = json.dumps(incoming, indent=2, sort_keys=True) + "\n"
     archive = store / ("release-%06d.json" % incoming["release_revision"])
-    if archive.exists() or archive.is_symlink():
-        raise DistributionError("CED revision has already been installed.")
-    with archive.open("x", encoding="utf-8") as stream:
-        stream.write(saved)
     temporary = store / "active.pending"
-    if temporary.exists() or temporary.is_symlink():
-        raise DistributionError("Concurrent CED installation requires inspection.")
-    try:
+    # Reject changed or redirected pending data; only the exact same signed
+    # bytes from an interrupted install may be resumed.
+    for path in (archive, temporary):
+        if path.is_symlink() or (path.exists() and
+                (not path.is_file() or path.read_text(encoding="utf-8") != saved)):
+            raise DistributionError("Conflicting or redirected interrupted CED installation.")
+    if not archive.exists():
+        with archive.open("x", encoding="utf-8") as stream:
+            stream.write(saved)
+            stream.flush()
+            os.fsync(stream.fileno())
+    if not temporary.exists():
         with temporary.open("x", encoding="utf-8") as stream:
             stream.write(saved)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, active)
-    finally:
-        temporary.unlink(missing_ok=True)
+    os.replace(temporary, active)
     return {
         "status": "SIGNED_SHARED_KNOWLEDGE_INSTALLED",
         "revision": incoming["release_revision"],
