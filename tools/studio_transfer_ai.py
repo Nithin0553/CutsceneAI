@@ -424,7 +424,13 @@ def decide(config: dict, census_path: str, worker: dict,
     element_planner = _agent_module("studio_element_plan")
     element_plan = evidence["element_plan"]
     element_response_hashes = []
-    if reasoner is None:
+    # Phase 3.1 rollout: the full source inventory and immutable safety
+    # contract run for everyone. Per-occurrence additional model invocations
+    # are explicitly opt-in until multi-element cost/latency UX is accepted.
+    planning_mode = os.environ.get("CUTSCENEAI_ELEMENT_PLANNING", "inventory")
+    if planning_mode not in {"inventory", "model"}:
+        raise TransferAIError("Invalid CUTSCENEAI_ELEMENT_PLANNING setting.")
+    if reasoner is None and planning_mode == "model":
         # The real configured AI must review every occurrence, not merely the
         # global strategy. A missing page fails before any native submission.
         try:
@@ -462,6 +468,9 @@ def decide(config: dict, census_path: str, worker: dict,
         "element_plan_sha256": element_plan["element_plan_sha256"],
         "element_model_reviewed_count": element_plan["model_reviewed_count"],
         "element_model_response_sha256s": element_response_hashes,
+        "element_planning_mode": (
+            "MODEL_REVIEWED" if element_response_hashes else "INVENTORY_ONLY"
+        ),
         "element_decisions_advisory_only": True,
         "model_invoked": True,
         "model_provider": (answer.get("_provider_name") or "INJECTED_REASONER")
@@ -535,6 +544,9 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
     except element_planner.ElementPlanError as exc:
         raise TransferAIError("Per-element AI plan is stale or tampered: " + str(exc)) from exc
     reviewed = decision["element_plan"]["model_reviewed_count"]
+    if decision.get("element_planning_mode") != (
+            "MODEL_REVIEWED" if reviewed else "INVENTORY_ONLY"):
+        raise TransferAIError("Element agent mode contradicts verified model evidence.")
     digests = decision.get("element_model_response_sha256s")
     if (decision.get("element_model_reviewed_count") != reviewed
             or not isinstance(digests, list)
