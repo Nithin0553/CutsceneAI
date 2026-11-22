@@ -493,3 +493,60 @@ def test_native_acceptance_writer_uses_actual_reopened_raw_evidence():
     assert "element7-readback.json" in source
     assert "rig-calibration.json" in source
     assert "mesh-forward-approval.json" in source
+
+
+
+def test_recomputed_clean_actor_labels_cannot_override_prepared_mapping(tmp_path):
+    """Even a fully recomputed CineTwin report is not authority to remap actors."""
+    work, job, folder = _scenario(tmp_path, complete=True)
+    target_path = folder / "target-behavior.json"
+    target = json.loads(target_path.read_text(encoding="utf-8"))
+    for frame in target["samples"]:
+        for entity in frame["entities"]:
+            if entity["entity_id"] == "camera":
+                entity["actor_label"] = "ForeignCamera"
+    _put(target_path, target)
+    comparison_path = folder / "comparison.json"
+    recorded = json.loads(comparison_path.read_text(encoding="utf-8"))
+    source = json.loads(Path(job["capture"]).read_text(encoding="utf-8"))
+    sampling = json.loads((folder / "sampling-plan.json").read_text(
+        encoding="utf-8"
+    ))
+    recomputed = compare(sampling, source, target)
+    assert recomputed["evaluation"]["status"] == "NO_FLAGGED_DIFFERENCES"
+    recorded.update(recomputed)
+    recorded["target_observation_sha256"] = _sha(target_path)
+    _put(comparison_path, recorded)
+    with pytest.raises(readback.Element7ReadbackError, match="prepared target mapping"):
+        readback.build(work, job["job_id"], folder)
+
+
+def test_forged_workflow_hash_and_invalid_native_grant_not_accepted(tmp_path):
+    work, job, folder = _scenario(tmp_path, with_element3=True)
+    baseline = readback.build(work, job["job_id"], folder)
+    assert baseline["element_occurrence_attribution"] is not None
+    candidate = folder.parent
+    pointer = json.loads((candidate / "element-workflow-active.json").read_text())
+    snapshot_path = candidate / (
+        "element-workflow-" + pointer["workflow_sha256"] + ".json"
+    )
+    snapshot = json.loads(snapshot_path.read_text())
+    snapshot["source_file_sha256"] = "c" * 64
+    snapshot["workflow_sha256"] = readback._hash({
+        k: v for k, v in snapshot.items() if k != "workflow_sha256"
+    })
+    _put(snapshot_path, snapshot)
+    with pytest.raises(readback.Element7ReadbackError, match="unapproved|foreign"):
+        readback.build(work, job["job_id"], folder)
+    # A real source record cannot be substituted by an otherwise plausible
+    # model/native authorization digest in a different candidate.
+    work, job, folder = _scenario(tmp_path / "separate", with_element3=True)
+    approval_path = folder.parent / "element-native-approval.json"
+    approval = json.loads(approval_path.read_text())
+    approval["approved_action_ids"] = ["A99999"]
+    approval["authorization_sha256"] = native_actions.digest({
+        k: v for k, v in approval.items() if k != "authorization_sha256"
+    })
+    _put(approval_path, approval)
+    with pytest.raises(readback.Element7ReadbackError):
+        readback.build(work, job["job_id"], folder)
