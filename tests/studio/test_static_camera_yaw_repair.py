@@ -32,14 +32,14 @@ from behavior_compare import compare
 from test_element7_native_readback import _put, _scenario
 
 
-def _yaw_camera(tmp_path, *, yaw=25.0):
+def _yaw_camera(tmp_path, *, yaw=25.0, roll=0.0, pitch=0.0):
     workspace, job, folder = _scenario(
         tmp_path, with_element3=True, complete=True,
         ai_agents_enabled=True, automatic_setup=True,
     )
     target_path = folder / "target-behavior.json"
     target = json.loads(target_path.read_text(encoding="utf-8"))
-    quat = list(readback_math.unreal_rpy_to_canonical_quat(0., 0., yaw))
+    quat = list(readback_math.unreal_rpy_to_canonical_quat(roll, pitch, yaw))
     for frame in target["samples"]:
         row, = [r for r in frame["entities"] if r["entity_id"] == "camera"]
         row["world_transform"]["rotation_xyzw"] = quat
@@ -143,10 +143,12 @@ class Component:
 
     def get_world_transform(self):
         roll,pitch,yaw=self.actor.roll,self.actor.pitch,self.actor.yaw+self.world_drift
-        # Our approved fixture uses pure native yaw and zero roll/pitch.
-        assert abs(roll)<0.0001 and abs(pitch)<0.0001
-        rad=math.radians(yaw)/2
-        return NS(rotation=NS(x=0.,y=0.,z=math.sin(rad),w=math.cos(rad)))
+        # Exact Unreal axial mapping reverses the canonical reflection;
+        # unlike a pure-Z shortcut, also covers legitimate small roll/pitch.
+        cx,cy,cz,cw=readback_math.unreal_rpy_to_canonical_quat(
+            roll,pitch,yaw,
+        )
+        return NS(rotation=NS(x=cz,y=-cx,z=-cy,w=cw))
 
 
 class Track:
@@ -288,6 +290,24 @@ def test_native_rotation_changes_only_actor_yaw_and_requires_reopened_cinetwin(
     assert result["persistence_after_editor_restart_verified"] is False
     assert result["cinetwin_reopened_time_grid_verified_after_repair"] is False
     assert result["rendered_camera_facing_verified"] is False
+    assert result["full_cutscene_fidelity_verified"] is False
+
+
+def test_yaw_write_keeps_original_native_roll_pitch_exactly(
+        tmp_path,monkeypatch):
+    # The source roll/pitch is 0, native is 0.1 degrees off. The source
+    # tolerance permits this mismatch, but native must NEVER rewrite
+    # the unrequested pitch/roll values while correcting a 25-degree yaw.
+    workspace,job,_=_yaw_camera(tmp_path,roll=0.1,pitch=-0.1)
+    request,proof=_approved(workspace,job)
+    assert proof["source_aligned_rotation_rpy_degrees"]==pytest.approx([0,0,0])
+    api,actor,_=_editor(proof)
+    import studio_auto_scene
+    monkeypatch.setattr(studio_auto_scene,"_save_level",lambda *_:None)
+    result=native.attempt(api,workspace,job,request)
+    assert actor.writes[0]==pytest.approx((0.1,-0.1,0))
+    assert (actor.roll,actor.pitch)==pytest.approx((0.1,-0.1))
+    assert result["native_actor_yaw_error_after_degrees"]<=0.1
     assert result["full_cutscene_fidelity_verified"] is False
 
 
