@@ -152,6 +152,19 @@ def attempt(api: Any, workspace: Path, job: dict, request: dict) -> dict:
             "Native character label is no longer unique."
         )
     actor = matches[0]
+    # Labels can be reused after deleting and spawning a different actor.
+    # Compare the actual UObject path to the freshly generated setup receipt,
+    # never infer creation identity from the label/mesh asset alone.
+    expected_path = created[0].get("native_actor_path")
+    live_path = getattr(actor, "get_path_name", None)
+    if (not isinstance(expected_path, str)
+            or not expected_path.startswith("/Game/")
+            or len(expected_path) > 1024
+            or not callable(live_path)
+            or str(live_path()) != expected_path):
+        raise StaticCharacterYawRepairError(
+            "Live character UObject is not the exact newly staged actor."
+        )
     observed = owner.inspect(
         api, sequence, actor,
         expected_actor_label=proof["target_actor_label"],
