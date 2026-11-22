@@ -210,7 +210,7 @@ def test_plan_or_capability_changed_after_consent_never_reaches_native_worker(tm
 
 
 def test_unobserved_editor_capabilities_cannot_grant_native_actions(tmp_path):
-    work, worker, _target, _summary, _manifest = _manifest(tmp_path)
+    work, worker, _target, _summary, manifest = _manifest(tmp_path)
     worker["connected"] = False
     report = workflow.prepare(work, worker)
     workflow.acknowledge(work, worker, report["workflow_sha256"])
