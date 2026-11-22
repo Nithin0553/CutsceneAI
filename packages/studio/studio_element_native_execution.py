@@ -64,6 +64,7 @@ def inventory(plan: dict, element_plan: dict) -> dict:
         kind = action["kind"]
         provided = action.get("source_location")
         linked = []
+        blocked_reason = None
         if provided is not None:
             if not isinstance(provided, str) or provided not in locations:
                 raise ElementNativeExecutionError(
@@ -71,9 +72,10 @@ def inventory(plan: dict, element_plan: dict) -> dict:
                 )
             element = locations[provided]
             if kind not in element["candidate_actions"]:
-                raise ElementNativeExecutionError(
-                    "Native action has no source-eligible registered CED mapping."
-                )
+                # A currently unavailable target capability must not prevent
+                # inspecting the candidate. Record a visible hard blocker and
+                # forbid native authorization until a fresh plan is prepared.
+                blocked_reason = "SOURCE_CED_ACTION_OR_TARGET_CAPABILITY_UNAVAILABLE"
             if (action.get("source_ced") is not None
                     and action["source_ced"] != element["ced"]):
                 raise ElementNativeExecutionError(
@@ -105,6 +107,8 @@ def inventory(plan: dict, element_plan: dict) -> dict:
                 if linked else "LEGACY_ACTION_SOURCE_ATTRIBUTION_UNVERIFIED"
             ),
             "native_preflight_required": True,
+            "native_action_eligible": blocked_reason is None,
+            "native_action_blocker": blocked_reason,
             "native_execution_verified": False,
             "cinematic_fidelity_verified": False,
         })
@@ -115,6 +119,7 @@ def inventory(plan: dict, element_plan: dict) -> dict:
         "element_plan_sha256": element_plan["element_plan_sha256"],
         "action_count": len(rows),
         "unattributed_count": sum(not row["source_occurrence_ids"] for row in rows),
+        "blocked_action_count": sum(not row["native_action_eligible"] for row in rows),
         "registered_action_counts": dict(sorted(Counter(row["kind"] for row in rows).items())),
         "native_execution_authorized": False,
         "full_cutscene_fidelity_verified": False,
@@ -141,6 +146,11 @@ def authorize(inventory_doc: dict, *, candidate_id: str,
         raise ElementNativeExecutionError(
             "The entire immutable prepared action set must be explicitly reviewed. "
             "Partial selections require preparing a different source-authenticated candidate."
+        )
+    if inventory_doc.get("blocked_action_count", 0):
+        raise ElementNativeExecutionError(
+            "Native action set contains source-blocked CED actions. "
+            "Resolve missing native capabilities or mappings and prepare a new candidate."
         )
     if inventory_doc["unattributed_count"] and not accept_legacy_unattributed:
         raise ElementNativeExecutionError(
