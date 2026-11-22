@@ -244,10 +244,12 @@ def build(csir: dict, conversion: dict, sampling: dict,
         if kind == "entities" and item["state"] in {
             "UNKNOWN_SEMANTIC_INVESTIGATE", "UNRESOLVED_SOURCE_DEPENDENCY"
         }:
-            if status == "INCOMPLETE_TARGET_UNMAPPED":
-                # Preserve the most concrete coverage failure. Unknown CED
-                # semantics are an *additional* investigation reason, not an
-                # excuse to hide a missing native target actor.
+            if status in {
+                "INCOMPLETE_TARGET_UNMAPPED", "DIRECT_MEASURED_DIFFERENCE",
+            }:
+                # Preserve native coverage and observed differences. Unknown
+                # semantics are additional investigation evidence, never an
+                # excuse to hide a measured mismatch or missing target actor.
                 flags.append("SOURCE_SEMANTIC_OR_DEPENDENCY_UNRESOLVED")
             else:
                 status = "SOURCE_SEMANTIC_OR_DEPENDENCY_UNRESOLVED"
