@@ -39,6 +39,84 @@ def _character_metrics(report, identifier):
     }
 
 
+def _character_facing_ownership_report(api, job, comparison, approved_axes,
+                                       source_sha256, target_sha256):
+    """Reopened-editor READ-ONLY native rotation owner inspection.
+
+    The approval is required to identify the actual imported skeletal mesh.
+    No report may authorize an actor rotation based on a UI or model guess.
+    Failures here are recorded as incomplete diagnostics, not as permission
+    to infer that an uninspectable owner is absent.
+    """
+    import studio_character_facing_ownership as ownership
+
+    report = {
+        'kind': 'cutsceneai.studio.native_character_facing_ownership',
+        'schema_version': '1',
+        'job_id': job['job_id'],
+        'candidate_id': job['candidate_id'],
+        'source_capture_sha256': source_sha256,
+        'target_observation_sha256': target_sha256,
+        'sequence_asset_path': job['sequence_path'],
+        'reopened_editor_pid': os.getpid(),
+        'status': 'READ_ONLY_NATIVE_OWNER_UNVERIFIED',
+        'native_edit_authorized': False,
+        'full_cutscene_fidelity_verified': False,
+        'characters': [],
+    }
+    native_rigs = comparison.get('rig_motion_diagnostics') or []
+    actors = comparison.get('entities') or []
+    approval = approved_axes.get('characters') if isinstance(approved_axes, dict) else {}
+    approval = approval if isinstance(approval, dict) else {}
+    by_id = {row.get('entity_id'): row for row in actors if isinstance(row, dict)}
+    try:
+        subsystem = api.get_editor_subsystem(api.EditorActorSubsystem)
+        scene_actors = list(subsystem.get_all_level_actors())
+        sequence = api.load_asset(job['sequence_path'])
+        if sequence is None:
+            raise ValueError('The exact generated Unreal sequence is missing.')
+    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+        scene_actors = []
+        sequence = None
+        global_failure = type(exc).__name__
+    else:
+        global_failure = ''
+    for rig in native_rigs[:64]:
+        ident = rig.get('entity_id') if isinstance(rig, dict) else None
+        mapping = by_id.get(ident) if isinstance(ident, str) else None
+        label = mapping.get('target_actor_label') if isinstance(mapping, dict) else None
+        entry = approval.get(ident) if isinstance(ident, str) else None
+        mesh = entry.get('target_mesh_asset_path') if isinstance(entry, dict) else None
+        row = {
+            'entity_id': ident,
+            'status': 'BLOCKED_UNVERIFIED_OWNER',
+            'native_edit_authorized': False,
+            'blocking_reasons': [],
+        }
+        if not isinstance(label, str) or not label or not isinstance(mesh, str):
+            row['blocking_reasons'] = ['SOURCE_BOUND_MESH_APPROVAL_OR_ACTOR_BINDING_MISSING']
+        elif global_failure:
+            row['blocking_reasons'] = ['NATIVE_EDITOR_OWNER_INSPECTION_FAILED_' + global_failure]
+        else:
+            matches = [actor for actor in scene_actors
+                       if str(actor.get_actor_label()) == label]
+            if len(matches) != 1:
+                row['blocking_reasons'] = ['AMBIGUOUS_NATIVE_CHARACTER_ACTOR']
+            else:
+                row = {'entity_id': ident, **ownership.inspect(
+                    api, sequence, matches[0],
+                    expected_actor_label=label,
+                    expected_mesh_asset_path=mesh,
+                    all_level_actors=scene_actors,
+                )}
+        report['characters'].append(row)
+    if len(native_rigs) > 64:
+        report['status'] = 'NATIVE_CHARACTER_INVENTORY_EXCEEDS_BUDGET'
+    elif report['characters']:
+        report['status'] = 'READ_ONLY_NATIVE_OWNER_INSPECTED_NOT_AUTHORIZED'
+    return report
+
+
 def start(workspace=None, *, job_id=None, baseline_target=None,
           rig_calibration_path=None, mesh_forward_approval_path=None):
     """Run after opening the generated map in a different Unreal process."""
@@ -122,6 +200,15 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
         if forward_approval is not None:
             extra_evidence['mesh_forward_approval'] = forward_approval
         comparison = compare(plan, source, target, **extra_evidence)
+        # Inspect the ACTUAL reopened actor and SkeletalMeshComponent owners.
+        # The findings are independent diagnostic evidence only; the engine
+        # has not authorized a character yaw edit or any cutscene fidelity.
+        facing_path = folder / 'native-character-facing-ownership.json'
+        facing = _character_facing_ownership_report(
+            unreal, job, comparison, forward_approval,
+            capture['sha256'], persistence._sha(observed_path),
+        )
+        _write(facing_path, facing)
         character_proof = None
         if job.get('character_native_readback_status') == 'PASS':
             import animation_conversion_policy as policy
@@ -217,6 +304,7 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
             'rig_calibration_statuses': calibration_results,
             'mesh_forward_approval_sha256': forward_approval_sha,
             'mesh_forward_statuses': forward_results,
+            'native_facing_ownership_sha256': persistence._sha(facing_path),
             'element3_workflow_sha256': (
                 element_permission['workflow_sha256']
                 if element_permission is not None else None
