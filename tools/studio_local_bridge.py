@@ -651,7 +651,35 @@ def job_status(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         'repair_changes', 'repair_status', 'repair_error', 'ai_agents_enabled',
         'element_native_authorization_sha256', 'element_native_dispatch_receipt',
         'element_native_dispatch_status',
-        'execution_stage', 'failure_stage')}
+        'execution_stage', 'failure_stage',
+        'element6_guard_status', 'element6_claim_sha256',
+        'element6_receipt_sha256', 'element6_runtime_receipt_sha256',
+        'element6_guard_error', 'element6_replay_allowed')}
+    # The Element 6 ledger is inspected without native code execution,
+    # resubmission or an automatic retry. A stale heartbeat while RUNNING
+    # means the attempt is unobservable; never equate it with a success.
+    try:
+        guard_dir = str(ROOT / 'packages/studio')
+        if guard_dir not in sys.path:
+            sys.path.insert(0, guard_dir)
+        import studio_element6_execution
+        guard_state = studio_element6_execution.inspect(folder, job)
+        if guard_state['available']:
+            if (job.get('status') == 'RUNNING'
+                    and not worker_connected(folder).get('connected')):
+                guard_state['status'] = (
+                    'NATIVE_ATTEMPT_UNOBSERVABLE_INSPECT_BEFORE_RECOVERY'
+                )
+                guard_state['requires_manual_inspection'] = True
+            result['element6_execution'] = guard_state
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        result['element6_execution'] = {
+            'available': False,
+            'status': 'NATIVE_ATTEMPT_LEDGER_UNVERIFIABLE_MANUAL_INSPECTION',
+            'reason_code': type(exc).__name__,
+            'native_replay_allowed': False,
+            'full_cutscene_fidelity_verified': False,
+        }
     # Read only the exact receipt belonging to this job's candidate.
     # Expose the actionable failed operation without publishing a traceback
     # or allowing a forged job path to read files outside Studio's workspace.
