@@ -302,6 +302,26 @@ def verify(report: dict, csir: dict, conversion: dict, sampling: dict,
         raise ElementCineTwinError("CineTwin attribution is stale, incomplete or tampered.")
 
 
+def _measured_progress(before: dict, after: dict) -> bool:
+    """Compare only numeric native measurements, not a model's progress claim."""
+    if set(before["discrepancy_flags"]) - set(after["discrepancy_flags"]):
+        return True
+    for key, threshold in (
+        ("actor_position_cm", 0.01),
+        ("actor_rotation_degrees", 0.1),
+        ("camera_lens_error_degrees", 0.1),
+    ):
+        a = before["measured"].get(key)
+        b = after["measured"].get(key)
+        if (type(a) in (float, int) and type(b) in (float, int)
+                and a - b >= threshold):
+            return True
+    if (before["measured"].get("skeletal_joint_status") == "FAIL"
+            and after["measured"].get("skeletal_joint_status") == "PASS"):
+        return True
+    return False
+
+
 def remeasure(csir: dict, conversion: dict, sampling: dict,
               source_capture: dict, target_captures: list[dict]) -> dict:
     """Recompare baseline + <=2 independent target observations (no writes).
@@ -340,12 +360,8 @@ def remeasure(csir: dict, conversion: dict, sampling: dict,
         error_after = current["measured"].get("actor_position_cm")
         flags_before = set(original["discrepancy_flags"])
         flags_after = set(current["discrepancy_flags"])
-        no_progress = had and all(
-            (row["measurement_status"] == "DIRECT_MEASURED_DIFFERENCE"
-             and set(row["discrepancy_flags"]) >= flags_before
-             and row["measured"].get("actor_position_cm", 0) >= error_before - 1e-4)
-            for row in prev[1:]
-        )
+        no_progress = had and not _measured_progress(original, prev[1])
+        introduced = flags_after - flags_before
         if original["source_kind"] != "entities":
             result = "NOT_DIRECTLY_ATTESTABLE"
         elif not had:
@@ -353,6 +369,8 @@ def remeasure(csir: dict, conversion: dict, sampling: dict,
                       else "NO_BASELINE_MEASURED_DIFFERENCE")
         elif no_progress:
             result = "STOP_REPEATED_NO_MEASURED_IMPROVEMENT"
+        elif introduced:
+            result = "REGRESSED_AFTER_REMEASUREMENT"
         elif ended == "DIRECT_MEASURED_NO_FLAGGED_DIFFERENCE":
             result = ("MEASURED_FLAGS_CLEARED_PERSISTENCE_UNVERIFIED"
                       if independent_identity else
