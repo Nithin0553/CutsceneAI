@@ -290,6 +290,7 @@ def retrieve(
         "schema_version": "2",
         "baseline_release_id": manifest["release_id"],
         "baseline_manifest_sha256": _digest(manifest),
+        "rule_index_sha256": _digest(rules),
         "source_ced_count": len(ordered),
         "source_occurrence_count": graph.occurrence_count,
         "relationship_count": graph.edge_count,
@@ -315,6 +316,66 @@ def retrieve(
     result["knowledge_sha256"] = _digest(result)
     return result
 
+
+
+def retrieve_all(
+    csir: dict[str, Any], *, target_capabilities: dict[str, Any],
+    source_version: str = "", target_version: str = "",
+    approved_store: Path | None = None, case_store: Path | None = None,
+    source_capabilities: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Inspect all source CED concepts without silently discarding pages.
+
+    The coverage, source evidence, baseline and approved-rule identity must be
+    identical on every page. If knowledge changes during retrieval, stop
+    before sending any evidence to an LLM or creating a native candidate.
+    """
+    options = {
+        "target_capabilities": target_capabilities,
+        "source_version": source_version,
+        "target_version": target_version,
+        "approved_store": approved_store,
+        "case_store": case_store,
+        "source_capabilities": source_capabilities,
+        "page_size": MAX_PAGE_SIZE,
+    }
+    first = retrieve(csir, page=0, **options)
+    entries = list(first["entries"])
+    page_digests = [first["knowledge_sha256"]]
+    keys = (
+        "baseline_manifest_sha256", "coverage_ledger_sha256",
+        "rule_index_sha256", "source_occurrence_count", "source_ced_count",
+    )
+    for page in range(1, first["page_count"]):
+        subsequent = retrieve(csir, page=page, **options)
+        if (any(first[key] != subsequent[key] for key in keys)
+                or subsequent["page_count"] != first["page_count"]
+                or len(subsequent["coverage_ledger"]) != first["source_ced_count"]):
+            raise KnowledgeServiceError(
+                "CED source, shared baseline or locally reviewed rules changed "
+                "during paginated retrieval; re-analyze the exact source."
+            )
+        entries.extend(subsequent["entries"])
+        page_digests.append(subsequent["knowledge_sha256"])
+    if (len(entries) != first["source_ced_count"]
+            or len({row["ced"] for row in entries}) != len(entries)):
+        raise KnowledgeServiceError("CED retrieval did not cover every distinct source concept.")
+    combined = dict(first)
+    combined.update({
+        "page": 0,
+        "page_size": MAX_PAGE_SIZE,
+        "entries": entries,
+        "retrieved_count": len(entries),
+        "omitted_count": 0,
+        "next_page": None,
+        "retrieval_complete": True,
+        "all_pages_retrieved": True,
+        "source_page_count": first["page_count"],
+        "source_page_sha256": page_digests,
+    })
+    combined.pop("knowledge_sha256")
+    combined["knowledge_sha256"] = _digest(combined)
+    return combined
 
 
 def redact_for_model(result: dict[str, Any]) -> dict[str, Any]:
