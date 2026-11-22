@@ -295,6 +295,71 @@ def _model_choose(summary: dict) -> dict:
             "type": "string",
             "enum": ["keep_native", *summary["animation_choices"]],
         }
+    public_knowledge = _agent_module("ced_agent_knowledge").model_projection(
+        summary["ced_knowledge"]
+    )
+    if public_knowledge.get("retrieval_complete") is not True:
+        raise TransferAIError("Incomplete CED page coverage cannot be accepted by the agent.")
+    entries = public_knowledge.get("entries")
+    if not isinstance(entries, list) or len(entries) != public_knowledge["source_ced_count"]:
+        raise TransferAIError("CED knowledge has missing source concepts.")
+    # Large source inventories are reviewed by the model in separate bounded
+    # batches, not silently trimmed to the first 48 concepts.
+    PAGE_SIZE = 24
+    page_notes = []
+    for index in range(0, len(entries), PAGE_SIZE):
+        if len(entries) <= PAGE_SIZE:
+            break
+        page_index = index // PAGE_SIZE
+        batch = entries[index:index + PAGE_SIZE]
+        observation = provider.complete_json(
+            task="cutsceneai_ced_page_review",
+            instructions=(
+                "You are CutSceneAI's read-only knowledge investigator. "
+                "For the supplied CED concept batch, identify native "
+                "capability gaps, semantic dependencies, and promising "
+                "installed conversion approaches. Unknown mappings are "
+                "investigation cases, not successful conversions. "
+                "Use only given facts, no project names or code execution. "
+                "Reply with JSON using the exact schema."
+            ),
+            payload={
+                "page_index": page_index,
+                "source_concepts": batch,
+                "allowed_strategies": summary["allowed_strategies"],
+            },
+            schema={
+                "type": "object", "additionalProperties": False,
+                "properties": {
+                    "page_index": {"type": "integer"},
+                    "risks": {"type": "string"},
+                    "candidate_approaches": {"type": "string"},
+                },
+                "required": ["page_index", "risks", "candidate_approaches"],
+            },
+        ).answer
+        if (type(observation.get("page_index")) is not int
+                or observation["page_index"] != page_index
+                or not all(isinstance(observation.get(key), str)
+                           and len(observation[key]) <= 750
+                           for key in ("risks", "candidate_approaches"))):
+            raise TransferAIError("AI returned an ungrounded CED page review.")
+        page_notes.append(observation)
+    if page_notes:
+        model_knowledge = {
+            "kind": public_knowledge["kind"],
+            "schema_version": public_knowledge["schema_version"],
+            "source_ced_count": len(entries),
+            "source_occurrence_count": public_knowledge["source_occurrence_count"],
+            "coverage_ledger_sha256": public_knowledge["coverage_ledger_sha256"],
+            "knowledge_sha256": public_knowledge["knowledge_sha256"],
+            "pages_reviewed": len(page_notes),
+            "expected_pages": (len(entries) + PAGE_SIZE - 1) // PAGE_SIZE,
+            "page_analyses": page_notes,
+            "native_write_permission": False,
+        }
+    else:
+        model_knowledge = public_knowledge
     response = provider.complete_json(
         task="cutsceneai_pretransfer_choice",
         instructions=(
@@ -320,9 +385,7 @@ def _model_choose(summary: dict) -> dict:
             "evidence": summary["summary"],
             "allowed_strategies": summary["allowed_strategies"],
             "animation_choices": summary.get("animation_choices", []),
-            "ced_knowledge": _agent_module("ced_agent_knowledge").model_projection(
-                summary["ced_knowledge"]
-            ),
+            "ced_knowledge": model_knowledge,
             "planning_feedback": summary.get("planning_feedback", ""),
         },
         schema={
