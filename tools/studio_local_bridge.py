@@ -600,6 +600,9 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
     # occurrence review, require acknowledgement of the *current* evidence
     # before queuing. This never adds AI-native execution permission and does
     # not break legacy unattended jobs without an Element 3 review.
+    tool_module_dir = str(ROOT / 'tools')
+    if tool_module_dir not in sys.path:
+        sys.path.insert(0, tool_module_dir)
     import studio_element_workflow
     studio_element_workflow.require_acknowledgment(folder, heartbeat, candidate_id)
     job_id = uuid.uuid4().hex
