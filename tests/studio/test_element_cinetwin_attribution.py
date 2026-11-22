@@ -339,3 +339,41 @@ def test_standalone_cinetwin_element_cli_never_overwrites_source_or_existing_rep
     )
     assert stale.returncode == 1
     assert "identity" in stale.stderr
+
+
+
+def test_improving_rotation_is_progress_even_when_actor_position_is_unchanged():
+    csir, conversion, sampling, source, target = _inputs()
+    first = copy.deepcopy(target)
+    after = copy.deepcopy(target)
+    for frame in first["samples"]:
+        frame["entities"][0]["world_transform"]["rotation_xyzw"] = [
+            0, 0, 1, 0,
+        ]
+    for frame in after["samples"]:
+        frame["entities"][0]["world_transform"]["rotation_xyzw"] = [
+            0, 0, 0.7071067811865476, 0.7071067811865476,
+        ]
+    review = audit.remeasure(csir, conversion, sampling, source, [first, after])
+    character = next(item for item in review["per_occurrence"]
+                     if item["occurrence_id"] == _item(
+                         audit.build(csir, conversion, sampling, source, first),
+                         "entities[0]", conversion,
+                     )["occurrence_id"])
+    assert character["result"] == "PARTIAL_OR_DIFFERENT_MEASURED_DISCREPANCY_REMAINS"
+    assert review["next_attempt_recommended"] is True
+    assert review["further_automatic_repair_or_retry_authorized"] is False
+
+
+def test_new_rotation_regression_stops_recommending_recovery_even_if_position_improves():
+    csir, conversion, sampling, source, target = _inputs()
+    before = copy.deepcopy(target)
+    after = copy.deepcopy(target)
+    _offset(before, 7)
+    _offset(after, 3)
+    for frame in after["samples"]:
+        frame["entities"][0]["world_transform"]["rotation_xyzw"] = [0, 0, 1, 0]
+    report = audit.remeasure(csir, conversion, sampling, source, [before, after])
+    assert report["next_attempt_recommended"] is False
+    assert any(row["result"] == "REGRESSED_AFTER_REMEASUREMENT"
+               for row in report["per_occurrence"])
