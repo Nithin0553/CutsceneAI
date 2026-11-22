@@ -83,7 +83,7 @@ def test_pending_source_report_can_work_without_element3_model_review(tmp_path):
 
 
 def test_passed_measured_scope_remains_full_fidelity_unverified(tmp_path):
-    work, job, native = _ready(tmp_path, complete=True)
+    work, job, _native = _ready(tmp_path, complete=True)
     report = outcome.build(work, job["job_id"])
     assert report["status"] == (
         "MEASURED_SCOPE_WITHIN_TOLERANCE_FULL_FIDELITY_UNVERIFIED"
@@ -178,7 +178,7 @@ def test_three_observations_exhaust_budget_and_never_grant_retry(tmp_path):
 
 
 def test_tampered_canonical_report_and_source_evidence_are_rejected(tmp_path):
-    work, job, folder = _ready(tmp_path)
+    work, job, _folder = _ready(tmp_path)
     good = outcome.build(work, job["job_id"])
     forged = copy.deepcopy(good)
     forged["release_ready"] = True
@@ -214,7 +214,7 @@ def test_synthetic_evidence_legacy_attempt_cannot_be_marked_verified(tmp_path):
 
 
 def test_terminal_document_is_immutable_and_pagination_redacted(tmp_path):
-    work, job, native = _ready(tmp_path)
+    work, job, _native = _ready(tmp_path)
     path, report = outcome.save_once(work, job["job_id"])
     assert path.is_file()
     assert path.name == "element9-outcome-" + report["outcome_sha256"] + ".json"
@@ -237,7 +237,7 @@ def test_terminal_document_is_immutable_and_pagination_redacted(tmp_path):
 
 
 def test_release_readiness_accounts_for_each_source_and_never_promotes_fidelity(tmp_path):
-    work, job, native = _ready(tmp_path, complete=True)
+    work, job, _native = _ready(tmp_path, complete=True)
     readiness = release_gate.assess(work, job["job_id"])
     check = readiness["checks"]["element9_final_outcome_accounting"]
     assert check["status"] == "PASS"
@@ -251,7 +251,7 @@ def test_release_readiness_accounts_for_each_source_and_never_promotes_fidelity(
 
 
 def test_studio_http_api_returns_page_and_pending_limitations_without_mutation(tmp_path):
-    work, job, folder = _ready(tmp_path, complete=True)
+    work, _job, folder = _ready(tmp_path, complete=True)
     web = tmp_path / "web"
     web.mkdir()
     (web / "index.html").write_text("test", encoding="utf-8")
