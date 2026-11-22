@@ -20,8 +20,8 @@ for part in ("packages/studio", "packages/ced", "packages/cinetwin",
     if route not in sys.path:
         sys.path.insert(0, route)
 
-import readback_math
 import agent_intent_router
+import readback_math
 import studio_agent_executor
 import studio_agent_feedback
 import studio_agent_graph
@@ -319,7 +319,6 @@ def test_native_camera_rotation_rejects_conflicting_owners_and_stale_proof(
     elif kind=="attached_child":
         child=Camera("Child",[0,0,0])
         child.parent=actor
-        get_all=api.get_editor_subsystem
         api.get_editor_subsystem=lambda _:NS(
             get_all_level_actors=lambda:[actor,child],
         )
