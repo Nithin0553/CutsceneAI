@@ -83,10 +83,14 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
                     or review["status"] in {
                         "STOP_MEASURED_REGRESSION_OR_NO_PROGRESS",
                         "STOP_REMEASUREMENT_BUDGET_EXHAUSTED",
-                    }):
+                    } or not studio_element8_repair.may_review_exact_character_offset(
+                        workspace, job["job_id"],
+                        [path.parent for path in saved],
+                        request.get("target_entity"),
+                    )):
                 raise ValueError(
                     "Element 8 measured discrepancy does not permit "
-                    "the existing character-offset adapter to be considered."
+                    "this exact user-named character-offset adapter to be considered."
                 )
     if request["strategy"] == "restore_constant_actor_offset":
         import studio_transform_repair
