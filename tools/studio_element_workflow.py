@@ -541,6 +541,27 @@ def prepare(folder: Path, worker: dict) -> dict[str, Any]:
             elif _read(archived) != prior:
                 raise ElementWorkflowError("Archived readback index was modified.")
             previous_index.unlink()
+    prior_approval = location / "element-native-approval.json"
+    if prior_approval.exists():
+        old = _read(prior_approval)
+        old_sha = old.get("authorization_sha256")
+        if (old.get("kind") != native_actions.KIND
+                or old.get("candidate_id") != report["candidate_id"]
+                or not isinstance(old_sha, str) or not HEX.fullmatch(old_sha)
+                or old_sha != _digest({
+                    k: v for k, v in old.items()
+                    if k != "authorization_sha256"
+                })):
+            raise ElementWorkflowError(
+                "Previous native operator approval was modified; inspect it before replanning."
+            )
+        if old.get("workflow_sha256") != digest:
+            archive = location / ("element-native-approval-" + old_sha + ".json")
+            if not archive.exists():
+                _write_new(archive, old)
+            elif _read(archive) != old:
+                raise ElementWorkflowError("Archived native approval was modified.")
+            prior_approval.unlink()
     _atomic(location / "element-workflow-active.json", pointer)
     # An old acknowledgment or readback from another snapshot never carries
     # forward to the new capability/knowledge/source binding.
