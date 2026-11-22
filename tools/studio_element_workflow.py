@@ -416,7 +416,7 @@ def _element4_model_gate(folder: Path, report: dict) -> dict:
     strategy. Never show an externally supplied/rehashed decision as accepted
     without rebuilding its exact source graph and CED evidence.
     """
-    config, candidate, location, csir_path, _mapping = _workspace(folder)
+    _config, _candidate, location, csir_path, _mapping = _workspace(folder)
     file = location / "ai-conversion-decision.json"
     if not file.exists():
         return {
@@ -480,7 +480,7 @@ def _element4_model_gate(folder: Path, report: dict) -> dict:
             "native_execution_authorized": False,
             "full_cutscene_fidelity_verified": False,
         }
-    except (ValueError, TypeError, KeyError, OSError):
+    except (ValueError, TypeError, KeyError, AttributeError, OSError):
         return {
             "status": "MODEL_STRATEGY_EVIDENCE_STALE_OR_UNVERIFIABLE",
             "independently_recomputed": False,
