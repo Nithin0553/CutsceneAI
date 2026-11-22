@@ -196,6 +196,7 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
     setAutopilot:(status)=>{autopilot={active:true,status,
       message:'Engine-safe transfer stage: '+status,agent_enabled:true};},
     completeAutopilot:()=>{autopilot={active:true,status:'GENERATED_UNVERIFIED',
+      job_id:'a'.repeat(32),
       message:'Editable sequence generated',agent_enabled:true};
       currentJob={job_id:'a'.repeat(32),candidate_id:'candidate001',
         generation_status:'GENERATED_UNVERIFIED',
@@ -632,7 +633,97 @@ async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
   assert.match(x.app.innerHTML,/The character is facing the wrong direction/);
 }
 
+async function testSimpleBlockedAutopilotCannotReuseOldNativeResult() {
+  const x=boot({simple:true});
+  await x.pause();
+  x.completeAutopilot();
+  await x.poll();
+  await x.click('quick-results');
+  assert.match(x.app.innerHTML,/Generated sequence:/,
+    'prior genuine generated result is visible when the autopilot job ID matches');
+
+  // The previous native job pointer survives while the new run stops
+  // before submitting any native work. Its results must not be borrowed.
+  x.setAutopilot('BLOCKED');
+  await x.poll();
+  await x.click('quick-results');
+  assert.doesNotMatch(x.app.innerHTML,/Generated sequence:/,
+    'blocked new run must not inherit the last completed native sequence');
+  assert.doesNotMatch(x.app.innerHTML,/Optional AI follow-up/,
+    'a blocked new run has no source-authorized old feedback or repairs');
+  x.setAutopilot('CANCELLED');
+  await x.poll();
+  assert.doesNotMatch(x.app.innerHTML,/Generated sequence:/,
+    'cancelled run must not inherit previous native results');
+}
+
+async function testAdvancedJobChangeInvalidatesDiagnostics() {
+  const code=fs.readFileSync('apps/studio-web/app.js','utf8');
+  const old='a'.repeat(32), next='b'.repeat(32);
+  let active=old, html='';
+  const listeners={};
+  const app={
+    get innerHTML(){return html;},
+    set innerHTML(value){html=value;},
+    addEventListener(name,handler){listeners[name]=handler;},
+  };
+  const seen=[];
+  const fake={
+    document:{querySelector:selector=>selector==='#app'?app:null,
+      addEventListener(){},visibilityState:'visible',activeElement:null},
+    window:{scrollTo(){}},navigator:{clipboard:{writeText:async()=>{}}},
+    setInterval(){},console,Promise,
+    fetch:async url=>{
+      seen.push(url);
+      let result={};
+      if(url==='/api/status')result={
+        token:'stubtoken',connection:null,candidate:null,active_job:active,
+        unreal_worker:{connected:false},destination_readiness:{status:'WAITING_FOR_UNREAL'},
+      };
+      else if(url==='/api/capabilities')result={};
+      else if(url==='/api/verification')result={persistence:{status:'NOT_REOPENED'}};
+      else if(url.startsWith('/api/jobs/')){
+        const id=url.substring('/api/jobs/'.length);
+        result={job_id:id,status:'GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED',
+          generation_status:'GENERATED_UNVERIFIED',diagnostic_file:'candidate-only.json'};
+      }else if(url.startsWith('/api/diagnostic/')){
+        const id=url.substring('/api/diagnostic/'.length);
+        result={entities:{[id===old?'old-only':'new-only']:{actor_max_cm:3}}};
+      }
+      else throw Error('Unexpected advanced UI request '+url);
+      return {ok:true,status:200,json:async()=>result};
+    },
+  };
+  vm.runInNewContext(code,fake,{filename:'app.js'});
+  const pause=()=>new Promise(resolve=>setTimeout(resolve,0));
+  const refresh=async()=>{
+    listeners.click({target:{closest(sel){
+      return sel==='[data-action]'?{dataset:{action:'refresh'}}:null;
+    }}});
+    await pause();await pause();
+  };
+  await pause();await pause();
+  assert.ok(seen.includes('/api/diagnostic/'+old),'initial diagnostic is loaded');
+  listeners.click({target:{closest(sel){
+    return sel==='[data-action]'?{dataset:{action:'results'}}:null;
+  }}});
+  assert.match(html,/old-only/);
+  active=next;
+  await refresh();
+  assert.ok(seen.includes('/api/diagnostic/'+next),
+    'job switch loads fresh diagnostics rather than retaining cached older data');
+  assert.match(html,/new-only/);
+  assert.doesNotMatch(html,/old-only/);
+  active=null;
+  await refresh();
+  assert.doesNotMatch(html,/new-only|old-only/,
+    'removing the native job pointer removes historical diagnostic results');
+  assert.match(html,/NOT RUN/);
+}
+
 (async()=>{
+  await testSimpleBlockedAutopilotCannotReuseOldNativeResult();
+  await testAdvancedJobChangeInvalidatesDiagnostics();
   await testSimpleNewTransferFromCompletedProjects();
   await testSimpleNewTransferFromResultsStartsImmediately();
   await testSimpleBlockedTransferOffersNewTransfer();
@@ -651,5 +742,5 @@ async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
   await testMissingSelectedCensusFailsClosed();
-  console.log('Cinematic UI backend contract: 17 scenarios including fresh-transfer restart from Projects and Results, native errors, and Home-first startup passed.');
+  console.log('Cinematic + advanced UI backend contract: 19 scenarios including job-switch cache invalidation, old-job isolation after blocked autopilot, fresh transfers and native errors passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
