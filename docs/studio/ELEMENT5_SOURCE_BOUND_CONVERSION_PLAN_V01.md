@@ -10,6 +10,16 @@ The repository already has a mature deterministic CSIR-to-Unreal compiler in `pa
 
 This separation matters: a native action that exists in a prepared plan is not necessarily attributable to a particular Unity source track/section, and a source/CED concept that is inventoried is not necessarily converted. Existing legacy builder actions often lack exact `source_location` metadata. Matching an actor's name, track name, approximate time or semantic category is **not sufficient to prove provenance**. Therefore, the Element 5 report labels legacy actions as *UNATTRIBUTED*, even when the overall deterministic compiler may still legitimately create an editable Sequencer track after separate user approval.
 
+## Strengthened existing deterministic compiler provenance
+
+The native compiler now adds *structural source provenance at the point of compilation*, not through later name matching:
+
+- `integrations/unreal/csir_plan.py` emits `source_location: entities[N]` and the known `entity.camera` source semantic for each directly constructed `camera_setup`.
+- `packages/studio/transfer_backend.py` attaches `source_location: tracks[N]` only when that action was generated while processing the exact track and its kind is permitted by the installed `feature_dispatch.EXPLICIT_ACTIONS` for the track's semantic. It does not overwrite a component adapter's existing explicit source location or invent section/curve-level provenance.
+- Camera/transform/animation/light/audio/event actions that cannot meet those exact requirements remain unattributed. Their missing proof is visible and requires the existing explicit legacy-action approval rather than a fabricated attribution.
+
+The compiler still produces exactly the same native action semantics and execution order. The only new action fields are read-only provenance metadata, retained in the prepared JSON and bound to the existing hashes. Every native preflight and source-authenticated recompiler sees the same data.
+
 ## Implementation
 
 `packages/studio/studio_element5_plan.py` is a dependency-light, source-bound contract with `build()` and `verify()`. It checks:
