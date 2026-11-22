@@ -318,6 +318,10 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
             r"[a-f0-9]{64}", facing_sha
         ):
             raise Element7ReadbackError("Invalid native facing inspection hash.")
+        if facing_file.is_symlink() or not facing_file.is_file():
+            raise Element7ReadbackError(
+                "Reopened native facing owner inspection is missing or unsafe."
+            )
         facing, actual_facing_sha = _safe_json(facing_file)
         if (actual_facing_sha != facing_sha
                 or facing.get("kind")
