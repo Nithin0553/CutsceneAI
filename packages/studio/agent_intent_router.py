@@ -141,6 +141,7 @@ def route(
     camera_cut_repair_evidence: dict[str, Any] | None = None,
     two_shot_cut_repair_evidence: dict[str, Any] | None = None,
     camera_position_repair_evidence: dict[str, Any] | None = None,
+    camera_yaw_repair_evidence: dict[str, Any] | None = None,
     character_facing_review: dict[str, Any] | None = None,
     static_character_yaw_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -234,6 +235,23 @@ def route(
                 "two_shot_cut_repair_sha256"
             ), str)
         )
+    camera_yaw_request_valid = False
+    if isinstance(camera_yaw_repair_evidence, dict):
+        from studio_camera_yaw_evidence import message_requests_yaw
+        camera_yaw_request_valid = message_requests_yaw(message)
+    camera_yaw_eligible = bool(
+        camera_yaw_request_valid
+        and intent["mode"] == "user_feedback"
+        and domains in (["camera"], ["camera", "transform"])
+        and scope == "unspecified"
+        and generation_complete and completed_repairs < repair_budget
+        and camera_yaw_repair_evidence.get("kind")
+        == "cutsceneai.studio.static_camera_yaw_review"
+        and camera_yaw_repair_evidence.get("eligible") is True
+        and camera_yaw_repair_evidence.get("native_edit_authorized") is False
+        and isinstance(camera_yaw_repair_evidence.get(
+            "camera_yaw_repair_sha256"), str)
+    )
     camera_position_request_valid = False
     if isinstance(camera_position_repair_evidence, dict):
         # A multi-domain message (e.g. "camera position and lens") may share
@@ -298,6 +316,19 @@ def route(
             "rollback before saving. Reopened CineTwin remains pending."
         )
         allowed = ["report_only", "restore_static_character_actor_yaw"]
+    elif camera_yaw_eligible:
+        disposition = "GUARDED_STATIC_CAMERA_YAW_AVAILABLE"
+        reason = (
+            "One exact source-mapped static CineCamera has an isolated "
+            "world-yaw mismatch with native pitch/roll, actor position, "
+            "scale, lens and camera-cut timing already aligned. The Unreal "
+            "editor must independently check original staged actor UObject, "
+            "unparented component/world basis, native Sequencer ownership, "
+            "fresh live orientation and current user feedback before a "
+            "single rollback-safe world yaw change. Reopened CineTwin "
+            "and rendered framing remain unverified."
+        )
+        allowed = ["report_only", "restore_static_camera_actor_yaw"]
     elif camera_position_eligible:
         disposition = "GUARDED_STATIC_CAMERA_PLACEMENT_AVAILABLE"
         reason = (
@@ -408,7 +439,8 @@ def route(
         "requires_editor_receipt": (
             eligibility or transform_eligible or camera_eligible
             or camera_cut_eligible or two_shot_eligible
-            or camera_position_eligible or static_character_yaw_eligible
+            or camera_position_eligible or camera_yaw_eligible
+            or static_character_yaw_eligible
         ),
         "user_observation_verified": False,
         "native_fidelity_verified": False,
