@@ -92,6 +92,73 @@ def record_terminal(workspace: Path, job: dict) -> dict:
     return {"status": "RECORDED", "recorded": True, "job_id": job_id}
 
 
+def record_measured_outcome(workspace: Path, job: dict) -> dict:
+    """Collect immutable measured native outcomes without claiming mapping success.
+
+    A whole-cutscene comparison cannot prove that any one CED mapping was
+    correct. Per-rule positive learning still requires explicit review via
+    ced_reinforcement.record_native_experience.
+    """
+    job_id = str(job.get("job_id") or "")
+    if JOB_RE.fullmatch(job_id) is None:
+        raise LearningLedgerError("Invalid measured learning job identity.")
+    root = workspace.resolve()
+    candidate_id = str(job.get("candidate_id") or "")
+    candidate = (root / "candidates" / candidate_id).resolve()
+    if (not candidate.is_relative_to(root / "candidates")
+            or candidate != Path(str(job.get("candidate_dir") or "")).resolve()):
+        raise LearningLedgerError("Measured native evidence belongs to a different candidate.")
+    if job.get("status") in {"RUNNING", "QUEUED", "PENDING"}:
+        return {"recorded": False, "status": "WAITING_FOR_NATIVE_RESULT"}
+    comparisons = sorted(candidate.glob("native-acceptance-*/comparison.json"))
+    if not comparisons:
+        return {"recorded": False, "status": "NO_INDEPENDENT_NATIVE_COMPARISON"}
+    # The established release assessor verifies source hashes, observation
+    # hashes, candidate, PID independence and independently replayed metrics.
+    studio = str(Path(__file__).resolve().parents[1] / "packages" / "studio")
+    if studio not in sys.path:
+        sys.path.insert(0, studio)
+    import studio_release_gate
+    assessment = studio_release_gate.assess(root, job_id)
+    measured = assessment["checks"].get("reopened_temporal_acceptance", {})
+    if measured.get("status") not in {"PASS", "FAIL", "INCOMPLETE"}:
+        raise LearningLedgerError("Native acceptance evidence has invalid status.")
+    chosen = max(comparisons, key=lambda p: (p.stat().st_mtime_ns, p.name))
+    if (chosen.is_symlink() or chosen.parent.is_symlink()
+            or chosen.parent.parent.resolve() != candidate
+            or chosen.stat().st_size > 16 * 1024 * 1024):
+        raise LearningLedgerError("Unsafe native comparison for private learning.")
+    source = Path(str(job.get("csir") or "")).resolve()
+    if not source.is_file() or source.is_symlink():
+        raise LearningLedgerError("Native learning source CSIR missing.")
+    document = {
+        "kind": "cutsceneai.learning.measured_transfer",
+        "schema_version": "1",
+        "job_id": job_id,
+        "candidate_id": candidate_id,
+        "source_sha256": _sha(source),
+        "comparison_sha256": _sha(chosen),
+        "measured_reopened_status": measured["status"],
+        "source_provenance_status": assessment["checks"].get(
+            "source_and_plan", {}).get("status", "INCOMPLETE"),
+        "full_fidelity_verified": False,
+        "per_rule_success_attributed": False,
+        "eligible_for_training": False,
+        "requires_human_review": True,
+    }
+    folder = _dir(root, "learning/measured-outcomes", create=True)
+    target = folder / (job_id + "-" + document["comparison_sha256"][:16] + ".json")
+    serialized = json.dumps(document, indent=2, sort_keys=True) + "\n"
+    if target.exists():
+        if target.is_symlink() or target.read_text(encoding="utf-8") != serialized:
+            raise LearningLedgerError("Conflicting private native measurement record.")
+    else:
+        with target.open("x", encoding="utf-8") as stream:
+            stream.write(serialized)
+    return {"recorded": True, "status": "PRIVATE_MEASUREMENT_RECORDED",
+            "measured_reopened_status": measured["status"], "eligible_for_training": False}
+
+
 def report(workspace: Path, csir: Path | None = None) -> dict:
     """Read verified mapping suggestions, not learned executable commands."""
     trials_dir = _dir(workspace, "learning/trials")
