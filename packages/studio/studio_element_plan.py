@@ -314,3 +314,92 @@ def verify(plan: dict[str, Any], csir: dict[str, Any],
         count += actual["model_reviewed"]
     if type(plan.get("model_reviewed_count")) is not int or count != plan["model_reviewed_count"]:
         raise ElementPlanError("Element review count is inconsistent with exact source coverage.")
+
+
+
+def review_with_model(plan: dict[str, Any], *,
+                      provider: Any) -> tuple[dict[str, Any], list[str]]:
+    """Ask the configured AI to select an advisory action for EACH occurrence.
+
+    No raw Unity identifiers, component values or paths cross this API.
+    Full occurrence coverage and exact response membership are enforced for
+    every bounded request; model failures do not authorize native fallback.
+    """
+    if not isinstance(plan, dict) or plan.get("no_native_execution_permission") is not True:
+        raise ElementPlanError("Untrusted per-element plan cannot be sent to a model.")
+    source = plan.get("elements")
+    if not isinstance(source, list) or len(source) != plan.get("source_occurrence_count"):
+        raise ElementPlanError("Element plan lost occurrence inventory.")
+    if len(source) > MAX_MODEL_OCCURRENCES:
+        raise ElementPlanError(
+            "The selected cutscene exceeds the bounded per-element AI review "
+            "budget. Every element remains inventoried, but no native AI "
+            "submission is allowed until planning is paged durably."
+        )
+    if not callable(getattr(provider, "complete_json", None)):
+        raise ElementPlanError("Per-element planning requires a configured JSON model.")
+    output = plan
+    response_hashes: list[str] = []
+    for position in range(0, len(source), MODEL_BATCH_SIZE):
+        batch = source[position:position + MODEL_BATCH_SIZE]
+        payload = {
+            "source_occurrence_count": len(source),
+            "page_index": position // MODEL_BATCH_SIZE,
+            "elements": [{
+                "occurrence_id": item["occurrence_id"],
+                "ced": item["ced"],
+                "source_kind": item["source_kind"],
+                "state": item["state"],
+                "dependencies": item["dependencies"],
+                "unresolved_dependencies": item["unresolved_dependencies"],
+                "candidate_actions": item["candidate_actions"],
+                "missing_target_capabilities": item["missing_target_capabilities"],
+            } for item in batch],
+        }
+        result = provider.complete_json(
+            task="cutsceneai_element_conversion_choices",
+            instructions=(
+                "You are a read-only Unity-to-Unreal cinematic conversion "
+                "planner. For EACH source occurrence, choose exactly one "
+                "registered candidate native action or report_only. The "
+                "options are only conversion candidates; actual native "
+                "preflight, mapping and fidelity verification have not "
+                "happened. Choose report_only for unknown semantics, absent "
+                "actions, missing dependencies or uncertain feasibility. "
+                "Do not invent APIs, identifiers, code, project assets, "
+                "pathnames, conversions or execution results. Return only "
+                "the exact structured JSON choices."
+            ),
+            payload=payload,
+            schema={
+                "type": "object", "additionalProperties": False,
+                "properties": {
+                    "choices": {
+                        "type": "array",
+                        "items": {
+                            "type": "object", "additionalProperties": False,
+                            "properties": {
+                                "occurrence_id": {"type": "string"},
+                                "action": {"type": "string"},
+                            },
+                            "required": ["occurrence_id", "action"],
+                        },
+                    },
+                },
+                "required": ["choices"],
+            },
+        )
+        answer = getattr(result, "answer", None)
+        if not isinstance(answer, dict) or set(answer) != {"choices"}:
+            raise ElementPlanError("AI element review returned invalid top-level data.")
+        output = apply_choices(
+            output, answer["choices"],
+            expected_ids=[item["occurrence_id"] for item in batch],
+        )
+        digest = getattr(result, "response_sha256", None)
+        if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+            raise ElementPlanError("Agent element response is missing a bounded evidence digest.")
+        response_hashes.append(digest)
+    if output["model_reviewed_count"] != len(source):
+        raise ElementPlanError("AI model omitted part of the source cutscene.")
+    return output, response_hashes
