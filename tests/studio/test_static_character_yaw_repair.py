@@ -5,7 +5,6 @@ setter values come exclusively from recomputed approved source evidence.
 """
 from __future__ import annotations
 
-import copy
 import json
 import math
 import sys
@@ -123,6 +122,11 @@ class Actor:
     def get_components_by_class(self, _):
         return [self.component]
 
+    def set_actor_location(self, new, sweep, teleport):
+        assert sweep is False and teleport is True
+        self.location = [new.x, new.y, new.z]
+        return True
+
     def set_actor_rotation(self, new, teleport):
         assert teleport is True
         self.writes.append((new.pitch, new.yaw, new.roll))
@@ -170,6 +174,7 @@ def editor(actor, *, tracks=(), roots=()):
         Rotator=lambda pitch, yaw, roll: ns(
             pitch=pitch, yaw=yaw, roll=roll,
         ),
+        Vector=lambda x, y, z: ns(x=x, y=y, z=z),
         get_editor_subsystem=lambda _: ns(
             get_all_level_actors=lambda: [actor],
         ),
@@ -324,6 +329,7 @@ def test_native_yaw_rollback_prevents_partial_editor_mutation(
     assert actor.pitch == pytest.approx(0)
     assert actor.roll == pytest.approx(0)
     assert len(actor.writes) == 2
+    assert actor.location == pytest.approx([0, 0, 0])
 
 
 def test_native_yaw_agent_request_never_contains_model_authored_orientation(
