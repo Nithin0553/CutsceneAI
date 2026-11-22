@@ -125,7 +125,9 @@ def _caps(config: dict, worker: dict) -> tuple[bool, dict[str, bool]]:
                   or config.get("auto_create_level") is True))
     inventory = worker.get("scene_inventory") if connected else None
     observed = inventory.get("native_capabilities") if isinstance(inventory, dict) else None
-    if (not isinstance(observed, dict)
+    if (not isinstance(inventory, dict)
+            or inventory.get("available") is not True
+            or not isinstance(observed, dict)
             or any(type(observed.get(name)) is not bool for name in KNOWN_CAPABILITIES)):
         return False, {key: False for key in KNOWN_CAPABILITIES}
     return True, {key: observed[key] for key in KNOWN_CAPABILITIES}
@@ -376,6 +378,19 @@ def prepare(folder: Path, worker: dict) -> dict[str, Any]:
     elif _read(file) != report:
         raise ElementWorkflowError("Existing candidate Element 3 snapshot was modified.")
     pointer = {"candidate_id": report["candidate_id"], "workflow_sha256": digest}
+    previous_index = location / "element-readback-index.json"
+    if previous_index.exists():
+        prior = _read(previous_index)
+        if prior.get("workflow_sha256") != digest:
+            prior_sha = prior.get("index_sha256")
+            if not isinstance(prior_sha, str) or not HEX.fullmatch(prior_sha):
+                raise ElementWorkflowError("Previously saved readback index is corrupt.")
+            archived = location / ("element-readback-index-" + prior_sha + ".json")
+            if not archived.exists():
+                _write_new(archived, prior)
+            elif _read(archived) != prior:
+                raise ElementWorkflowError("Archived readback index was modified.")
+            previous_index.unlink()
     _atomic(location / "element-workflow-active.json", pointer)
     # An old acknowledgment or readback from another snapshot never carries
     # forward to the new capability/knowledge/source binding.
@@ -438,7 +453,10 @@ def verify_target(folder: Path, worker: dict, target_path: str) -> dict:
     _config, _candidate, location, _source, _mapping = _workspace(folder)
     if not isinstance(target_path, str) or not target_path.strip():
         raise ElementWorkflowError("Choose an existing Unreal CineTwin target JSON.")
-    target_file = Path(target_path).expanduser().resolve()
+    target_unresolved = Path(target_path).expanduser()
+    if target_unresolved.is_symlink():
+        raise ElementWorkflowError("Refusing a symlinked target observation.")
+    target_file = target_unresolved.resolve()
     target_digest = _sha_file(target_file, max_bytes=MAX_CAPTURE_BYTES)
     index = _index(folder, report)
     if (len(index["observations"]) >= MAX_STORED_REVIEWS
