@@ -236,17 +236,27 @@ def test_regrounded_verification_rejects_tampering_even_with_recomputed_digest()
         elements.verify(reviewed, source, knowledge, caps)
 
 
-def test_large_source_is_inventoried_but_model_review_budget_fails_closed():
+def test_large_source_is_fully_paged_without_silent_model_omissions():
     source = {"entities": [{"ced_type": "entity.camera"} for _ in range(257)]}
     caps = {"cine_camera_actor": True}
     knowledge = ced.retrieve_all(source, target_capabilities=caps)
     plan = elements.prepare(source, knowledge, caps)
     assert plan["source_occurrence_count"] == 257
+    seen = []
+
     class Model:
         def complete_json(self, **kwargs):
-            pytest.fail("Oversize model review must refuse before model invocation")
-    with pytest.raises(elements.ElementPlanError, match="budget"):
-        elements.review_with_model(plan, provider=Model())
+            seen.append(kwargs["payload"]["page_index"])
+            return SimpleNamespace(answer={"choices": [
+                {"occurrence_id": row["occurrence_id"], "action": "camera_setup"}
+                for row in kwargs["payload"]["elements"]
+            ]}, response_sha256="d" * 64)
+
+    reviewed, hashes = elements.review_with_model(plan, provider=Model())
+    assert seen == list(range(22))
+    assert len(hashes) == 22
+    assert reviewed["model_reviewed_count"] == 257
+    elements.verify(reviewed, source, knowledge, caps)
 
 
 def test_malformed_timeline_does_not_silently_disappear_from_inventory():
