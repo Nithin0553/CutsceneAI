@@ -14,9 +14,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "packages" / "studio"))
+sys.path.insert(0, str(ROOT / "integrations" / "unreal"))
 sys.path.insert(0, str(ROOT / "tests" / "studio"))
 
 import studio_element_native_execution as native
+import studio_element_native_gate as native_gate
 import studio_element_workflow as workflow
 from test_element_studio_workflow import _setup, _write
 
@@ -156,6 +158,7 @@ def test_exact_grant_is_checked_again_before_engine_mutation_and_receipted(tmp_p
     job = {
         "kind": "cutsceneai.studio.local_unreal_job",
         "job_id": job_id, "candidate_id": summary["candidate_id"],
+        "candidate_dir": str(location),
         "csir": config["csir"],
         "mapping": current["mapping_copy"],
         "sequence_path": current["sequence_path"],
@@ -164,6 +167,15 @@ def test_exact_grant_is_checked_again_before_engine_mutation_and_receipted(tmp_p
             approved["native_action_authorization_sha256"],
     }
     consent, manifest_again = workflow.verify_native_job(work, job)
+    native_permission, native_manifest = native_gate.verify_job(
+        work, job, worker["scene_inventory"]
+    )
+    assert native_permission == consent
+    assert native_manifest == manifest
+    changed_native = copy.deepcopy(worker["scene_inventory"])
+    changed_native["native_capabilities"]["cine_camera_actor"] = False
+    with pytest.raises(native_gate.NativeElementGateError, match="capability"):
+        native_gate.verify_job(work, job, changed_native)
     assert consent["action_count"] == 1
     assert manifest_again == manifest
     receipt_file = location / ("unreal-runtime-receipt-" + job_id + ".json")
@@ -175,6 +187,7 @@ def test_exact_grant_is_checked_again_before_engine_mutation_and_receipted(tmp_p
             workflow._active(work)["transfer_plan_sha256"],
     })
     recorded = workflow.record_native_job(work, job)
+    assert native_gate.record_job(work, job, worker["scene_inventory"]) == recorded
     assert recorded["action_count"] == 1
     assert recorded["native_builder_completed"] is True
     assert recorded["individual_native_action_readbacks_verified"] is False
