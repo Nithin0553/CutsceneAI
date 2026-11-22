@@ -540,7 +540,9 @@ def test_forged_workflow_hash_and_invalid_native_grant_not_accepted(tmp_path):
         readback.build(work, job["job_id"], folder)
     # A real source record cannot be substituted by an otherwise plausible
     # model/native authorization digest in a different candidate.
-    work, job, folder = _scenario(tmp_path / "separate", with_element3=True)
+    isolated = tmp_path / "separate"
+    isolated.mkdir()
+    work, job, folder = _scenario(isolated, with_element3=True)
     approval_path = folder.parent / "element-native-approval.json"
     approval = json.loads(approval_path.read_text())
     approval["approved_action_ids"] = ["A99999"]
