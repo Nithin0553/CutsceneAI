@@ -139,6 +139,7 @@ def route(
     transform_repair_evidence: dict[str, Any] | None = None,
     camera_lens_repair_evidence: dict[str, Any] | None = None,
     camera_cut_repair_evidence: dict[str, Any] | None = None,
+    camera_position_repair_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Choose *admissible strategies*, not a repair or an engine operation.
 
@@ -212,7 +213,27 @@ def route(
             "camera_cut_repair_sha256"
         ), str)
     )
-    if camera_cut_eligible:
+    camera_position_eligible = bool(
+        intent["mode"] == "user_feedback"
+        and domains in (["camera", "transform"], ["camera"])
+        and generation_complete and completed_repairs < repair_budget
+        and isinstance(camera_position_repair_evidence, dict)
+        and camera_position_repair_evidence.get("eligible") is True
+        and camera_position_repair_evidence.get("kind")
+        == "cutsceneai.studio.static_camera_position_review"
+        and isinstance(camera_position_repair_evidence.get(
+            "camera_position_repair_sha256"), str)
+    )
+    if camera_position_eligible:
+        disposition = "GUARDED_STATIC_CAMERA_PLACEMENT_AVAILABLE"
+        reason = (
+            "An exact-source, single CineCamera has a constant sampled world "
+            "offset with matching rotation and scale. The editor must check "
+            "native Sequencer ownership, staged camera identity, live base "
+            "transform and explicit current user consent before one edit."
+        )
+        allowed = ["report_only", "restore_static_camera_position"]
+    elif camera_cut_eligible:
         disposition = "GUARDED_ONE_CAMERA_CUT_TIMING_AVAILABLE"
         reason = (
             "An exact-source frame-aligned single camera cut was observed "
@@ -290,7 +311,7 @@ def route(
         "safe_strategies": allowed,
         "requires_editor_receipt": (
             eligibility or transform_eligible or camera_eligible
-            or camera_cut_eligible
+            or camera_cut_eligible or camera_position_eligible
         ),
         "user_observation_verified": False,
         "native_fidelity_verified": False,
