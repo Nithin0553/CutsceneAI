@@ -68,37 +68,82 @@ def _safe_ticket(request_id: str) -> str:
 
 
 def editor_status(project_root: str | Path) -> dict:
-    """Read-only Unity presence bound to the selected project and editor PID.
+    """Read-only project-scoped Unity presence, with actionable diagnostics.
 
-    Unity automatically resumes its bridge polling after C# domain reloads.
-    This marker is diagnostic, never authority to generate an Unreal asset or
-    to accept source capture without its separately hashed request receipt.
+    A heartbeat is diagnostic only; it cannot authorize native extraction,
+    replace request receipts or attest cutscene fidelity.
     """
-    offline = {"connected": False, "status": "WAITING_FOR_UNITY_EDITOR"}
+    offline = {
+        "connected": False,
+        "status": "WAITING_FOR_UNITY_EDITOR",
+        "next_action": (
+            "Open the exact selected Unity project and enable Tools > "
+            "CutsceneAI > Studio Bridge > Enable Source Bridge. "
+            "The bridge must write CutSceneAI/StudioBridge/unity-editor.json."
+        ),
+    }
     try:
         root = _root(project_root)
         marker = _bridge(root) / "unity-editor.json"
         if not marker.is_file():
             return offline
         record = _load(marker, 4096)
+        version = record.get("bridge_version")
+        if version != "unity-editor-v0.3":
+            return {
+                "connected": False, "status": "UNSUPPORTED_UNITY_BRIDGE_VERSION",
+                "bridge_version": str(version or "UNKNOWN")[:80],
+                "next_action": (
+                    "Unity is running an incompatible source bridge. Verify "
+                    "Package Manager points to the current repository package "
+                    "and let Unity recompile before re-enabling it."
+                ),
+            }
+        if record.get("source_bridge_enabled") is not True:
+            return {
+                "connected": False, "status": "UNITY_SOURCE_BRIDGE_DISABLED",
+                "next_action": (
+                    "Enable Source Bridge in this exact Unity project. "
+                    "Bridge consent is intentionally project-scoped."
+                ),
+            }
         if (record.get("kind") != "cutsceneai.unity.editor_presence"
                 or record.get("schema_version") != "1"
-                or record.get("source_bridge_enabled") is not True
-                or record.get("bridge_version") != "unity-editor-v0.2"
                 or type(record.get("editor_pid")) is not int
                 or record["editor_pid"] <= 0
                 or record.get("editor_mode") not in ("PLAY_MODE", "EDIT_MODE")):
-            return {"connected": False, "status": "INVALID_OR_DISABLED_UNITY_BRIDGE"}
+            return {
+                "connected": False, "status": "INVALID_OR_DISABLED_UNITY_BRIDGE",
+                "next_action": (
+                    "Unity's heartbeat fields are invalid. Confirm the Unity "
+                    "Editor compiled the current bridge package."
+                ),
+            }
         reported = record.get("project_root")
         if (not isinstance(reported, str) or not Path(reported).is_absolute()
                 or Path(reported).resolve() != root):
-            return {"connected": False, "status": "WRONG_UNITY_PROJECT"}
+            return {
+                "connected": False, "status": "WRONG_UNITY_PROJECT",
+                "next_action": (
+                    "Studio is reading a heartbeat for another Unity project. "
+                    "Check the folder chosen in Studio matches the open Editor."
+                ),
+            }
         tick = datetime.fromisoformat(str(record["heartbeat"]).replace("Z", "+00:00"))
         if tick.tzinfo is None:
-            return {"connected": False, "status": "INVALID_UNITY_HEARTBEAT"}
+            return {
+                "connected": False, "status": "INVALID_UNITY_HEARTBEAT",
+                "next_action": "Unity's bridge heartbeat timestamp is invalid.",
+            }
         age = (datetime.now(timezone.utc) - tick).total_seconds()
         if not 0 <= age < 8:
-            return {"connected": False, "status": "UNITY_COMPANION_RELOADING_OR_OFFLINE"}
+            return {
+                "connected": False, "status": "UNITY_COMPANION_RELOADING_OR_OFFLINE",
+                "next_action": (
+                    "The Unity heartbeat is stale. Check the Unity Console "
+                    "for bridge file-write errors or a script-compilation failure."
+                ),
+            }
         return {
             "connected": True, "status": "CONNECTED",
             "project_root": str(root), "editor_pid": record["editor_pid"],
@@ -108,8 +153,13 @@ def editor_status(project_root: str | Path) -> dict:
             "restart_required": False,
         }
     except (OSError, ValueError, KeyError, TypeError, RuntimeError, UnityBridgeError):
-        return {"connected": False, "status": "INVALID_UNITY_BRIDGE_HEARTBEAT"}
-
+        return {
+            "connected": False, "status": "INVALID_UNITY_BRIDGE_HEARTBEAT",
+            "next_action": (
+                "The Unity heartbeat is malformed or cannot be read. "
+                "Check project permissions and the StudioBridge directory."
+            ),
+        }
 
 def request_snapshot(project_root: str | Path) -> dict:
     """Create one immutable export request, never start Unity or execute code."""
@@ -139,7 +189,11 @@ def request_snapshot(project_root: str | Path) -> dict:
     }
 
 
-def _evidence(root: Path, relative_path: object, expected_sha: object, suffix: str) -> str:
+def _evidence(
+    root: Path, relative_path: object, expected_sha: object, suffix: str,
+    *, limit: int = 128 * 1024 * 1024,
+) -> str:
+    """Verify bounded evidence in streaming chunks before parsing large JSON."""
     if not isinstance(relative_path, str) or not relative_path or "\\" in relative_path:
         raise UnityBridgeError("Invalid source evidence location.")
     raw = Path(relative_path)
@@ -152,10 +206,25 @@ def _evidence(root: Path, relative_path: object, expected_sha: object, suffix: s
         raise UnityBridgeError("Incorrect Unity evidence file format.")
     if not isinstance(expected_sha, str) or SHA_RE.fullmatch(expected_sha) is None:
         raise UnityBridgeError("Missing source evidence digest.")
-    if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha:
+    size = path.stat().st_size
+    if not 0 < size <= limit:
+        raise UnityBridgeError(
+            "Unity evidence exceeds the bounded " +
+            str(limit // (1024 * 1024)) + " MiB source file limit or is empty."
+        )
+    digest = hashlib.sha256()
+    hashed_bytes = 0
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            hashed_bytes += len(chunk)
+            if hashed_bytes > limit:
+                raise UnityBridgeError("Unity evidence grew beyond its safe size limit while hashing.")
+            digest.update(chunk)
+    if hashed_bytes != size or path.stat().st_size != size:
+        raise UnityBridgeError("Unity evidence size changed during validation.")
+    if digest.hexdigest() != expected_sha:
         raise UnityBridgeError("Unity evidence has changed since export.")
     return str(path.resolve())
-
 
 def snapshot_status(project_root: str | Path, request_id: str) -> dict:
     """Validate a native Unity receipt and both immutable evidence hashes."""
@@ -183,13 +252,15 @@ def snapshot_status(project_root: str | Path, request_id: str) -> dict:
     census = _evidence(root, receipt.get("census_path"), receipt.get("census_sha256"), ".json")
     source_document = _load(Path(csir), limit=128 * 1024 * 1024)
     census_document = _load(Path(census), limit=128 * 1024 * 1024)
-    if (source_document.get("schema_version") != "0.1.0"
-            or source_document.get("source", {}).get("engine") != "unity"):
+    source_identity = source_document.get("source")
+    if (not isinstance(source_identity, dict)
+            or source_document.get("schema_version") != "0.1.0"
+            or source_identity.get("engine") != "unity"):
         raise UnityBridgeError("Exported CSIR is not a supported Unity source document.")
     if (census_document.get("kind") != "cutsceneai.engine.feature_surface"
             or census_document.get("engine") != "unity"):
         raise UnityBridgeError("Exported source census is not a Unity feature surface.")
-    fingerprint = source_document.get("source", {}).get("project_fingerprint")
+    fingerprint = source_identity.get("project_fingerprint")
     if (not isinstance(fingerprint, str) or not fingerprint
             or fingerprint != census_document.get("project_fingerprint")):
         raise UnityBridgeError("CSIR and census source project identity do not match.")
@@ -288,7 +359,10 @@ def behavior_capture_status(project_root: str | Path, capture_request_id: str) -
     expected_plan = "CutSceneAI/StudioBridge/evidence/" + ticket + ".cinetwin.sampling-plan.json"
     if request.get("plan_path") != expected_plan:
         raise UnityBridgeError("Unexpected source CineTwin plan path.")
-    plan_path = _evidence(root, expected_plan, request.get("plan_sha256"), ".cinetwin.sampling-plan.json")
+    plan_path = _evidence(
+        root, expected_plan, request.get("plan_sha256"),
+        ".cinetwin.sampling-plan.json", limit=8 * 1024 * 1024,
+    )
     receipt_path = bridge / "receipts" / (ticket + ".json")
     if not receipt_path.exists():
         return {

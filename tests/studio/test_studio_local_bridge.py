@@ -776,7 +776,7 @@ def test_connected_source_status_recovers_automatically_after_unity_domain_reloa
         "schema_version": "1", "project_root": str(project.resolve()),
         "heartbeat": datetime.datetime.now(datetime.UTC).isoformat(),
         "editor_pid": 1234, "source_bridge_enabled": True,
-        "editor_mode": "EDIT_MODE", "bridge_version": "unity-editor-v0.2",
+        "editor_mode": "EDIT_MODE", "bridge_version": "unity-editor-v0.3",
     })
     assert bridge._unity_live_status(work)["connected"] is True
     bridge.atomic_json(marker, {

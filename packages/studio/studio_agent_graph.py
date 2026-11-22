@@ -112,24 +112,65 @@ def _source_materials(candidate: Path) -> bool:
 
 
 def _ced_policy() -> dict[str, Any]:
-    """Use the checked-in CED taxonomy as vocabulary, never free-form actions."""
-    path = (Path(__file__).resolve().parents[2] /
-            "packages/contracts/dictionary/cutscene-elements-v0.2.json")
-    if not path.is_file():
-        raise AgentError("CED taxonomy is unavailable.")
+    """Compatibility-only taxonomy view for earlier research checks.
+
+    Model prompts now use _ced_knowledge_for_agent instead of the flat list.
+    """
+    path = Path(__file__).resolve().parents[1] / (
+        "contracts/dictionary/cutscene-elements-v0.2.json"
+    )
     document = _json(path)
     categories = document.get("categories") or {}
-    names = ("material", "texture", "shader", "animation", "character",
-             "transform", "camera", "light", "environment", "event",
-             "audio", "render", "scene", "relationship")
+    names = (
+        "material", "texture", "shader", "animation", "character",
+        "transform", "camera", "light", "environment", "event",
+        "audio", "render", "scene", "relationship",
+    )
     return {
         "ced_version": document.get("version"),
         "categories": {
-            name: categories.get(name, [])[:18]
-            for name in names if isinstance(categories.get(name), list)
+            name: categories[name][:18] for name in names
+            if isinstance(categories.get(name), list)
         },
     }
 
+
+def _ced_knowledge_for_agent(workspace: Path, job: dict[str, Any]) -> dict[str, Any]:
+    """Retrieve job-specific CED rules; do not dump the complete taxonomy.
+
+    A missing source yields an explicit gap. It does not grant repair rights
+    or replace the independently measured CineTwin/native audit.
+    """
+    source_file = job.get("csir")
+    if not isinstance(source_file, str) or not source_file:
+        return {"status": "SOURCE_SEMANTIC_EVIDENCE_UNAVAILABLE", "entries": []}
+    import ced_agent_knowledge
+    source = _json(Path(source_file))
+    target_caps = job.get("native_capabilities")
+    if not isinstance(target_caps, dict):
+        target_caps = {}
+    result = ced_agent_knowledge.retrieve(
+        source, target_capabilities=target_caps,
+        source_version=str(
+            (source.get("source") if isinstance(source.get("source"), dict) else
+             {}).get("engine_version") or ""
+        ),
+        target_version=str(job.get("target_engine_version") or ""),
+        approved_store=workspace.parent / "ced-knowledge",
+        case_store=workspace / "learning" / "approved-cases",
+    )
+    public = ced_agent_knowledge.model_projection(result)
+    # Retrieval is advisory: all native permission checks run later. This
+    # prompt sees only anonymized unknown classes and private case aliases.
+    return {
+        "status": "RETRIEVED_CED_EVIDENCE_UNVERIFIED",
+        "knowledge_sha256": result["knowledge_sha256"],
+        "source_ced_count": result["source_ced_count"],
+        "entries": public["entries"][:12],
+        "private_verified_case_suggestions": public["private_verified_case_suggestions"][:3],
+        "privacy_projection": public["privacy_projection"],
+        "no_native_write_permission": True,
+    }
 
 def _approved_precedents(workspace: Path, job: dict[str, Any]) -> list[dict[str, Any]]:
     """Give the reasoning model *redacted* verified CED mapping precedents.
@@ -224,46 +265,43 @@ def _approved_ced_rulebook_precedents(workspace: Path, job: dict[str, Any]) -> l
 
 
 def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise AgentError("OPENAI_API_KEY is not configured in the local Studio process.")
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
-        raise AgentError('Install python -m pip install "langgraph>=1.0,<2" "openai>=2,<3" in Studio Python.') from exc
-    # Only the diagnostic summary is sent, never source asset bytes, paths,
-    # API keys, user scripts or arbitrary file content.
-    response = OpenAI(timeout=25.0, max_retries=0).responses.create(
-        model=os.environ.get("CUTSCENEAI_AGENT_MODEL", "gpt-5-mini"),
+    """Use the same local/cloud model policy as the conversion planning agent."""
+    import studio_model_provider as provider
+    response = provider.complete_json(
+        task="cutsceneai_agent_choice",
         instructions=(
-            "You are a diagnostic repair selector in CutSceneAI Studio. "
-            "A user's natural-language observation is unverified until independent "
-            "native readback confirms the relevant discrepancy. Never edit a "
-            "different semantic domain merely because it has a detected issue. "
-            "Return only JSON. Choose strategy restore_source_albedo ONLY if "
-            "that strategy is eligible from independently verified source GUID "
-            "texture provenance and current Unreal character fallback slots; "
-            "otherwise choose report_only. Choose restore_constant_actor_offset ONLY "
-            "when safe_strategies includes it for a single user-named character "
-            "world-position correction; Unreal must independently remeasure it. "
-            "Do not create new commands or claim "
-            "full visual/animation/camera/audio parity. The deterministic "
-            "executor independently validates every action."
+            "You are CutSceneAI's diagnostic repair agent. Analyze the bounded "
+            "native CineTwin discrepancy, user feedback, installed adapters and "
+            "retrieved CED knowledge. The knowledge base is advisory and does "
+            "not grant engine write privileges. A user's observation is "
+            "unverified until native readback confirms it. Choose only from "
+            "the listed independently safe repair options. "
+            "restore_source_albedo requires known Unity material provenance "
+            "and measured Unreal fallback slots. "
+            "restore_constant_actor_offset requires exact one-character "
+            "source/target world-position evidence and independent native "
+            "remeasurement. If evidence is insufficient or the discrepancy "
+            "is outside an installed repair adapter, choose report_only. "
+            "Never invent engine commands, source paths, executable code, "
+            "new mapping rules, or claims of visual/skeletal parity."
         ),
-        input="Evaluate this bounded CED/CineTwin evidence and output JSON: " +
-              json.dumps(summary, sort_keys=True)[:12000],
-        text={"format": {"type": "json_schema", "name": "cutsceneai_agent_choice",
-                         "strict": True, "schema": {
-                             "type": "object", "additionalProperties": False,
-                             "properties": {
-                                 "strategy": {"type": "string", "enum": sorted(ALLOWED_STRATEGIES)},
-                                 "reason": {"type": "string"},
-                             },
-                             "required": ["strategy", "reason"],
-                         }}},
+        payload={"diagnostic_summary": summary},
+        schema={
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "strategy": {"type": "string", "enum": sorted(ALLOWED_STRATEGIES)},
+                "reason": {"type": "string"},
+            },
+            "required": ["strategy", "reason"],
+        },
     )
-    result = json.loads(response.output_text)
-    return {"strategy": result["strategy"], "reason": result["reason"]}
-
+    answer = response.answer
+    if (answer.get("strategy") not in ALLOWED_STRATEGIES
+            or not isinstance(answer.get("reason"), str)
+            or len(answer["reason"]) > 1200
+            or set(answer) != {"strategy", "reason"}):
+        raise AgentError("Model returned a malformed or unregistered repair strategy.")
+    return {"strategy": answer["strategy"], "reason": answer["reason"]}
 
 def _current_user_feedback(candidate: Path, job: dict[str, Any]) -> dict[str, Any] | None:
     """Read an immutable, job-bound user correction without authorizing execution."""
@@ -407,7 +445,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
 
     def reason(state: AgentState) -> dict[str, Any]:
         summary = {
-            "ced_taxonomy": _ced_policy(),
+            "ced_knowledge": _ced_knowledge_for_agent(workspace, job),
             "component_adapter_catalog": state.get("component_adapter_catalog", [])[:32],
             "unreal_character_fallback_slots": state["last_fallback"],
             "source_guid_backed_albedo": _source_materials(candidate),
