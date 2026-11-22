@@ -16,6 +16,7 @@ from typing import Any
 from contracts import ContractError, validate_manifest
 from semantic_graph import SemanticGraphError, analyze
 from strategy_recipes import StrategyRecipeError, from_rule as recipe_from_rule
+from strategy_ranking import load_feedback, rank_rules, similar_known
 
 PACKAGES = Path(__file__).resolve().parents[1]
 DICTIONARY = PACKAGES / "contracts" / "dictionary"
@@ -193,6 +194,7 @@ def retrieve(
     csir: dict[str, Any], *, target_capabilities: dict[str, Any],
     source_version: str = "", target_version: str = "",
     approved_store: Path | None = None, case_store: Path | None = None,
+    feedback_store: Path | None = None,
     source_capabilities: dict[str, Any] | None = None,
     page: int = 0, page_size: int = 48,
 ) -> dict[str, Any]:
@@ -217,6 +219,7 @@ def retrieve(
     if len(graph.counts) > MAX_CONCEPTS:
         raise KnowledgeServiceError("Too many distinct source semantics for bounded retrieval.")
     manifest, known, baseline, actions = _baseline()
+    feedback = load_feedback(feedback_store)
     approved = _local_rules(approved_store)
     # Keep the shared and private sources distinct even when a rule ID
     # collides. Approval loaders independently reject conflicting rules.
@@ -264,11 +267,10 @@ def retrieve(
                 "runtime_execution_authorized": False,
             }
             matches.append(item)
-        matches.sort(key=lambda item: (
-            item["status"] != "RULE_CANDIDATE_REQUIRES_PREFLIGHT",
-            item["origin"] != "LOCAL_REVIEWED_NATIVE_MAPPING",
-            str(item["rule_id"]),
-        ))
+        matches = rank_rules(
+            matches, ced=ced, source_version=source_version,
+            target_version=target_version, feedback=feedback, relations=relations,
+        )
         entries.append({
             "ced": ced, "source_occurrences": count,
             "semantic_known": ced in known,
@@ -277,6 +279,9 @@ def retrieve(
             "rules": matches[:MAX_RULES_PER_CONCEPT],
             "rules_omitted_count": max(0, len(matches) - MAX_RULES_PER_CONCEPT),
             "native_action_candidates": native[:6],
+            "unknown_investigation": (
+                similar_known(ced, known) if ced not in known else []
+            ),
             "resolution_state": (
                 "UNKNOWN_SEMANTIC_INVESTIGATE" if ced not in known else
                 "RETRIEVED_CANDIDATES_NEED_NATIVE_PREFLIGHT" if matches or native
@@ -291,6 +296,7 @@ def retrieve(
         "baseline_release_id": manifest["release_id"],
         "baseline_manifest_sha256": _digest(manifest),
         "rule_index_sha256": _digest(rules),
+        "feedback_ledger_sha256": _digest(feedback),
         "source_ced_count": len(ordered),
         "source_occurrence_count": graph.occurrence_count,
         "relationship_count": graph.edge_count,
@@ -322,6 +328,7 @@ def retrieve_all(
     csir: dict[str, Any], *, target_capabilities: dict[str, Any],
     source_version: str = "", target_version: str = "",
     approved_store: Path | None = None, case_store: Path | None = None,
+    feedback_store: Path | None = None,
     source_capabilities: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Inspect all source CED concepts without silently discarding pages.
@@ -336,6 +343,7 @@ def retrieve_all(
         "target_version": target_version,
         "approved_store": approved_store,
         "case_store": case_store,
+        "feedback_store": feedback_store,
         "source_capabilities": source_capabilities,
         "page_size": MAX_PAGE_SIZE,
     }
@@ -344,7 +352,8 @@ def retrieve_all(
     page_digests = [first["knowledge_sha256"]]
     keys = (
         "baseline_manifest_sha256", "coverage_ledger_sha256",
-        "rule_index_sha256", "source_occurrence_count", "source_ced_count",
+        "rule_index_sha256", "feedback_ledger_sha256",
+        "source_occurrence_count", "source_ced_count",
     )
     for page in range(1, first["page_count"]):
         subsequent = retrieve(csir, page=page, **options)
