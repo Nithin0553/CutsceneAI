@@ -16,6 +16,7 @@ from typing import Any
 
 import studio_element7_readback as readback
 import studio_element8_repair as repair
+import studio_element9_outcome as outcome
 
 KIND = "cutsceneai.studio.static_camera_lens_review"
 MAX_FOV_DELTA = 35.0
@@ -30,6 +31,12 @@ _USER_FIX = re.compile(r"\b(?:fix|repair|correct|adjust|restore)\b", re.IGNORECA
 _USER_NEGATE = re.compile(r"\b(?:do not|don't|dont|without)\s+"
                           r"(?:modify|edit|change|fix|repair|correct|adjust)",
                           re.IGNORECASE)
+# The user must request ONLY static lens correction, not a multi-domain shot,
+# camera cut or animation rewrite that this single component cannot solve.
+_UNSUPPORTED_REQUEST = re.compile(
+    r"\b(?:cuts?|shots?|timing|switch|switching|blend|blending|"
+    r"animation|animate|keyframes?|movement|moving|rotate|rotation)\b", re.I,
+)
 
 
 class CameraLensEvidenceError(ValueError):
@@ -53,23 +60,27 @@ def message_requests_lens(message: Any) -> bool:
     return (
         isinstance(message, str) and 0 < len(message) <= 1200
         and bool(_USER_LENS.search(message) and _USER_FIX.search(message))
-        and not bool(_USER_NEGATE.search(message))
+        and not bool(_USER_NEGATE.search(message)
+                     or _UNSUPPORTED_REQUEST.search(message))
         and "\x00" not in message
     )
 
 
-def _latest_folders(candidate: Path) -> list[Path]:
-    evidence = sorted(
-        candidate.glob("native-acceptance-*/element7-readback.json"),
-        key=lambda path: (path.stat().st_mtime_ns, path.parent.name),
-    )
-    if (not evidence or len(evidence) > repair.MAX_OBSERVATIONS
-            or any(path.is_symlink() or path.parent.is_symlink()
-                   for path in evidence)):
+def _latest_folders(workspace: Path, job_id: str) -> list[Path]:
+    # The canonical Element 9 discoverer refuses partial native folders.
+    # Filtering only files ending in 'element7-readback.json' would silently
+    # ignore a failed/incomplete capture and reuse an older clean baseline.
+    try:
+        folders = outcome.discover(workspace, job_id)
+    except (outcome.OutcomeError, OSError, ValueError) as exc:
         raise CameraLensEvidenceError(
-            "A bounded, independently reconstructable reopened CineTwin capture is required."
+            "Native camera baseline includes incomplete or foreign captures."
+        ) from exc
+    if not folders:
+        raise CameraLensEvidenceError(
+            "A source-bound reopened CineTwin capture is required."
         )
-    return [path.parent for path in evidence]
+    return folders
 
 
 def build(workspace: Path, job: dict[str, Any]) -> dict[str, Any]:
@@ -86,7 +97,7 @@ def build(workspace: Path, job: dict[str, Any]) -> dict[str, Any]:
     )
     if job != canonical:
         raise CameraLensEvidenceError("Native job changed before camera review.")
-    folders = _latest_folders(candidate)
+    folders = _latest_folders(root, job_id)
     try:
         bounded = repair.build(root, job_id, folders)
         native = readback.build(root, job_id, folders[-1])
@@ -236,7 +247,6 @@ def build(workspace: Path, job: dict[str, Any]) -> dict[str, Any]:
 
 
 def _context(workspace: Path, job_id: str):
-    import studio_element9_outcome as outcome
     try:
         return outcome._context(workspace, job_id)
     except (outcome.OutcomeError, KeyError, TypeError, OSError) as exc:
