@@ -408,6 +408,67 @@ def compose(
                         "do not recreate Unity GameObject enable/disable, collision, "
                         "script callbacks or post-playback activation semantics."
                     )
+                elif (capture is not None and entity is not None
+                      and entity.get("ced_type") == "entity.camera"
+                      and track.get("ced_type") == "camera.transform"
+                      and entity.get("name") in mapping.get("entities", {})):
+                    # Unity's sampled/EVALUATED actor world trajectory is
+                    # authoritative even if its local source curves do not
+                    # reveal a safe world origin or camera rig baseline.
+                    # Never require a speculative native local-curve plan
+                    # before trusting independently validated CineTwin poses.
+                    camera_keys = _world_keys(csir, capture, entity)
+                    native_actions = [{
+                        "kind": "transform",
+                        "entity_name": entity["name"],
+                        "actor_label": str(
+                            mapping["entities"][entity["name"]]["actor_label"]
+                        ),
+                        "track_name": "CutSceneAI Evaluated Camera World Motion",
+                        "keys": camera_keys,
+                        "baked_source_curves": True,
+                        "source_behavior_strategy": "verified_cinetwin_camera_world_pose",
+                    }]
+                    # FOV is a separate camera component owner. If its
+                    # authored curve is present, preserve exactly observed
+                    # source camera lens samples instead of dropping FOV when
+                    # local transform source metadata is incomplete.
+                    animated_lens = any(
+                        str(curve.get("canonical_semantic") or "")
+                        == "camera.vertical_fov_degrees"
+                        or str(curve.get("property_name") or "").lower()
+                        == "field of view"
+                        for section in track.get("sections", [])
+                        for curve in section.get(
+                            "payload", {}
+                        ).get("animation", {}).get("curves", [])
+                        if isinstance(curve, dict)
+                    )
+                    if animated_lens:
+                        camera_metadata = entity.get("metadata", {}).get("camera", {})
+                        native_actions.append({
+                            "kind": "camera_fov",
+                            "entity_name": entity["name"],
+                            "actor_label": str(
+                                mapping["entities"][entity["name"]]["actor_label"]
+                            ),
+                            "source_fov_axis": "vertical",
+                            "target_output_aspect": plan["output_aspect"],
+                            "observed_source_aspect":
+                                camera_metadata.get("aspect"),
+                            "keys": _scalar_bake_keys(
+                                csir, capture, entity,
+                                component_name="camera",
+                                field_name="vertical_fov_degrees",
+                            ),
+                            "baked_source_curves": True,
+                        })
+                    status = "BAKED_PARTIAL"
+                    reasons.append(
+                        "Source-authenticated Unity evaluated CineTwin world "
+                        "camera poses take precedence over local source curves; "
+                        "native Sequencer and rendered shot parity remain unverified."
+                    )
                 else:
                     native_actions = _native_track(csir, mapping, track)
                 scalar_actions = scalar_property_adapter.build_actions(
@@ -439,35 +500,6 @@ def compose(
                     reasons.append(
                         "Explicit source-linear scalar property keys converted to editable "
                         "target track candidates; native readback and behavioral parity unverified."
-                    )
-                if (capture is not None and entity is not None
-                    and entity.get("ced_type") == "entity.camera"
-                    and track.get("ced_type") == "camera.transform"
-                    and entity.get("name") in mapping.get("entities", {})
-                    and any(action.get("kind") == "transform" for action in native_actions)):
-                    # Curves can be editor/parent-local even when they look like
-                    # world motion. A verified CineTwin capture is the source
-                    # ground truth; use its evaluated world camera trajectory,
-                    # keeping native FOV and camera-cut actions independent.
-                    world_keys = _world_keys(csir, capture, entity)
-                    native_actions = [
-                        action for action in native_actions
-                        if action.get("kind") != "transform"
-                    ]
-                    native_actions.append({
-                        "kind": "transform",
-                        "entity_name": entity["name"],
-                        "actor_label": str(mapping["entities"][entity["name"]]["actor_label"]),
-                        "track_name": "CutSceneAI Evaluated Camera World Motion",
-                        "keys": world_keys,
-                        "baked_source_curves": True,
-                        "source_behavior_strategy": "verified_cinetwin_camera_world_pose",
-                    })
-                    status = "BAKED_PARTIAL"
-                    reasons.append(
-                        "Verified CineTwin world-camera trajectory replaces unverified "
-                        "native/local curves; source-sampled world position and orientation "
-                        "only, without image/FOV/render fidelity claim."
                     )
                 if native_actions and status != "BAKED_PARTIAL":
                     status = "NATIVE_UNVERIFIED"
