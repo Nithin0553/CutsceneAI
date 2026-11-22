@@ -64,13 +64,24 @@ def test_unregistered_or_foreign_source_native_actions_fail_closed(tmp_path):
     for action, expected in [
         ({"kind": "execute_python"}, "builder"),
         ({"kind": "camera_setup", "source_location": "entities[999]"}, "foreign"),
-        ({"kind": "audio", "source_location": "entities[1]"}, "registered"),
         ({"kind": "camera_setup", "source_location": "entities[1]",
           "source_ced": "Vendor.SecretProperty"}, "semantic"),
     ]:
         with pytest.raises(ValueError, match=expected):
             native.inventory({"sequence_asset_path": "/Game/Demo/LS_Trial",
                               "actions": [action]}, report)
+    unavailable = native.inventory({
+        "sequence_asset_path": "/Game/Demo/LS_Trial",
+        "actions": [{"kind": "audio", "source_location": "entities[1]"}],
+    }, report)
+    assert unavailable["blocked_action_count"] == 1
+    assert unavailable["actions"][0]["native_action_eligible"] is False
+    with pytest.raises(native.ElementNativeExecutionError, match="source-blocked"):
+        native.authorize(
+            unavailable, candidate_id="20261121T183000Z_deadbeef",
+            workflow_sha256="a" * 64, transfer_plan_sha256="b" * 64,
+            approved_action_ids=["A00000"], accept_legacy_unattributed=False,
+        )
 
 
 def test_separate_native_approval_covers_exact_actions_and_legacy_unattributed(tmp_path):
@@ -241,7 +252,7 @@ def test_worker_checks_action_grant_before_editor_mutation():
     assert worker.index("studio_element_native_gate.verify_job(") < (
         worker.index("_ensure_target_level(job)", worker.index("def _execute(job):"))
     )
-    assert worker.index("studio_element_workflow.verify_native_job(WORKSPACE, job)") < (
+    assert worker.index("studio_element_native_gate.verify_job(") < (
         worker.index("studio_auto_scene.run(")
     )
     assert worker.index("studio_element_native_gate.record_job(") > (
