@@ -25,7 +25,7 @@ MAX_USER_COMMENT = 1200
 ALLOWED_STRATEGIES = {
     "restore_source_albedo", "restore_constant_actor_offset",
     "restore_static_camera_lens", "restore_single_camera_cut_timing",
-    "report_only",
+    "restore_static_camera_position", "report_only",
 }
 
 
@@ -57,6 +57,7 @@ class AgentState(TypedDict, total=False):
     element8_review: dict[str, Any]
     camera_lens_candidate: dict[str, Any]
     camera_cut_candidate: dict[str, Any]
+    camera_position_candidate: dict[str, Any]
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -429,6 +430,21 @@ def build_graph(workspace: Path, job: dict[str, Any],
         transform_proof = None
         camera_proof = None
         cut_proof = None
+        camera_position_proof = None
+        if comment:
+            import studio_camera_position_evidence
+            if studio_camera_position_evidence.message_requests_position(user_message):
+                try:
+                    camera_position_proof = studio_camera_position_evidence.build(
+                        workspace, job,
+                    )
+                except (studio_camera_position_evidence.StaticCameraPositionError,
+                        ValueError, OSError, KeyError, TypeError) as exc:
+                    camera_position_proof = {
+                        "eligible": False,
+                        "reason": "No exact-source static camera placement proof: "
+                                  + str(exc)[:200],
+                    }
         if comment and agent_intent_router.recognize(user_message)["domains"] == ["camera"]:
             import studio_camera_lens_evidence
             if studio_camera_lens_evidence.message_requests_lens(user_message):
@@ -482,6 +498,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 transform_repair_evidence=transform_proof,
                 camera_lens_repair_evidence=camera_proof,
                 camera_cut_repair_evidence=cut_proof,
+                camera_position_repair_evidence=camera_position_proof,
                 adapter_catalog=feedback.get("component_adapter_catalog"),
                 fallback_observation_scope=(
                     "character" if "character_material_slots_engine_default" in visual
@@ -521,6 +538,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "transform_candidate": transform_proof or {},
             "camera_lens_candidate": camera_proof or {},
             "camera_cut_candidate": cut_proof or {},
+            "camera_position_candidate": camera_position_proof or {},
             "element8_review": element8 or {},
         }
         if not issues:
@@ -581,6 +599,16 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 "native_edit_authorized": False,
                 "rendered_shot_equivalence_verified": False,
             },
+            "verified_camera_position_candidate": {
+                "eligible": bool(
+                    state.get("camera_position_candidate", {}).get("eligible")
+                ),
+                "source_occurrence_id": state.get(
+                    "camera_position_candidate", {},
+                ).get("source_camera_occurrence_id"),
+                "native_edit_authorized": False,
+                "reopened_cinetwin_verified": False,
+            },
             "element8_native_readback": state.get("element8_review", {}),
         }
         try:
@@ -615,6 +643,15 @@ def build_graph(workspace: Path, job: dict[str, Any],
         ):
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
                     "failure": "Transform proposal was not independently authorized.",
+                    "chosen_strategy": "report_only"}
+        if strategy == "restore_static_camera_position" and not (
+            comment and state.get("feedback_id")
+            and state.get("camera_position_candidate", {}).get("eligible") is True
+            and "restore_static_camera_position"
+            in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Static camera placement lacks source/native proof.",
                     "chosen_strategy": "report_only"}
         if strategy == "restore_single_camera_cut_timing" and not (
             comment and state.get("feedback_id")
@@ -657,6 +694,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "restore_source_albedo", "restore_constant_actor_offset",
             "restore_static_camera_lens",
             "restore_single_camera_cut_timing",
+            "restore_static_camera_position",
         }:
             return {"status": "UNRESOLVED_NO_SAFE_STRATEGY"}
         request_id = uuid.uuid4().hex
@@ -672,6 +710,15 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "iteration": state.get("iterations", 0) + 1,
             "baseline_fallback": state.get("last_fallback", 0),
         }
+        if strategy == "restore_static_camera_position":
+            camera = state.get("camera_position_candidate") or {}
+            if camera.get("eligible") is not True or not state.get("feedback_id"):
+                raise AgentError("Missing verified static camera placement permission.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "camera_position_repair_sha256": camera["camera_position_repair_sha256"],
+                "source_camera_occurrence_id": camera["source_camera_occurrence_id"],
+            })
         if strategy == "restore_single_camera_cut_timing":
             shot = state.get("camera_cut_candidate") or {}
             if (shot.get("eligible") is not True
@@ -761,6 +808,43 @@ def build_graph(workspace: Path, job: dict[str, Any],
                     + "Reopened-project persistence and full parity remain unverified."
                 ),
             }
+        if state.get("chosen_strategy") == "restore_static_camera_position":
+            camera = state.get("camera_position_candidate") or {}
+            error = result.get("native_base_position_error_after_cm")
+            valid = bool(
+                result.get("status")
+                == "CAMERA_STATIC_POSITION_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("camera_position_repair_sha256")
+                == camera.get("camera_position_repair_sha256")
+                and result.get("source_camera_occurrence_id")
+                == camera.get("source_camera_occurrence_id")
+                and result.get("native_base_property_readback_verified") is True
+                and type(error) in (int, float) and math.isfinite(error)
+                and 0 <= error <= 0.1
+                and result.get("cinetwin_reopened_time_grid_verified_after_repair")
+                is False
+                and result.get("rendered_framing_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common = {
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+                "history": (state.get("history") or []) + [{
+                    "request_id": request_id,
+                    "strategy": "restore_static_camera_position",
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified": False,
+                }],
+            }
+            if not valid:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                                       "Native camera position readback failed")[:500]}
+            return {**common,
+                    "status": "CAMERA_POSITION_SAVED_REOPENED_CINETWIN_PENDING",
+                    "reasoning": "Only native CineCamera base placement passed; "
+                                 "reopened shot composition, track time grid and "
+                                 "rendered framing remain unverified."}
         if state.get("chosen_strategy") == "restore_single_camera_cut_timing":
             shot = state.get("camera_cut_candidate") or {}
             valid = bool(
