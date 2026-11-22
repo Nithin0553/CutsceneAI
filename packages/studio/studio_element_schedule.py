@@ -64,6 +64,7 @@ def _ownership_conflicts(plan: dict, csir: dict) -> list[dict]:
     by_location = {r["source_location"]: r for r in plan["elements"]}
     by_id = {r["occurrence_id"]: r for r in plan["elements"]}
     groups: dict[tuple[str, str], list[tuple[float, float, str, str]]] = defaultdict(list)
+    owners: dict[tuple[str, str], set[str]] = defaultdict(set)
     found: set[tuple[str, tuple[str, ...]]] = set()
 
     def flag(kind: str, *ids: str) -> None:
@@ -73,26 +74,37 @@ def _ownership_conflicts(plan: dict, csir: dict) -> list[dict]:
 
     tracks = csir.get("tracks", [])
     for ti, track in enumerate(tracks):
-        if not isinstance(track, dict) or track.get("muted") is True:
-            continue
-        domain = _WRITE_DOMAINS.get(track.get("ced_type"))
-        if domain is None:
-            continue
+        if not isinstance(track, dict):
+            raise ElementScheduleError("Malformed source track.")
         location = f"tracks[{ti}]"
         owner = by_location[location]
         track_id = owner["occurrence_id"]
+        if track.get("muted") is True:
+            flag("MUTED_SOURCE_TRACK", track_id, *(
+                by_location[f"{location}.sections[{si}]"]["occurrence_id"]
+                for si, _ in enumerate(track.get("sections") or [])
+            ))
+            continue
+        semantic = track.get("ced_type")
+        domain = _WRITE_DOMAINS.get(semantic) if isinstance(semantic, str) else None
+        if domain is None:
+            continue
         # The existing source-bound dependency resolver, not a second raw-ID
         # lookup, is authoritative for ownership.
         binding = [d for d in owner["dependencies"]
                    if by_id[d]["source_kind"] == "entities"]
-        if len(binding) != 1:
-            if domain == "transform" and track.get("sections"):
+        if len(binding) != 1 and domain != "camera_cut":
+            if track.get("sections"):
                 flag("UNPROVEN_TRACK_BINDING", track_id)
             continue
-        key = (binding[0], domain)
+        # Camera cuts may be global, but overlapping cuts still contend for
+        # the single sequence camera-cut ownership domain.
+        key = (binding[0] if binding else "SEQUENCE", domain)
         sections = track.get("sections", [])
         if not isinstance(sections, list):
             raise ElementScheduleError("Malformed source Timeline sections.")
+        if sections:
+            owners[key].add(track_id)
         for si, section in enumerate(sections):
             section_id = by_location[f"{location}.sections[{si}]"]["occurrence_id"]
             try:
@@ -122,15 +134,13 @@ def _ownership_conflicts(plan: dict, csir: dict) -> list[dict]:
                 flag("UNBAKED_TIMELINE_BLEND", track_id, section_id)
             groups[key].append((start, end, track_id, section_id))
 
-    for (_binding, domain), clips in sorted(groups.items()):
-        if domain == "transform":
-            track_ids = {r[2] for r in clips}
-            if len(track_ids) > 1:
-                # Existing native Timeline policy requires one measured
-                # owner for source transform / animation blending.
-                flag("MULTIPLE_TRANSFORM_TRACK_WRITERS", *(
-                    [r[2] for r in clips] + [r[3] for r in clips]
-                ))
+    for key, track_ids in sorted(owners.items()):
+        if key[1] == "transform" and len(track_ids) > 1:
+            # Require measured mixed-track ownership even when a clip has
+            # invalid/missing timing and cannot enter the overlap sweep.
+            clip_ids = [row[3] for row in groups[key]]
+            flag("MULTIPLE_TRANSFORM_TRACK_WRITERS", *track_ids, *clip_ids)
+    for (_binding, _domain), clips in sorted(groups.items()):
         ordered = sorted(clips, key=lambda r: (r[0], r[1], r[2], r[3]))
         max_end = -math.inf
         max_row = None
@@ -190,6 +200,8 @@ def build(plan: dict[str, Any], csir: dict[str, Any]) -> dict[str, Any]:
     Every candidate requires separately verified native preflight. No schedule
     may modify the native converter or assert that a dependency was executed.
     """
+    if isinstance(plan, dict):
+        element_plan._validate_contract(plan)
     if (not isinstance(plan, dict) or not isinstance(csir, dict)
             or plan.get("no_native_execution_permission") is not True
             or plan.get("native_conversion_executed") is not False
