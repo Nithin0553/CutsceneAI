@@ -307,6 +307,12 @@ def test_default_ai_decision_reviews_all_source_elements_before_native(scene, mo
 
     def review(**kwargs):
         requests.append(kwargs)
+        if kwargs["task"] == "cutsceneai_element4_bounded_alternatives":
+            return SimpleNamespace(answer={"choices": [
+                {"occurrence_id": item["occurrence_id"],
+                 "action": "report_only"}
+                for item in kwargs["payload"]["rejected"]
+            ]}, response_sha256="b" * 64)
         return SimpleNamespace(answer={
             "choices": [
                 {
@@ -421,6 +427,12 @@ def test_phase33_model_receives_strategy_options_without_native_bypass(scene, mo
 
     def review(**kwargs):
         requests.append(kwargs["payload"])
+        if kwargs["task"] == "cutsceneai_element4_bounded_alternatives":
+            return SimpleNamespace(answer={"choices": [
+                {"occurrence_id": row["occurrence_id"],
+                 "action": "report_only"}
+                for row in kwargs["payload"]["rejected"]
+            ]}, response_sha256="e" * 64)
         for element in kwargs["payload"]["elements"]:
             assert "adaptive_evidence" in element
             assert element["candidate_actions"] == [
