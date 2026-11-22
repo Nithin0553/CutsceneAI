@@ -512,6 +512,19 @@ def compose(
                     "skeletal joint equivalence, custom property, script or physics guarantee."
                 )
         if status in {"NATIVE_UNVERIFIED", "NATIVE_PARTIAL", "BAKED_PARTIAL"}:
+            # The installed compiler generated these actions while visiting
+            # THIS exact source track index. Preserve that direct structural
+            # provenance only for action kinds explicitly registered for its
+            # CED semantic. Unrelated section/curve actions remain unlinked;
+            # do not infer provenance from actor labels or key times.
+            semantic = track.get("ced_type")
+            eligible = feature_dispatch.EXPLICIT_ACTIONS.get(semantic, ())
+            for action in native_actions:
+                if (action["kind"] in eligible
+                        and "source_location" not in action
+                        and "covered_source_locations" not in action):
+                    action["source_location"] = f"tracks[{index}]"
+                    action["source_ced"] = semantic
             additions.extend(native_actions)
         ledger.append({
             "track_index": index,
