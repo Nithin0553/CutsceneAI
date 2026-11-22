@@ -69,7 +69,11 @@ Inside `studio_static_character_yaw_repair.attempt` the current Unreal
 editor must independently recheck:
 
 - exact current feedback identity and one-character source proof hash;
-- current source-created actor in the setup receipt and unique live label;
+- current source-created actor in the setup receipt, its **exact native
+  UObject path** captured during staging, and one unique live label; a
+  different actor renamed to the same label is never a valid substitute.
+  If Unreal cannot provide the object path at staging, source transfer may
+  still proceed but this optional yaw repair is **blocked**;
 - **full** native master/binding Sequencer track inventory, attachment,
   component-relative basis, mesh path, scale, physics, roll/pitch;
 - **inactive skeletal animation**, including no active AnimInstance,
