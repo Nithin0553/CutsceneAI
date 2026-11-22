@@ -491,7 +491,7 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
     channels = unreal_compat.get_section_channels(section)
     camera_grid = (
         action.get("source_behavior_strategy")
-        == studio_camera_motion_contract.STRATEGY
+        in studio_camera_motion_contract.CAMERA_STRATEGIES
     )
     if camera_grid:
         # Unreal 3D transform tracks use 9 independent channels:
