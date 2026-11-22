@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/ced/shared-manifest/v1",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "release_id",
+    "release_status",
+    "taxonomy",
+    "baseline_rules",
+    "rulebook",
+    "recipe_schema",
+    "distribution",
+    "private_data_policy",
+    "promotions",
+    "signature_status",
+    "runtime_execution_authority",
+    "unknown_concept_policy"
+  ],
+  "properties": {
+    "kind": {
+      "const": "cutsceneai.ced.shared_baseline_manifest"
+    },
+    "schema_version": {
+      "const": "1"
+    },
+    "release_id": {
+      "type": "string",
+      "pattern": "^ced-baseline-[A-Za-z0-9_.-]{1,100}$"
+    },
+    "release_status": {
+      "const": "SOURCE_CONTROL_REVIEWED_BASELINE_NOT_NATIVE_FIDELITY_CERTIFIED"
+    },
+    "taxonomy": {
+      "const": "cutscene-elements-v0.2.json"
+    },
+    "baseline_rules": {
+      "const": "adaptive-rules-v0.1.json"
+    },
+    "rulebook": {
+      "const": "ced-mapping-rulebook-v1.json"
+    },
+    "recipe_schema": {
+      "const": "ced-strategy-recipe-v1.schema.json"
+    },
+    "distribution": {
+      "const": "GIT_VERSIONED_READ_ONLY_NO_REMOTE_AUTO_UPDATE"
+    },
+    "private_data_policy": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 180
+    },
+    "promotions": {
+      "const": "MANUAL_REVIEW_AND_INDEPENDENT_NATIVE_EVIDENCE_REQUIRED"
+    },
+    "signature_status": {
+      "type": "string",
+      "maxLength": 160
+    },
+    "runtime_execution_authority": {
+      "const": false
+    },
+    "unknown_concept_policy": {
+      "const": "INVESTIGATE_PROPOSALS_IN_PRIVATE_STORE_NOT_EXECUTABLE"
+    }
+  },
+  "additionalProperties": false
+}

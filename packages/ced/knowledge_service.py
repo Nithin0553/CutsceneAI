@@ -13,8 +13,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from contracts import ContractError, validate_manifest
 from semantic_graph import SemanticGraphError, analyze
 from strategy_recipes import StrategyRecipeError, from_rule as recipe_from_rule
+from strategy_ranking import load_feedback, rank_rules, similar_known
 
 PACKAGES = Path(__file__).resolve().parents[1]
 DICTIONARY = PACKAGES / "contracts" / "dictionary"
@@ -59,7 +61,10 @@ def _module(folder: str, name: str):
 
 
 def _baseline() -> tuple[dict[str, Any], set[str], list[dict[str, Any]], dict[str, tuple]]:
-    manifest = _read(DICTIONARY / "ced-shared-manifest-v1.json")
+    try:
+        manifest = validate_manifest(_read(DICTIONARY / "ced-shared-manifest-v1.json"))
+    except ContractError as exc:
+        raise KnowledgeServiceError("CED shared baseline contract failed: " + str(exc)) from exc
     if (manifest.get("kind") != "cutsceneai.ced.shared_baseline_manifest"
             or manifest.get("schema_version") != "1"
             or manifest.get("runtime_execution_authority") is not False
@@ -98,6 +103,27 @@ def _local_rules(store: Path | None) -> list[dict[str, Any]]:
     # The existing approved-rule loader verifies immutable candidates,
     # reviewed native evidence, held-out gates and adapter compatibility.
     return rulebook.approved_rules(store)
+
+
+def _signed_rules() -> list[dict[str, Any]]:
+    """Include only locally installed releases with pre-pinned publisher trust."""
+    root = Path.home() / ".cutsceneai-studio"
+    store = root / "ced-shared-releases"
+    active = store / "active.json"
+    if not active.exists():
+        return []
+    trust = root / "ced-trust" / "publisher.pem"
+    if not trust.is_file() or trust.is_symlink():
+        raise KnowledgeServiceError(
+            "An installed shared CED release requires an explicitly trusted publisher."
+        )
+    from shared_distribution import DistributionError, installed_rules
+    try:
+        return installed_rules(store, trust_key_file=trust)
+    except DistributionError as exc:
+        raise KnowledgeServiceError(
+            "Installed shared CED release failed signature or native adapter verification."
+        ) from exc
 
 
 def _private_cases(csir: dict[str, Any], store: Path | None) -> list[dict[str, Any]]:
@@ -189,6 +215,7 @@ def retrieve(
     csir: dict[str, Any], *, target_capabilities: dict[str, Any],
     source_version: str = "", target_version: str = "",
     approved_store: Path | None = None, case_store: Path | None = None,
+    feedback_store: Path | None = None,
     source_capabilities: dict[str, Any] | None = None,
     page: int = 0, page_size: int = 48,
 ) -> dict[str, Any]:
@@ -213,11 +240,18 @@ def retrieve(
     if len(graph.counts) > MAX_CONCEPTS:
         raise KnowledgeServiceError("Too many distinct source semantics for bounded retrieval.")
     manifest, known, baseline, actions = _baseline()
+    feedback = load_feedback(feedback_store)
     approved = _local_rules(approved_store)
     # Keep the shared and private sources distinct even when a rule ID
     # collides. Approval loaders independently reject conflicting rules.
     rules = [(rule, "BASELINE_REGISTERED_UNVERIFIED") for rule in baseline]
     rules.extend((rule, "LOCAL_REVIEWED_NATIVE_MAPPING") for rule in approved)
+    signed = _signed_rules()
+    baseline_ids = {item["rule_id"] for item in baseline}
+    local_ids = {item["rule_id"] for item in approved}
+    if any(row["rule_id"] in baseline_ids | local_ids for row in signed):
+        raise KnowledgeServiceError("Signed shared CED rule conflicts with local knowledge.")
+    rules.extend((rule, "SHARED_SIGNED_APPROVED_ADVISORY") for rule in signed)
     for rule, origin in rules:
         if not isinstance(rule, dict) or not isinstance(rule.get("ced"), str):
             raise KnowledgeServiceError("Malformed " + origin + " CED rule.")
@@ -260,11 +294,10 @@ def retrieve(
                 "runtime_execution_authorized": False,
             }
             matches.append(item)
-        matches.sort(key=lambda item: (
-            item["status"] != "RULE_CANDIDATE_REQUIRES_PREFLIGHT",
-            item["origin"] != "LOCAL_REVIEWED_NATIVE_MAPPING",
-            str(item["rule_id"]),
-        ))
+        matches = rank_rules(
+            matches, ced=ced, source_version=source_version,
+            target_version=target_version, feedback=feedback, relations=relations,
+        )
         entries.append({
             "ced": ced, "source_occurrences": count,
             "semantic_known": ced in known,
@@ -273,6 +306,9 @@ def retrieve(
             "rules": matches[:MAX_RULES_PER_CONCEPT],
             "rules_omitted_count": max(0, len(matches) - MAX_RULES_PER_CONCEPT),
             "native_action_candidates": native[:6],
+            "unknown_investigation": (
+                similar_known(ced, known) if ced not in known else []
+            ),
             "resolution_state": (
                 "UNKNOWN_SEMANTIC_INVESTIGATE" if ced not in known else
                 "RETRIEVED_CANDIDATES_NEED_NATIVE_PREFLIGHT" if matches or native
@@ -286,6 +322,8 @@ def retrieve(
         "schema_version": "2",
         "baseline_release_id": manifest["release_id"],
         "baseline_manifest_sha256": _digest(manifest),
+        "rule_index_sha256": _digest(rules),
+        "feedback_ledger_sha256": _digest(feedback),
         "source_ced_count": len(ordered),
         "source_occurrence_count": graph.occurrence_count,
         "relationship_count": graph.edge_count,
@@ -311,6 +349,69 @@ def retrieve(
     result["knowledge_sha256"] = _digest(result)
     return result
 
+
+
+def retrieve_all(
+    csir: dict[str, Any], *, target_capabilities: dict[str, Any],
+    source_version: str = "", target_version: str = "",
+    approved_store: Path | None = None, case_store: Path | None = None,
+    feedback_store: Path | None = None,
+    source_capabilities: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Inspect all source CED concepts without silently discarding pages.
+
+    The coverage, source evidence, baseline and approved-rule identity must be
+    identical on every page. If knowledge changes during retrieval, stop
+    before sending any evidence to an LLM or creating a native candidate.
+    """
+    options = {
+        "target_capabilities": target_capabilities,
+        "source_version": source_version,
+        "target_version": target_version,
+        "approved_store": approved_store,
+        "case_store": case_store,
+        "feedback_store": feedback_store,
+        "source_capabilities": source_capabilities,
+        "page_size": MAX_PAGE_SIZE,
+    }
+    first = retrieve(csir, page=0, **options)
+    entries = list(first["entries"])
+    page_digests = [first["knowledge_sha256"]]
+    keys = (
+        "baseline_manifest_sha256", "coverage_ledger_sha256",
+        "rule_index_sha256", "feedback_ledger_sha256",
+        "source_occurrence_count", "source_ced_count",
+    )
+    for page in range(1, first["page_count"]):
+        subsequent = retrieve(csir, page=page, **options)
+        if (any(first[key] != subsequent[key] for key in keys)
+                or subsequent["page_count"] != first["page_count"]
+                or len(subsequent["coverage_ledger"]) != first["source_ced_count"]):
+            raise KnowledgeServiceError(
+                "CED source, shared baseline or locally reviewed rules changed "
+                "during paginated retrieval; re-analyze the exact source."
+            )
+        entries.extend(subsequent["entries"])
+        page_digests.append(subsequent["knowledge_sha256"])
+    if (len(entries) != first["source_ced_count"]
+            or len({row["ced"] for row in entries}) != len(entries)):
+        raise KnowledgeServiceError("CED retrieval did not cover every distinct source concept.")
+    combined = dict(first)
+    combined.update({
+        "page": 0,
+        "page_size": MAX_PAGE_SIZE,
+        "entries": entries,
+        "retrieved_count": len(entries),
+        "omitted_count": 0,
+        "next_page": None,
+        "retrieval_complete": True,
+        "all_pages_retrieved": True,
+        "source_page_count": first["page_count"],
+        "source_page_sha256": page_digests,
+    })
+    combined.pop("knowledge_sha256")
+    combined["knowledge_sha256"] = _digest(combined)
+    return combined
 
 
 def redact_for_model(result: dict[str, Any]) -> dict[str, Any]:
@@ -443,7 +544,11 @@ def redact_for_model(result: dict[str, Any]) -> dict[str, Any]:
             ]
             native_id = item.get("rule_id")
             if native_id not in baseline_ids:
-                item["rule_id"] = "local_reviewed_rule_" + str(index + 1)
+                item["rule_id"] = (
+                    "shared_reviewed_rule_" if item.get("origin")
+                    == "SHARED_SIGNED_APPROVED_ADVISORY"
+                    else "local_reviewed_rule_"
+                ) + str(index + 1)
             if item.get("resolver") not in baseline_resolvers:
                 item["resolver"] = "reviewed_native_resolver"
             recipe = item.get("strategy_recipe")

@@ -11,6 +11,8 @@ import json
 import re
 from typing import Any
 
+from contracts import ContractError, validate_recipe
+
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,127}\Z")
 _RELATIONS = {
     "parent", "binds", "contains", "uses_asset", "depends_on",
@@ -49,7 +51,8 @@ def from_rule(rule: dict[str, Any], *, origin: str,
     """Materialize one bounded candidate recipe from an existing CED rule."""
     if not isinstance(rule, dict) or not isinstance(related_semantics, list):
         raise StrategyRecipeError("Recipe requires a structured registered CED rule.")
-    if origin not in {"BASELINE_REGISTERED_UNVERIFIED", "LOCAL_REVIEWED_NATIVE_MAPPING"}:
+    if origin not in {"BASELINE_REGISTERED_UNVERIFIED", "LOCAL_REVIEWED_NATIVE_MAPPING",
+                      "SHARED_SIGNED_APPROVED_ADVISORY"}:
         raise StrategyRecipeError("Recipe origin must be a known baseline or local review.")
     ced = _token(rule.get("ced"))
     rule_id = _token(rule.get("rule_id"))
@@ -135,5 +138,9 @@ def from_rule(rule: dict[str, Any], *, origin: str,
     portable = {key: value for key, value in recipe.items()
                 if key not in {"execution_authorized", "resolver_reference",
                                "verified_case_ids"}}
+    try:
+        validate_recipe(portable)
+    except ContractError as exc:
+        raise StrategyRecipeError("CED strategy recipe contract failed: " + str(exc)) from exc
     recipe["recipe_sha256"] = _digest(portable)
     return recipe
