@@ -148,6 +148,21 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
                 character_proof['before'] = _character_metrics(compare(plan, source, baseline), identifier)
                 character_proof['baseline_status'] = 'MATCHED_SOURCE_GRID_AND_UNREAL_PROJECT'
                 character_proof['baseline_sha256'] = persistence._sha(Path(baseline_target))
+        # Optional Element 3 occurrence attribution comes from the SAME
+        # real, different-editor tick-synchronized target observation.
+        # Recreate the exact source/CED review rather than trust saved JSON
+        # or fabricate any native-per-element success claims.
+        element_acceptance = None
+        if (candidate / 'element-workflow-active.json').is_file():
+            import studio_element_workflow
+            import studio_element_cinetwin
+            audited_workflow = studio_element_workflow._active(root)
+            source_csir = persistence._json(Path(job['csir']))
+            element_acceptance = studio_element_cinetwin.build(
+                source_csir, audited_workflow['element_plan'], plan, source, target,
+            )
+            element_file = folder / 'element-native-attribution.json'
+            _write(element_file, element_acceptance)
         evaluation = comparison['evaluation']
         joints = [row['joint_positions']['status'] for row in comparison['rig_motion_diagnostics']]
         calibration_results = [
@@ -185,6 +200,15 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
             'rig_calibration_statuses': calibration_results,
             'mesh_forward_approval_sha256': forward_approval_sha,
             'mesh_forward_statuses': forward_results,
+            'element3_native_attribution_sha256': (
+                persistence._sha(folder / 'element-native-attribution.json')
+                if element_acceptance is not None else None
+            ),
+            'element3_source_occurrence_count': (
+                element_acceptance['source_occurrence_count']
+                if element_acceptance is not None else None
+            ),
+            'full_cutscene_fidelity_verified': False,
             **({'character_conversion': character_proof} if character_proof else {}),
         })
         unreal.log('[CutSceneAI Studio] ' + status + ' — ' + str(output))
