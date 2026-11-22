@@ -259,3 +259,46 @@ def test_real_native_worker_pre_mutation_recomputes_stage5_after_consent(tmp_pat
         unreal_gate.verify_job(work, job, worker["scene_inventory"])
     assert all(not action["native_execution_verified"]
                for action in current["element5_source_bound_plan"]["native_actions"])
+
+
+
+def test_deterministic_compiler_emits_exact_source_origins_not_guessing_names():
+    import transfer_backend
+    from test_transfer_backend import mapping, source
+
+    src = source()
+    target = mapping()
+    source_before = copy.deepcopy(src)
+    prepared, coverage = transfer_backend.compose(src, target)
+    assert src == source_before
+    assert coverage["source_track_count"] == len(src["tracks"])
+    by_kind = {row["kind"]: row for row in prepared["actions"]}
+    assert by_kind["camera_setup"]["source_location"] == "entities[1]"
+    assert by_kind["camera_setup"]["source_ced"] == "entity.camera"
+    assert by_kind["transform"]["source_location"] == "tracks[0]"
+    assert by_kind["transform"]["source_ced"] == "animation.track"
+    assert by_kind["camera_cut"]["source_location"] == "tracks[2]"
+    assert by_kind["camera_cut"]["source_ced"] == "camera.cut"
+    assert by_kind["marker"]["source_location"] == "tracks[4]"
+    assert by_kind["marker"]["source_ced"] == "event.trigger"
+    assert not any(row.get("source_location") == "tracks[1]"
+                   for row in prepared["actions"])
+
+
+def test_unregistered_legacy_action_never_acquires_a_fabricated_origin_by_name():
+    values = list(_scenario())
+    values[2] = {
+        "sequence_asset_path": "/Game/Stage/LS_Safe",
+        "actions": [{
+            "kind": "camera_setup", "actor_label": "CameraUnreal",
+            "entity_name": "PRIVATE_CAMERA",
+        }],
+    }
+    report = _build(values)
+    assert report["explicit_source_action_count"] == 0
+    assert report["legacy_unattributed_action_count"] == 1
+    assert all(not row["explicitly_attributed_action_ids"]
+               for row in report["source_occurrences"])
+    assert report["native_actions"][0]["source_attribution"] == (
+        "LEGACY_ACTION_SOURCE_ATTRIBUTION_UNVERIFIED"
+    )
