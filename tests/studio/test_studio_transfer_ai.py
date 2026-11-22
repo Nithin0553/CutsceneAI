@@ -297,6 +297,7 @@ def test_ai_inspection_passes_large_capture_only_to_bounded_capture_reader(
 def test_default_ai_decision_reviews_all_source_elements_before_native(scene, monkeypatch):
     config, census, worker = scene
     import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_PLANNING", "model")
 
     monkeypatch.setattr(ai, "_model_choose", lambda _: {
         "strategy": "native_source", "reason": "Registered native source policy",
@@ -350,6 +351,7 @@ def test_ai_rejects_unregistered_per_occurrence_action_before_conversion(
         scene, monkeypatch):
     config, census, worker = scene
     import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_PLANNING", "model")
     monkeypatch.setattr(ai, "_model_choose", lambda _: {
         "strategy": "native_source", "reason": "Source strategy"
     })
