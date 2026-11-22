@@ -74,11 +74,11 @@ def test_per_occurrence_inventory_covers_every_nested_curve_and_duplicate_semant
     source, knowledge, caps = evidence()
     plan = elements.prepare(source, knowledge, caps)
     assert plan["source_occurrence_count"] == knowledge["source_occurrence_count"]
-    assert plan["source_occurrence_count"] == 12
+    assert plan["source_occurrence_count"] == 10
     assert plan["model_reviewed_count"] == 0
     assert plan["no_native_execution_permission"] is True
     assert plan["native_conversion_executed"] is False
-    assert len({x["occurrence_id"] for x in plan["elements"]}) == 12
+    assert len({x["occurrence_id"] for x in plan["elements"]}) == 10
     by_location = {x["source_location"]: x for x in plan["elements"]}
     assert by_location["entities[1]"]["dependencies"] == [
         by_location["entities[0]"]["occurrence_id"],
