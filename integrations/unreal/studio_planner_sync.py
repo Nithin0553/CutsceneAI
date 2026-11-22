@@ -37,7 +37,9 @@ MODULES = (
     # contract and source occurrence attribution in the long-lived editor.
     ("studio_element_cinetwin", "packages/studio"),
     ("studio_element7_readback", "packages/studio"),
+    ("studio_element8_repair", "packages/studio"),
     ("studio_element_native_gate", "integrations/unreal"),
+    ("studio_agent_executor", "integrations/unreal"),
     # The automatic asset manifest is created by the Studio host Python
     # process, then re-verified by Unreal's long-lived Python process.
     # A stale cached asset inspector changes its actor/import plan even when
