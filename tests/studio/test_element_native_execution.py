@@ -508,3 +508,32 @@ def test_separate_native_action_pagination_does_not_truncate_source_occurrences(
     assert next_page["native_actions"]["candidate_actions"][0]["action_id"] == "A00060"
     with pytest.raises(workflow.ElementWorkflowError, match="action review"):
         workflow.current(work, worker, action_offset=-1)
+
+
+
+def test_explicit_covered_source_list_cannot_launder_unregistered_occurrences(tmp_path):
+    work, worker, _target, _summary, _manifest_doc = _manifest(tmp_path)
+    snapshot = workflow._active(work)
+    plan = {
+        "sequence_asset_path": "/Game/Demo/LS_Trial",
+        "actions": [{
+            "kind": "camera_setup", "source_location": "entities[1]",
+            "source_ced": "entity.camera",
+            "covered_source_locations": ["entities[2]"],
+        }],
+    }
+    native_inventory = native.inventory(
+        plan, snapshot["element_plan"], snapshot["element_strategy"],
+    )
+    assert native_inventory["blocked_action_count"] == 1
+    assert native_inventory["actions"][0]["native_action_blocker"] in {
+        "COVERED_SOURCE_OCCURRENCE_ACTION_UNAVAILABLE",
+        "COVERED_SOURCE_STRATEGY_OR_DEPENDENCY_BLOCKED",
+    }
+    with pytest.raises(native.ElementNativeExecutionError, match="source-blocked"):
+        native.authorize(
+            native_inventory, candidate_id=snapshot["candidate_id"],
+            workflow_sha256=snapshot["workflow_sha256"],
+            transfer_plan_sha256="d" * 64,
+            approved_action_ids=["A00000"], accept_legacy_unattributed=False,
+        )
