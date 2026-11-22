@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import feature_dispatch
 import studio_element_plan as element_plan
 
 CINETWIN = str(Path(__file__).resolve().parents[1] / "cinetwin")
@@ -270,8 +271,13 @@ def build(csir: dict, conversion: dict, sampling: dict,
         output.append({
             "occurrence_id": item["occurrence_id"],
             "source_kind": kind,
-            "ced": item["ced"] if item["state"] != "UNKNOWN_SEMANTIC_INVESTIGATE"
-            else "unknown.unclassified",
+            # Only publicly registered native-action concepts are emitted.
+            # Unknown vendor namespaces can be meaningful source credentials
+            # and must not leak even if an attacker rehashes the advisory plan.
+            "ced": (
+                item["ced"] if item["ced"] in feature_dispatch.EXPLICIT_ACTIONS
+                else "unknown.unclassified"
+            ),
             "measurement_status": status,
             "discrepancy_flags": sorted(set(flags)),
             "measured": metric,
