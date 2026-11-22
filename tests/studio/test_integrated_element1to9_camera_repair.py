@@ -88,6 +88,7 @@ class FakeComponent:
     def __init__(self, focal):
         self.focal = focal
         self.fail_set = False
+        self.fail_after_set = False
         self.incorrect_set = False
         self.filmback = SimpleNamespace(
             get_editor_property=lambda prop: 24 if prop == "sensor_height" else None,
@@ -112,6 +113,9 @@ class FakeComponent:
             raise RuntimeError("Simulated native setter error")
         self.focal = value + (3 if self.incorrect_set else 0)
         self.incorrect_set = False
+        if self.fail_after_set:
+            self.fail_after_set = False
+            raise RuntimeError("Native camera setter mutated then raised")
 
 
 class FakeActor:
@@ -146,6 +150,7 @@ def _fake_api(label, before_focal, *, tracks=None):
         ),
         MovieSceneSequenceExtensions=SimpleNamespace(
             get_bindings=lambda seq: [binding],
+            get_tracks=lambda seq: [],
         ),
         get_editor_subsystem=lambda kind: group,
         load_asset=lambda path: object(),
@@ -272,6 +277,12 @@ def test_camera_lens_cannot_be_auto_repaired_without_explicit_user_request(tmp_p
     ):
         assert lens_evidence.message_requests_lens(message) is False
     assert lens_evidence.message_requests_lens("Please fix camera FOV.") is True
+    assert not lens_evidence.message_requests_lens(
+        "Please fix the camera cuts and zoom."
+    )
+    assert not lens_evidence.message_requests_lens(
+        "Please correct camera FOV and animated rotation."
+    )
     assert agent_intent_router.route(
         "Please fix the camera lens FOV.",
         generation_complete=True, native_material_fallback_slots=0,
@@ -405,3 +416,55 @@ def test_graph_repair_proposal_binds_camera_identity_not_model_numeric_value(tmp
     assert "focal_length_mm" not in native
     assert "camera_repair_sha256" in native
     assert result["fidelity_verified"] is False
+
+
+
+def test_native_cinecamera_setter_failure_after_partial_mutation_rolls_back(
+        tmp_path):
+    workspace, job, folder = _camera_mismatch(tmp_path)
+    proof = lens_evidence.build(workspace, job)
+    feedback_id, _candidate = _authorize(workspace, job)
+    request = _request(workspace, job, folder, proof, feedback_id)
+    api, component = _fake_api(
+        proof["target_actor_label"], proof["native_focal_before_mm"],
+    )
+    component.fail_after_set = True
+    with pytest.raises(RuntimeError, match="setter mutated"):
+        studio_camera_lens_repair.attempt(
+            api, workspace, job, request,
+        )
+    assert component.focal == pytest.approx(proof["native_focal_before_mm"])
+
+
+def test_native_camera_master_property_track_blocks_static_base_focal_edit(
+        tmp_path):
+    workspace, job, folder = _camera_mismatch(tmp_path)
+    proof = lens_evidence.build(workspace, job)
+    feedback_id, _candidate = _authorize(workspace, job)
+    request = _request(workspace, job, folder, proof, feedback_id)
+    api, component = _fake_api(
+        proof["target_actor_label"], proof["native_focal_before_mm"],
+    )
+    master = SimpleNamespace(
+        get_class=lambda: SimpleNamespace(
+            get_name=lambda: "MovieSceneFloatTrack",
+        ),
+    )
+    api.MovieSceneSequenceExtensions.get_tracks = lambda sequence: [master]
+    with pytest.raises(studio_camera_lens_repair.CameraLensRepairError,
+                       match="property controls"):
+        studio_camera_lens_repair.attempt(
+            api, workspace, job, request,
+        )
+    assert component.focal == pytest.approx(proof["native_focal_before_mm"])
+
+
+def test_incomplete_followup_capture_blocks_reusing_old_camera_lens_baseline(
+        tmp_path):
+    workspace, job, folder = _camera_mismatch(tmp_path)
+    assert lens_evidence.build(workspace, job)["eligible"]
+    partial = folder.parent / "native-acceptance-incomplete"
+    partial.mkdir()
+    with pytest.raises(lens_evidence.CameraLensEvidenceError,
+                       match="incomplete"):
+        lens_evidence.build(workspace, job)
