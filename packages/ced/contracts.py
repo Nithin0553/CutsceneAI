@@ -52,10 +52,6 @@ def validate(name: str, value: Any) -> dict[str, Any]:
 
 def validate_recipe(value: Any) -> dict[str, Any]:
     document = validate("recipe", value)
-    if not document["semantic_ids"] or document["semantic_ids"][0] != document["recipe_id"]:
-        # Recipe ID is a registered rule identity rather than a semantic ID;
-        # this check must NOT mix those independent namespaces.
-        pass
     semantic_ids = set(document["semantic_ids"])
     for edge in document["relationships"]:
         if edge["from"] not in semantic_ids or edge["to"] not in semantic_ids:
