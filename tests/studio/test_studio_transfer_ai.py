@@ -1,6 +1,7 @@
 """The AI participates in *candidate planning*, not arbitrary native execution."""
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -378,3 +379,63 @@ def test_per_occurrence_decision_tampering_blocks_stale_plan_verification(scene)
     decision["element_plan"]["elements"].pop()
     with pytest.raises(ai.TransferAIError, match="tampered"):
         ai.verify(decision, config, census, worker)
+
+
+def test_phase33_strategy_is_source_bound_and_reverified_before_native(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Installed native policy."
+    })
+    comparison = decision["element_strategy"]
+    assert decision["element_strategy_advisory_only"] is True
+    assert decision["element_strategy_sha256"] == comparison["comparison_sha256"]
+    assert comparison["native_execution_authorized"] is False
+    assert comparison["full_cutscene_fidelity_verified"] is False
+    assert len(comparison["comparisons"]) == decision["element_plan"][
+        "source_occurrence_count"]
+    assert ai.verify(decision, config, census, worker)
+
+    tampered = copy.deepcopy(decision)
+    tampered["element_strategy"]["comparisons"][0]["suggested_action"] = (
+        "arbitrary_native_code"
+    )
+    import studio_element_plan
+    tampered["element_strategy"].pop("comparison_sha256")
+    tampered["element_strategy"]["comparison_sha256"] = (
+        studio_element_plan._digest(tampered["element_strategy"])
+    )
+    tampered["element_strategy_sha256"] = tampered["element_strategy"][
+        "comparison_sha256"]
+    with pytest.raises(ai.TransferAIError, match="Adaptive element strategy"):
+        ai.verify(tampered, config, census, worker)
+
+
+def test_phase33_model_receives_strategy_options_without_native_bypass(scene, monkeypatch):
+    config, census, worker = scene
+    import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_PLANNING", "model")
+    monkeypatch.setattr(ai, "_model_choose", lambda _: {
+        "strategy": "native_source", "reason": "Source policy"
+    })
+    requests = []
+
+    def review(**kwargs):
+        requests.append(kwargs["payload"])
+        for element in kwargs["payload"]["elements"]:
+            assert "adaptive_evidence" in element
+            assert element["candidate_actions"] == [
+                option["action"] for option in element["adaptive_evidence"][
+                    "alternatives"]
+            ]
+        return SimpleNamespace(answer={"choices": [
+            {"occurrence_id": element["occurrence_id"],
+             "action": (element["candidate_actions"][0]
+                        if element["candidate_actions"] else "report_only")}
+            for element in kwargs["payload"]["elements"]
+        ]}, response_sha256="d" * 64)
+
+    monkeypatch.setattr(studio_model_provider, "complete_json", review)
+    decision = ai.decide(config, census, worker)
+    assert requests
+    assert decision["element_planning_mode"] == "MODEL_REVIEWED"
+    assert ai.verify(decision, config, census, worker)
