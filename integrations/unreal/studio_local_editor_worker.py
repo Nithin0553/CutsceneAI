@@ -211,11 +211,10 @@ def _execute(job):
     if element_review_requested or job.get('element_native_authorization_sha256'):
         if not element_review_requested:
             raise RuntimeError('Native element authorization has no active source review.')
-        tools_dir = str(ROOT / 'tools')
-        if tools_dir not in sys.path:
-            sys.path.insert(0, tools_dir)
-        import studio_element_workflow
-        element_dispatch = studio_element_workflow.verify_native_job(WORKSPACE, job)
+        import studio_element_native_gate
+        element_dispatch = studio_element_native_gate.verify_job(
+            WORKSPACE, job, _native_level_inventory(),
+        )
         job['element_native_dispatch_status'] = 'EXACT_ACTIONS_AUTHORIZED_PREFLIGHT_PENDING'
     # A host AI conversion choice is a measured, source-bound option record,
     # not authority to write arbitrary Unreal commands. Match its bytes to
@@ -334,8 +333,10 @@ def _execute(job):
         # exact native actions. Record that fact from its *real* runtime
         # receipt; individual action readback and fidelity remain pending.
         try:
-            import studio_element_workflow
-            dispatch = studio_element_workflow.record_native_job(WORKSPACE, job)
+            import studio_element_native_gate
+            dispatch = studio_element_native_gate.record_job(
+                WORKSPACE, job, _native_level_inventory(),
+            )
             job['element_native_dispatch_receipt'] = str(
                 candidate_dir / ('element-native-dispatch-' + job['job_id'] + '.json')
             )
