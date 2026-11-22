@@ -22,7 +22,9 @@ import agent_intent_router
 import studio_character_facing_review as review
 import studio_element7_readback as readback
 from test_element7_native_readback import (
-    _native_facing_owner_fixture, _put, _scenario,
+    _native_facing_owner_fixture,
+    _put,
+    _scenario,
 )
 
 
