@@ -68,10 +68,17 @@ def _bound_rows(csir: dict, conversion: dict) -> list[dict]:
             or len(conversion["elements"]) != len(rows)):
         raise ElementCineTwinError("Source occurrence plan is stale, forged or incomplete.")
     for index, (observed, expected) in enumerate(zip(conversion["elements"], rows)):
+        declared_ced = observed["ced"]
+        raw_ced = expected["semantic"]
         if (observed["occurrence_id"] != f"E{index:05d}"
                 or observed["source_kind"] != expected["kind"]
-                or observed["source_location"] != expected["source_location"]):
-            raise ElementCineTwinError("Source occurrence identities are not aligned.")
+                or observed["source_location"] != expected["source_location"]
+                or not isinstance(declared_ced, str)
+                or (declared_ced != "unknown.unclassified"
+                    and declared_ced != raw_ced)):
+            raise ElementCineTwinError(
+                "Source occurrence identities or semantic evidence are not aligned."
+            )
     return rows
 
 
