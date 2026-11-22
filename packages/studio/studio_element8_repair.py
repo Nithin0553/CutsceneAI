@@ -25,6 +25,7 @@ OPTIONS = frozenset({
     "INVESTIGATE_TARGET_MAPPING",
     "INSPECT_EXISTING_USER_AUTHORIZED_CHARACTER_OFFSET_POLICY",
     "INSPECT_SKELETAL_RETARGETING_AND_CALIBRATION",
+    "INSPECT_APPROVED_MESH_ANATOMICAL_FORWARD_BASIS",
     "INSPECT_NATIVE_CAMERA_LENS",
     "INSPECT_NATIVE_CAMERA_CUT_BINDINGS",
     "INSPECT_OTHER_NATIVE_DOMAIN",
@@ -82,6 +83,12 @@ def _recommend(item: dict) -> str:
         # adapter; that adapter independently measures root/actor motion,
         # checks explicit user feedback and rolls back unsuccessful changes.
         return "INSPECT_EXISTING_USER_AUTHORIZED_CHARACTER_OFFSET_POLICY"
+    if flags == {"CHARACTER_MESH_ANATOMICAL_FORWARD_MISMATCH"}:
+        # The native CineTwin comparison may contain an independently
+        # approved mesh-forward profile, but its yaw candidate remains a
+        # diagnostic: it does not prove actor/Sequencer transform ownership,
+        # a stable imported FBX basis, safe rollback or permission to edit.
+        return "INSPECT_APPROVED_MESH_ANATOMICAL_FORWARD_BASIS"
     if any(
         flag.startswith("SKELETAL_") or flag.startswith("SOURCE_BONES_")
         or flag.startswith("CALIBRATED_") or flag.startswith("CHARACTER_MESH_")

@@ -104,11 +104,18 @@ def compare_reference_calibrated(
     per_bone = {bone: {"source_bone_id": bone, "target_bone_name": target,
                        "max_orientation_delta_error_degrees": 0.0, "worst_time_seconds": None}
                 for bone, target in sorted(mapped_bones.items())}
+    previous_time = None
     for index, (left, right) in enumerate(zip(source_samples, target_samples)):
         try:
             time_a, time_b = float(left["time_seconds"]), float(right["time_seconds"])
-            if not math.isfinite(time_a) or abs(time_a - time_b) > 1e-7:
-                raise RigCalibrationError("Source and target samples have different time grids.")
+            if (not math.isfinite(time_a) or not math.isfinite(time_b)
+                    or abs(time_a - time_b) > 1e-7
+                    or (previous_time is not None and time_a <= previous_time)):
+                raise RigCalibrationError(
+                    "Source and target calibrated pose grids must be matched "
+                    "and strictly increasing."
+                )
+            previous_time = time_a
             src_poses = [p for p in left["skeletal_poses"] if p["entity_id"] == entity_id]
             dst_poses = [p for p in right["skeletal_poses"] if p["entity_id"] == entity_id]
             if len(src_poses) != 1 or len(dst_poses) != 1:
