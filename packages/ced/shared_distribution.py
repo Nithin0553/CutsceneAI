@@ -60,8 +60,17 @@ def _validate_rules(rules: list[dict[str, Any]]) -> None:
     if not isinstance(rules, list) or len(rules) > 64:
         raise DistributionError("Shared release has an invalid bounded rule set.")
     seen = set()
-    baseline_ids = {rule["rule_id"] for rule in ced_rulebook._baseline()}
+    baseline = ced_rulebook._baseline()
+    baseline_ids = {rule["rule_id"] for rule in baseline}
     concepts = ced_rulebook._concepts()
+    known_caps = {
+        cap for rule in baseline for selector in ("source", "target")
+        for cap in rule[selector].get("capabilities_all", [])
+    }
+    known_evidence = {
+        value for rule in baseline
+        for value in rule["resolution"].get("required_evidence", [])
+    }
     for rule in rules:
         try:
             ced_rulebook.validate_candidate(rule)
@@ -69,9 +78,14 @@ def _validate_rules(rules: list[dict[str, Any]]) -> None:
             raise DistributionError("Signed CED release rule is malformed.") from exc
         if (rule["rule_id"] in seen or rule["rule_id"] in baseline_ids
                 or rule["ced"] not in concepts
-                or not ced_rulebook._eligible_adapter(rule)):
+                or not ced_rulebook._eligible_adapter(rule)
+                or not set(rule["source"].get("capabilities_all", [])) <= known_caps
+                or not set(rule["target"].get("capabilities_all", [])) <= known_caps
+                or not set(rule["resolution"].get("required_evidence", []))
+                    <= known_evidence):
             raise DistributionError(
-                "Signed rule is duplicate, unknown or has no registered native adapter."
+                "Signed rule is duplicate, contains private unknown declarations "
+                "or has no registered native adapter."
             )
         seen.add(rule["rule_id"])
 
