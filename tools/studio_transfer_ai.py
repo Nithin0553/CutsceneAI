@@ -266,12 +266,13 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
         evidence["character_compatibility"] = report
         evidence["summary"]["character_compatibility"] = policy.report_for_model(report)
         evidence["animation_choices"] = policy.available_choices(report)
-    knowledge = _agent_module("ced_agent_knowledge").retrieve(
+    knowledge = _agent_module("ced_agent_knowledge").retrieve_all(
         csir, target_capabilities=native_capabilities,
         source_version=str(csir.get("source", {}).get("engine_version") or ""),
         target_version=str(worker.get("engine_version") or ""),
         approved_store=Path.home() / ".cutsceneai-studio" / "ced-knowledge",
         case_store=Path.home() / ".cutsceneai-studio" / "ced-cases",
+        feedback_store=Path.home() / ".cutsceneai-studio" / "ced-experiences.jsonl",
     )
     evidence["ced_knowledge"] = knowledge
     return evidence
