@@ -21,9 +21,15 @@ for section in ("packages/studio", "packages/ced", "packages/cinetwin",
     sys.path.insert(0, str(ROOT / section))
 
 import ced_agent_knowledge as ced
-import studio_element7_readback as readback
+import studio_element4_validation as gate4
+import studio_element5_plan as gate5
 import studio_element6_execution as execution
+import studio_element7_readback as readback
+import studio_element_investigation as investigation
+import studio_element_native_execution as native_actions
 import studio_element_plan as element_plan
+import studio_element_schedule as schedule_tool
+import studio_element_strategy as strategy_tool
 import studio_release_gate as release_gate
 from behavior_compare import compare
 from sampling_plan import build_plan
@@ -123,24 +129,69 @@ def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False):
     })
     native_folder = candidate / "native-acceptance-synthetic"
     workflow = None
+    native_permission = ""
     if with_element3:
-        knowledge = ced.retrieve_all(csir, target_capabilities={
+        caps = {
+            "fbx_asset_import": False, "sequencer_visibility_track": False,
             "cine_camera_actor": True,
             "sequencer_skeletal_animation_track": True,
-        })
-        conversion = element_plan.prepare(
-            csir, knowledge, {"cine_camera_actor": True,
-                              "sequencer_skeletal_animation_track": True},
+        }
+        knowledge = ced.retrieve_all(csir, target_capabilities=caps)
+        conversion = element_plan.prepare(csir, knowledge, caps)
+        scheduled = schedule_tool.build(conversion, csir)
+        strategies = strategy_tool.build(
+            conversion, scheduled, knowledge, csir, caps,
         )
-        workflow = "f" * 64
+        investigated = investigation.build(
+            conversion, scheduled, strategies, knowledge, csir, caps,
+        )
+        validated = gate4.build(
+            conversion, scheduled, strategies, investigated, knowledge,
+            csir, caps, global_strategy="native_source",
+            allowed_strategies=["native_source", "source_materials"],
+        )
+        transfer = json.loads(
+            (candidate / "transfer-plan.json").read_text(encoding="utf-8")
+        )
+        source_bound = gate5.build(
+            csir, mapping, transfer, conversion,
+            scheduled, strategies, validated,
+        )
+        snapshot = {
+            "kind": "cutsceneai.studio.element_workflow",
+            "schema_version": "1", "candidate_id": candidate_id,
+            "source_file_sha256": _sha(original),
+            "source_csir_sha256": conversion["source_csir_sha256"],
+            "candidate_mapping_sha256": _sha(mapping_file),
+            "transfer_plan_sha256": _sha(candidate / "transfer-plan.json"),
+            "target_project_identity_sha256": hashlib.sha256(
+                str(project.resolve()).encode("utf-8")
+            ).hexdigest(),
+            "element_plan": conversion,
+            "element_schedule": scheduled,
+            "element_strategy": strategies,
+            "element4_baseline_validation": validated,
+            "element5_source_bound_plan": source_bound,
+            "native_execution_authorized": False,
+            "full_cutscene_fidelity_verified": False,
+        }
+        workflow = readback._hash(snapshot)
+        snapshot["workflow_sha256"] = workflow
         _put(candidate / "element-workflow-active.json", {
             "candidate_id": candidate_id, "workflow_sha256": workflow,
         })
-        _put(candidate / ("element-workflow-" + workflow + ".json"), {
-            "candidate_id": candidate_id,
-            "workflow_sha256": workflow,
-            "element_plan": conversion,
-        })
+        _put(candidate / ("element-workflow-" + workflow + ".json"), snapshot)
+        inventory = native_actions.inventory(transfer, conversion, strategies)
+        permission = native_actions.authorize(
+            inventory, candidate_id=candidate_id,
+            workflow_sha256=workflow,
+            transfer_plan_sha256=_sha(candidate / "transfer-plan.json"),
+            approved_action_ids=[
+                action["action_id"] for action in inventory["actions"]
+            ], accept_legacy_unattributed=False,
+        )
+        native_permission = permission["authorization_sha256"]
+        _put(candidate / "element-native-approval.json", permission)
     job_id = "a" * 32
     job = {
         "kind": "cutsceneai.studio.local_unreal_job",
@@ -157,7 +208,7 @@ def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False):
         "generation_editor_pid": 1111,
         "ai_agents_enabled": False,
         "ai_conversion_decision_sha256": "",
-        "element_native_authorization_sha256": "",
+        "element_native_authorization_sha256": native_permission,
     }
     _put(work / "jobs" / (job_id + ".json"), job)
     _put(work / "active-job.json", {"job_id": job_id})
@@ -214,7 +265,9 @@ def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False):
         "native_persistence_status":
             "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS",
         "element3_workflow_sha256": workflow,
-        "element3_native_authorization_sha256": None,
+        "element3_native_authorization_sha256": (
+            native_permission or None
+        ),
         "element3_source_occurrence_count": (
             conversion["source_occurrence_count"] if workflow else None
         ),
@@ -423,9 +476,12 @@ def test_release_gate_exposes_measured_scope_not_full_cinematic_release(tmp_path
 def test_native_acceptance_writer_uses_actual_reopened_raw_evidence():
     source = (ROOT / "integrations/unreal" /
               "studio_native_acceptance.py").read_text()
-    assert source.index("cinetwin_tick_evaluator.start(") < source.index(
+    # The readback is constructed inside the observer's on_complete
+    # callback; the callback is defined earlier in source than start().
+    assert source.index("def finish(target):") < source.index(
         "studio_element7_readback.build("
-    )
+    ) < source.index("cinetwin_tick_evaluator.start(")
+    assert "on_complete=finish" in source
     assert "plan.get('kind') == 'cinetwin.sampling_plan'" in source
     assert "element7-readback.json" in source
     assert "rig-calibration.json" in source
