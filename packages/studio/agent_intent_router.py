@@ -141,6 +141,7 @@ def route(
     camera_cut_repair_evidence: dict[str, Any] | None = None,
     camera_position_repair_evidence: dict[str, Any] | None = None,
     character_facing_review: dict[str, Any] | None = None,
+    static_character_yaw_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Choose *admissible strategies*, not a repair or an engine operation.
 
@@ -249,7 +250,36 @@ def route(
         and character_facing_review.get("native_edit_authorized") is False
         and character_facing_review.get("model_command_authorized") is False
     )
-    if camera_position_eligible:
+    static_character_yaw_eligible = False
+    if isinstance(static_character_yaw_evidence, dict):
+        from studio_static_character_yaw_evidence import message_requests_static_yaw
+        static_character_yaw_eligible = bool(
+            message_requests_static_yaw(message)
+            and intent["mode"] == "user_feedback"
+            and domains in (["animation"], ["transform"])
+            and not intent["ambiguous"] and scope == "character"
+            and generation_complete and completed_repairs < repair_budget
+            and static_character_yaw_evidence.get("kind")
+            == "cutsceneai.studio.static_character_yaw_review"
+            and static_character_yaw_evidence.get("eligible") is True
+            and static_character_yaw_evidence.get("native_edit_authorized") is False
+            and isinstance(static_character_yaw_evidence.get(
+                "character_yaw_repair_sha256"
+            ), str)
+        )
+    if static_character_yaw_eligible:
+        disposition = "GUARDED_STATIC_CHARACTER_ACTOR_YAW_AVAILABLE"
+        reason = (
+            "One unmoving source character has an independently approved "
+            "anatomical mesh axis, full-grid stable yaw, matching static "
+            "calibrated skeletal motion and read-only native actor/mesh "
+            "ownership. This is only eligibility for a source-derived "
+            "user-requested actor base yaw; the live editor must recheck "
+            "inactive animation, physics, hierarchy, Sequencer and "
+            "rollback before saving. Reopened CineTwin remains pending."
+        )
+        allowed = ["report_only", "restore_static_character_actor_yaw"]
+    elif camera_position_eligible:
         disposition = "GUARDED_STATIC_CAMERA_PLACEMENT_AVAILABLE"
         reason = (
             "An exact-source, single CineCamera has a constant sampled world "
