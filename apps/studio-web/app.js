@@ -9,7 +9,8 @@
     selectedFolders:{unity:'',unreal:''}, discovery:null, selectedCutscene:'', selectedLevel:'', selectedUnrealProject:'', sourceRightsConfirmed:false,
     capabilities:null, sourceSurfaces:null, censusIdentity:'', selectedCensus:'', strictSourceCensus:true,
     visibilityFallback:false, importFbxMaterials:false, verification:null,
-    elementReview:null, elementReviewCandidateId:'', elementReviewError:'', releaseReadiness:null };
+    elementReview:null, elementReviewCandidateId:'', elementReviewError:'', releaseReadiness:null,
+    finalOutcome:null, finalOutcomeJobId:'', finalOutcomeError:'' };
   const steps = [['connect','Connect'],['select','Select'],['review','Review'],['transfer','Transfer'],['results','Results']];
   const mark = `<svg viewBox="0 0 36 36" fill="currentColor" aria-hidden="true"><path d="M18 2 3 30h11l4-7h-5l7-14zM23 18l10 12H19l-4-4h8l-4-5z"/></svg>`;
   const icons = {
@@ -325,7 +326,8 @@
       '<p class="body-copy">After generating, Save All and reopen the staging map in a different Unreal Editor process once. This command captures independent CineTwin measurements. Rendered frame, audio, event and complete skeletal fidelity remain separately gated.</p>'+
       '<pre class="command" id="element-native-acceptance-command">'+esc(script)+'</pre>'+
       '<div class="form-actions">'+btn('Copy native acceptance command','copy-native-acceptance-command','secondary')+
-      btn('Check release evidence','check-native-acceptance','secondary',state.busy)+'</div>'+
+      btn('Check release evidence','check-native-acceptance','secondary',state.busy)+
+      btn('Check final source outcome','check-final-outcome','secondary',state.busy)+'</div>'+
       (r?item('Release gate',r.status)+
         '<div class="rule"></div><h3>Element 7 · Native readback + CineTwin</h3>'+
         item('Original engine execution chain',r.checks?.element7_native_execution_chain?.status||'INCOMPLETE')+
@@ -347,6 +349,27 @@
         checks.map(([name,check])=>'<p class="hint"><strong>'+esc(name.replaceAll('_',' '))+
           '</strong> · '+esc(check.status)+' · '+esc(check.explanation||'')+'</p>').join('')+
         '</details>':'<p class="hint">No reopened native acceptance report checked yet.</p>')+
+      '<div class="rule"></div><h3>Element 9 · Remeasure or report limitation</h3>'+
+      (state.finalOutcome?.available?
+        item('Final source outcome',state.finalOutcome.status)+
+        item('Source occurrences accounted for',size(state.finalOutcome.source_occurrence_count))+
+        item('Native observations',size(state.finalOutcome.native_observation_count))+
+        item('Remaining manual remeasurements',size(state.finalOutcome.remaining_manual_remeasurement_budget))+
+        item('Next evidence step',state.finalOutcome.next_step)+
+        '<details class="element-list"><summary>Source-level outcomes</summary>'+
+        (state.finalOutcome.source_page||[]).map(x=>
+          '<div class="element-review-row"><strong>'+esc(x.occurrence_id+' · '+x.source_kind)+'</strong>'+
+          '<p class="hint">'+esc(x.outcome)+' · '+esc(x.next_step)+'</p>'+
+          '<p class="hint">Explicit native source actions: '+size(x.explicit_native_source_action_count)+
+          ' · Cinematic fidelity unverified</p></div>').join('')+
+        '<div class="form-actions">'+
+        btn('Previous sources','final-prev','secondary',state.busy||state.finalOutcome.page_offset===0)+
+        btn('Next sources','final-next','secondary',
+          state.busy||(state.finalOutcome.page_offset+state.finalOutcome.page_size)>=state.finalOutcome.source_occurrence_count)+
+        '</div></details>'+
+        '<p class="hint">This is a read-only outcome report. Measured improvement does not prove what caused it or grant another engine execution.</p>':
+        '<p class="hint">'+esc(state.finalOutcomeError||
+          'Check final source outcome to see every source element, including unmeasured ones.')+'</p>')+
       '<p class="hint">A measured-domain pass is never proof of full cinematic equivalence.</p></section>';
   }
   function results(){const r=state.report,j=state.job,c=state.status?.connection;
@@ -411,6 +434,10 @@
           }
         }catch{}
       }
+      if(state.finalOutcomeJobId &&
+         state.finalOutcomeJobId!==status.active_job){
+        state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
+      }
       if(status.active_job){
         try{state.verification=await api('verification')}
         catch{state.verification=null}
@@ -471,6 +498,7 @@
       return;
     }
     if(name==='prepare'){
+      state.finalOutcome=null;state.finalOutcomeJobId='';state.finalOutcomeError='';
       state.busy=true;render();try{
         const preferences={
           enable_actor_visibility_fallback:state.visibilityFallback,
@@ -493,6 +521,22 @@
         notice('Independent native evidence checked. Incomplete domains remain unverified.');
       }catch(err){notice('Acceptance evidence unavailable: '+err.message,true)}
       finally{state.busy=false;render()}return;
+    }
+    if(name==='check-final-outcome'||name==='final-prev'||name==='final-next'){
+      if(!state.job){notice('A saved transfer is required for final source accounting.',true);return}
+      const old=state.finalOutcome;
+      const offset=name==='check-final-outcome'?0:
+        Math.max(0,(old?.page_offset||0)+
+          (name==='final-next'?(old?.page_size||50):-(old?.page_size||50)));
+      state.busy=true;render();try{
+        state.finalOutcome=await api('final-outcome?offset='+offset);
+        state.finalOutcomeJobId=state.job.job_id;
+        state.finalOutcomeError='';
+        notice('Every source occurrence accounted for. Unmeasured fidelity remains explicit.');
+      }catch(err){
+        state.finalOutcome=null;state.finalOutcomeError=err.message;
+        notice('Final evidence is incomplete: '+err.message,true);
+      }finally{state.busy=false;render()}return;
     }
     if(name==='prepare-elements'){
       state.busy=true;render();try{
@@ -558,6 +602,7 @@
     }
     if(name==='execute'){
       if(!state.candidate){notice('Prepare a verified transfer first.',true);return}
+      state.finalOutcome=null;state.finalOutcomeJobId='';state.finalOutcomeError='';
       if(state.elementReviewCandidateId &&
          (!state.elementReview?.review_acknowledged ||
           !state.elementReview.target_capability_evidence_current ||

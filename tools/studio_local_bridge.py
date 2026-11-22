@@ -826,6 +826,9 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
     readiness_dir = str(ROOT / 'packages' / 'readiness')
     if readiness_dir not in sys.path:
         sys.path.insert(0, readiness_dir)
+    studio_dir = str(ROOT / 'packages' / 'studio')
+    if studio_dir not in sys.path:
+        sys.path.insert(0, studio_dir)
     import studio_project_discovery
     class StudioHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -984,6 +987,34 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                 if data.get('kind') != 'cutsceneai.studio.closed_loop_evaluation':
                     return self.reply(409, {'error': 'Unexpected feedback report type.'})
                 return self.reply(200, {'available': True, **data})
+            if path == '/api/final-outcome':
+                import studio_element9_outcome
+                from urllib.parse import parse_qs
+                active = folder / 'active-job.json'
+                if not active.is_file():
+                    return self.reply(200, {
+                        'available': False, 'status': 'NO_ACTIVE_TRANSFER',
+                        'release_ready': False,
+                        'full_cutscene_fidelity_verified': False,
+                    })
+                try:
+                    query = parse_qs(urlparse(self.path).query)
+                    if set(query) - {'offset'}:
+                        raise ValueError('Unknown final-outcome query parameter.')
+                    pages = query.get('offset', ['0'])
+                    if (len(pages) != 1 or not pages[0].isdigit()
+                            or len(pages[0]) > 5):
+                        raise ValueError('Invalid final-outcome page offset.')
+                    job_id = str(load_json(active)['job_id'])
+                    result = studio_element9_outcome.build(folder, job_id)
+                    return self.reply(200, studio_element9_outcome.page(
+                        result, int(pages[0]),
+                    ))
+                except (ValueError, KeyError, TypeError, OSError) as exc:
+                    return self.reply(409, {
+                        'error': 'Final source-bound outcome evidence unavailable: '
+                                 + str(exc)[:400],
+                    })
             if path == '/api/release-readiness':
                 import studio_release_gate
                 active_path = folder / 'active-job.json'
