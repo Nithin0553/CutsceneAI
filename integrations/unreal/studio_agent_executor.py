@@ -1,7 +1,8 @@
 """Guarded Unreal editor adapter for optional host LangGraph repair requests.
 
-No arbitrary code execution. A source-backed material restoration or one
-full-frame actor translation, editor thread only, two receipts per job.
+No arbitrary code execution. Source-backed material restoration, one measured
+actor translation, or one independently observed constant CineCamera lens
+correction. All are editor-thread only; two receipts per job.
 """
 from __future__ import annotations
 
@@ -31,7 +32,8 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
             or request.get("job_id") != job["job_id"]
             or request.get("candidate_id") != job["candidate_id"]
             or request.get("strategy") not in {
-                "restore_source_albedo", "restore_constant_actor_offset"
+                "restore_source_albedo", "restore_constant_actor_offset",
+                "restore_static_camera_lens",
             }
             or request.get("sequence_path") != job["sequence_path"]
             or request.get("expected_project") != job["expected_project"]
@@ -95,6 +97,11 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
     if request["strategy"] == "restore_constant_actor_offset":
         import studio_transform_repair
         return studio_transform_repair.attempt(api, workspace, job, request)
+    if request["strategy"] == "restore_static_camera_lens":
+        import studio_camera_lens_repair
+        return studio_camera_lens_repair.attempt(
+            api, workspace, job, request,
+        )
     import studio_visual_audit
     before = studio_visual_audit.audit_latest(workspace, api=api)
     old_count = before.get("character_material_slots_engine_default")
