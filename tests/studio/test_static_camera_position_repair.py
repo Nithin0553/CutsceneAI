@@ -172,6 +172,15 @@ def test_source_position_review_requires_constant_exact_camera_and_user_intent(t
         "report_only", "restore_static_camera_position",
     ]
     assert route["model_can_authorize_native_commands"] is False
+    # A valid camera measurement cannot excuse a mixed user request.
+    mixed = agent_intent_router.route(
+        "Fix the camera position and lens.",
+        generation_complete=True, native_material_fallback_slots=0,
+        source_albedo_provenance=False, completed_repairs=0,
+        repair_budget=2, independent_issues=[],
+        camera_position_repair_evidence=proof,
+    )
+    assert mixed["safe_strategies"] == ["report_only"]
     # Mixed semantic request is not allowed even with the same native proof.
     route = agent_intent_router.route(
         "Fix the camera position and rotation.",
