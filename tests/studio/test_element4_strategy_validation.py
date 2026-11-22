@@ -204,7 +204,8 @@ def test_forged_selected_action_or_rehashed_gate_never_validates():
             global_strategy="native_source", allowed_strategies=ALLOWED,
         )
     faked = copy.deepcopy(case[5])
-    faked["comparisons"][0]["alternatives"] = []
+    altered = next(row for row in faked["comparisons"] if row["alternatives"])
+    altered["alternatives"] = []
     faked.pop("comparison_sha256")
     faked["comparison_sha256"] = plans._digest(faked)
     broken = (case[0], case[1], case[2], case[3], case[4], faked, case[6])
