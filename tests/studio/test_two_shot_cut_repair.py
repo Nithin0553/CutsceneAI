@@ -226,7 +226,8 @@ def test_two_shot_later_switch_shrinks_second_section_first(
 
 @pytest.mark.parametrize("case", [
     "stale_feedback", "wrong_request_hash", "different_camera",
-    "same_label_replacement", "wrong_camera_class",
+    "same_label_replacement", "foreign_binding_object",
+    "wrong_camera_class",
     "changed_native_binding", "reversed_native_sections",
     "nested_shot", "subsequence", "time_warp", "root_master",
     "different_original_frame", "camera_added", "missing_camera_path",
@@ -248,6 +249,17 @@ def test_two_shot_rejects_foreign_bindings_tracks_and_identity_without_mutation(
         actors[1].label = "AnotherCamera"
     elif case == "same_label_replacement":
         actors[1].path = "/Game/Unrelated/OtherCamera"
+    elif case == "foreign_binding_object":
+        # The binding resolves a different UObject with the SAME label.
+        # The old label-only CineTwin inspector would accept this falsely.
+        ext = api.MovieSceneSequenceExtensions
+        live = ext.locate_bound_objects
+        foreign = Actor("CamRightNative")
+        foreign.path = "/Game/Foreign/L_Altered.L_Altered:PersistentLevel.CamRightNative"
+        ext.locate_bound_objects = (
+            lambda seq, binding, world: [foreign]
+            if binding.key == "right-guid" else live(seq, binding, world)
+        )
     elif case == "wrong_camera_class":
         actors[1].cls = "Actor"
     elif case == "changed_native_binding":
