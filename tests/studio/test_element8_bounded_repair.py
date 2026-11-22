@@ -107,6 +107,15 @@ def test_element8_only_proposes_existing_user_scoped_offset_adapter(tmp_path):
     )
     assert person["measured_actor_position_error_cm"] == pytest.approx(7.0)
     assert review["native_repair_adapter_available_for_review"] is True
+    assert element8.may_review_exact_character_offset(
+        work, job["job_id"], [native], "Alice",
+    ) is True
+    assert element8.may_review_exact_character_offset(
+        work, job["job_id"], [native], "Camera",
+    ) is False
+    assert element8.may_review_exact_character_offset(
+        work, job["job_id"], [native], "Other",
+    ) is False
     assert review["manual_remeasurement_possible"] is True
     assert review["status"] == (
         "INVESTIGATE_APPROVED_NARROW_ADAPTER_OR_REPORT_LIMITATION"
