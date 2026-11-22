@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -99,6 +100,14 @@ def main() -> int:
             csir, conversion, sampling, source = (
                 read(path) for path in inputs[:4]
             )
+            # The standalone CLI has the raw CSIR bytes; require that the
+            # native CineTwin plan/capture identity matches those exact bytes,
+            # not merely a caller-supplied digest of equivalent JSON content.
+            observed_csir_sha = hashlib.sha256(inputs[0].read_bytes()).hexdigest()
+            if observed_csir_sha != sampling.get("source", {}).get("csir_sha256"):
+                raise studio_element_cinetwin.ElementCineTwinError(
+                    "CineTwin source identity differs from the exact CSIR file bytes."
+                )
             captures = [read(path) for path in targets]
             if args.command == "element-verify":
                 report = studio_element_cinetwin.build(
