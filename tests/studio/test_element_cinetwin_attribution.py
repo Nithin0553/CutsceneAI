@@ -391,3 +391,20 @@ def test_rehashed_element_semantic_cannot_relabel_unsupported_source_as_characte
     forged["element_plan_sha256"] = elements._digest(forged)
     with pytest.raises(audit.ElementCineTwinError, match="semantic"):
         audit.build(csir, forged, sampling, source, target)
+
+
+
+def test_rehashed_unregistered_semantic_is_never_sent_as_public_ced():
+    csir, conversion, sampling, source, target = _inputs()
+    forged = copy.deepcopy(conversion)
+    row = next(item for item in forged["elements"]
+               if item["source_location"] == "entities[2]")
+    # The source really says entity.audio, but this is NOT an executable
+    # native action registered by the Element 3.1 dispatcher.
+    row["ced"] = "entity.audio"
+    forged.pop("element_plan_sha256")
+    forged["element_plan_sha256"] = elements._digest(forged)
+    report = audit.build(csir, forged, sampling, source, target)
+    audio = _item(report, "entities[2]", forged)
+    assert audio["ced"] == "unknown.unclassified"
+    assert audio["native_repair_authorized"] is False
