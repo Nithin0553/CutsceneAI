@@ -219,7 +219,7 @@ def test_camera_placement_rejects_native_transform_owner_and_stale_consent(
         tmp_path):
     workspace, job, _folder = _offset_camera(tmp_path)
     request, proof = _approved(workspace, job)
-    api, actor, saved = _editor(proof, tracks=["MovieScene3DTransformTrack"])
+    api, actor, _saved = _editor(proof, tracks=["MovieScene3DTransformTrack"])
     with pytest.raises(native.StaticCameraNativeRepairError, match="ownership"):
         native.attempt(api, workspace, job, request)
     assert actor.coords == pytest.approx(proof["native_world_before_cm"])
@@ -233,7 +233,7 @@ def test_camera_placement_rejects_native_transform_owner_and_stale_consent(
 def test_camera_placement_mutation_failure_rolls_back(tmp_path):
     workspace, job, _folder = _offset_camera(tmp_path)
     request, proof = _approved(workspace, job)
-    api, actor, saved = _editor(proof)
+    api, actor, _saved = _editor(proof)
     actor.incorrect_set = True
     with pytest.raises(native.StaticCameraNativeRepairError, match="did not reach"):
         native.attempt(api, workspace, job, request)
