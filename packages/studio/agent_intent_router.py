@@ -137,6 +137,7 @@ def route(
     adapter_catalog: object = None,
     fallback_observation_scope: str = "character",
     transform_repair_evidence: dict[str, Any] | None = None,
+    camera_lens_repair_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Choose *admissible strategies*, not a repair or an engine operation.
 
@@ -188,7 +189,27 @@ def route(
         and transform_repair_evidence.get("eligible") is True
         and isinstance(transform_repair_evidence.get("entity"), str)
     )
-    if transform_eligible:
+    camera_eligible = bool(
+        intent["mode"] == "user_feedback"
+        and domains == ["camera"] and not intent["ambiguous"]
+        and generation_complete and completed_repairs < repair_budget
+        and isinstance(camera_lens_repair_evidence, dict)
+        and camera_lens_repair_evidence.get("eligible") is True
+        and camera_lens_repair_evidence.get("kind")
+        == "cutsceneai.studio.static_camera_lens_review"
+        and isinstance(camera_lens_repair_evidence.get("camera_repair_sha256"), str)
+    )
+    if camera_eligible:
+        disposition = "GUARDED_STATIC_CAMERA_LENS_REPAIR_AVAILABLE"
+        reason = (
+            "An exact-source, single native CineCamera has an independently "
+            "measured constant vertical FOV mismatch and no planned camera "
+            "FOV animation. The editor must independently recheck the "
+            "current component/Sequencer key ownership before a single "
+            "user-authorized, rollback-protected focal-length edit."
+        )
+        allowed = ["report_only", "restore_static_camera_lens"]
+    elif transform_eligible:
         disposition = "GUARDED_ACTOR_TRANSLATION_AVAILABLE"
         reason = ("The exact user-named character has an independently sampled "
                   "constant actor/root offset, without conflicting native transform "
@@ -245,7 +266,9 @@ def route(
         "native_material_fallback_slots": native_material_fallback_slots,
         "registered_adapters_informational": _sanitized_adapters(adapter_catalog),
         "safe_strategies": allowed,
-        "requires_editor_receipt": eligibility or transform_eligible,
+        "requires_editor_receipt": (
+            eligibility or transform_eligible or camera_eligible
+        ),
         "user_observation_verified": False,
         "native_fidelity_verified": False,
         "model_can_authorize_native_commands": False,
