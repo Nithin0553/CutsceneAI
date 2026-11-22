@@ -83,8 +83,11 @@ claim blocks native replay.
   quaternion; live component world quaternion equals the native actor world
   orientation under the verified Unreal-to-canonical basis.
 
-Only then one `Actor.set_actor_rotation(Rotator(expected_pitch,
-source_expected_yaw, expected_roll), teleport=True)` is attempted. The
+Only then one `Actor.set_actor_rotation(Rotator(current_native_pitch,
+source_expected_yaw, current_native_roll), teleport=True)` is attempted.
+**Current native roll and pitch are preserved exactly**; the independently
+approved source values are used solely to verify those axes are already
+within tolerance, not to rewrite them. The
 editor must confirm success and read back actor world rotation, unchanged
 world location and scale, and matching CineCameraComponent world basis,
 then save the existing level via the Studio native saver.
