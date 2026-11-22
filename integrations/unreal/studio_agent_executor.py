@@ -36,6 +36,7 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
                 "restore_static_camera_lens",
                 "restore_single_camera_cut_timing",
                 "restore_static_camera_position",
+                "restore_static_character_actor_yaw",
             }
             or request.get("sequence_path") != job["sequence_path"]
             or request.get("expected_project") != job["expected_project"]
@@ -112,6 +113,11 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
     if request["strategy"] == "restore_static_camera_position":
         import studio_camera_position_repair
         return studio_camera_position_repair.attempt(api, workspace, job, request)
+    if request["strategy"] == "restore_static_character_actor_yaw":
+        import studio_static_character_yaw_repair
+        return studio_static_character_yaw_repair.attempt(
+            api, workspace, job, request,
+        )
     import studio_visual_audit
     before = studio_visual_audit.audit_latest(workspace, api=api)
     old_count = before.get("character_material_slots_engine_default")
