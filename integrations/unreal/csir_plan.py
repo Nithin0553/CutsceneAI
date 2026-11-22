@@ -756,6 +756,57 @@ def _section_curve_channels(section: dict[str, Any]) -> tuple[
     return position, quaternion, euler
 
 
+def _validate_camera_curve_ownership(section: dict[str, Any]) -> None:
+    """Reject unsupported, duplicate or nested camera curve owners.
+
+    Historical conversion silently ignored nested or unknown curves. A
+    source-bound full-frame camera trajectory may never omit them.
+    """
+    curves = section.get("payload", {}).get("animation", {}).get("curves", [])
+    if not isinstance(curves, list) or len(curves) > 4096:
+        raise PlanError("Camera curve inventory is absent or unbounded.")
+    seen = set()
+    euler_names = {"localeuleranglesraw."+axis for axis in "xyz"} | {
+        "m_localeulerangleshint."+axis for axis in "xyz"
+    }
+    for curve in curves:
+        if not isinstance(curve, dict):
+            raise PlanError("Malformed camera source animation curve.")
+        if str(curve.get("path") or "").strip():
+            raise PlanError("Nested camera/rig curve requires a separate native owner.")
+        semantic = str(curve.get("canonical_semantic") or "")
+        native = str(curve.get("property_name") or "").lower()
+        euler = native if native in euler_names else ""
+        allowed = (
+            semantic.startswith(("transform.position.", "transform.rotation.",
+                                 "transform.track_offset.",
+                                 "transform.clip_offset.",
+                                 "transform.infinite_offset."))
+            or semantic == "camera.vertical_fov_degrees"
+            or native == "field of view" or bool(euler)
+        )
+        if not allowed:
+            raise PlanError(
+                "Unrecognized animated camera property is not safe to omit: "
+                + str(semantic or native)[:100]
+            )
+        if semantic == "transform.rotation.euler_native" and not euler:
+            raise PlanError("Camera native Euler curve has no known source axis.")
+        if euler and semantic not in {"", "transform.rotation.euler_native"}:
+            raise PlanError("Camera Euler channel semantic and source axis conflict.")
+        key = "euler:"+euler if euler else (
+            semantic if semantic else "property:"+native
+        )
+        if key in seen:
+            raise PlanError("Duplicate camera source transform property: " + key)
+        seen.add(key)
+        if any("weighted_mode" in k and int(k["weighted_mode"]) != 0
+               for k in curve.get("keys", [])):
+            raise PlanError(
+                "Weighted camera animation tangents need a dedicated evaluator."
+            )
+
+
 def _sample_section_transform(
     section: dict[str, Any],
     entity: dict[str, Any],
@@ -765,6 +816,8 @@ def _sample_section_transform(
     *,
     camera_frame_bake: bool = False,
 ) -> tuple[list[dict[str, Any]], bool]:
+    if camera_frame_bake:
+        _validate_camera_curve_ownership(section)
     curves = _curve_map(section)
     position_curves, quaternion_curves, euler_curves = _section_curve_channels(section)
     active_curves = [c for c in [*position_curves.values(),
