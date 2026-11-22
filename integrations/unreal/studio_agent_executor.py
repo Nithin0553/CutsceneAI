@@ -37,6 +37,7 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
                 "restore_single_camera_cut_timing",
                 "restore_two_shot_camera_switch",
                 "restore_static_camera_position",
+                "restore_static_camera_actor_yaw",
                 "restore_static_character_actor_yaw",
             }
             or request.get("sequence_path") != job["sequence_path"]
@@ -119,6 +120,9 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
     if request["strategy"] == "restore_static_camera_position":
         import studio_camera_position_repair
         return studio_camera_position_repair.attempt(api, workspace, job, request)
+    if request["strategy"] == "restore_static_camera_actor_yaw":
+        import studio_camera_yaw_repair
+        return studio_camera_yaw_repair.attempt(api, workspace, job, request)
     if request["strategy"] == "restore_static_character_actor_yaw":
         import studio_static_character_yaw_repair
         return studio_static_character_yaw_repair.attempt(
