@@ -659,6 +659,20 @@ def job_status(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
                     result['setup_error'] = setup_error.get('message')
         except (OSError, ValueError, KeyError, TypeError):
             pass
+    # Observe terminal native jobs and store private, source-hash-bound
+    # learning diagnostics. Do not retrigger an Unreal job or award positive
+    # learning credit. Failures must not mask the actual native job status.
+    if job.get('status') not in {'RUNNING', 'QUEUED', 'PENDING', 'NEW'}:
+        try:
+            import studio_continual_learning
+            result['private_learning_trial'] = studio_continual_learning.record_terminal(
+                folder, job
+            )['status']
+            measured = studio_continual_learning.record_measured_outcome(folder, job)
+            result['private_native_measurement'] = measured['status']
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            result['private_learning_trial'] = 'EVIDENCE_REVIEW_REQUIRED'
+            result['private_learning_diagnostic'] = type(exc).__name__
     return result
 
 

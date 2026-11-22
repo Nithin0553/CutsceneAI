@@ -157,13 +157,18 @@ def _ced_knowledge_for_agent(workspace: Path, job: dict[str, Any]) -> dict[str, 
         ),
         target_version=str(job.get("target_engine_version") or ""),
         approved_store=workspace.parent / "ced-knowledge",
+        case_store=workspace / "learning" / "approved-cases",
     )
-    # Retrieval is advisory: all native permission checks run later.
+    public = ced_agent_knowledge.model_projection(result)
+    # Retrieval is advisory: all native permission checks run later. This
+    # prompt sees only anonymized unknown classes and private case aliases.
     return {
         "status": "RETRIEVED_CED_EVIDENCE_UNVERIFIED",
         "knowledge_sha256": result["knowledge_sha256"],
         "source_ced_count": result["source_ced_count"],
-        "entries": result["entries"][:12],
+        "entries": public["entries"][:12],
+        "private_verified_case_suggestions": public["private_verified_case_suggestions"][:3],
+        "privacy_projection": public["privacy_projection"],
         "no_native_write_permission": True,
     }
 
