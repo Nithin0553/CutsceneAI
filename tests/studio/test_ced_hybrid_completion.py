@@ -16,6 +16,7 @@ for folder in ("ced", "studio", "readiness", "learning", "tools"):
     sys.path.insert(0, str(ROOT / "packages" / folder)
                     if folder != "tools" else str(ROOT / "tools"))
 
+import ced_knowledge
 import ced_rulebook
 import contracts
 import knowledge_service
@@ -329,3 +330,81 @@ def test_signed_distribution_rejects_unknown_private_capability_tokens():
     rule["source"]["capabilities_all"].append("PrivateClient.RigInternalSecret")
     with pytest.raises(shared_distribution.DistributionError, match="private unknown"):
         shared_distribution._validate_rules([rule])
+
+
+
+def test_signed_release_can_resume_exact_pending_bytes_and_reinstall_idempotently(tmp_path):
+    bundle, _rule, trust, decisions, publisher_key, publisher_public = _reviewed_bundle(
+        tmp_path
+    )
+    release_file = tmp_path / "release1.json"
+    release = shared_distribution.sign_release(
+        bundle, review_decisions=decisions, trusted_reviewers=trust,
+        publisher_private_key=publisher_key, revision=1,
+        previous_release_sha256=None, revoked_rule_ids=[],
+        output_file=release_file, explicit_release_consent=True,
+    )
+    store = tmp_path / "resumed-install"
+    store.mkdir()
+    serialized = json.dumps(release, indent=2, sort_keys=True) + "\n"
+    (store / "release-000001.json").write_text(serialized)
+    (store / "active.pending").write_text(serialized)
+    result = shared_distribution.install_release(
+        release_file, trust_key_file=publisher_public,
+        store=store, explicit_install_consent=True,
+    )
+    assert result["status"] == "SIGNED_SHARED_KNOWLEDGE_INSTALLED"
+    assert not (store / "active.pending").exists()
+    assert (store / "active.json").read_text() == serialized
+    repeated = shared_distribution.install_release(
+        release_file, trust_key_file=publisher_public,
+        store=store, explicit_install_consent=True,
+    )
+    assert repeated["status"] == "SIGNED_SHARED_KNOWLEDGE_ALREADY_INSTALLED"
+    assert len(list(store.glob("release-*.json"))) == 1
+
+
+def test_signed_release_rejects_conflicting_interrupted_data(tmp_path):
+    bundle, _rule, trust, decisions, publisher_key, publisher_public = _reviewed_bundle(
+        tmp_path
+    )
+    release_file = tmp_path / "release1.json"
+    shared_distribution.sign_release(
+        bundle, review_decisions=decisions, trusted_reviewers=trust,
+        publisher_private_key=publisher_key, revision=1,
+        previous_release_sha256=None, revoked_rule_ids=[],
+        output_file=release_file, explicit_release_consent=True,
+    )
+    store = tmp_path / "conflicting-install"
+    store.mkdir()
+    (store / "active.pending").write_text('{"forged":"different"}')
+    with pytest.raises(shared_distribution.DistributionError, match="Conflicting"):
+        shared_distribution.install_release(
+            release_file, trust_key_file=publisher_public,
+            store=store, explicit_install_consent=True,
+        )
+    assert not (store / "active.json").exists()
+    assert not list(store.glob("release-*.json"))
+
+
+def test_review_signing_cli_refuses_to_replace_existing_decision(tmp_path):
+    bundle, _rule, _trust, _decisions, _publisher_key, _publisher_public = _reviewed_bundle(
+        tmp_path
+    )
+    reviewer_key, _pub, _raw = _keys(tmp_path, "separate-reviewer")
+    output = tmp_path / "existing-review.json"
+    output.write_text("DO NOT OVERWRITE")
+    with pytest.raises(FileExistsError):
+        ced_knowledge.main([
+            "sign-review",
+            "--bundle", str(bundle),
+            "--reviewer", "independent-verify",
+            "--role", "NATIVE_EVIDENCE",
+            "--private-key", str(reviewer_key),
+            "--native-evidence", str(tmp_path / "native.json"),
+            "--heldout-report", str(tmp_path / "heldout.json"),
+            "--regression-report", str(tmp_path / "regression.json"),
+            "--output", str(output),
+            "--explicit-review-approval",
+        ])
+    assert output.read_text() == "DO NOT OVERWRITE"
