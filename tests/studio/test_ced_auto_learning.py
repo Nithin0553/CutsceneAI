@@ -38,7 +38,7 @@ def native_workspace(tmp_path):
 
 
 def test_job_status_automatically_records_private_unverified_trial(native_workspace):
-    workspace, candidate, job = native_workspace
+    workspace, _candidate, job = native_workspace
     result = studio_local_bridge.job_status(job["job_id"], workspace)
     assert result["status"] == "GENERATED_DIAGNOSTIC_INCOMPLETE"
     assert result["private_learning_trial"] == "RECORDED"
