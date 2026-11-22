@@ -377,3 +377,17 @@ def test_new_rotation_regression_stops_recommending_recovery_even_if_position_im
     assert report["next_attempt_recommended"] is False
     assert any(row["result"] == "REGRESSED_AFTER_REMEASUREMENT"
                for row in report["per_occurrence"])
+
+
+
+def test_rehashed_element_semantic_cannot_relabel_unsupported_source_as_character():
+    csir, conversion, sampling, source, target = _inputs()
+    forged = copy.deepcopy(conversion)
+    row = next(item for item in forged["elements"]
+               if item["source_location"] == "entities[2]")
+    assert row["ced"] == "unknown.unclassified"
+    row["ced"] = "entity.character"
+    forged.pop("element_plan_sha256")
+    forged["element_plan_sha256"] = elements._digest(forged)
+    with pytest.raises(audit.ElementCineTwinError, match="semantic"):
+        audit.build(csir, forged, sampling, source, target)
