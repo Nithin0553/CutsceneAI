@@ -85,6 +85,19 @@ def record_terminal(workspace: Path, job: dict) -> dict:
         "fidelity_verified": False,
         "eligible_for_training": False,
         "classification": "UNREVIEWED_DIAGNOSTIC_ONLY",
+        "native_failure_category": (
+            "NONE" if job.get("status") == "GENERATED_DIAGNOSTIC_INCOMPLETE"
+            else "FAILED_NATIVE_STEP" if job.get("error")
+            else "UNVERIFIED_NATIVE_OUTCOME"
+        ),
+        "failure_stage_class": (
+            str(job.get("failure_stage"))
+            if str(job.get("failure_stage")) in {
+                "PRECHECK", "ASSET_IMPORT", "SEQUENCE_GENERATION",
+                "NATIVE_PERSISTENCE", "READBACK", "VERIFY", "NONE",
+            } else "UNKNOWN"
+        ),
+        "error_reported": bool(job.get("error")),
     }
     with output.open("x", encoding="utf-8") as stream:
         json.dump(document, stream, sort_keys=True, indent=2)
