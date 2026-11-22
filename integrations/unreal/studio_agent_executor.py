@@ -34,6 +34,7 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
             or request.get("strategy") not in {
                 "restore_source_albedo", "restore_constant_actor_offset",
                 "restore_static_camera_lens",
+                "restore_single_camera_cut_timing",
             }
             or request.get("sequence_path") != job["sequence_path"]
             or request.get("expected_project") != job["expected_project"]
@@ -100,6 +101,11 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
     if request["strategy"] == "restore_static_camera_lens":
         import studio_camera_lens_repair
         return studio_camera_lens_repair.attempt(
+            api, workspace, job, request,
+        )
+    if request["strategy"] == "restore_single_camera_cut_timing":
+        import studio_camera_cut_repair
+        return studio_camera_cut_repair.attempt(
             api, workspace, job, request,
         )
     import studio_visual_audit
