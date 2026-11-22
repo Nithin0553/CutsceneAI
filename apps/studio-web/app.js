@@ -179,6 +179,15 @@
           '</div>').join('')+'</details>'+
         '<div class="form-actions">'+btn('Previous','elements-prev','secondary',state.busy||r.offset===0)+
         btn('Next','elements-next','secondary',state.busy||!r.has_more)+'</div>'+
+        '<div class="rule"></div><h3>Exact native action authorization</h3>'+
+        item('Registered prepared actions',size(r.native_actions?.action_count))+
+        item('Legacy actions without exact-source attribution',size(r.native_actions?.unattributed_count))+
+        item('Native action approval',r.native_actions?.approved_for_existing_native_preflight?'APPROVED · ENGINE PREFLIGHT REQUIRED':'NOT AUTHORIZED')+
+        '<p class="hint">Only the immutable registered Unreal builder action set can run. Actions without explicit source-location metadata are not described as per-element verified. Partial plan changes require a NEW candidate.</p>'+
+        (r.native_actions?.approved_for_existing_native_preflight?
+          statusLabel('EXACT ACTION SET AUTHORIZED','good'):
+          btn('Approve all prepared native actions','approve-native-elements','secondary',
+              state.busy||!r.review_acknowledged||!r.target_capability_evidence_current||!r.target_capabilities_observed))+
         '<p class="hint">Acknowledgment confirms issue review only; it does not authorize native or AI tool execution.</p>'+
         (r.review_acknowledged?statusLabel('REVIEW ACKNOWLEDGED','good'):
           btn('Acknowledge known source limitations','ack-elements','secondary',
@@ -211,8 +220,10 @@
     const recoveryHint=recoverableReadinessImportFailure
       ? '<div class="slim-note">The Unity assets and actors are already staged. The Python readiness import blocked sequence generation before it started. Do not reimport or retry this job. See docs/studio/RECOVER_SEQUENCE_AFTER_READINESS_IMPORT.md for the one-time, guarded sequence-only recovery.</div>'
       : '';
-    const elementsApproved=Boolean(!state.elementReview?.available ||
-      (state.elementReview.review_acknowledged&&state.elementReview.target_capability_evidence_current));
+    const elementsApproved=Boolean(!state.elementReviewCandidateId ||
+      (state.elementReview?.available&&state.elementReview.review_acknowledged&&
+       state.elementReview.target_capability_evidence_current&&
+       state.elementReview.native_actions?.approved_for_existing_native_preflight));
     const canGenerate=Boolean(connectedTarget&&p&&elementsApproved&&
       ((d.ready&&d.candidate_id===p.candidate_id)||autoCanRun)&&!state.busy&&!state.job);
     if(!c)return missing('Unreal transfer','Connect your Unity source and target Unreal project first.','connect');
@@ -416,12 +427,39 @@
       state.busy=true;render();try{state.elementReview=await api('elements?offset='+offset)}
       catch(err){notice(err.message,true)}finally{state.busy=false;render()}return;
     }
+    if(name==='approve-native-elements'){
+      const e=state.elementReview, native=e?.native_actions;
+      if(!e?.available||!native||!e.review_acknowledged||!e.target_capabilities_observed){
+        notice('Current source review and live Unreal capability evidence are required.',true);return;
+      }
+      const hasLegacy=native.unattributed_count>0;
+      const consent=confirm(
+        'Approve the EXACT '+native.action_count+' prepared, registered Unreal builder actions for this candidate?'+
+        (hasLegacy?'\n\n'+native.unattributed_count+' legacy actions lack explicit per-element source provenance. They remain unverified and require separate explicit acceptance.':'')+
+        '\n\nThis approval does not execute anything or prove native fidelity. The separate Generate action and engine preflight remain required.');
+      if(!consent)return;
+      if(hasLegacy&&!confirm(
+        'Confirm separately that you have reviewed the '+native.unattributed_count+
+        ' legacy actions whose individual source occurrence is not yet proven. Continue ONLY in a backed-up staging project.')){
+        return;
+      }
+      state.busy=true;render();try{
+        await api('elements/approve-native-actions',{
+          workflow_sha256:e.workflow_sha256,
+          action_inventory_sha256:native.action_inventory_sha256,
+          review_all:true,accept_legacy_unattributed:hasLegacy
+        });
+        state.elementReview=await api('elements');
+        notice('Exact registered native actions authorized for this candidate. Unreal preflight and separate Generate approval still required.');
+      }catch(err){notice(err.message,true)}finally{state.busy=false;render()}return;
+    }
     if(name==='execute'){
       if(!state.candidate){notice('Prepare a verified transfer first.',true);return}
-      if(state.elementReview?.available &&
-         (!state.elementReview.review_acknowledged ||
-          !state.elementReview.target_capability_evidence_current)){
-        notice('Acknowledge the current Element 3 source limitations in Review first.',true);return}
+      if(state.elementReviewCandidateId &&
+         (!state.elementReview?.review_acknowledged ||
+          !state.elementReview.target_capability_evidence_current ||
+          !state.elementReview.native_actions?.approved_for_existing_native_preflight)){
+        notice('Review and separately authorize the exact Element 3 action set before Generate.',true);return}
       const d=state.status?.destination_readiness;
       const autoReady=automaticSetupState(state.candidate,d).safe;
       const w=worker();
