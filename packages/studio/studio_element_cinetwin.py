@@ -244,7 +244,13 @@ def build(csir: dict, conversion: dict, sampling: dict,
         if kind == "entities" and item["state"] in {
             "UNKNOWN_SEMANTIC_INVESTIGATE", "UNRESOLVED_SOURCE_DEPENDENCY"
         }:
-            status = "SOURCE_SEMANTIC_OR_DEPENDENCY_UNRESOLVED"
+            if status == "INCOMPLETE_TARGET_UNMAPPED":
+                # Preserve the most concrete coverage failure. Unknown CED
+                # semantics are an *additional* investigation reason, not an
+                # excuse to hide a missing native target actor.
+                flags.append("SOURCE_SEMANTIC_OR_DEPENDENCY_UNRESOLVED")
+            else:
+                status = "SOURCE_SEMANTIC_OR_DEPENDENCY_UNRESOLVED"
         if (kind == "entities" and status == "DIRECT_MEASURED_DIFFERENCE"
                 and item["ced"] == "entity.character"
                 and by_eid.get(direct_entity, {}).get("motion_diagnostic")
