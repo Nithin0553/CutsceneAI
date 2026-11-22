@@ -325,10 +325,10 @@ def test_unreal_hot_reload_includes_exact_source_plan_and_gate_without_restart()
 
 def test_full_deterministic_compiler_plan_reconciles_against_actual_ced_eligibility():
     import ced_agent_knowledge as ced
+    import studio_element_native_execution as native
     import studio_element_plan as source_planner
     import studio_element_schedule as schedule_tool
     import studio_element_strategy as strategies
-    import studio_element_native_execution as native
     import transfer_backend
     from test_transfer_backend import mapping, source
 
