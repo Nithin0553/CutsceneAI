@@ -829,6 +829,7 @@ def _tick(_delta):
             BUSY = True
             native_guard = None
             attempt = None
+            other_claim_exists = False
             try:
                 native_guard = _native_attempt_guard()
                 # Durable write-ahead claim happens BEFORE RUNNING status,
@@ -843,24 +844,47 @@ def _tick(_delta):
                 _save(path, job)
                 job = _execute(job)
             except Exception as exc:
-                job['failure_stage'] = job.get('execution_stage', 'UNKNOWN_NATIVE_STAGE')
-                job['status'] = ('PARTIAL_SETUP_MUST_INSPECT'
-                                 if job.get('setup_status') == 'PARTIAL_SETUP_MUST_INSPECT'
-                                 else 'BLOCKED_OR_FAILED')
-                job['error'] = str(exc)
-                job['traceback'] = traceback.format_exc()
-                job['fidelity_verified'] = False
-                if attempt is not None:
-                    job['element6_guard_status'] = (
-                        'INCOMPLETE_OR_FAILED_NO_AUTOMATIC_REPLAY'
+                # Another editor may have claimed the QUEUED job before it
+                # changed the shared job file to RUNNING. Never let the losing
+                # editor overwrite the owner's live status or native receipt.
+                candidate_id = job.get('candidate_id')
+                job_id = job.get('job_id')
+                if (attempt is None and native_guard is not None
+                        and isinstance(candidate_id, str)
+                        and isinstance(job_id, str)
+                        and native_guard.CANDIDATE.fullmatch(candidate_id)
+                        and native_guard.JOB_ID.fullmatch(job_id)):
+                    other_claim_exists = (
+                        WORKSPACE / 'candidates' / candidate_id /
+                        ('element6-native-claim-' + job_id + '.json')
+                    ).is_file()
+                if other_claim_exists:
+                    unreal.log_warning(
+                        '[CutSceneAI Studio] Existing native attempt owns this '
+                        'queue item. Do not replay or overwrite its job status.'
                     )
-                if (Path(job['candidate_dir']) / 'character-native-attempt.json').exists():
-                    try:
-                        import studio_character_execution
-                        studio_character_execution.attempt_status(job, 'FAILED_NO_REPLAY', reason=str(exc))
-                    except Exception as attempt_error:
-                        job['character_attempt_record_error'] = str(attempt_error)
-                unreal.log_error('[CutSceneAI Studio] Job stopped: ' + str(exc))
+                else:
+                    job['failure_stage'] = job.get('execution_stage', 'UNKNOWN_NATIVE_STAGE')
+                    job['status'] = ('PARTIAL_SETUP_MUST_INSPECT'
+                                     if job.get('setup_status') == 'PARTIAL_SETUP_MUST_INSPECT'
+                                     else 'BLOCKED_OR_FAILED')
+                    job['error'] = str(exc)
+                    job['traceback'] = traceback.format_exc()
+                    job['fidelity_verified'] = False
+                    if attempt is not None:
+                        job['element6_guard_status'] = (
+                            'INCOMPLETE_OR_FAILED_NO_AUTOMATIC_REPLAY'
+                        )
+                    candidate = Path(str(job.get('candidate_dir') or ''))
+                    if (candidate / 'character-native-attempt.json').exists():
+                        try:
+                            import studio_character_execution
+                            studio_character_execution.attempt_status(
+                                job, 'FAILED_NO_REPLAY', reason=str(exc),
+                            )
+                        except Exception as attempt_error:
+                            job['character_attempt_record_error'] = str(attempt_error)
+                    unreal.log_error('[CutSceneAI Studio] Job stopped: ' + str(exc))
             finally:
                 if attempt is not None and native_guard is not None:
                     try:
@@ -890,7 +914,8 @@ def _tick(_delta):
                                 'GENERATED_GUARD_EVIDENCE_INCOMPLETE_REVIEW_REQUIRED'
                             )
                         job['fidelity_verified'] = False
-                _save(path, job)
+                if not other_claim_exists:
+                    _save(path, job)
                 BUSY = False
             break
     except Exception as exc:
