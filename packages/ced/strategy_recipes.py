@@ -11,6 +11,8 @@ import json
 import re
 from typing import Any
 
+from contracts import ContractError, validate_recipe
+
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,127}\Z")
 _RELATIONS = {
     "parent", "binds", "contains", "uses_asset", "depends_on",
@@ -135,5 +137,9 @@ def from_rule(rule: dict[str, Any], *, origin: str,
     portable = {key: value for key, value in recipe.items()
                 if key not in {"execution_authorized", "resolver_reference",
                                "verified_case_ids"}}
+    try:
+        validate_recipe(portable)
+    except ContractError as exc:
+        raise StrategyRecipeError("CED strategy recipe contract failed: " + str(exc)) from exc
     recipe["recipe_sha256"] = _digest(portable)
     return recipe
