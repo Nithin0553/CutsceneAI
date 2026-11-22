@@ -12,8 +12,11 @@ import json
 import re
 import sys
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from jsonschema import Draft202012Validator
 
 PACKAGES = Path(__file__).resolve().parents[1]
 STUDIO = str(PACKAGES / "studio")
@@ -36,6 +39,32 @@ _ACTION_CAPABILITY = {
 
 class ElementPlanError(ValueError):
     """An element plan cannot be grounded in this exact source and CED snapshot."""
+
+
+@lru_cache(maxsize=1)
+def _validator() -> Draft202012Validator:
+    path = (PACKAGES / "contracts" / "agent" /
+            "element-conversion-plan-v1.schema.json")
+    if (path.is_symlink() or not path.is_file()
+            or not 0 < path.stat().st_size <= 64 * 1024):
+        raise ElementPlanError("Versioned per-element plan schema is unavailable.")
+    try:
+        schema = json.loads(path.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ElementPlanError("Versioned per-element plan schema is invalid.") from exc
+    return Draft202012Validator(schema)
+
+
+def _validate_contract(document: dict[str, Any]) -> None:
+    # The schema constrains every field to a bounded, privacy-minimal
+    # contract; source/knowledge equivalence is checked separately.
+    error = next(_validator().iter_errors(document), None)
+    if error is not None:
+        raise ElementPlanError(
+            "Per-element plan violates its versioned schema at " +
+            str(error.json_path)[:140]
+        )
 
 
 def _digest(value: Any) -> str:
@@ -233,6 +262,7 @@ def prepare(csir: dict[str, Any], knowledge: dict[str, Any],
         "elements": elements,
     }
     result["element_plan_sha256"] = _digest(result)
+    _validate_contract(result)
     return result
 
 
@@ -275,6 +305,7 @@ def apply_choices(plan: dict[str, Any], choices: list[dict[str, Any]],
                                           for row in updated["elements"])
     updated.pop("element_plan_sha256", None)
     updated["element_plan_sha256"] = _digest(updated)
+    _validate_contract(updated)
     return updated
 
 
@@ -282,6 +313,9 @@ def verify(plan: dict[str, Any], csir: dict[str, Any],
            knowledge: dict[str, Any],
            target_capabilities: dict[str, Any]) -> None:
     """Independently recompute all source/knowledge/action predicates."""
+    if not isinstance(plan, dict):
+        raise ElementPlanError("Missing structured per-occurrence plan.")
+    _validate_contract(plan)
     baseline = prepare(csir, knowledge, target_capabilities)
     if not isinstance(plan, dict) or set(plan) != set(baseline):
         raise ElementPlanError("Element plan contains unknown or missing contract fields.")
