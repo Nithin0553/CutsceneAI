@@ -552,3 +552,19 @@ def test_forged_workflow_hash_and_invalid_native_grant_not_accepted(tmp_path):
     _put(approval_path, approval)
     with pytest.raises(readback.Element7ReadbackError):
         readback.build(work, job["job_id"], folder)
+
+
+
+def test_open_unreal_editor_refreshes_canonical_element7_code_without_restart():
+    import studio_planner_sync
+
+    modules = [name for name, _relative in studio_planner_sync.MODULES]
+    assert modules.index("studio_element6_execution") < (
+        modules.index("studio_element_cinetwin")
+    )
+    assert modules.index("studio_element_cinetwin") < (
+        modules.index("studio_element7_readback")
+    )
+    assert modules.index("studio_element7_readback") < (
+        modules.index("studio_element_native_gate")
+    )
