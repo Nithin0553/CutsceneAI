@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from contracts import ContractError, validate_manifest
 from semantic_graph import SemanticGraphError, analyze
 from strategy_recipes import StrategyRecipeError, from_rule as recipe_from_rule
 
@@ -59,7 +60,10 @@ def _module(folder: str, name: str):
 
 
 def _baseline() -> tuple[dict[str, Any], set[str], list[dict[str, Any]], dict[str, tuple]]:
-    manifest = _read(DICTIONARY / "ced-shared-manifest-v1.json")
+    try:
+        manifest = validate_manifest(_read(DICTIONARY / "ced-shared-manifest-v1.json"))
+    except ContractError as exc:
+        raise KnowledgeServiceError("CED shared baseline contract failed: " + str(exc)) from exc
     if (manifest.get("kind") != "cutsceneai.ced.shared_baseline_manifest"
             or manifest.get("schema_version") != "1"
             or manifest.get("runtime_execution_authority") is not False
