@@ -436,11 +436,38 @@ def decide(config: dict, census_path: str, worker: dict,
     if planning_mode not in {"inventory", "model"}:
         raise TransferAIError("Invalid CUTSCENEAI_ELEMENT_PLANNING setting.")
     if reasoner is None and planning_mode == "model":
-        # The real configured AI must review every occurrence, not merely the
-        # global strategy. A missing page fails before any native submission.
+        # Large scenes save every independently validated redacted model page.
+        # A bounded interrupted run is resumable, but NEVER a native approval.
         try:
+            provider = _agent_module("studio_model_provider")
+            large = element_plan["source_occurrence_count"] > 256
+            checkpoint_path = None
+            model_identity = "unspecified"
+            page_budget = None
+            if large:
+                provider_name = provider.provider_name()
+                model_identity = provider_name + "/" + provider._model_name(provider_name)
+                checkpoint_path = (
+                    Path.home() / ".cutsceneai-studio" / "element-reviews" /
+                    (element_plan["element_plan_sha256"] + ".json")
+                )
+                raw_limit = os.environ.get("CUTSCENEAI_ELEMENT_REVIEW_MAX_NEW_PAGES", "32")
+                if not re.fullmatch(r"[1-9][0-9]{0,3}", raw_limit):
+                    raise TransferAIError("Invalid per-run model review page budget.")
+                page_budget = int(raw_limit)
+            blocking_statuses = {
+                "SOURCE_DEPENDENCY_MISSING", "DEPENDENCY_CYCLE",
+                "UPSTREAM_BLOCKED", "OWNERSHIP_CONFLICT",
+            }
+            blockers = {
+                row["occurrence_id"]: row["status"]
+                for row in evidence["element_schedule"]["nodes"]
+                if row["status"] in blocking_statuses
+            }
             element_plan, element_response_hashes = element_planner.review_with_model(
-                element_plan, provider=_agent_module("studio_model_provider"),
+                element_plan, provider=provider, checkpoint_path=checkpoint_path,
+                model_identity=model_identity, max_new_pages=page_budget,
+                blocked_occurrences=blockers,
             )
         except Exception as exc:
             raise TransferAIError(
