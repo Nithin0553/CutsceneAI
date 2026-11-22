@@ -89,7 +89,7 @@ def test_candidate_review_contains_all_five_phase_inputs_and_redacts_names(tmp_p
     work, worker, _target = _setup(tmp_path)
     prepared = workflow.prepare(work, worker)
     assert prepared["available"] is True
-    assert prepared["source_occurrence_count"] == 6
+    assert prepared["source_occurrence_count"] == 5
     assert prepared["review_acknowledged"] is False
     assert prepared["native_execution_authorized"] is False
     assert prepared["full_cutscene_fidelity_verified"] is False
@@ -102,7 +102,7 @@ def test_candidate_review_contains_all_five_phase_inputs_and_redacts_names(tmp_p
     candidate = work / "candidates" / prepared["candidate_id"]
     persisted = candidate / ("element-workflow-" + prepared["workflow_sha256"] + ".json")
     record = json.loads(persisted.read_text(encoding="utf-8"))
-    assert record["element_plan"]["source_occurrence_count"] == 6
+    assert record["element_plan"]["source_occurrence_count"] == 5
     assert record["element_schedule"]["native_execution_permitted"] is False
     assert record["element_strategy"]["native_execution_authorized"] is False
     assert record["element_investigation"]["native_execution_authorized"] is False
