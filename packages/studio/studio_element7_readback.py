@@ -134,7 +134,12 @@ def _attempt(root: Path, candidate: Path, job: dict) -> dict:
         runtime_file = candidate / ("unreal-runtime-receipt-" + jid + ".json")
         runtime, runtime_sha = _safe_json(runtime_file)
         completed = (
-            state["status"]
+            job.get("generation_status") == "GENERATED_UNVERIFIED"
+            and job.get("status") in {
+                "GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED",
+                "GENERATED_DIAGNOSTIC_INCOMPLETE",
+            }
+            and state["status"]
             == "NATIVE_BUILDER_COMPLETED_READBACK_AND_FIDELITY_UNVERIFIED"
             and state["stages"] == list(native_guard.STAGES[1:])
             and receipt["runtime_receipt_sha256"] == runtime_sha
@@ -481,6 +486,7 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
     elif (not tick_observed
             or persistence.get("restart_verified") is not True
             or persistence.get("native_structure_status") != "PASS"
+            or persistence.get("sequence_persisted") is not True
             or persistence.get("provenance_status") != "COMPLETE"
             or persistence.get("status")
             != "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS"
