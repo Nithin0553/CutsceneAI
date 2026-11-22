@@ -856,6 +856,14 @@ def _sample_section_transform(
         raise PlanError("Animated camera source or timeline interval is invalid.")
     bake = camera_frame_bake or any(c.get("native_keys") for c in active_curves)
     if camera_frame_bake:
+        native_blend = section.get("native_payload", {})
+        if not isinstance(native_blend, dict):
+            raise PlanError("Camera Timeline easing metadata is invalid.")
+        if (timeline_clip_easing_seconds(native_blend, "in") > 0
+                or timeline_clip_easing_seconds(native_blend, "out") > 0):
+            raise PlanError(
+                "Eased/blended Unity camera clips require evaluated CineTwin capture."
+            )
         # One source-authoritative transform per display frame. Sparse Unity
         # channel keys must not be interpolated again with Unreal auto tangents.
         # Rounding arbitrary Timeline boundaries would silently shift a shot.
@@ -1215,6 +1223,36 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                     "Multiple active source camera transform tracks require ownership/blend resolution."
                 )
             camera_track_owners.add(ident)
+
+    # A camera parent may move even if the camera's own local curve appears
+    # static. Composing a parent's original static metadata is incorrect when
+    # a Timeline owner animates any ancestor. Only independent captured Unity
+    # WORLD camera poses can resolve that motion.
+    active_track_owners = {
+        owner.get("binding_entity_id") for owner in csir.get("tracks", [])
+        if owner.get("muted") is not True
+        and owner.get("sections")
+        and owner.get("ced_type") != "camera.cut"
+    }
+    for camera_id in camera_track_owners:
+        child = entities[camera_id]
+        visited = {camera_id}
+        parent_id = child.get("parent_entity_id")
+        while parent_id:
+            if parent_id in visited:
+                raise PlanError(
+                    "Animated camera hierarchy contains a parent cycle."
+                )
+            visited.add(parent_id)
+            if parent_id in active_track_owners:
+                raise PlanError(
+                    "Animated camera parent trajectory requires evaluated "
+                    "CineTwin world-motion capture."
+                )
+            parent = entities.get(parent_id)
+            if parent is None:
+                raise PlanError("Animated camera parent source entity is missing.")
+            parent_id = parent.get("parent_entity_id")
 
     for track in csir.get("tracks", []):
         # A muted source Timeline track contributes no evaluated behavior.
