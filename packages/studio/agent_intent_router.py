@@ -233,14 +233,18 @@ def route(
         and isinstance(camera_position_repair_evidence.get(
             "camera_position_repair_sha256"), str)
     )
+    from studio_character_facing_review import relevant_feedback
     character_facing_observed = bool(
-        intent["mode"] == "user_feedback"
+        relevant_feedback(message)
+        and intent["mode"] == "user_feedback"
         and domains == ["animation"] and not intent["ambiguous"]
         and scope == "character" and generation_complete
         and completed_repairs < repair_budget
         and isinstance(character_facing_review, dict)
         and character_facing_review.get("kind")
         == "cutsceneai.studio.character_facing_owner_review"
+        and character_facing_review.get("status")
+        == "REOPENED_CHARACTER_OWNER_DIAGNOSTIC_ONLY"
         and character_facing_review.get("native_owner_observation_available") is True
         and character_facing_review.get("native_edit_authorized") is False
         and character_facing_review.get("model_command_authorized") is False
