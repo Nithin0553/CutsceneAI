@@ -9,7 +9,7 @@
     selectedFolders:{unity:'',unreal:''}, discovery:null, selectedCutscene:'', selectedLevel:'', selectedUnrealProject:'', sourceRightsConfirmed:false,
     capabilities:null, sourceSurfaces:null, censusIdentity:'', selectedCensus:'', strictSourceCensus:true,
     visibilityFallback:false, importFbxMaterials:false, verification:null,
-    elementReview:null, elementReviewCandidateId:'', elementReviewError:'' };
+    elementReview:null, elementReviewCandidateId:'', elementReviewError:'', releaseReadiness:null };
   const steps = [['connect','Connect'],['select','Select'],['review','Review'],['transfer','Transfer'],['results','Results']];
   const mark = `<svg viewBox="0 0 36 36" fill="currentColor" aria-hidden="true"><path d="M18 2 3 30h11l4-7h-5l7-14zM23 18l10 12H19l-4-4h8l-4-5z"/></svg>`;
   const icons = {
@@ -273,6 +273,25 @@
       ${persistence?.path?`<p class="hint">Persistence evidence: ${esc(persistence.path)}</p>`:''}${hierarchy?.path?`<p class="hint">Hierarchy evidence: ${esc(hierarchy.path)}</p>`:''}${visual?.path?`<p class="hint">Visual evidence: ${esc(visual.path)}</p>`:''}
       <p class="hint">Even a structural PASS does not verify full source-to-target cinematic playback, rendering, audio or custom scripting.</p></section>`;
   }
+  function nativeAcceptancePanel(){
+    if(!state.job)return '';
+    const root=String(state.status?.repo_root||'').replaceAll('\\','/').replaceAll('"','');
+    const script='import sys\nsys.path.insert(0, r"'+root+'/integrations/unreal")\nimport studio_native_acceptance\nstudio_native_acceptance.start()';
+    const r=state.releaseReadiness;
+    const checks=Object.entries(r?.checks||{});
+    return '<section class="panel pad"><div class="section-head"><h2>Real-engine acceptance</h2>'+
+      statusLabel(r?.release_ready?'RELEASE READY':r?.status||'NOT VERIFIED',r?.release_ready?'good':'warning')+'</div>'+
+      '<p class="body-copy">After generating, Save All and reopen the staging map in a different Unreal Editor process once. This command captures independent CineTwin measurements. Rendered frame, audio, event and complete skeletal fidelity remain separately gated.</p>'+
+      '<pre class="command" id="element-native-acceptance-command">'+esc(script)+'</pre>'+
+      '<div class="form-actions">'+btn('Copy native acceptance command','copy-native-acceptance-command','secondary')+
+      btn('Check release evidence','check-native-acceptance','secondary',state.busy)+'</div>'+
+      (r?item('Release gate',r.status)+
+        '<details><summary>Independent domain checks ('+size(checks.length)+')</summary>'+
+        checks.map(([name,check])=>'<p class="hint"><strong>'+esc(name.replaceAll('_',' '))+
+          '</strong> · '+esc(check.status)+' · '+esc(check.explanation||'')+'</p>').join('')+
+        '</details>':'<p class="hint">No reopened native acceptance report checked yet.</p>')+
+      '<p class="hint">A measured-domain pass is never proof of full cinematic equivalence.</p></section>';
+  }
   function results(){const r=state.report,j=state.job,c=state.status?.connection;
     const ev=state.elementReview?.verification;
     const perElement=ev?'<section class="panel pad"><div class="section-head"><h2>Element 3 · CineTwin readback</h2>'+
@@ -284,7 +303,7 @@
         '<p class="hint">'+esc(x.occurrence_id)+' · '+esc(x.result||x.measurement_status)+' · '+esc((x.latest_discrepancy_flags||x.discrepancy_flags||[]).join(', '))+'</p>').join('')+
       '<p class="hint">Only measured domains were compared. No repair or native retry was authorized.</p></section>':'';
 
-    return `<div class="page-heading"><div class="eyebrow">05 / RESULTS</div><h1>Transfer results</h1><p>Inspectable evidence from Unreal, not a simulated success score.</p></div>${stageRail()}${verificationPanel()}<div class="results-layout"><section class="panel pad"><div class="section-head"><h2>Unreal generation</h2>${statusLabel(j?.generation_status==='GENERATED_UNVERIFIED'?'GENERATED · UNVERIFIED':j?.status||'NOT RUN',j?.generation_status==='GENERATED_UNVERIFIED'?'good':'warning')}</div>${item('Sequence',j?.generated_sequence||state.candidate?.sequence_path||'Not generated in this session')}${item('Job status',j?.status||'Not started')}${item('Saved-level readback','Not verified by this UI')}${item('Fidelity','Not established')}${j?.receipt_file?item('Runtime receipt',j.receipt_file):''}${j?.error?`<p class="notice-inline">${esc(j.error)}</p>`:''}<div class="rule"></div><h3>Independent CineTwin diagnostics</h3>${state.jobDiagnostic?`<div class="diagnostic-table">${Object.entries(state.jobDiagnostic.entities||{}).map(([k,v])=>item(`${k} · actor max`,v.actor_max_cm==null?'Not measured':`${Number(v.actor_max_cm).toFixed(2)} cm`)).join('')}</div>`:'<p class="muted">No run-specific world-position comparison is available yet.</p>'}</section><aside>${perElement}<section class="panel pad"><div class="section-head"><h2>Attach existing CineTwin capture</h2>${icon('layers')}</div><p class="body-copy">Already completed Stage 7 manually? Attach the <strong>Unreal target observation JSON</strong> you generated. This only reads and summarizes the file; it does not regenerate anything.</p><form id="observation-form"><label class="field"><span>Existing target observation JSON</span><input name="path" value="${esc(state.evidencePath)}" placeholder="D:\\...\\stage7_target_observation.json" required autocomplete="off" spellcheck="false"></label><button class="button secondary full" type="submit">Inspect existing observation</button></form>${r?`<div class="rule"></div>${statusLabel('TARGET CAPTURE COMPLETE','good')}${item('Samples',`${size(r.sample_count)} measured`)}${item('Mapped actors',`${size(r.mapped_actor_count)} / ${size(r.source_entity_count)}`)}${item('Skeletal rigs',size(r.skeletal_rig_count))}${item('Unmapped source entities',size(r.unmapped_count))}${item('Comparison','Target only · no parity claim')}<div class="rule"></div><h3>Measured target actor motion (cm)</h3>${Object.entries(r.actor_motion_cm||{}).map(([k,v])=>item(k.split('_').pop(),v+' cm')).join('')}<div class="rule"></div><h3>Target skeletal motion</h3>${Object.entries(r.skeletal_bone_motion_cm||{}).map(([k,v],i)=>item('Rig '+(i+1),v+' cm'+(v<0.1?' · STATIC OBSERVED':''))).join('')}`:''}</section><section class="callout">${icon('alert')}<p>Matching-time Unity observations are still required to quantify source-to-target errors. Skeletal pose equivalence, audio output, and rendered-frame fidelity remain unverified.</p></section></aside></div>`;
+    return `<div class="page-heading"><div class="eyebrow">05 / RESULTS</div><h1>Transfer results</h1><p>Inspectable evidence from Unreal, not a simulated success score.</p></div>${stageRail()}${verificationPanel()}${nativeAcceptancePanel()}<div class="results-layout"><section class="panel pad"><div class="section-head"><h2>Unreal generation</h2>${statusLabel(j?.generation_status==='GENERATED_UNVERIFIED'?'GENERATED · UNVERIFIED':j?.status||'NOT RUN',j?.generation_status==='GENERATED_UNVERIFIED'?'good':'warning')}</div>${item('Sequence',j?.generated_sequence||state.candidate?.sequence_path||'Not generated in this session')}${item('Job status',j?.status||'Not started')}${item('Saved-level readback','Not verified by this UI')}${item('Fidelity','Not established')}${j?.receipt_file?item('Runtime receipt',j.receipt_file):''}${j?.error?`<p class="notice-inline">${esc(j.error)}</p>`:''}<div class="rule"></div><h3>Independent CineTwin diagnostics</h3>${state.jobDiagnostic?`<div class="diagnostic-table">${Object.entries(state.jobDiagnostic.entities||{}).map(([k,v])=>item(`${k} · actor max`,v.actor_max_cm==null?'Not measured':`${Number(v.actor_max_cm).toFixed(2)} cm`)).join('')}</div>`:'<p class="muted">No run-specific world-position comparison is available yet.</p>'}</section><aside>${perElement}<section class="panel pad"><div class="section-head"><h2>Attach existing CineTwin capture</h2>${icon('layers')}</div><p class="body-copy">Already completed Stage 7 manually? Attach the <strong>Unreal target observation JSON</strong> you generated. This only reads and summarizes the file; it does not regenerate anything.</p><form id="observation-form"><label class="field"><span>Existing target observation JSON</span><input name="path" value="${esc(state.evidencePath)}" placeholder="D:\\...\\stage7_target_observation.json" required autocomplete="off" spellcheck="false"></label><button class="button secondary full" type="submit">Inspect existing observation</button></form>${r?`<div class="rule"></div>${statusLabel('TARGET CAPTURE COMPLETE','good')}${item('Samples',`${size(r.sample_count)} measured`)}${item('Mapped actors',`${size(r.mapped_actor_count)} / ${size(r.source_entity_count)}`)}${item('Skeletal rigs',size(r.skeletal_rig_count))}${item('Unmapped source entities',size(r.unmapped_count))}${item('Comparison','Target only · no parity claim')}<div class="rule"></div><h3>Measured target actor motion (cm)</h3>${Object.entries(r.actor_motion_cm||{}).map(([k,v])=>item(k.split('_').pop(),v+' cm')).join('')}<div class="rule"></div><h3>Target skeletal motion</h3>${Object.entries(r.skeletal_bone_motion_cm||{}).map(([k,v],i)=>item('Rig '+(i+1),v+' cm'+(v<0.1?' · STATIC OBSERVED':''))).join('')}`:''}</section><section class="callout">${icon('alert')}<p>Matching-time Unity observations are still required to quantify source-to-target errors. Skeletal pose equivalence, audio output, and rendered-frame fidelity remain unverified.</p></section></aside></div>`;
   }
   function missing(title,msg,destination){return `<div class="page-heading"><h1>${esc(title)}</h1><p>${esc(msg)}</p></div><section class="panel pad empty-large">${icon('folder')}<h2>Complete the previous step</h2>${btn(`Go to ${destination} `+icon('arrow'),destination)}</section>`}
   function page(){return ({overview,connect,select,review,transfer,results}[state.page]||overview)()}
@@ -355,8 +374,9 @@
     if(name==='continue'){navigate(state.job?'results':state.candidate?'transfer':c?'select':'connect');return}
     if(name==='clear'){state.error='';state.info='';render();return}
     if(name==='refresh'){await refresh();return}
-    if(['copy-command','copy-unreal-scan','copy-audit-command'].includes(name)){
-      const field=name==='copy-command'?'worker-command':name==='copy-unreal-scan'?'unreal-scan-command':'audit-command';
+    if(['copy-command','copy-unreal-scan','copy-audit-command','copy-native-acceptance-command'].includes(name)){
+      const field=name==='copy-command'?'worker-command':name==='copy-unreal-scan'?'unreal-scan-command':
+        name==='copy-native-acceptance-command'?'element-native-acceptance-command':'audit-command';
       try{await navigator.clipboard.writeText($('#'+field).textContent);notice('Unreal Python command copied.')}
       catch{notice('Copy the command manually from the box.',true)}return;
     }
@@ -395,13 +415,21 @@
         };
         if(state.selectedCensus){preferences.source_feature_surface_path=state.selectedCensus;preferences.require_complete_source_features=state.strictSourceCensus}
         state.candidate=await api('prepare',preferences);
-        state.job=null;state.jobDiagnostic=null;state.verification=null;
+        state.job=null;state.jobDiagnostic=null;state.verification=null;state.releaseReadiness=null;
         state.elementReview=null;state.elementReviewError='';
         state.elementReviewCandidateId=state.candidate.candidate_id;
         try{state.elementReview=await api('elements/prepare',{})}
         catch(err){state.elementReviewError='Element review pending: '+err.message}
         notice('Source-authenticated candidate prepared. Per-element review '+(state.elementReview?.available?'available.':'needs investigation.'));
       }catch(err){notice('Plan blocked: '+err.message,true)}finally{state.busy=false;render()}return;
+    }
+    if(name==='check-native-acceptance'){
+      if(!state.job){notice('Native job evidence is required.',true);return}
+      state.busy=true;render();try{
+        state.releaseReadiness=await api('release-readiness');
+        notice('Independent native evidence checked. Incomplete domains remain unverified.');
+      }catch(err){notice('Acceptance evidence unavailable: '+err.message,true)}
+      finally{state.busy=false;render()}return;
     }
     if(name==='prepare-elements'){
       state.busy=true;render();try{
@@ -506,14 +534,14 @@
           csir:body.csir,level:body.level,
           source_rights_confirmed:!!form.querySelector('[name=source_rights_confirmed]').checked
         });
-        state.status.connection=result;state.candidate=null;state.job=null;state.sourceSurfaces=null;state.censusIdentity='';state.selectedCensus='';state.verification=null;
+        state.status.connection=result;state.candidate=null;state.job=null;state.releaseReadiness=null;state.sourceSurfaces=null;state.censusIdentity='';state.selectedCensus='';state.verification=null;
         state.jobDiagnostic=null;state.report=null;state.evidencePath='';
         navigate('select');notice('Projects connected. Cutscene and mapping detected automatically.');
       }else if(form.id==='connect-form'){
         body.skeletal_root_world_lock=!!form.querySelector('[name=skeletal_root_world_lock]').checked;
         body.source_rights_confirmed=!!form.querySelector('[name=source_rights_confirmed]').checked;
         const result=await api('connect',body);
-        state.status.connection=result;state.candidate=null;state.job=null;state.sourceSurfaces=null;state.censusIdentity='';state.selectedCensus='';state.verification=null;state.jobDiagnostic=null;state.report=null;state.evidencePath='';navigate('select');notice('Project files verified. Select your exported cutscene.');
+        state.status.connection=result;state.candidate=null;state.job=null;state.releaseReadiness=null;state.sourceSurfaces=null;state.censusIdentity='';state.selectedCensus='';state.verification=null;state.jobDiagnostic=null;state.report=null;state.evidencePath='';navigate('select');notice('Project files verified. Select your exported cutscene.');
       }else if(form.id==='observation-form'){
         state.evidencePath=body.path;state.report=await api('observation',{path:body.path});
         if(state.elementReview?.available){
