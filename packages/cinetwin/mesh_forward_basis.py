@@ -68,6 +68,56 @@ def _yaw_to_align_in_unreal(target_canonical, source_canonical) -> float | None:
     return round(math.degrees(math.atan2(tx*sy-ty*sx, tx*sx+ty*sy)), 6)
 
 
+YAW_SPREAD_TOLERANCE_DEGREES = 0.5
+MIN_HORIZONTAL_PROJECTION = 0.2
+
+
+def _wrapped_degrees(a: float, b: float) -> float:
+    """Smallest signed angle a-b; -180 and +180 are equivalent."""
+    delta = math.radians(a - b)
+    return math.degrees(math.atan2(math.sin(delta), math.cos(delta)))
+
+
+def _yaw_rotated_canonical(direction, unreal_yaw_degrees):
+    """Rotate a canonical WORLD vector about Unreal +Z (canonical +Y)."""
+    # Unreal world XY = (-canonical_z, canonical_x).
+    x, y, z = direction
+    ux, uy = -z, x
+    angle = math.radians(unreal_yaw_degrees)
+    c, s = math.cos(angle), math.sin(angle)
+    rx, ry = ux * c - uy * s, ux * s + uy * c
+    return (ry, y, -rx)
+
+
+def _constant_yaw_diagnostic(source_world, target_world,
+                             yaw_values, tolerance_degrees):
+    """A per-frame yaw guess must never become an actor repair policy.
+
+    Even a stable direction difference is only a *diagnostic*: actor/mesh
+    track ownership, parent attachment, bind frames and save/rollback are not
+    verified by the anatomical-forward comparator.
+    """
+    if len(source_world) < 2:
+        return "INSUFFICIENT_FRAMES_FOR_CONSTANT_YAW", None, None, None
+    if len(yaw_values) != len(source_world):
+        return "UNSAFE_NONPLANAR_OR_VERTICAL_FORWARD", None, None, None
+    radians = [math.radians(yaw) for yaw in yaw_values]
+    mean = math.degrees(math.atan2(
+        sum(math.sin(v) for v in radians),
+        sum(math.cos(v) for v in radians),
+    ))
+    spread = max(abs(_wrapped_degrees(value, mean)) for value in yaw_values)
+    residual = max(
+        _angle(_yaw_rotated_canonical(target, mean), source)
+        for source, target in zip(source_world, target_world)
+    )
+    if spread > YAW_SPREAD_TOLERANCE_DEGREES or residual > tolerance_degrees:
+        return ("UNSAFE_TIME_VARYING_OR_NON_YAW_ORIENTATION",
+                None, round(spread, 6), round(residual, 6))
+    return ("STABLE_SAMPLED_YAW_DIAGNOSTIC_ONLY", round(mean, 6),
+            round(spread, 6), round(residual, 6))
+
+
 def bind_profile(profile: dict, plan: dict, target: dict, entity_id: str) -> dict:
     if (not isinstance(profile, dict)
             or profile.get("kind") != "cutsceneai.mesh_forward_approval"
@@ -107,52 +157,92 @@ def compare_mesh_forward(
                                "Source reviewed actor-local anatomical forward")
     target_axis = unreal_vector_to_canonical(profile["target_forward_mesh_local_unreal_xyz"])
     expected_mesh = profile["target_mesh_asset_path"]
-    maximum, worst_time, yaw = 0.0, None, None
+    maximum, worst_time, previous_time = 0.0, None, None
+    source_directions, target_directions, yaw_values = [], [], []
     for index, (left, right) in enumerate(zip(source_samples, target_samples)):
         try:
             t = float(left["time_seconds"])
-            if not math.isfinite(t) or abs(t-float(right["time_seconds"])) > 1e-7:
-                raise MeshForwardError("Source/target mesh facing time mismatch.")
+            target_time = float(right["time_seconds"])
+            if (not math.isfinite(t) or not math.isfinite(target_time)
+                    or abs(t - target_time) > 1e-7
+                    or (previous_time is not None and t <= previous_time)):
+                raise MeshForwardError(
+                    "Source/target mesh facing times must be strictly increasing and matched."
+                )
+            previous_time = t
             source_actors = [x for x in left["entities"] if x.get("entity_id") == entity_id]
             bases = [x for x in right.get("skeletal_mesh_component_bases", [])
                      if x.get("entity_id") == entity_id]
             if len(source_actors) != 1 or len(bases) != 1:
-                raise MeshForwardError(f"Missing or ambiguous independently observed mesh component at frame {index}.")
+                raise MeshForwardError(
+                    f"Missing or ambiguous independently observed mesh component at frame {index}."
+                )
             basis = bases[0]
             if (basis.get("status") != "OBSERVED"
                     or basis.get("target_mesh_asset_path") != expected_mesh):
-                raise MeshForwardError("Native target mesh/component differs from approved anatomy evidence.")
+                raise MeshForwardError(
+                    "Native target mesh/component differs from approved anatomy evidence."
+                )
             source_q = _quat(source_actors[0]["world_transform"]["rotation_xyzw"],
                              "source actor orientation")
             target_q = unreal_to_canonical_quat(
                 basis["unreal_component_world_rotation_xyzw"])
             source_world = _rotate(source_q, source_axis)
             target_world = _rotate(target_q, target_axis)
+            source_directions.append(source_world)
+            target_directions.append(target_world)
+            yaw = _yaw_to_align_in_unreal(target_world, source_world)
+            if (yaw is not None
+                    and math.hypot(source_world[0], source_world[2])
+                    >= MIN_HORIZONTAL_PROJECTION
+                    and math.hypot(target_world[0], target_world[2])
+                    >= MIN_HORIZONTAL_PROJECTION):
+                yaw_values.append(yaw)
             error = _angle(source_world, target_world)
             if worst_time is None or error > maximum:
                 maximum = error
                 worst_time = t
-                yaw = _yaw_to_align_in_unreal(target_world, source_world)
         except RigCalibrationError as exc:
             raise MeshForwardError(str(exc)) from exc
         except (TypeError, KeyError, IndexError, ValueError) as exc:
             if isinstance(exc, MeshForwardError):
                 raise
-            raise MeshForwardError(f"Incomplete observed mesh orientation at frame {index}.") from exc
+            raise MeshForwardError(
+                f"Incomplete observed mesh orientation at frame {index}."
+            ) from exc
+    status = "PASS" if maximum <= tolerance_degrees else "FAIL"
+    diagnostic_status, candidate_yaw, yaw_spread, yaw_residual = (
+        _constant_yaw_diagnostic(
+            source_directions, target_directions, yaw_values, tolerance_degrees,
+        )
+        if status == "FAIL"
+        else ("ALREADY_WITHIN_TOLERANCE", None, None, None)
+    )
     return {
-        "status": "PASS" if maximum <= tolerance_degrees else "FAIL",
+        "status": status,
         "scope": "APPROVED_MESH_ANATOMICAL_FORWARD_VS_SOURCE",
         "max_world_forward_error_degrees": round(maximum, 6),
         "worst_time_seconds": worst_time,
         "tolerance_degrees": tolerance_degrees,
+        # Only a stable, planar discrepancy across EVERY sampled frame may
+        # produce a diagnostic numeric suggestion. Never authorize a native
+        # actor or imported mesh rewrite from this computed value alone.
         "suggested_target_actor_yaw_correction_degrees": (
-            yaw if maximum > tolerance_degrees else 0.0
+            candidate_yaw if status == "FAIL" else 0.0
         ),
+        "constant_yaw_diagnostic_status": diagnostic_status,
+        "max_sampled_yaw_variation_degrees": yaw_spread,
+        "max_yaw_only_residual_degrees": yaw_residual,
+        "requires_original_full_grid_validation": True,
         "suggestion_applied": False,
-        "requires_native_recheck_and_explicit_approval": maximum > tolerance_degrees,
+        "native_actor_yaw_repair_authorized": False,
+        "requires_native_recheck_and_explicit_approval": status == "FAIL",
         "sample_count": len(source_samples),
         "warning": (
-            "A suggested yaw is diagnostic only. A nonplanar axis/mesh/rig mismatch "
-            "or changing facing error cannot be corrected safely with an actor yaw guess."
+            "A stable sampled yaw is a non-executable diagnostic, not permission "
+            "to rotate an actor. Verify complete source time grid, component "
+            "hierarchy, animated transform ownership, native editor readback, "
+            "and exact user approval before any registered bounded repair. "
+            "Time-varying or nonplanar mismatches must be investigated instead."
         ),
     }
