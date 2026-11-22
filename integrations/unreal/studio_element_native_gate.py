@@ -20,6 +20,7 @@ if STUDIO not in sys.path:
 
 import feature_dispatch
 import studio_element_native_execution as approval_policy
+import studio_element5_plan as source_plan_policy
 
 HEX = re.compile(r"[a-f0-9]{64}\Z")
 ID = re.compile(r"[a-f0-9]{32}\Z")
@@ -146,6 +147,31 @@ def verify_job(workspace: Path, job: dict, native_inventory: dict) -> tuple[dict
     manifest = approval_policy.inventory(
         plan, source_plan, workflow["element_strategy"],
     )
+    # Element 5 is an immutable read-only reconciliation of every source
+    # occurrence and every already-registered native action. Recompute it in
+    # Unreal's stdlib-only interpreter before *any* editor mutation.
+    bound = workflow.get("element5_source_bound_plan")
+    if not isinstance(bound, dict):
+        raise NativeElementGateError(
+            "Element 5 source-bound conversion evidence was not prepared."
+        )
+    try:
+        source_plan_policy.verify(
+            bound, csir, _read(Path(job["mapping"])), plan,
+            source_plan, workflow["element_schedule"],
+            workflow["element_strategy"],
+            workflow["element4_baseline_validation"],
+        )
+    except (source_plan_policy.SourceBoundPlanError,
+            TypeError, KeyError, ValueError) as exc:
+        raise NativeElementGateError(
+            "Element 5 compiled action/source provenance is modified or stale."
+        ) from exc
+    if (bound["native_action_inventory_sha256"]
+            != approval_policy.digest(manifest)):
+        raise NativeElementGateError(
+            "Element 5 action ordering or native permission inventory changed."
+        )
     permission = _read(candidate / "element-native-approval.json")
     approval_policy.verify_authorization(
         permission, manifest, candidate_id=job["candidate_id"],
