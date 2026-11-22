@@ -421,3 +421,161 @@ def test_langgraph_request_is_proof_hash_not_ai_authored_yaw(tmp_path):
     assert "source_aligned_rotation_rpy_degrees" not in request
     assert "native_rotation_rpy_before_degrees" not in request
     assert state["fidelity_verified"] is False
+
+
+
+@pytest.mark.parametrize("case",[
+    "animated_source","animated_target","position_difference",
+    "source_position_drift","target_position_drift",
+    "target_roll","target_pitch","yaw_drift","small_yaw",
+    "unbounded_yaw","wrong_scale","bad_time_grid",
+    "missing_camera_sample",
+])
+def test_static_camera_source_grid_denies_animated_or_competing_discrepancy(
+        tmp_path,monkeypatch,case):
+    # This is an *eligibility policy unit test*, not a forged native pass:
+    # original separately-verified Element 7/8 objects stay constant while
+    # the sampled source/native fixture is deliberately varied to exercise
+    # independent boundary predicates.
+    workspace,job,folder=_yaw_camera(tmp_path)
+    original_build=readback.build(workspace,job["job_id"],folder)
+    review=evidence.repair.build(workspace,job["job_id"],[folder])
+    source_path=Path(job["capture"])
+    target_path=folder/"target-behavior.json"
+    source=json.loads(source_path.read_text())
+    target=json.loads(target_path.read_text())
+    samples_a=source["samples"]
+    samples_b=target["samples"]
+    get_camera=lambda frame: next(
+        row for row in frame["entities"] if row["entity_id"]=="camera"
+    )["world_transform"]
+    if case=="animated_source":
+        get_camera(samples_a[2])["rotation_xyzw"]=list(
+            readback_math.unreal_rpy_to_canonical_quat(0.,0.,4.)
+        )
+    elif case=="animated_target":
+        get_camera(samples_b[2])["rotation_xyzw"]=list(
+            readback_math.unreal_rpy_to_canonical_quat(0.,0.,31.)
+        )
+    elif case=="position_difference":
+        get_camera(samples_b[0])["position_m"][0]+=0.07
+    elif case=="source_position_drift":
+        for frame in samples_a[1:]:
+            get_camera(frame)["position_m"][0]+=0.002
+    elif case=="target_position_drift":
+        for frame in samples_b[1:]:
+            get_camera(frame)["position_m"][0]+=0.002
+    elif case=="target_roll":
+        for frame in samples_b:
+            get_camera(frame)["rotation_xyzw"]=list(
+                readback_math.unreal_rpy_to_canonical_quat(5.,0.,25.)
+            )
+    elif case=="target_pitch":
+        for frame in samples_b:
+            get_camera(frame)["rotation_xyzw"]=list(
+                readback_math.unreal_rpy_to_canonical_quat(0.,-15.,25.)
+            )
+    elif case=="yaw_drift":
+        for frame in samples_b[1:]:
+            get_camera(frame)["rotation_xyzw"]=list(
+                readback_math.unreal_rpy_to_canonical_quat(0.,0.,40.)
+            )
+    elif case=="small_yaw":
+        for frame in samples_b:
+            get_camera(frame)["rotation_xyzw"]=list(
+                readback_math.unreal_rpy_to_canonical_quat(0.,0.,0.3)
+            )
+    elif case=="unbounded_yaw":
+        for frame in samples_b:
+            get_camera(frame)["rotation_xyzw"]=list(
+                readback_math.unreal_rpy_to_canonical_quat(0.,0.,120.)
+            )
+    elif case=="wrong_scale":
+        get_camera(samples_b[0])["scale_xyz"][0]=1.3
+    elif case=="bad_time_grid":
+        samples_b[2]["time_seconds"]+=0.01
+    else:
+        samples_b[1]["entities"]=[
+            row for row in samples_b[1]["entities"]
+            if row["entity_id"]!="camera"
+        ]
+    original_read=evidence.readback._safe_json
+    monkeypatch.setattr(evidence.readback,"build",lambda *_:original_build)
+    monkeypatch.setattr(evidence.repair,"build",lambda *_:review)
+    def synthetic_read(path):
+        if Path(path)==source_path:
+            return source,"fixture-source"
+        if Path(path)==target_path:
+            return target,"fixture-target"
+        return original_read(path)
+    monkeypatch.setattr(evidence.readback,"_safe_json",synthetic_read)
+    with pytest.raises(evidence.StaticCameraYawError):
+        evidence.build(workspace,job)
+
+
+def test_camera_yaw_source_authored_camera_track_denied_before_native_edit(
+        tmp_path,monkeypatch):
+    workspace,job,_=_yaw_camera(tmp_path)
+    original=evidence.outcome._context
+    def source_track(*args):
+        root,candidate,canonical,csir,mapping,compiled=original(*args)
+        csir={
+            **csir,
+            "tracks":[*csir["tracks"],{
+                "track_id":"camera-keyframes",
+                "ced_type":"transform.track",
+                "binding_entity_id":"camera",
+            }],
+        }
+        return root,candidate,canonical,csir,mapping,compiled
+    monkeypatch.setattr(evidence.outcome,"_context",source_track)
+    with pytest.raises(evidence.StaticCameraYawError,match="animation"):
+        evidence.build(workspace,job)
+
+
+def test_camera_yaw_interrupted_editor_claim_refuses_native_replay(
+        tmp_path,monkeypatch):
+    from test_langgraph_agent_integration import staged as agent_staged
+
+    workspace,candidate,job,_=agent_staged(tmp_path)
+    studio_agent_feedback.submit(
+        workspace,job,"Please fix the camera rotation."
+    )
+    monkeypatch.setattr(evidence,"build",lambda *_:{
+        "kind":evidence.KIND,
+        "eligible":True,
+        "source_camera_occurrence_id":"occ-camera",
+        "native_yaw_delta_degrees":-25.,
+        "sample_count":5,
+        "camera_yaw_repair_sha256":"d"*64,
+        "native_edit_authorized":False,
+    })
+    state=studio_agent_graph.run_once(workspace,job,lambda _:{
+        "strategy":"restore_static_camera_actor_yaw",
+        "reason":"Only source-bound static camera world yaw.",
+    })
+    assert state["status"]=="WAITING_FOR_UNREAL_AGENT_REPAIR"
+    rid=state["pending_request"]
+    (candidate/("agent-claim-"+rid+".json")).write_text(
+        '{"status":"interrupted native camera write"}',encoding="utf-8"
+    )
+    monkeypatch.setattr(native,"attempt",lambda *_:pytest.fail(
+        "Native yaw edit must never replay an interrupted claim."
+    ))
+    api=NS(
+        EditorAssetLibrary=NS(does_asset_exist=lambda _:True),
+        log_warning=lambda _:None,
+    )
+    def writer(path,document):
+        path.write_text(json.dumps(document),encoding="utf-8")
+    assert studio_agent_executor.service_one(
+        api,workspace,project=job["expected_project"],
+        level=job["expected_level"],save=writer,
+    ) is True
+    receipt=json.loads((candidate/("agent-receipt-"+rid+".json")).read_text())
+    assert receipt["status"]=="REPAIR_FAILED_OR_BLOCKED"
+    assert "no automatic replay" in receipt["error"]
+    assert studio_agent_executor.service_one(
+        api,workspace,project=job["expected_project"],
+        level=job["expected_level"],save=writer,
+    ) is False
