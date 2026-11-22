@@ -169,8 +169,10 @@ def attempt(api: Any, workspace: Path, job: dict, request: dict) -> dict:
     changed = False
     saved = False
     try:
-        component.set_editor_property("current_focal_length", new_focal)
+        # Set rollback intent before calling Unreal: some property setters
+        # can mutate an object and then raise from post-edit notifications.
         changed = True
+        component.set_editor_property("current_focal_length", new_focal)
         after = observe_native_camera(actor)
         if (after.get("status") != "OBSERVED"
                 or abs(_float(after["sensor_height_mm"]) - old_height) > 0.01
