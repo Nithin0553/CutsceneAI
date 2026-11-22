@@ -171,6 +171,9 @@ def test_exact_single_source_camera_cut_can_be_proposed_not_auto_executed(tmp_pa
     assert intent["model_can_authorize_native_commands"] is False
     assert not cut.message_requests_cut("Do not fix the camera cut timing.")
     assert not cut.message_requests_cut("Please fix the camera lens FOV.")
+    assert not cut.message_requests_cut(
+        "Please correct camera cut timing and zoom animation."
+    )
 
 
 def test_single_cut_native_editor_applies_bound_frame_pair_and_requires_reopen(tmp_path):
@@ -256,3 +259,38 @@ def test_cut_agent_dispatch_records_only_source_bound_proof_not_model_frames(tmp
     assert "expected_start_frame" not in request
     assert "expected_end_frame" not in request
     assert result["fidelity_verified"] is False
+
+
+
+def test_camera_cut_save_failure_restores_original_section_without_success(
+        tmp_path):
+    workspace, job, _folder = _cut_scene(tmp_path)
+    request, _proof = _consent(workspace, job)
+    api, section, saved = _native()
+    api.EditorAssetLibrary.save_loaded_asset = (
+        lambda seq: saved.append(seq) or False
+    )
+    with pytest.raises(native_cut.CameraCutRepairError, match="save"):
+        native_cut.attempt(api, workspace, job, request)
+    assert (section.start, section.end) == (0, 3)
+    assert len(saved) == 1
+
+
+def test_camera_cut_repair_does_not_modify_subsequence_or_nested_shots(
+        tmp_path):
+    workspace, job, _folder = _cut_scene(tmp_path)
+    request, _proof = _consent(workspace, job)
+    api, section, saved = _native()
+    nested = SimpleNamespace(
+        get_class=lambda: SimpleNamespace(
+            get_name=lambda: "MovieSceneCinematicShotTrack",
+        ),
+    )
+    get_tracks = api.MovieSceneSequenceExtensions.get_tracks
+    api.MovieSceneSequenceExtensions.get_tracks = (
+        lambda seq: [*get_tracks(seq), nested]
+    )
+    with pytest.raises(native_cut.CameraCutRepairError, match="Nested"):
+        native_cut.attempt(api, workspace, job, request)
+    assert (section.start, section.end) == (0, 3)
+    assert saved == []
