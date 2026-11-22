@@ -568,7 +568,7 @@ def test_without_capture_missing_camera_world_baseline_stops_unverified_trajecto
     # baseline cannot justify an editable native camera trajectory.
     assert camera == []
     assert report["tracks"][-1]["outcome"] == "SKIPPED"
-    assert any("baseline" in reason.lower()
+    assert any("world transform" in reason.lower()
                for reason in report["tracks"][-1]["details"])
     assert report["no_full_fidelity_claim"] is True
 
