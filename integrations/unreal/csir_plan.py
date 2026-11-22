@@ -777,13 +777,22 @@ def _validate_camera_curve_ownership(section: dict[str, Any]) -> None:
         semantic = str(curve.get("canonical_semantic") or "")
         native = str(curve.get("property_name") or "").lower()
         euler = native if native in euler_names else ""
+        allowed_semantics = {
+            *(f"transform.position.{axis}" for axis in "xyz"),
+            *(f"transform.rotation.{axis}" for axis in "xyzw"),
+            *(f"transform.{offset}.position.{axis}"
+              for offset in ("track_offset", "clip_offset", "infinite_offset")
+              for axis in "xyz"),
+            *(f"transform.{offset}.rotation.{axis}"
+              for offset in ("track_offset", "clip_offset", "infinite_offset")
+              for axis in "xyzw"),
+            "camera.vertical_fov_degrees",
+        }
         allowed = (
-            semantic.startswith(("transform.position.", "transform.rotation.",
-                                 "transform.track_offset.",
-                                 "transform.clip_offset.",
-                                 "transform.infinite_offset."))
-            or semantic == "camera.vertical_fov_degrees"
-            or native == "field of view" or bool(euler)
+            semantic in allowed_semantics
+            or (semantic == "transform.rotation.euler_native" and bool(euler))
+            or (not semantic and native == "field of view")
+            or (not semantic and bool(euler))
         )
         if not allowed:
             raise PlanError(
@@ -794,7 +803,7 @@ def _validate_camera_curve_ownership(section: dict[str, Any]) -> None:
             raise PlanError("Camera native Euler curve has no known source axis.")
         if euler and semantic not in {"", "transform.rotation.euler_native"}:
             raise PlanError("Camera Euler channel semantic and source axis conflict.")
-        key = "euler:"+euler if euler else (
+        key = ("euler:"+euler.rsplit(".", 1)[-1]) if euler else (
             semantic if semantic else "property:"+native
         )
         if key in seen:
