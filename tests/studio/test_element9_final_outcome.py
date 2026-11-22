@@ -90,7 +90,7 @@ def test_passed_measured_scope_remains_full_fidelity_unverified(tmp_path):
     )
     assert report["native_observation_count"] == 1
     assert report["bounded_remeasurement_attempt_count"] == 0
-    assert report["native_builder_execution_proven"] is True
+    assert report["native_builder_receipt_consistent_with_saved_evidence"] is True
     assert report["measured_improvement_is_not_repair_causality"] is True
     assert report["independent_engine_attestation_verified"] is False
     assert report["source_occurrence_count"] == len(report["source_occurrences"])
