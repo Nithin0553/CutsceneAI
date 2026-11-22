@@ -319,3 +319,13 @@ def test_untrusted_external_signer_cannot_publish(tmp_path):
             output_file=tmp_path / "untrusted.json",
             explicit_release_consent=True,
         )
+
+
+
+def test_signed_distribution_rejects_unknown_private_capability_tokens():
+    rule = copy.deepcopy(json.loads(ced_rulebook.BASE_RULES.read_text())["rules"][0])
+    rule["rule_id"] = "signed-public-case"
+    rule["ced"] = "transform.quaternion"
+    rule["source"]["capabilities_all"].append("PrivateClient.RigInternalSecret")
+    with pytest.raises(shared_distribution.DistributionError, match="private unknown"):
+        shared_distribution._validate_rules([rule])
