@@ -594,3 +594,83 @@ def test_open_unreal_editor_refreshes_canonical_element7_code_without_restart():
     assert modules.index("studio_element7_readback") < (
         modules.index("studio_element_native_gate")
     )
+
+
+def _native_facing_owner_fixture(folder, job):
+    target_path = folder / "target-behavior.json"
+    native = {
+        "kind": "cutsceneai.studio.native_character_facing_ownership",
+        "schema_version": "1",
+        "job_id": job["job_id"], "candidate_id": job["candidate_id"],
+        "source_capture_sha256": _sha(Path(job["capture"])),
+        "target_observation_sha256": _sha(target_path),
+        "sequence_asset_path": job["sequence_path"],
+        "reopened_editor_pid": 2222,
+        "status": "READ_ONLY_NATIVE_OWNER_INSPECTED_NOT_AUTHORIZED",
+        "native_edit_authorized": False,
+        "full_cutscene_fidelity_verified": False,
+        "characters": [{
+            "entity_id": "character",
+            "status": "STATIC_NATIVE_OWNER_CANDIDATE_REQUIRES_SOURCE_PROOF",
+            "native_edit_authorized": False, "actor_yaw_repair_authorized": False,
+            "blocking_reasons": [],
+        }],
+    }
+    path = folder / "native-character-facing-ownership.json"
+    _put(path, native)
+    cmp_path = folder / "comparison.json"
+    comparison = json.loads(cmp_path.read_text())
+    comparison["native_facing_ownership_sha256"] = _sha(path)
+    _put(cmp_path, comparison)
+    return path, cmp_path
+
+
+def test_native_facing_owner_report_is_bound_to_exact_job_not_rotation_permission(tmp_path):
+    work, job, folder = _scenario(tmp_path, complete=True)
+    _native_facing_owner_fixture(folder, job)
+    report = readback.build(work, job["job_id"], folder)
+    readback.verify(report, work, job["job_id"], folder)
+    assert report["native_repair_authorized"] is False
+    assert report["full_cutscene_fidelity_verified"] is False
+
+
+@pytest.mark.parametrize("change", [
+    "native_authority", "foreign_job", "foreign_candidate", "foreign_source",
+    "foreign_target", "foreign_editor", "foreign_sequence", "tamper_bytes",
+    "unreferenced", "missing",
+])
+def test_native_facing_owner_proof_refuses_tamper_and_false_authority(tmp_path, change):
+    work, job, folder = _scenario(tmp_path, complete=True)
+    path, cmp_path = _native_facing_owner_fixture(folder, job)
+    data = json.loads(path.read_text())
+    if change == "native_authority":
+        data["characters"][0]["actor_yaw_repair_authorized"] = True
+    elif change == "foreign_job":
+        data["job_id"] = "f" * 32 if job["job_id"] != "f" * 32 else "e" * 32
+    elif change == "foreign_candidate":
+        data["candidate_id"] = "20261122T190000Z_ffffffff"
+    elif change == "foreign_source":
+        data["source_capture_sha256"] = "0" * 64
+    elif change == "foreign_target":
+        data["target_observation_sha256"] = "1" * 64
+    elif change == "foreign_editor":
+        data["reopened_editor_pid"] = 9999
+    elif change == "foreign_sequence":
+        data["sequence_asset_path"] = "/Game/Foreign/LS"
+    if change == "missing":
+        path.unlink()
+    elif change == "tamper_bytes":
+        path.write_bytes(path.read_bytes() + b"\n")
+    else:
+        _put(path, data)
+    if change not in {"missing", "tamper_bytes", "unreferenced"}:
+        comparison = json.loads(cmp_path.read_text())
+        comparison["native_facing_ownership_sha256"] = _sha(path)
+        _put(cmp_path, comparison)
+    if change == "unreferenced":
+        comparison = json.loads(cmp_path.read_text())
+        comparison.pop("native_facing_ownership_sha256")
+        _put(cmp_path, comparison)
+    with pytest.raises(readback.Element7ReadbackError,
+                       match="facing owner|facing inspection|facing owner inspection|native facing"):
+        readback.build(work, job["job_id"], folder)

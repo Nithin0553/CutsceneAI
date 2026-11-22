@@ -140,6 +140,7 @@ def route(
     camera_lens_repair_evidence: dict[str, Any] | None = None,
     camera_cut_repair_evidence: dict[str, Any] | None = None,
     camera_position_repair_evidence: dict[str, Any] | None = None,
+    character_facing_review: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Choose *admissible strategies*, not a repair or an engine operation.
 
@@ -232,6 +233,22 @@ def route(
         and isinstance(camera_position_repair_evidence.get(
             "camera_position_repair_sha256"), str)
     )
+    from studio_character_facing_review import relevant_feedback
+    character_facing_observed = bool(
+        relevant_feedback(message)
+        and intent["mode"] == "user_feedback"
+        and domains == ["animation"] and not intent["ambiguous"]
+        and scope == "character" and generation_complete
+        and completed_repairs < repair_budget
+        and isinstance(character_facing_review, dict)
+        and character_facing_review.get("kind")
+        == "cutsceneai.studio.character_facing_owner_review"
+        and character_facing_review.get("status")
+        == "REOPENED_CHARACTER_OWNER_DIAGNOSTIC_ONLY"
+        and character_facing_review.get("native_owner_observation_available") is True
+        and character_facing_review.get("native_edit_authorized") is False
+        and character_facing_review.get("model_command_authorized") is False
+    )
     if camera_position_eligible:
         disposition = "GUARDED_STATIC_CAMERA_PLACEMENT_AVAILABLE"
         reason = (
@@ -266,6 +283,17 @@ def route(
                   "constant actor/root offset, without conflicting native transform "
                   "tracks. Unreal must remeasure and validate before any edit.")
         allowed = ["report_only", "restore_constant_actor_offset"]
+    elif character_facing_observed:
+        disposition = "NATIVE_CHARACTER_ROTATION_OWNERSHIP_REVIEW_ONLY"
+        reason = (
+            "The exact reopened Unreal character/mesh owner inventory and "
+            "source-bound CineTwin evidence are available for diagnosis. "
+            "Actor, skeletal component, imported mesh, Sequencer and root "
+            "motion are separate rotation owners; no native facing repair "
+            "is permitted until a registered reversible writer and "
+            "independent post-edit readback are proven."
+        )
+        allowed = ["report_only"]
     elif eligibility:
         disposition = "GUARDED_MATERIAL_REPAIR_AVAILABLE"
         reason = ("A source-backed material fallback was observed in native "

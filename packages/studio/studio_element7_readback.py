@@ -307,6 +307,48 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
         raise Element7ReadbackError(
             "Reopened native observation lacks a distinct matching editor process."
         )
+    # Optional independently reopened native-owner inspection is strictly
+    # informational. Its raw JSON is hash-pinned to this source and editor,
+    # cannot grant native edit authority and cannot override the recomputed
+    # actor/mesh/skeletal CineTwin comparison.
+    facing_file = folder / "native-character-facing-ownership.json"
+    facing_sha = recorded.get("native_facing_ownership_sha256")
+    if facing_sha is not None:
+        if not isinstance(facing_sha, str) or not re.fullmatch(
+            r"[a-f0-9]{64}", facing_sha
+        ):
+            raise Element7ReadbackError("Invalid native facing inspection hash.")
+        if facing_file.is_symlink() or not facing_file.is_file():
+            raise Element7ReadbackError(
+                "Reopened native facing owner inspection is missing or unsafe."
+            )
+        facing, actual_facing_sha = _safe_json(facing_file)
+        if (actual_facing_sha != facing_sha
+                or facing.get("kind")
+                != "cutsceneai.studio.native_character_facing_ownership"
+                or facing.get("job_id") != job_id
+                or facing.get("candidate_id") != job.get("candidate_id")
+                or facing.get("source_capture_sha256") != source_sha
+                or facing.get("target_observation_sha256") != target_sha
+                or facing.get("sequence_asset_path") != job.get("sequence_path")
+                or facing.get("reopened_editor_pid") != observation_pid
+                or facing.get("native_edit_authorized") is not False
+                or facing.get("full_cutscene_fidelity_verified") is not False
+                or not isinstance(facing.get("characters"), list)
+                or any(
+                    not isinstance(row, dict)
+                    or row.get("native_edit_authorized") is not False
+                    or row.get("actor_yaw_repair_authorized", False) is not False
+                    for row in facing["characters"]
+                )):
+            raise Element7ReadbackError(
+                "Native facing owner inspection is foreign, altered or claims "
+                "unsupported character rotation authority."
+            )
+    elif facing_file.exists():
+        raise Element7ReadbackError(
+            "Unreferenced reopened native facing owner inspection is not trusted."
+        )
     project_file = Path(str(job.get("expected_project") or ""))
     if (project_file.is_symlink() or not project_file.is_file()
             or not 0 < project_file.stat().st_size <= 4 * 1024 * 1024):

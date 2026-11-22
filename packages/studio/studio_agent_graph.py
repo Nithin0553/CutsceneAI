@@ -58,6 +58,7 @@ class AgentState(TypedDict, total=False):
     camera_lens_candidate: dict[str, Any]
     camera_cut_candidate: dict[str, Any]
     camera_position_candidate: dict[str, Any]
+    character_facing_candidate: dict[str, Any]
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -436,6 +437,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
         camera_proof = None
         cut_proof = None
         camera_position_proof = None
+        facing_review = None
         if comment:
             import studio_camera_position_evidence
             if studio_camera_position_evidence.message_requests_position(user_message):
@@ -487,6 +489,22 @@ def build_graph(workspace: Path, job: dict[str, Any],
                     "eligible": False,
                     "reason": "Missing trusted native evidence: " + str(exc)[:250],
                 }
+        if comment:
+            import studio_character_facing_review
+            if studio_character_facing_review.relevant_feedback(user_message):
+                try:
+                    facing_review = studio_character_facing_review.build(
+                        workspace, job,
+                    )
+                except (studio_character_facing_review.CharacterFacingReviewError,
+                        ValueError, TypeError, KeyError, OSError):
+                    facing_review = {
+                        "kind": studio_character_facing_review.KIND,
+                        "status": "NATIVE_FACING_OWNERSHIP_EVIDENCE_INCOMPLETE",
+                        "native_owner_observation_available": False,
+                        "native_edit_authorized": False,
+                        "model_command_authorized": False,
+                    }
         issues = feedback.get("issues") or []
         if not isinstance(issues, list):
             raise AgentError("Invalid independent issue list.")
@@ -504,6 +522,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 camera_lens_repair_evidence=camera_proof,
                 camera_cut_repair_evidence=cut_proof,
                 camera_position_repair_evidence=camera_position_proof,
+                character_facing_review=facing_review,
                 adapter_catalog=feedback.get("component_adapter_catalog"),
                 fallback_observation_scope=(
                     "character" if "character_material_slots_engine_default" in visual
@@ -544,6 +563,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "camera_lens_candidate": camera_proof or {},
             "camera_cut_candidate": cut_proof or {},
             "camera_position_candidate": camera_position_proof or {},
+            "character_facing_candidate": facing_review or {},
             "element8_review": element8 or {},
         }
         if not issues:
@@ -613,6 +633,19 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 ).get("source_camera_occurrence_id"),
                 "native_edit_authorized": False,
                 "reopened_cinetwin_verified": False,
+            },
+            "verified_character_facing_owner_review": {
+                "status": state.get("character_facing_candidate", {}).get("status"),
+                "native_owner_observation_available": bool(
+                    state.get("character_facing_candidate", {}).get(
+                        "native_owner_observation_available"
+                    )
+                ),
+                "observed_character_count": state.get(
+                    "character_facing_candidate", {},
+                ).get("observed_character_count", 0),
+                "native_edit_authorized": False,
+                "full_cutscene_fidelity_verified": False,
             },
             "element8_native_readback": state.get("element8_review", {}),
         }
