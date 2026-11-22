@@ -270,7 +270,9 @@ def _execute(job):
     # Recheck the exact original job + source/target/action fingerprints here.
     # A changed claim, mapping or approval must not reach editor mutation.
     element6_guard = _native_attempt_guard()
-    element6_claim = element6_guard.load_claim(WORKSPACE, job)
+    element6_claim = element6_guard.load_claim(
+        WORKSPACE, job, editor_pid=os.getpid(),
+    )
     element6_guard.step(
         WORKSPACE, job, element6_claim, 'PREPARED_SOURCE_AND_ACTIONS_VERIFIED',
     )
