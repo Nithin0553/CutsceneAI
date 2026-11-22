@@ -431,13 +431,16 @@ def acknowledge(folder: Path, worker: dict, workflow_sha256: str) -> dict:
 
 
 def require_acknowledgment(folder: Path, worker: dict, candidate_id: str) -> None:
-    _config, _candidate, location, _source, _mapping = _workspace(folder)
-    if _candidate["candidate_id"] != candidate_id:
-        raise ElementWorkflowError("Element review belongs to a different candidate.")
+    if not isinstance(candidate_id, str) or not CANDIDATE_ID.fullmatch(candidate_id):
+        raise ElementWorkflowError("Invalid candidate identity for Element 3 review.")
+    location = folder / "candidates" / candidate_id
     if not (location / "element-workflow-active.json").is_file():
         # The original manual/automated transfer remains backward compatible
         # when an Element 3 review was never requested.
         return
+    _config, _candidate, location, _source, _mapping = _workspace(folder)
+    if _candidate["candidate_id"] != candidate_id:
+        raise ElementWorkflowError("Element review belongs to a different candidate.")
     report = _active(folder)
     config, _candidate, location, _source, _mapping = _workspace(folder)
     if (not _review_ack(location, report["workflow_sha256"])
