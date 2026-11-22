@@ -327,7 +327,13 @@ def test_two_shot_reverts_both_sections_after_partial_write_or_save_error(
         native.attempt(api, workspace, job, request)
     assert (a.start, a.end, b.start, b.end) == (0, 22, 22, 40)
     assert len(history) >= 3
-    assert saves == [] if "save" not in case else len(saves) == 1
+    assert history[-2:] == [
+        ("right-guid", 22, 40), ("left-guid", 0, 22),
+    ]
+    if "save" not in case:
+        assert saves == []
+    else:
+        assert len(saves) == 1
 
 
 def test_langgraph_emits_hash_only_source_scoped_two_shot_native_request(
