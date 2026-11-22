@@ -130,6 +130,16 @@ def inventory(plan: dict, element_plan: dict,
                 )
             for location in covered:
                 row = locations[location]
+                if kind not in row["candidate_actions"]:
+                    blocked_reason = "COVERED_SOURCE_OCCURRENCE_ACTION_UNAVAILABLE"
+                if by_strategy:
+                    coverage = by_strategy[row["occurrence_id"]]
+                    if not any(
+                        candidate.get("action") == kind
+                        and candidate.get("eligible_for_model_proposal") is True
+                        for candidate in coverage.get("alternatives", [])
+                    ):
+                        blocked_reason = "COVERED_SOURCE_STRATEGY_OR_DEPENDENCY_BLOCKED"
                 if row["occurrence_id"] not in linked:
                     linked.append(row["occurrence_id"])
         rows.append({
