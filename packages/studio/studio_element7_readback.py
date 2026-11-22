@@ -24,7 +24,9 @@ if CINETWIN not in sys.path:
     sys.path.insert(0, CINETWIN)
 
 import studio_element_cinetwin
+import studio_element5_plan as source_plan
 import studio_element6_execution as native_guard
+import studio_element_native_execution as native_actions
 from behavior_compare import BehavioralComparisonError, compare
 from sampling_plan import SamplingPlanError, build_plan, validate_capture
 
@@ -352,13 +354,56 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
             raise Element7ReadbackError("Current Element 3 review identity is invalid.")
         snapshot, _ = _safe_json(candidate / ("element-workflow-" + digest + ".json"))
         if (snapshot.get("workflow_sha256") != digest
+                or snapshot.get("kind") != "cutsceneai.studio.element_workflow"
                 or snapshot.get("candidate_id") != job["candidate_id"]
+                or digest != _hash({
+                    key: value for key, value in snapshot.items()
+                    if key != "workflow_sha256"
+                })
+                or snapshot.get("source_file_sha256") != csir_sha
+                or snapshot.get("candidate_mapping_sha256") != mapping_sha
+                or snapshot.get("transfer_plan_sha256") != transfer_sha
+                or snapshot.get("target_project_identity_sha256")
+                != hashlib.sha256(str(project_file.resolve()).encode(
+                    "utf-8"
+                )).hexdigest()
                 or recorded.get("element3_workflow_sha256") != digest
                 or recorded.get("element3_native_authorization_sha256")
                 != job.get("element_native_authorization_sha256")):
             raise Element7ReadbackError(
                 "Measured target uses an unapproved/foreign source occurrence plan."
             )
+        # Re-evaluate the saved Element 3/4/5 decisions and EXACT native
+        # operator grant without importing Unreal or trusting editor UI.
+        try:
+            source_plan.verify(
+                snapshot["element5_source_bound_plan"],
+                csir, mapping, transfer, snapshot["element_plan"],
+                snapshot["element_schedule"], snapshot["element_strategy"],
+                snapshot["element4_baseline_validation"],
+            )
+            manifest = native_actions.inventory(
+                transfer, snapshot["element_plan"], snapshot["element_strategy"],
+            )
+            approval, _ = _safe_json(
+                candidate / "element-native-approval.json"
+            )
+            native_actions.verify_authorization(
+                approval, manifest, candidate_id=job["candidate_id"],
+                workflow_sha256=digest,
+                transfer_plan_sha256=transfer_sha,
+            )
+            if (approval["authorization_sha256"]
+                    != job.get("element_native_authorization_sha256")):
+                raise Element7ReadbackError(
+                    "Native target observation does not belong to approved actions."
+                )
+        except (source_plan.SourceBoundPlanError,
+                native_actions.ElementNativeExecutionError,
+                Element7ReadbackError, KeyError, TypeError, ValueError) as exc:
+            raise Element7ReadbackError(
+                "Element 7 source/action provenance or operator consent is invalid."
+            ) from exc
         try:
             attribution = studio_element_cinetwin.build(
                 csir, snapshot["element_plan"], sampling, source, target,
