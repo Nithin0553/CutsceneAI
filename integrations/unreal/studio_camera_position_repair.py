@@ -54,12 +54,18 @@ def _static_transform_ownership(api: Any, sequence: Any) -> None:
             root.extend(tracks)
         if len(root) > 10000:
             raise StaticCameraNativeRepairError("Native track count exceeds limits.")
+        allowed = {
+            "MovieSceneCameraCutTrack",
+            "MovieSceneSkeletalAnimationTrack",
+            "MovieSceneVisibilityTrack",
+            "MovieSceneAudioTrack",
+        }
         for track in root:
             kind = str(track.get_class().get_name())
-            if any(term in kind for term in (
-                "3DTransform", "Transform", "Property", "Vector",
-                "CinematicShot", "SubTrack", "Constraint",
-            )):
+            # Unknown tracks (including scalar, double, parameter, attach,
+            # control-rig, shot and custom plugin tracks) may drive placement.
+            # Reject rather than trying to guess their hidden write targets.
+            if kind not in allowed:
                 raise StaticCameraNativeRepairError(
                     "Sequencer transform/property ownership is not a static camera."
                 )
