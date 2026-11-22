@@ -203,6 +203,20 @@ def _execute(job):
         raise RuntimeError('Prepared evidence does not match submitted job.')
     if prepared['target']['sequence_asset_path'] != job['sequence_path']:
         raise RuntimeError('Sequence identity mismatch.')
+    # Explicit Element 3 review requires a separate exact action-grant
+    # checked again inside the live Unreal process BEFORE asset import,
+    # level creation, actor mutation or Level Sequence construction.
+    element_dispatch = None
+    element_review_requested = (candidate_dir / 'element-workflow-active.json').is_file()
+    if element_review_requested or job.get('element_native_authorization_sha256'):
+        if not element_review_requested:
+            raise RuntimeError('Native element authorization has no active source review.')
+        tools_dir = str(ROOT / 'tools')
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        import studio_element_workflow
+        element_dispatch = studio_element_workflow.verify_native_job(WORKSPACE, job)
+        job['element_native_dispatch_status'] = 'EXACT_ACTIONS_AUTHORIZED_PREFLIGHT_PENDING'
     # A host AI conversion choice is a measured, source-bound option record,
     # not authority to write arbitrary Unreal commands. Match its bytes to
     # the job's approved hash BEFORE any native editor mutation.
@@ -315,6 +329,29 @@ def _execute(job):
         expected_level_path=job['expected_level'],
     )
     job['generation_status'] = 'GENERATED_UNVERIFIED'
+    if element_dispatch is not None:
+        # The canonical builder has already recompiled and dispatched the
+        # exact native actions. Record that fact from its *real* runtime
+        # receipt; individual action readback and fidelity remain pending.
+        try:
+            import studio_element_workflow
+            dispatch = studio_element_workflow.record_native_job(WORKSPACE, job)
+            job['element_native_dispatch_receipt'] = str(
+                candidate_dir / ('element-native-dispatch-' + job['job_id'] + '.json')
+            )
+            job['element_native_dispatch_status'] = (
+                'REGISTERED_BUILDER_COMPLETED_INDIVIDUAL_READBACK_UNVERIFIED'
+            )
+            job['element_native_dispatched_action_count'] = dispatch['action_count']
+        except Exception as exc:
+            job['element_native_dispatch_status'] = (
+                'DISPATCH_RECEIPT_UNAVAILABLE_REVIEW_REQUIRED'
+            )
+            job['element_native_dispatch_error'] = str(exc)[:350]
+            unreal.log_warning(
+                '[CutSceneAI Studio] Native element dispatch receipt incomplete: '
+                + str(exc)
+            )
     try:
         job['bindings_created_count'] = len(result.get_bindings())
     except Exception:
