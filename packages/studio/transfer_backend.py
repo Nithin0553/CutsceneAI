@@ -253,8 +253,9 @@ def _scalar_bake_keys(
     *,
     component_name: str,
     field_name: str,
+    include_terminal: bool = False,
 ) -> list[dict[str, Any]]:
-    """Build sampled camera/light value tracks at source display-frame timestamps."""
+    """Build sampled camera/light values; optionally preserve final frame."""
     rate = csir["timing"].get("display_rate") or csir["timing"]["source_rate"]
     hz = float(rate["numerator"]) / float(rate["denominator"])
     start = csir_plan.rational_seconds(csir["timing"]["playback_start"])
@@ -264,7 +265,8 @@ def _scalar_bake_keys(
         for s in capture["samples"]
     }
     result = []
-    for frame in range(int(math.floor((end - start) * hz + 1e-7))):
+    count = int(math.floor((end - start) * hz + 1e-7))
+    for frame in range(count + (1 if include_terminal else 0)):
         moment = start + frame / hz
         sample = by_time.get(round(moment, 8))
         if sample is None:
@@ -447,6 +449,7 @@ def compose(
                             csir, capture, entity,
                             component_name="camera",
                             field_name="vertical_fov_degrees",
+                            include_terminal=True,
                         ),
                         "baked_source_curves": True,
                     })
