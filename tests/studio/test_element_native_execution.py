@@ -512,7 +512,7 @@ def test_separate_native_action_pagination_does_not_truncate_source_occurrences(
 
 
 def test_explicit_covered_source_list_cannot_launder_unregistered_occurrences(tmp_path):
-    work, worker, _target, _summary, _manifest_doc = _manifest(tmp_path)
+    work, _worker, _target, _summary, _manifest_doc = _manifest(tmp_path)
     snapshot = workflow._active(work)
     plan = {
         "sequence_asset_path": "/Game/Demo/LS_Trial",
