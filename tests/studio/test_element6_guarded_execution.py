@@ -172,7 +172,7 @@ def test_structured_stage_checkpoints_are_ordered_and_never_overwritten(tmp_path
         k: v for k, v in forged.items() if k != "stage_sha256"
     })
     _write(path, forged)
-    with pytest.raises(guard.GuardedExecutionError, match="altered"):
+    with pytest.raises(guard.GuardedExecutionError, match="does not match|altered"):
         guard.inspect(work, job)
 
 
