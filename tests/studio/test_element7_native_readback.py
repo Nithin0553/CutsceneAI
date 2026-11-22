@@ -247,6 +247,7 @@ def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False):
         "expected_level": job["expected_level"],
         "status": "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS",
         "native_structure_status": "PASS",
+        "sequence_persisted": True,
         "restart_verified": True,
         "provenance_status": "COMPLETE",
     })
