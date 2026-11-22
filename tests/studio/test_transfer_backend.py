@@ -231,9 +231,11 @@ def test_unhandled_camera_track_bakes_source_lens_and_world_pose():
     assert report["tracks"][-1]["outcome"] == "BAKED_PARTIAL"
     assert len([a for a in plan["actions"] if a["kind"] == "camera_fov"]) == 1
     assert len([a for a in plan["actions"] if a["kind"] == "transform"]) == 2
-    assert next(a for a in plan["actions"] if a["kind"] == "camera_fov")["keys"][0] == {
-        "frame": 0, "value": 55.0,
-    }
+    lens_keys = next(a for a in plan["actions"]
+                     if a["kind"] == "camera_fov")["keys"]
+    assert lens_keys[0] == {"frame": 0, "value": 55.0}
+    assert lens_keys[-1] == {"frame": 4, "value": 55.0}
+    assert [row["frame"] for row in lens_keys] == [0, 1, 2, 3, 4]
 
 
 def test_unknown_light_animation_bakes_independently_measured_intensity():
