@@ -140,10 +140,13 @@ def main(argv: list[str] | None = None) -> int:
             regression_report=Path(args.regression_report),
             explicitly_approved=args.explicit_review_approval,
         )
-        Path(args.output).write_text(
-            json.dumps(result, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        output = Path(args.output)
+        if output.is_symlink() or not output.parent.is_dir():
+            raise ValueError("Reviewer evidence output must be a new safe local file.")
+        # Never overwrite an existing signature, unrelated user data or an
+        # earlier reviewer decision as part of the promotion process.
+        with output.open("x", encoding="utf-8") as stream:
+            stream.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
         result = {"status": "SIGNED_INDEPENDENT_REVIEW_RECORDED",
                   "review_record_role": result["role"]}
     elif args.command == "sign-release":
