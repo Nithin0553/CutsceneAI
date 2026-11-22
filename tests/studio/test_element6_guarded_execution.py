@@ -178,6 +178,7 @@ def test_structured_stage_checkpoints_are_ordered_and_never_overwritten(tmp_path
 
 def test_builder_receipt_is_not_engine_fidelity_or_individual_action_parity(tmp_path):
     work, folder, job = _queued(tmp_path)
+    original_queued_job = copy.deepcopy(job)
     claim = guard.claim(work, job, editor_pid=123)
     for stage in guard.STAGES[1:]:
         guard.step(work, job, claim, stage)
@@ -198,7 +199,7 @@ def test_builder_receipt_is_not_engine_fidelity_or_individual_action_parity(tmp_
     with pytest.raises(guard.GuardedExecutionError, match="already claimed"):
         guard.terminal(work, job, claim)
     with pytest.raises(guard.GuardedExecutionError, match="already claimed"):
-        guard.claim(work, job, editor_pid=124)
+        guard.claim(work, original_queued_job, editor_pid=124)
 
 
 @pytest.mark.parametrize("receipt_values", [
