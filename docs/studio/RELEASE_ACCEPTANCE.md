@@ -84,12 +84,14 @@ fails its saved-session hash comparison.
   matrix with independently measured supported/unsupported feature outcomes.
 
 The integrated Elements 1–9 / Phase 10.2 software stack now registers
-**seven narrowly bounded source-bound repair families**: material albedo
+**eight narrowly bounded source-bound repair families**: material albedo
 fallback, one-character constant actor offset, static physical CineCamera lens,
 single camera-cut section boundary, static CineCamera world placement,
-**one static-character actor-base yaw**, and an exact **two-camera, two-shot
+**one static-character actor-base yaw**, an exact **two-camera, two-shot
 shared-switch frame correction** (no inserts, deletes, reorder, retargeting,
-time-warps, subsequences or general multi-cut scheduling). Static character yaw
+time-warps, subsequences or general multi-cut scheduling), and **one
+static-CineCamera actor world-yaw-only correction** (no animated camera
+transform, rig, pitch/roll, lens, cut or moving-camera rewrites). Static character yaw
 requires reviewed anatomical mesh
 forward, exact native reopened owner, calibrated motionless rig and no active
 native animation/Sequencer transform controller. The native owner,
@@ -101,7 +103,8 @@ camera animation, audio, events, lighting/shader parity and unknown plugins
 remain diagnostic-only or unsupported. See [Elements 1–9 audit](ELEMENT1_TO_9_INTEGRATED_AUDIT_AND_REPAIR_EXPANSION_V01.md),
 [Phase 10.1 gap audit](PHASE10_1_SOFTWARE_GAP_AUDIT_V01.md), and
 [Phase 10.2 static character yaw scope](PHASE10_2_GUARDED_STATIC_CHARACTER_YAW_V01.md)
-and [Phase 10.2 two-shot camera switch scope](PHASE10_2_TWO_SHOT_CAMERA_SWITCH_V01.md).
+and [Phase 10.2 two-shot camera switch scope](PHASE10_2_TWO_SHOT_CAMERA_SWITCH_V01.md), and
+[Phase 10.2 static camera yaw scope](PHASE10_2_STATIC_CAMERA_YAW_V01.md).
 No arbitrary Unity script, proprietary shader, animation rig or camera
 control may be reconstructed simply because an LLM identifies a mismatch.
 
