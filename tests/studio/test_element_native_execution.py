@@ -261,3 +261,40 @@ def test_engine_reopen_acceptance_recomputes_real_source_bound_occurrences():
             "studio_release_gate.py").read_text(encoding="utf-8")
     assert "studio_element_cinetwin.build(" in host
     assert "element3_native_reopened_attribution" in host
+
+
+
+def test_new_element_review_archives_old_native_consent_without_reusing_it(tmp_path):
+    work, worker, _target, summary, manifest = _manifest(tmp_path)
+    workflow.acknowledge(work, worker, summary["workflow_sha256"])
+    approval = workflow.approve_native_actions(
+        work, worker, workflow_sha256=summary["workflow_sha256"],
+        inventory_sha256=native.digest(manifest),
+        review_all=True, accept_legacy_unattributed=False,
+    )
+    config = json.loads((work / "active-candidate.json").read_text())
+    location = work / "candidates" / config["candidate_id"]
+    mapping = Path(config["mapping_copy"])
+    mapping.write_text(mapping.read_text(encoding="utf-8") + " ", encoding="utf-8")
+    changed = workflow.prepare(work, worker)
+    assert changed["workflow_sha256"] != summary["workflow_sha256"]
+    assert changed["native_actions"]["approved_for_existing_native_preflight"] is False
+    assert changed["review_acknowledged"] is False
+    assert not (location / "element-native-approval.json").exists()
+    archived = (location / ("element-native-approval-" +
+                            approval["native_action_authorization_sha256"] + ".json"))
+    assert archived.is_file()
+    assert json.loads(archived.read_text())["authorization_sha256"] == (
+        approval["native_action_authorization_sha256"]
+    )
+
+
+def test_native_unreal_gate_keeps_host_optional_dependencies_out_of_editor_imports():
+    src = (ROOT / "integrations" / "unreal" /
+           "studio_element_native_gate.py").read_text(encoding="utf-8")
+    assert "import studio_element_workflow" not in src
+    assert "import studio_element_plan" not in src
+    assert "import langgraph" not in src
+    assert "import jsonschema" not in src
+    assert "feature_dispatch._source_rows(csir)" in src
+    assert "native_inventory.get(\"available\") is not True" in src
