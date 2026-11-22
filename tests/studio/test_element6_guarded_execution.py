@@ -81,7 +81,9 @@ def test_claim_is_durable_bound_and_one_native_attempt_only(tmp_path):
     assert claim["claim_sha256"] == guard.digest({
         k: v for k, v in claim.items() if k != "claim_sha256"
     })
-    assert guard.load_claim(work, job) == claim
+    assert guard.load_claim(work, job, editor_pid=943) == claim
+    with pytest.raises(guard.GuardedExecutionError, match="another Unreal Editor"):
+        guard.load_claim(work, job, editor_pid=944)
     assert guard.inspect(work, job)["last_stage"] == "CLAIMED_NO_REPLAY"
     assert guard.inspect(work, job)["native_replay_allowed"] is False
     assert "CameraUnreal" not in json.dumps(claim)
@@ -140,7 +142,7 @@ def test_source_mapping_plan_or_approval_change_invalidates_live_attempt(tmp_pat
             job["element_native_authorization_sha256"] = "c" * 64
             _write(work / "jobs" / (job["job_id"] + ".json"), job)
         claim = guard.claim(work, job, editor_pid=994)
-        assert guard.load_claim(work, job) == claim
+        assert guard.load_claim(work, job, editor_pid=994) == claim
         if changed == "plan":
             path = folder / "transfer-plan.json"
         elif changed == "approval":
@@ -150,7 +152,7 @@ def test_source_mapping_plan_or_approval_change_invalidates_live_attempt(tmp_pat
         path.write_text(path.read_text(encoding="utf-8") + "\n",
                         encoding="utf-8")
         with pytest.raises(guard.GuardedExecutionError, match="changed"):
-            guard.load_claim(work, job)
+            guard.load_claim(work, job, editor_pid=994)
         assert guard.inspect(work, job)["native_replay_allowed"] is False
 
 
