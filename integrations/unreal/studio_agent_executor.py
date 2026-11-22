@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,46 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
         raise ValueError("Agent request refers to inactive job.")
     if len(list(candidate.glob("agent-receipt-*.json"))) >= 2:
         raise ValueError("Exceeded two guarded repair receipts.")
+    # Defense in depth: when actual reopened Element 7 CineTwin evidence
+    # exists, a previously authorized offset agent may only reach its native
+    # adapter if the new Element 8 verifier independently recommends REVIEW
+    # for a precise character occurrence and no no-progress/regression stop.
+    # This does NOT replace the adapter's fresh native measurements or the
+    # explicit one-character user feedback requirement.
+    if request["strategy"] == "restore_constant_actor_offset":
+        saved = sorted(
+            candidate.glob("native-acceptance-*/element7-readback.json"),
+            key=lambda path: (path.stat().st_mtime_ns, path.parent.name),
+        )
+        if saved:
+            if len(saved) > 3 or any(
+                path.is_symlink() or path.parent.is_symlink()
+                for path in saved
+            ):
+                raise ValueError("Element 8 remeasurement evidence is unsafe or over budget.")
+            package = str(Path(__file__).resolve().parents[2] / "packages/studio")
+            if package not in sys.path:
+                sys.path.insert(0, package)
+            import studio_element8_repair
+
+            try:
+                review = studio_element8_repair.build(
+                    workspace, job["job_id"], [path.parent for path in saved],
+                )
+            except (studio_element8_repair.BoundedRepairError,
+                    OSError, KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    "Element 8 source-bound native evidence is missing or altered."
+                ) from exc
+            if (not review["native_repair_adapter_available_for_review"]
+                    or review["status"] in {
+                        "STOP_MEASURED_REGRESSION_OR_NO_PROGRESS",
+                        "STOP_REMEASUREMENT_BUDGET_EXHAUSTED",
+                    }):
+                raise ValueError(
+                    "Element 8 measured discrepancy does not permit "
+                    "the existing character-offset adapter to be considered."
+                )
     if request["strategy"] == "restore_constant_actor_offset":
         import studio_transform_repair
         return studio_transform_repair.attempt(api, workspace, job, request)
