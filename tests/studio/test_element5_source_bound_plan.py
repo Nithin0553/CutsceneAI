@@ -375,3 +375,25 @@ def test_full_deterministic_compiler_plan_reconciles_against_actual_ced_eligibil
         provenance, scene, target, compiled, occurrence_plan,
         schedule, strategies_doc, validated,
     )
+
+
+
+def test_exact_exported_unity_names_create_only_unverified_target_reference_evidence():
+    from test_element_adaptive_strategy import _scene
+
+    scene = _scene()
+    scene["entities"][2]["name"] = "PRIVATE_CAMERA"
+    scene["assets"][0]["name"] = "SECRET_MODEL"
+    data = _scenario(scene=scene)
+    report = _build(data)
+    camera = next(row for row in report["source_occurrences"]
+                  if row["source_location"] == "entities[2]")
+    asset = next(row for row in report["source_occurrences"]
+                 if row["source_location"] == "assets[0]")
+    assert camera["mapping_status"] == "TARGET_REFERENCE_DECLARED_UNVERIFIED"
+    assert asset["mapping_status"] == "TARGET_REFERENCE_DECLARED_UNVERIFIED"
+    assert report["mapped_source_occurrence_count"] >= 2
+    assert report["target_readback_verified"] is False
+    serialized = json.dumps(report)
+    assert "PRIVATE_CAMERA" not in serialized
+    assert "SECRET_MODEL" not in serialized
