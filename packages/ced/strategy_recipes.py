@@ -51,7 +51,8 @@ def from_rule(rule: dict[str, Any], *, origin: str,
     """Materialize one bounded candidate recipe from an existing CED rule."""
     if not isinstance(rule, dict) or not isinstance(related_semantics, list):
         raise StrategyRecipeError("Recipe requires a structured registered CED rule.")
-    if origin not in {"BASELINE_REGISTERED_UNVERIFIED", "LOCAL_REVIEWED_NATIVE_MAPPING"}:
+    if origin not in {"BASELINE_REGISTERED_UNVERIFIED", "LOCAL_REVIEWED_NATIVE_MAPPING",
+                      "SHARED_SIGNED_APPROVED_ADVISORY"}:
         raise StrategyRecipeError("Recipe origin must be a known baseline or local review.")
     ced = _token(rule.get("ced"))
     rule_id = _token(rule.get("rule_id"))
