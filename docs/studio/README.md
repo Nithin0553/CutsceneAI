@@ -1,4 +1,23 @@
-# CutSceneAI Studio — local connected UI (v0.8)
+# CutSceneAI Studio — local connected transfer software
+
+**Current implementation (November 2026):** The normal `/` UI runs
+`cinematic.js` with server-owned one-click Unity analysis and guarded Unreal
+generation; `?manual=1` offers explicit research steps, and `?advanced=1`
+runs `app.js` for independent audits. Existing editors can refresh supported
+Python bridge/localhost changes while idle rather than requiring repeated
+engine restarts. Unity Play Mode capture and real Unreal native acceptance
+still require the actual editors. See
+[Phase 10.1 software gap audit](PHASE10_1_SOFTWARE_GAP_AUDIT_V01.md),
+[Elements 1–9 implementation audit](ELEMENT1_TO_9_INTEGRATED_AUDIT_AND_REPAIR_EXPANSION_V01.md),
+and [live bridge continuity](LIVE_BRIDGE_CONTINUITY.md).
+
+**Historical note:** The v0.5–v0.8 experimental walkthroughs below are kept
+for reproducing early Stage 1–4 projects. Where they describe manual CSIR
+export, no automatic staging, old worker version or editor restarts, use the
+current implementation and acceptance documents above instead. A source
+checkout/bootstrap is not yet a verified standalone distribution.
+
+## Historical local UI and Stage 1–4 research (v0.8)
 
 This directory documents the local browser UI and the source-driven fresh Unreal target experiments. The application is a development interface over the existing CutSceneAI source-CSIR planner and Unreal Editor adapters; it is **not** a fully automated project-to-project converter.
 

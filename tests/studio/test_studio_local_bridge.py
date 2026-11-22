@@ -902,3 +902,47 @@ def test_ced_rulebook_api_refuses_untrusted_executable_mapping(service):
     code, response = call(base + '/api/ced-rulebook/propose', suspicious, token)
     assert code == 422
     assert 'conversion resolution' in response['error']
+
+
+def test_verification_endpoint_fails_closed_on_invalid_active_job_pointer(service):
+    """Corrupt or stale job references return JSON 409, not a traceback/500."""
+    base, tmp = service
+    work = tmp / 'work'
+    status, no_job = call(base + '/api/verification')
+    assert status == 200 and no_job['available'] is False
+
+    bridge.atomic_json(work / 'active-job.json', {'job_id': '../../elsewhere'})
+    status, invalid = call(base + '/api/verification')
+    assert status == 409 and 'identity' in invalid['error'].lower()
+
+    job_id = 'a' * 32
+    bridge.atomic_json(work / 'active-job.json', {'job_id': job_id})
+    status, missing = call(base + '/api/verification')
+    assert status == 409 and 'unavailable' in missing['error'].lower()
+
+    bridge.atomic_json(work / 'jobs' / (job_id + '.json'),
+                       {'job_id': 'b' * 32})
+    status, mismatch = call(base + '/api/verification')
+    assert status == 409 and 'does not match' in mismatch['error'].lower()
+
+
+def test_closed_loop_endpoint_refuses_foreign_or_stale_native_job(service):
+    """One old native job pointer cannot become another job's repair feedback."""
+    base, tmp = service
+    work = tmp / 'work'
+    status, absent = call(base + '/api/closed-loop')
+    assert status == 200 and absent['status'] == 'NOT_GENERATED'
+
+    bridge.atomic_json(work / 'active-job.json', {'job_id': '../foreign'})
+    status, invalid = call(base + '/api/closed-loop')
+    assert status == 409 and 'identity' in invalid['error'].lower()
+
+    job_id = 'c' * 32
+    bridge.atomic_json(work / 'active-job.json', {'job_id': job_id})
+    status, missing = call(base + '/api/closed-loop')
+    assert status == 409 and 'unavailable' in missing['error'].lower()
+
+    bridge.atomic_json(work / 'jobs' / (job_id + '.json'),
+                       {'job_id': 'd' * 32})
+    status, mismatch = call(base + '/api/closed-loop')
+    assert status == 409 and 'does not match' in mismatch['error'].lower()

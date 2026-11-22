@@ -939,11 +939,26 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         'hierarchy': None, 'visual': None,
                         'fidelity_verified': False,
                     })
-                active = load_json(active_file)
-                job_file = folder / 'jobs' / (str(active['job_id']) + '.json')
-                return self.reply(
-                    200, studio_ui_features.verification(folder, active, load_json(job_file))
-                )
+                try:
+                    active = load_json(active_file)
+                    job_id = active.get('job_id')
+                    if (not isinstance(job_id, str) or len(job_id) != 32
+                            or any(c not in '0123456789abcdef' for c in job_id)):
+                        raise ValueError('Invalid active verification job identity.')
+                    job_file = folder / 'jobs' / (job_id + '.json')
+                    if job_file.is_symlink():
+                        raise ValueError('Symlinked verification job is unsafe.')
+                    job = load_json(job_file)
+                    if job.get('job_id') != job_id:
+                        raise ValueError('Native job identity does not match verification request.')
+                    return self.reply(
+                        200, studio_ui_features.verification(folder, active, job)
+                    )
+                except (ValueError, KeyError, TypeError, OSError) as exc:
+                    return self.reply(409, {
+                        'error': 'Job-bound native verification unavailable: '
+                                 + str(exc)[:300],
+                    })
             if path == '/api/status':
                 cfg = folder / 'connection.json'
                 return self.reply(200, {'service': 'CutSceneAI Studio Local Companion',
@@ -975,18 +990,35 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                 active_path = folder / 'active-job.json'
                 if not active_path.is_file():
                     return self.reply(200, {'available': False, 'status': 'NOT_GENERATED'})
-                current_job = load_json(active_path)
-                job = load_json(folder / 'jobs' / (current_job['job_id'] + '.json'))
-                candidate = Path(job.get('candidate_dir') or '').resolve()
-                if not candidate.is_relative_to((folder / 'candidates').resolve()):
-                    return self.reply(409, {'error': 'Unsafe candidate path.'})
-                report = candidate / ('closed-loop-evaluation-' + current_job['job_id'] + '.json')
-                if not report.is_file():
-                    return self.reply(200, {'available': False, 'status': 'EVIDENCE_INCOMPLETE'})
-                data = load_json(report)
-                if data.get('kind') != 'cutsceneai.studio.closed_loop_evaluation':
-                    return self.reply(409, {'error': 'Unexpected feedback report type.'})
-                return self.reply(200, {'available': True, **data})
+                try:
+                    current_job = load_json(active_path)
+                    job_id = current_job.get('job_id')
+                    if (not isinstance(job_id, str) or len(job_id) != 32
+                            or any(c not in '0123456789abcdef' for c in job_id)):
+                        raise ValueError('Invalid active closed-loop job identity.')
+                    job_file = folder / 'jobs' / (job_id + '.json')
+                    if job_file.is_symlink():
+                        raise ValueError('Symlinked closed-loop job is unsafe.')
+                    job = load_json(job_file)
+                    if job.get('job_id') != job_id:
+                        raise ValueError('Native job identity does not match feedback request.')
+                    candidate = Path(job.get('candidate_dir') or '').resolve()
+                    if not candidate.is_relative_to((folder / 'candidates').resolve()):
+                        raise ValueError('Unsafe candidate path.')
+                    report = candidate / ('closed-loop-evaluation-' + job_id + '.json')
+                    if report.is_symlink():
+                        raise ValueError('Symlinked closed-loop report is unsafe.')
+                    if not report.is_file():
+                        return self.reply(200, {'available': False, 'status': 'EVIDENCE_INCOMPLETE'})
+                    data = load_json(report)
+                    if data.get('kind') != 'cutsceneai.studio.closed_loop_evaluation':
+                        raise ValueError('Unexpected feedback report type.')
+                    return self.reply(200, {'available': True, **data})
+                except (ValueError, KeyError, TypeError, OSError) as exc:
+                    return self.reply(409, {
+                        'error': 'Job-bound closed-loop evidence unavailable: '
+                                 + str(exc)[:300],
+                    })
             if path == '/api/final-outcome':
                 import studio_element9_outcome
                 from urllib.parse import parse_qs

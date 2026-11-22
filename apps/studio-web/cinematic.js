@@ -591,16 +591,23 @@
       try{state.learningStatus=await api('learning');}catch{state.learningStatus=null;}
     }
     if(!state.running)state.candidate=s.candidate||null;
-    // Before a new run has submitted its job, /api/status can still refer
-    // to the previous completed job. Never present it as the new result.
+    // The server can retain an earlier active-job pointer while a new
+    // autopilot run is waiting, blocked or cancelled. Never display that
+    // older job as evidence for this run, including in terminal states.
     const currentRun=state.autopilot||{};
+    const runJobId=typeof currentRun.job_id==='string'?currentRun.job_id:'';
     const previousJobPending=Boolean(simpleMode&&currentRun.active&&
-      ['WAITING_FOR_UNITY','WAITING_FOR_UNITY_CAPTURE','CONNECTING',
-       'ANALYZING_PROJECTS','WAITING_FOR_MODEL','PREPARING','WAITING_FOR_UNREAL','UNREAL_RUNNING']
-        .includes(currentRun.status)&&
-      (!currentRun.job_id||currentRun.job_id!==s.active_job));
-    if(s.active_job&&!previousJobPending){
-      state.job=await api('jobs/'+s.active_job);
+      (!runJobId||runJobId!==s.active_job));
+    const nextJobId=s.active_job&&!previousJobPending?s.active_job:'';
+    // Results from one candidate must never survive into another job.
+    // Read-only native verification and AI corrections are job-scoped too.
+    if((state.job?.job_id||'')!==nextJobId){
+      state.job=null;state.verification=null;state.diagnosis=null;
+      state.feedback=null;state.releaseReadiness=null;
+      state.aiTransferAudit=null;state.agentConversation=null;state.agentStatus=null;
+    }
+    if(nextJobId){
+      state.job=await api('jobs/'+nextJobId);
       try{state.aiTransferAudit=await api('ai-transfer-audit');}
       catch(e){state.aiTransferAudit={available:false,status:'AUDIT_UNAVAILABLE',error:String(e.message||e)};}
     }else{

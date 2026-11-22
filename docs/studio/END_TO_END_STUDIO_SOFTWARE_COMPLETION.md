@@ -1,5 +1,13 @@
 # CutSceneAI Studio — End-to-End Software Completion Contract
 
+> **Current integration baseline (November 2026):** This document retains
+> the historical release-candidate milestones, not the latest implementation
+> inventory. Elements 1–9 and five guarded repair adapters are integrated in
+> [draft PR #149](https://github.com/Nithin0553/CutsceneAI/pull/149).
+> The verified pre-engine defect register and remaining priorities are in
+> [Phase 10.1 software gap audit](PHASE10_1_SOFTWARE_GAP_AUDIT_V01.md).
+> No real engine acceptance or software-freeze sign-off has occurred.
+
 **Software release candidate:** `feature/studio-e2e-release-candidate-v0.1`  
 **Combined baseline:** original integration draft PR #124 + Friday's draft PR #126.  
 **Constraint:** Finish and verify the *software* with synthetic and contract tests
