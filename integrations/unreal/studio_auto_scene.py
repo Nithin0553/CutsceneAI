@@ -358,7 +358,7 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
             # character yaw writer. An actor with the same display label
             # must not silently replace the originally staged character.
             get_path=getattr(actor,'get_path_name',None)
-            if kind=='entity.character' and callable(get_path):
+            if kind in ('entity.character','entity.camera') and callable(get_path):
                 try:
                     native_actor_path=str(get_path())
                 except (AttributeError,TypeError,RuntimeError,ValueError):
