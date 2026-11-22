@@ -304,3 +304,21 @@ def test_unregistered_legacy_action_never_acquires_a_fabricated_origin_by_name()
     assert report["native_actions"][0]["source_attribution"] == (
         "LEGACY_ACTION_SOURCE_ATTRIBUTION_UNVERIFIED"
     )
+
+
+
+def test_unreal_hot_reload_includes_exact_source_plan_and_gate_without_restart():
+    import studio_planner_sync
+
+    modules = [row[0] for row in studio_planner_sync.MODULES]
+    assert modules.index("csir_plan") < modules.index("transfer_backend")
+    assert modules.index("transfer_backend") < modules.index("prepared_transfer")
+    assert modules.index("studio_element_native_execution") < (
+        modules.index("studio_element5_plan")
+    )
+    assert modules.index("studio_element5_plan") < (
+        modules.index("studio_element_native_gate")
+    )
+    assert modules.index("prepared_transfer") < (
+        modules.index("studio_element_native_gate")
+    )
