@@ -37,13 +37,18 @@ def _target_with_offset(folder: Path, job: dict, centimeters: float,
                         *, capture_marker: str = "") -> None:
     raw = folder / "target-behavior.json"
     target = json.loads(raw.read_text(encoding="utf-8"))
-    for sample in target["samples"]:
-        character = next(x for x in sample["entities"]
+    source = json.loads(Path(job["capture"]).read_text(encoding="utf-8"))
+    for original, observed in zip(source["samples"], target["samples"]):
+        expected_character = next(x for x in original["entities"]
+                                  if x["entity_id"] == "character")
+        character = next(x for x in observed["entities"]
                          if x["entity_id"] == "character")
-        character["world_transform"]["position_m"][0] += centimeters / 100
+        character["world_transform"]["position_m"][0] = (
+            expected_character["world_transform"]["position_m"][0]
+            + centimeters / 100
+        )
     target["provenance"] = {"capture_marker": capture_marker}
     _put(raw, target)
-    source = json.loads(Path(job["capture"]).read_text(encoding="utf-8"))
     sampling = json.loads((folder / "sampling-plan.json").read_text(
         encoding="utf-8"
     ))
@@ -301,9 +306,10 @@ def test_existing_agent_graph_inherits_exact_element8_native_stop_policy(tmp_pat
 
 
 def test_unreal_agent_refuses_offset_that_element8_cannot_recommend(tmp_path):
-    work, job, native = _scenario(tmp_path, with_element3=True)
-    job.update(ai_agents_enabled=True, automatic_setup=True)
-    _put(work / "jobs" / (job["job_id"] + ".json"), job)
+    work, job, native = _scenario(
+        tmp_path, with_element3=True,
+        ai_agents_enabled=True, automatic_setup=True,
+    )
     request = {
         "kind": "cutsceneai.studio.agent_repair_request",
         "schema_version": "1", "job_id": job["job_id"],
