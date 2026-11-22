@@ -211,6 +211,8 @@ def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False):
         "target_observation_sha256": _sha(native_folder / "target-behavior.json"),
         "persistence_sha256": _sha(native_folder / "persistence.json"),
         "sampling_plan_sha256": _sha(native_folder / "sampling-plan.json"),
+        "native_persistence_status":
+            "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS",
         "element3_workflow_sha256": workflow,
         "element3_native_authorization_sha256": None,
         "element3_source_occurrence_count": (
