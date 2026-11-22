@@ -280,6 +280,11 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
     evidence["element_plan"] = _agent_module("studio_element_plan").prepare(
         csir, knowledge, native_capabilities,
     )
+    # The dependency graph is derived from the same source-bound plan and is
+    # informational only. It does not reorder or authorize native builder calls.
+    evidence["element_schedule"] = _agent_module("studio_element_schedule").build(
+        evidence["element_plan"], csir,
+    )
     return evidence
 
 
@@ -442,10 +447,14 @@ def decide(config: dict, census_path: str, worker: dict,
                 "Per-element AI planning failed before native execution: "
                 + str(exc)[:400]
             ) from exc
+    source_csir = _read(Path(config["csir"]))
     element_planner.verify(
-        element_plan, _read(Path(config["csir"])),
+        element_plan, source_csir,
         evidence["ced_knowledge"],
         evidence["summary"]["target_native_capabilities"],
+    )
+    element_schedule = _agent_module("studio_element_schedule").build(
+        element_plan, source_csir,
     )
     # Never let model preference disable the existing source-material import
     # guarantee when provenance documents source materials. This policy is a
@@ -466,6 +475,9 @@ def decide(config: dict, census_path: str, worker: dict,
         "ced_retrieved_concepts": evidence["ced_knowledge"]["retrieved_count"],
         "element_plan": element_plan,
         "element_plan_sha256": element_plan["element_plan_sha256"],
+        "element_schedule": element_schedule,
+        "element_schedule_sha256": element_schedule["schedule_sha256"],
+        "element_scheduling_advisory_only": True,
         "element_model_reviewed_count": element_plan["model_reviewed_count"],
         "element_model_response_sha256s": element_response_hashes,
         "element_planning_mode": (
@@ -543,6 +555,17 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
         )
     except element_planner.ElementPlanError as exc:
         raise TransferAIError("Per-element AI plan is stale or tampered: " + str(exc)) from exc
+    schedule = decision.get("element_schedule")
+    if (decision.get("element_scheduling_advisory_only") is not True
+            or not isinstance(schedule, dict)
+            or decision.get("element_schedule_sha256") != schedule.get("schedule_sha256")):
+        raise TransferAIError("Dependency schedule evidence or read-only guard is missing.")
+    scheduler = _agent_module("studio_element_schedule")
+    try:
+        scheduler.verify(schedule, decision["element_plan"],
+                         _read(Path(config["csir"])))
+    except scheduler.ElementScheduleError as exc:
+        raise TransferAIError("Dependency schedule is stale or tampered: " + str(exc)) from exc
     reviewed = decision["element_plan"]["model_reviewed_count"]
     if decision.get("element_planning_mode") != (
             "MODEL_REVIEWED" if reviewed else "INVENTORY_ONLY"):
