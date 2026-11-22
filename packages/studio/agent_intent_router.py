@@ -243,7 +243,7 @@ def route(
         camera_yaw_request_valid
         and intent["mode"] == "user_feedback"
         and domains in (["camera"], ["camera", "transform"])
-        and not intent["ambiguous"]
+        and scope == "unspecified"
         and generation_complete and completed_repairs < repair_budget
         and camera_yaw_repair_evidence.get("kind")
         == "cutsceneai.studio.static_camera_yaw_review"
