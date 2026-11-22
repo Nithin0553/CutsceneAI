@@ -352,3 +352,43 @@ def test_unreal_planner_refreshes_canonical_element8_in_open_editor():
     assert index.index("studio_element7_readback") < index.index(
         "studio_element8_repair"
     ) < index.index("studio_agent_executor")
+
+
+def test_isolated_anatomical_forward_mismatch_is_diagnostic_not_yaw_permission():
+    """Element 8 routes independently observed mesh facing without native edits."""
+    row = {
+        "measurement_status": "DIRECT_MEASURED_DIFFERENCE",
+        "discrepancy_flags": ["CHARACTER_MESH_ANATOMICAL_FORWARD_MISMATCH"],
+        "recovery_hint": "REPORT_LIMITATION",
+        "ced": "entity.character",
+        "measured": {},
+    }
+    strategy = "INSPECT_APPROVED_MESH_ANATOMICAL_FORWARD_BASIS"
+    assert element8._recommend(row) == strategy
+    assert strategy in element8.OPTIONS
+    report = {
+        "kind": element8.KIND,
+        "per_occurrence": [{
+            "occurrence_id": "E00003", "advisory_strategy": strategy,
+            "native_edit_authorized": False,
+        }],
+        "native_repair_authorized": False,
+        "automatic_native_retry_authorized": False,
+    }
+    report["repair_plan_sha256"] = element8._hash(report)
+    selected = element8.select_advisory(report, "E00003", strategy)
+    assert selected["strategy"] == strategy
+    assert selected["native_repair_authorized"] is False
+    assert selected["native_execution_requested"] is False
+    with pytest.raises(element8.BoundedRepairError, match="model"):
+        element8.select_advisory(
+            report, "E00003",
+            "RESTORE_CHARACTER_YAW_WITHOUT_ENGINE_OWNER_EVIDENCE",
+        )
+
+    # A mismatch involving skeletal calibration/pose as well is not treated
+    # as an isolated mesh import-basis issue.
+    row["discrepancy_flags"].append("SKELETAL_JOINT_ANGULAR_MOTION_PROFILE_MISMATCH")
+    assert element8._recommend(row) == (
+        "INSPECT_SKELETAL_RETARGETING_AND_CALIBRATION"
+    )
