@@ -6,7 +6,6 @@ character can be safely rotated. The answer from the adapter is always
 """
 from __future__ import annotations
 
-import copy
 import math
 import sys
 from pathlib import Path
