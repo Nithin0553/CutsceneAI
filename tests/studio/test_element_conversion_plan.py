@@ -229,7 +229,7 @@ def test_regrounded_verification_rejects_tampering_even_with_recomputed_digest()
     falsified["elements"][0]["candidate_actions"] = ["destroy_level"]
     falsified.pop("element_plan_sha256")
     falsified["element_plan_sha256"] = elements._digest(falsified)
-    with pytest.raises(elements.ElementPlanError, match="changed"):
+    with pytest.raises(elements.ElementPlanError, match="schema|changed"):
         elements.verify(falsified, source, knowledge, caps)
     source["entities"][0]["ced_type"] = "entity.camera"
     with pytest.raises(elements.ElementPlanError):
@@ -254,3 +254,20 @@ def test_malformed_timeline_does_not_silently_disappear_from_inventory():
     source["tracks"][0]["sections"] = {"hidden": "not a list"}
     with pytest.raises(elements.ElementPlanError, match="section"):
         elements.prepare(source, knowledge, caps)
+
+
+
+def test_versioned_element_contract_rejects_extra_fields_even_if_rehashed():
+    source, knowledge, caps = evidence()
+    plan = elements.prepare(source, knowledge, caps)
+    tampered = copy.deepcopy(plan)
+    tampered["elements"][0]["unsafe_native_code"] = "import unreal"
+    tampered.pop("element_plan_sha256")
+    tampered["element_plan_sha256"] = elements._digest(tampered)
+    with pytest.raises(elements.ElementPlanError, match="schema"):
+        elements.verify(tampered, source, knowledge, caps)
+    source_path = (ROOT / "packages/contracts/agent/element-conversion-plan-v1.schema.json")
+    schema = json.loads(source_path.read_text())
+    assert schema["properties"]["no_native_execution_permission"]["const"] is True
+    assert schema["properties"]["native_conversion_executed"]["const"] is False
+    assert "destroy_project" not in json.dumps(schema)
