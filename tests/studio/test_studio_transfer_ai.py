@@ -439,3 +439,98 @@ def test_phase33_model_receives_strategy_options_without_native_bypass(scene, mo
     assert requests
     assert decision["element_planning_mode"] == "MODEL_REVIEWED"
     assert ai.verify(decision, config, census, worker)
+
+
+
+def test_phase34_source_investigation_rebuilt_before_native_execution(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Registered policy"
+    })
+    report = decision["element_investigation"]
+    assert decision["element_investigation_advisory_only"] is True
+    assert report["source_occurrence_count"] == decision["element_plan"][
+        "source_occurrence_count"]
+    assert report["native_execution_authorized"] is False
+    assert report["source_and_target_fidelity_verified"] is False
+    assert decision["element_investigation_mode"] == "INVENTORY_ONLY"
+    assert decision["element_investigation_model_response_sha256s"] == []
+    assert ai.verify(decision, config, census, worker)
+
+    modified = copy.deepcopy(decision)
+    modified["element_investigation"]["findings"][0]["reason_codes"].append(
+        "SOURCE_NATIVE_EXECUTION_SUCCESS"
+    )
+    import studio_element_plan
+    report = modified["element_investigation"]
+    report.pop("investigation_sha256")
+    report["investigation_sha256"] = studio_element_plan._digest(report)
+    modified["element_investigation_sha256"] = report["investigation_sha256"]
+    with pytest.raises(ai.TransferAIError, match="investigation"):
+        ai.verify(modified, config, census, worker)
+
+
+def test_phase34_opt_in_model_investigates_every_issue_without_unsafe_tools(
+        scene, monkeypatch):
+    config, census, worker = scene
+    import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_INVESTIGATION", "model")
+    monkeypatch.setattr(ai, "_model_choose", lambda _: {
+        "strategy": "native_source", "reason": "Safe native source"
+    })
+    calls = []
+
+    def investigate(**kwargs):
+        assert kwargs["task"] == "cutsceneai_element_investigation_next_step"
+        calls.append(kwargs["payload"])
+        body = json.dumps(kwargs["payload"])
+        assert config["csir"] not in body
+        assert config["target_project"] not in body
+        return SimpleNamespace(answer={"choices": [
+            {"occurrence_id": row["occurrence_id"],
+             "action": row["available_investigation_steps"][0]}
+            for row in kwargs["payload"]["cases"]
+        ]}, response_sha256="d" * 64)
+
+    monkeypatch.setattr(studio_model_provider, "complete_json", investigate)
+    decision = ai.decide(config, census, worker)
+    report = decision["element_investigation"]
+    count = sum(bool(row["available_investigation_steps"])
+                for row in report["findings"])
+    assert calls
+    assert decision["element_investigation_mode"] == "MODEL_REVIEWED"
+    assert decision["element_investigation_model_reviewed_count"] == count
+    assert decision["element_investigation_model_response_sha256s"] == [
+        "d" * 64]
+    assert report["native_execution_authorized"] is False
+    assert ai.verify(decision, config, census, worker)
+
+
+def test_phase34_model_cannot_propose_arbitrary_unreal_investigation_code(
+        scene, monkeypatch):
+    config, census, worker = scene
+    import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_INVESTIGATION", "model")
+    monkeypatch.setattr(ai, "_model_choose", lambda _: {
+        "strategy": "native_source", "reason": "Safe"
+    })
+
+    def malicious(**kwargs):
+        return SimpleNamespace(answer={"choices": [
+            {"occurrence_id": row["occurrence_id"],
+             "action": "execute_unreal_python_and_change_scene"}
+            for row in kwargs["payload"]["cases"]
+        ]}, response_sha256="e" * 64)
+
+    monkeypatch.setattr(studio_model_provider, "complete_json", malicious)
+    with pytest.raises(ai.TransferAIError, match="investigation failed"):
+        ai.decide(config, census, worker)
+
+
+def test_phase34_invalid_investigation_mode_fails_closed(scene, monkeypatch):
+    config, census, worker = scene
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_INVESTIGATION", "execute")
+    with pytest.raises(ai.TransferAIError, match="CUTSCENEAI_ELEMENT_INVESTIGATION"):
+        ai.decide(config, census, worker, reasoner=lambda _: {
+            "strategy": "native_source", "reason": "Still read-only"
+        })
