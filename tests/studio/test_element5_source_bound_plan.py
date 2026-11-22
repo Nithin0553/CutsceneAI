@@ -15,8 +15,6 @@ for path in ("packages/studio", "tests/studio", "tools", "integrations/unreal"):
 import studio_element4_validation as validation
 import studio_element5_plan as stage5
 import studio_element_investigation as investigation
-import studio_element_schedule as scheduling
-import studio_element_strategy as adaptive
 import studio_element_native_gate as unreal_gate
 import studio_element_workflow as workflow
 from test_element_adaptive_strategy import _evidence
