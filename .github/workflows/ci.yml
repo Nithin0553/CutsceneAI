@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, "foundation/**", "feature/**", "engine/**", "fix/**", "chore/**", "agent/friday-animation-rootmotion-assets-v0.1"]
+    branches: [main, "foundation/**", "feature/**", "engine/**", "fix/**", "chore/**", "audit/**", "integration/**", "agent/friday-animation-rootmotion-assets-v0.1"]
   pull_request:
-    branches: [main, "feature/**", "chore/**", "integration/agent-native-adapters-v0.1"]
+    branches: [main, "feature/**", "chore/**", "audit/**", "integration/**"]
 
 jobs:
   python-contracts:
