@@ -278,10 +278,15 @@ def verify_claim(workspace: Path, job: dict, claim_record: dict) -> None:
         raise GuardedExecutionError("Native attempt lost active-job ownership.")
 
 
-def load_claim(workspace: Path, job: dict) -> dict:
-    """Reopen and revalidate the original claimed job in the live editor."""
+def load_claim(workspace: Path, job: dict, *, editor_pid: int) -> dict:
+    """Reopen the claim only in the original Unreal Editor OS process."""
     candidate, _ = _paths(Path(workspace), job)
     record = _read(_claim_path(candidate, job["job_id"]))
+    if (type(editor_pid) is not int or editor_pid <= 0
+            or record.get("editor_pid") != editor_pid):
+        raise GuardedExecutionError(
+            "The claimed native job belongs to another Unreal Editor process."
+        )
     verify_claim(Path(workspace), job, record)
     return record
 
