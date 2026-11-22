@@ -19,6 +19,9 @@ import studio_element_strategy as strategy
 VERSION = "1"
 BATCH_SIZE = element_plan.MODEL_BATCH_SIZE
 MAX_REASONING_ROUNDS = 2
+REGISTERED_GLOBAL_STRATEGIES = frozenset({
+    "native_source", "source_materials", "visual_activation_partial",
+})
 BLOCKED_STATUSES = frozenset({
     "SOURCE_DEPENDENCY_MISSING", "DEPENDENCY_CYCLE", "UPSTREAM_BLOCKED",
     "UPSTREAM_NOT_PLANNED", "OWNERSHIP_CONFLICT",
@@ -43,7 +46,9 @@ def _inputs(
             or not isinstance(allowed_strategies, list)
             or len(allowed_strategies) != len(set(allowed_strategies))
             or not allowed_strategies
-            or any(not isinstance(item, str) for item in allowed_strategies)
+            or any(not isinstance(item, str)
+                   or item not in REGISTERED_GLOBAL_STRATEGIES
+                   for item in allowed_strategies)
             or global_strategy not in allowed_strategies):
         raise StrategyValidationError(
             "Global planning strategy is not explicitly registered and allowed."
