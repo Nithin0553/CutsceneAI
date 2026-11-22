@@ -45,7 +45,7 @@ def _manifest(tmp_path, *, two_actions=False):
 
 
 def test_explicit_registered_native_actions_are_bound_to_original_occurrences(tmp_path):
-    work, _worker, _target, summary, manifest = _manifest(tmp_path)
+    _work, _worker, _target, summary, manifest = _manifest(tmp_path)
     assert summary["native_actions"]["action_count"] == 1
     assert manifest["action_count"] == 1
     row, = manifest["actions"]
@@ -234,7 +234,7 @@ def test_plan_or_capability_changed_after_consent_never_reaches_native_worker(tm
 
 
 def test_unobserved_editor_capabilities_cannot_grant_native_actions(tmp_path):
-    work, worker, _target, _summary, manifest = _manifest(tmp_path)
+    work, worker, _target, _summary, _manifest_doc = _manifest(tmp_path)
     worker["connected"] = False
     report = workflow.prepare(work, worker)
     workflow.acknowledge(work, worker, report["workflow_sha256"])
