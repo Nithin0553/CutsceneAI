@@ -167,6 +167,14 @@
       (!r?.available?btn('Analyze source occurrences','prepare-elements','secondary',state.busy):
         item('Source occurrences',size(r.source_occurrence_count))+
         item('Unresolved or review-required',size(needs))+
+        '<div class="rule"></div><h3>Element 4 · Validated strategy?</h3>'+
+        item('Independent decision gate',r.element4_strategy_validation?.status||'NOT AVAILABLE')+
+        (r.element4_strategy_validation?.independently_recomputed?
+          item('Registered advisory candidates',size(r.element4_strategy_validation.advisory_candidate_count))+
+          item('Reported source limitations',size(r.element4_strategy_validation.reported_limitation_count))+
+          item('Rejected combinations',size(r.element4_strategy_validation.rejected_count)):
+          '<p class="hint">A source inventory is not an AI-validated strategy. A model decision must be source-bound and independently revalidated to show a pass here.</p>')+
+        '<p class="hint">No → bounded registered alternatives → full graph revalidation. Yes means planning eligible, not native execution or fidelity.</p>'+
         item('Native capabilities',r.target_capabilities_observed?'Observed in connected Unreal':'Not observed')+
         item('Capability evidence',r.target_capability_evidence_current?'Current':'Changed · refresh review')+
         '<details class="element-list" open><summary>Review occurrences ('+size(r.elements?.length||0)+' on this page)</summary>'+

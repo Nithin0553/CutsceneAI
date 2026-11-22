@@ -307,6 +307,12 @@ def test_default_ai_decision_reviews_all_source_elements_before_native(scene, mo
 
     def review(**kwargs):
         requests.append(kwargs)
+        if kwargs["task"] == "cutsceneai_element4_bounded_alternatives":
+            return SimpleNamespace(answer={"choices": [
+                {"occurrence_id": item["occurrence_id"],
+                 "action": "report_only"}
+                for item in kwargs["payload"]["rejected"]
+            ]}, response_sha256="b" * 64)
         return SimpleNamespace(answer={
             "choices": [
                 {
@@ -421,6 +427,12 @@ def test_phase33_model_receives_strategy_options_without_native_bypass(scene, mo
 
     def review(**kwargs):
         requests.append(kwargs["payload"])
+        if kwargs["task"] == "cutsceneai_element4_bounded_alternatives":
+            return SimpleNamespace(answer={"choices": [
+                {"occurrence_id": row["occurrence_id"],
+                 "action": "report_only"}
+                for row in kwargs["payload"]["rejected"]
+            ]}, response_sha256="e" * 64)
         for element in kwargs["payload"]["elements"]:
             assert "adaptive_evidence" in element
             assert element["candidate_actions"] == [
@@ -534,3 +546,54 @@ def test_phase34_invalid_investigation_mode_fails_closed(scene, monkeypatch):
         ai.decide(config, census, worker, reasoner=lambda _: {
             "strategy": "native_source", "reason": "Still read-only"
         })
+
+
+
+def test_element4_approved_strategy_is_source_bound_and_not_native_permission(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Registered deterministic source"
+    })
+    result = decision["element4_validation"]
+    assert decision["element4_validation_advisory_only"] is True
+    assert decision["element4_validation_sha256"] == result["validation_sha256"]
+    assert result["accepted_for_source_bound_plan"] is True
+    assert result["source_occurrence_count"] == decision["element_plan"][
+        "source_occurrence_count"
+    ]
+    assert result["native_execution_authorized"] is False
+    assert result["full_cutscene_fidelity_verified"] is False
+    assert decision["element4_alternative_reasoning_audit"] == []
+    assert ai.verify(decision, config, census, worker)
+
+    # Even a fully rehashed approval label cannot bypass source reconputation.
+    forged = copy.deepcopy(decision)
+    forged["element4_validation"]["accepted_for_source_bound_plan"] = False
+    import studio_element_plan as plan_tool
+    forged["element4_validation"].pop("validation_sha256")
+    forged["element4_validation"]["validation_sha256"] = plan_tool._digest(
+        forged["element4_validation"]
+    )
+    forged["element4_validation_sha256"] = forged[
+        "element4_validation"]["validation_sha256"]
+    with pytest.raises(ai.TransferAIError, match="Element 4"):
+        ai.verify(forged, config, census, worker)
+
+
+def test_element4_retry_metadata_cannot_be_forged_into_model_authority(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Source-backed CED"
+    })
+    invalid = copy.deepcopy(decision)
+    invalid["element4_alternative_reasoning_audit"] = [{
+        "round": 1, "rejected_count": 1,
+        "validated_replacement_count": 1,
+        "previous_validation_sha256": "a" * 64,
+        "new_plan_sha256": "b" * 64,
+        "responses": [{"page_index": 0, "response_sha256": "c" * 64,
+                       "reviewed_count": 1}],
+        "native_execution_authorized": False,
+    }]
+    with pytest.raises(ai.TransferAIError, match="Element 4"):
+        ai.verify(invalid, config, census, worker)

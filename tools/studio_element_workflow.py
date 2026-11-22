@@ -409,6 +409,86 @@ def _index(folder: Path, report: dict) -> dict:
     return index
 
 
+def _element4_model_gate(folder: Path, report: dict) -> dict:
+    """Show the REAL pretransfer model gate, or an explicit unverified state.
+
+    The source-inventory-only candidate is NOT mislabeled as a model-validated
+    strategy. Never show an externally supplied/rehashed decision as accepted
+    without rebuilding its exact source graph and CED evidence.
+    """
+    _config, _candidate, location, csir_path, _mapping = _workspace(folder)
+    file = location / "ai-conversion-decision.json"
+    if not file.exists():
+        return {
+            "status": "NO_MODEL_STRATEGY_DECISION",
+            "independently_recomputed": False,
+            "native_execution_authorized": False,
+            "full_cutscene_fidelity_verified": False,
+        }
+    decision = _read(file)
+    if not isinstance(decision.get("element4_validation"), dict):
+        return {
+            "status": "LEGACY_DECISION_UNVERIFIED",
+            "independently_recomputed": False,
+            "native_execution_authorized": False,
+            "full_cutscene_fidelity_verified": False,
+        }
+    try:
+        import studio_element4_validation as gate_module
+
+        csir = _read(csir_path)
+        knowledge = _knowledge(
+            csir, report["target_capabilities"], folder, report["target_version"],
+        )
+        candidate_gate = decision["element4_validation"]
+        if (decision.get("kind") != "cutsceneai.studio.ai_conversion_decision"
+                or decision.get("input_sha256", {}).get("csir")
+                != report["source_file_sha256"]
+                or decision.get("element4_validation_sha256")
+                != candidate_gate.get("validation_sha256")
+                or decision.get("element4_validation_advisory_only") is not True
+                or not isinstance(decision.get("allowed_strategies"), list)
+                or decision.get("element_plan_sha256") !=
+                decision["element_plan"]["element_plan_sha256"]
+                or decision.get("element_schedule_sha256") !=
+                decision["element_schedule"]["schedule_sha256"]
+                or decision.get("element_strategy_sha256") !=
+                decision["element_strategy"]["comparison_sha256"]
+                or decision.get("element_investigation_sha256") !=
+                decision["element_investigation"]["investigation_sha256"]):
+            raise gate_module.StrategyValidationError(
+                "Studio conversion decision is not exact-source bound."
+            )
+        gate_module.verify(
+            candidate_gate, decision["element_plan"],
+            decision["element_schedule"], decision["element_strategy"],
+            decision["element_investigation"], knowledge, csir,
+            report["target_capabilities"],
+            global_strategy=decision["strategy"],
+            allowed_strategies=decision["allowed_strategies"],
+        )
+        return {
+            "status": candidate_gate["validation_status"],
+            "independently_recomputed": True,
+            "accepted_for_source_bound_plan":
+                candidate_gate["accepted_for_source_bound_plan"],
+            "source_occurrence_count": candidate_gate["source_occurrence_count"],
+            "advisory_candidate_count": candidate_gate["validated_candidate_count"],
+            "reported_limitation_count": candidate_gate["reported_limitation_count"],
+            "rejected_count": candidate_gate["rejected_count"],
+            "validation_sha256": candidate_gate["validation_sha256"],
+            "native_execution_authorized": False,
+            "full_cutscene_fidelity_verified": False,
+        }
+    except (ValueError, TypeError, KeyError, AttributeError, OSError):
+        return {
+            "status": "MODEL_STRATEGY_EVIDENCE_STALE_OR_UNVERIFIABLE",
+            "independently_recomputed": False,
+            "native_execution_authorized": False,
+            "full_cutscene_fidelity_verified": False,
+        }
+
+
 def _readback_inputs(folder: Path, report: dict, index: dict):
     config, _candidate, location, csir_path, _mapping = _workspace(folder)
     csir = _read(csir_path)
@@ -503,6 +583,7 @@ def _preview(report: dict, folder: Path, worker: dict,
         "target_capabilities_observed": report["target_capabilities_observed"],
         "target_capability_evidence_current": _current_native_status(report, config, worker),
         "review_acknowledged": _review_ack(location, report["workflow_sha256"]),
+        "element4_strategy_validation": _element4_model_gate(folder, report),
         "native_actions": {
             "action_count": manifest["action_count"],
             "unattributed_count": manifest["unattributed_count"],
