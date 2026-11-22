@@ -646,7 +646,7 @@ def test_native_facing_owner_proof_refuses_tamper_and_false_authority(tmp_path, 
     if change == "native_authority":
         data["characters"][0]["actor_yaw_repair_authorized"] = True
     elif change == "foreign_job":
-        data["job_id"] = "a" * 32
+        data["job_id"] = "f" * 32 if job["job_id"] != "f" * 32 else "e" * 32
     elif change == "foreign_candidate":
         data["candidate_id"] = "20261122T190000Z_ffffffff"
     elif change == "foreign_source":
