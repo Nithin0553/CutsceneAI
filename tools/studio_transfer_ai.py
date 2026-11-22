@@ -553,7 +553,10 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
             or any(not isinstance(value, str) or
                    not re.fullmatch(r"[0-9a-f]{64}", value) for value in digests)
             or (not digests and reviewed != 0)
-            or (digests and reviewed != decision["element_plan"]["source_occurrence_count"])):
+            or (digests and reviewed != decision["element_plan"]["source_occurrence_count"])
+            or (digests and len(digests) != (
+                reviewed + element_planner.MODEL_BATCH_SIZE - 1
+            ) // element_planner.MODEL_BATCH_SIZE)):
         raise TransferAIError("Per-element model provenance is missing or incomplete.")
     report = current.get("character_compatibility")
     if report is not None or decision.get("character_compatibility_sha256") or decision.get("animation_conversion"):
