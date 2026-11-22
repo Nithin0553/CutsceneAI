@@ -35,6 +35,7 @@ import studio_element7_readback as element7
 import studio_element8_repair as element8
 import studio_element9_outcome as element9
 import studio_element_cinetwin
+import studio_element_investigation
 import studio_element_plan
 import studio_element_schedule
 import studio_element_strategy
@@ -59,8 +60,6 @@ def _camera_mismatch(tmp_path, *, agents=True, automatic=True,
         )
         native["vertical_fov_degrees"] = float(target_fov)
     _put(target_path, target)
-    from test_element8_bounded_repair import _target_with_offset
-
     # Reconstruct genuine measured CineTwin comparison fields from source
     # and target, never write a hand-authored synthetic PASS status.
     from behavior_compare import compare
@@ -112,6 +111,7 @@ class FakeComponent:
         if self.fail_set:
             raise RuntimeError("Simulated native setter error")
         self.focal = value + (3 if self.incorrect_set else 0)
+        self.incorrect_set = False
 
 
 class FakeActor:
@@ -190,29 +190,30 @@ def test_1to9_stacked_software_evidence_contract_is_complete(tmp_path):
     compiled, _ = element7._safe_json(candidate / "transfer-plan.json")
     workflow = element8._snapshot(candidate)
     assert csir["source"]["engine"] == "unity"
-    assert workflow["target_capabilities"] is not None if (
-        "target_capabilities" in workflow
-    ) else workflow["element_plan"]["source_occurrence_count"] > 0
-    source_knowledge = knowledge.retrieve_all(
-        csir, target_capabilities={
-            "cine_camera_actor": True,
-            "sequencer_skeletal_animation_track": True,
-        },
-    )
+    caps = {
+        "fbx_asset_import": False, "sequencer_visibility_track": False,
+        "cine_camera_actor": True, "sequencer_skeletal_animation_track": True,
+    }
+    source_knowledge = knowledge.retrieve_all(csir, target_capabilities=caps)
     assert source_knowledge["knowledge_sha256"]
     plan = workflow["element_plan"]
     assert plan["source_occurrence_count"] > 0
-    assert workflow["element_schedule"]["source_occurrence_count"] == (
-        plan["source_occurrence_count"]
-    ) if "source_occurrence_count" in workflow["element_schedule"] else True
-    assert workflow["element_strategy"]["comparison_sha256"]
+    studio_element_plan.verify(plan, csir, source_knowledge, caps)
+    scheduled = workflow["element_schedule"]
+    studio_element_schedule.verify(scheduled, plan, csir)
+    strategies = workflow["element_strategy"]
+    studio_element_strategy.verify(
+        strategies, plan, scheduled, source_knowledge, csir, caps,
+    )
+    investigated = studio_element_investigation.build(
+        plan, scheduled, strategies, source_knowledge, csir, caps,
+    )
     element4.verify(
         workflow["element4_baseline_validation"],
-        plan, workflow["element_schedule"], workflow["element_strategy"],
-        workflow["element4_baseline_validation"]["investigation_sha256"]
-        if False else {},
-        source_knowledge, csir, {},
-    ) if False else None
+        plan, scheduled, strategies, investigated, source_knowledge,
+        csir, caps, global_strategy="native_source",
+        allowed_strategies=["native_source", "source_materials"],
+    )
     element5.verify(
         workflow["element5_source_bound_plan"], csir, mapping, compiled,
         plan, workflow["element_schedule"], workflow["element_strategy"],
@@ -224,6 +225,12 @@ def test_1to9_stacked_software_evidence_contract_is_complete(tmp_path):
     assert original["native_attempt"]["native_builder_completed"]
     triage = element8.build(workspace, job["job_id"], [folder])
     assert triage["source_occurrence_count"] == plan["source_occurrence_count"]
+    attributed = studio_element_cinetwin.build(
+        csir, plan, json.loads((folder / "sampling-plan.json").read_text()),
+        json.loads(Path(job["capture"]).read_text()),
+        json.loads((folder / "target-behavior.json").read_text()),
+    )
+    assert attributed["source_occurrence_count"] == plan["source_occurrence_count"]
     terminal = element9.build(workspace, job["job_id"], [folder])
     assert terminal["source_occurrence_count"] == (
         plan["source_occurrence_count"]
@@ -236,7 +243,7 @@ def test_1to9_stacked_software_evidence_contract_is_complete(tmp_path):
 
 
 def test_source_bound_static_cinecamera_review_derived_from_native_samples(tmp_path):
-    workspace, job, folder = _camera_mismatch(tmp_path)
+    workspace, job, _folder = _camera_mismatch(tmp_path)
     proof = lens_evidence.build(workspace, job)
     assert proof["eligible"] is True
     assert proof["source_camera_name"] == "Camera"
@@ -253,19 +260,15 @@ def test_source_bound_static_cinecamera_review_derived_from_native_samples(tmp_p
 
 
 def test_camera_lens_cannot_be_auto_repaired_without_explicit_user_request(tmp_path):
-    workspace, job, folder = _camera_mismatch(tmp_path)
+    workspace, job, _folder = _camera_mismatch(tmp_path)
     proof = lens_evidence.build(workspace, job)
     for message in (
         "The camera framing is wrong.",
         "Please fix the camera rotation.",
         "Don't fix the camera lens.",
-        "Please fix all camera cuts and zoom now.",
     ):
-        assert (lens_evidence.message_requests_lens(message)
-                is (message == "Please fix all camera cuts and zoom now.")) or (
-                    "Don't" in message and
-                    lens_evidence.message_requests_lens(message) is False
-                ) or "framing" in message or "rotation" in message
+        assert lens_evidence.message_requests_lens(message) is False
+    assert lens_evidence.message_requests_lens("Please fix camera FOV.") is True
     assert agent_intent_router.route(
         "Please fix the camera lens FOV.",
         generation_complete=True, native_material_fallback_slots=0,
@@ -317,9 +320,7 @@ def test_guarded_native_camera_lens_repair_rolls_back_when_verified_scope_fails(
                 studio_camera_lens_repair.attempt(
                     api2, workspace, job, request,
                 )
-            assert comp2.focal == pytest.approx(
-                proof["native_focal_before_mm"] + 3
-            ) if False else True
+            assert comp2.focal == pytest.approx(proof["native_focal_before_mm"])
         else:
             forged = dict(request, camera_repair_sha256="0" * 64)
             with pytest.raises(studio_camera_lens_repair.CameraLensRepairError):
@@ -345,7 +346,7 @@ def test_native_cinecamera_repair_refuses_animated_lens_tracks(tmp_path):
 
 
 def test_camera_fov_without_element7_evidence_is_diagnosis_only(tmp_path):
-    workspace, job, folder = _scenario(
+    workspace, job, _folder = _scenario(
         tmp_path, with_element3=True, complete=True,
         ai_agents_enabled=True, automatic_setup=True,
     )
@@ -363,7 +364,7 @@ def test_camera_fov_without_element7_evidence_is_diagnosis_only(tmp_path):
 
 
 def test_expanded_repair_requires_single_known_source_camera_and_unmodified_plan(tmp_path):
-    workspace, job, folder = _camera_mismatch(tmp_path)
+    workspace, job, _folder = _camera_mismatch(tmp_path)
     source_path = Path(job["csir"])
     original = json.loads(source_path.read_text())
     extra = copy.deepcopy(original["entities"][1])
@@ -376,7 +377,7 @@ def test_expanded_repair_requires_single_known_source_camera_and_unmodified_plan
 
 
 def test_graph_repair_proposal_binds_camera_identity_not_model_numeric_value(tmp_path):
-    workspace, job, folder = _camera_mismatch(tmp_path)
+    workspace, job, _folder = _camera_mismatch(tmp_path)
     fid, candidate = _authorize(workspace, job)
     _put(candidate / ("closed-loop-evaluation-" + job["job_id"] + ".json"), {
         "kind": "cutsceneai.studio.closed_loop_evaluation",
