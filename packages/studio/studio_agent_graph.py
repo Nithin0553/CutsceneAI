@@ -24,7 +24,8 @@ MAX_REPAIRS = 2
 MAX_USER_COMMENT = 1200
 ALLOWED_STRATEGIES = {
     "restore_source_albedo", "restore_constant_actor_offset",
-    "restore_static_camera_lens", "report_only",
+    "restore_static_camera_lens", "restore_single_camera_cut_timing",
+    "report_only",
 }
 
 
@@ -55,6 +56,7 @@ class AgentState(TypedDict, total=False):
     transform_candidate: dict[str, Any]
     element8_review: dict[str, Any]
     camera_lens_candidate: dict[str, Any]
+    camera_cut_candidate: dict[str, Any]
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -289,7 +291,11 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
             "user lens correction plus exact reopened native CineCamera "
             "measurements, constant source FOV, and an independently guarded "
             "one-camera focal-length component edit. No generic zoom/shot "
-            "rewrites are permitted. If evidence is insufficient or the discrepancy "
+            "rewrites are permitted. restore_single_camera_cut_timing "
+            "requires an exact source-authored single shot, known camera "
+            "binding, small sampled frame discrepancy and separate native "
+            "section readback. No multi-shot/subsequence rewrites. "
+            "If evidence is insufficient or the discrepancy "
             "is outside an installed repair adapter, choose report_only. "
             "Never invent engine commands, source paths, executable code, "
             "new mapping rules, or claims of visual/skeletal parity."
@@ -422,6 +428,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
         element8 = _element8_review(workspace, candidate, job)
         transform_proof = None
         camera_proof = None
+        cut_proof = None
         if comment and agent_intent_router.recognize(user_message)["domains"] == ["camera"]:
             import studio_camera_lens_evidence
             if studio_camera_lens_evidence.message_requests_lens(user_message):
@@ -432,6 +439,17 @@ def build_graph(workspace: Path, job: dict[str, Any],
                     camera_proof = {
                         "eligible": False,
                         "reason": "No exact-source native static lens proof: "
+                                  + str(exc)[:200],
+                    }
+            import studio_camera_cut_evidence
+            if studio_camera_cut_evidence.message_requests_cut(user_message):
+                try:
+                    cut_proof = studio_camera_cut_evidence.build(workspace, job)
+                except (studio_camera_cut_evidence.CameraCutEvidenceError,
+                        ValueError, OSError, KeyError, TypeError) as exc:
+                    cut_proof = {
+                        "eligible": False,
+                        "reason": "No source-bound camera-cut evidence: "
                                   + str(exc)[:200],
                     }
         if (comment and agent_intent_router.recognize(user_message)["domains"] == ["transform"]):
@@ -463,6 +481,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 independent_issues=issues,
                 transform_repair_evidence=transform_proof,
                 camera_lens_repair_evidence=camera_proof,
+                camera_cut_repair_evidence=cut_proof,
                 adapter_catalog=feedback.get("component_adapter_catalog"),
                 fallback_observation_scope=(
                     "character" if "character_material_slots_engine_default" in visual
@@ -501,6 +520,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "intent_routing": routing,
             "transform_candidate": transform_proof or {},
             "camera_lens_candidate": camera_proof or {},
+            "camera_cut_candidate": cut_proof or {},
             "element8_review": element8 or {},
         }
         if not issues:
@@ -551,6 +571,16 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 "native_edit_authorized": False,
                 "full_cutscene_fidelity_verified": False,
             },
+            "verified_camera_cut_candidate": {
+                "eligible": bool(
+                    state.get("camera_cut_candidate", {}).get("eligible")
+                ),
+                "native_boundary_error_frames": state.get(
+                    "camera_cut_candidate", {},
+                ).get("maximum_frame_boundary_error"),
+                "native_edit_authorized": False,
+                "rendered_shot_equivalence_verified": False,
+            },
             "element8_native_readback": state.get("element8_review", {}),
         }
         try:
@@ -586,6 +616,15 @@ def build_graph(workspace: Path, job: dict[str, Any],
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
                     "failure": "Transform proposal was not independently authorized.",
                     "chosen_strategy": "report_only"}
+        if strategy == "restore_single_camera_cut_timing" and not (
+            comment and state.get("feedback_id")
+            and state.get("camera_cut_candidate", {}).get("eligible") is True
+            and "restore_single_camera_cut_timing"
+            in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Camera-cut timing lacks exact native source evidence.",
+                    "chosen_strategy": "report_only"}
         if strategy == "restore_static_camera_lens" and not (
             comment and state.get("feedback_id")
             and state.get("camera_lens_candidate", {}).get("eligible") is True
@@ -617,6 +656,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
         if strategy not in {
             "restore_source_albedo", "restore_constant_actor_offset",
             "restore_static_camera_lens",
+            "restore_single_camera_cut_timing",
         }:
             return {"status": "UNRESOLVED_NO_SAFE_STRATEGY"}
         request_id = uuid.uuid4().hex
@@ -632,6 +672,15 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "iteration": state.get("iterations", 0) + 1,
             "baseline_fallback": state.get("last_fallback", 0),
         }
+        if strategy == "restore_single_camera_cut_timing":
+            shot = state.get("camera_cut_candidate") or {}
+            if (shot.get("eligible") is not True
+                    or not state.get("feedback_id")):
+                raise AgentError("Missing verified user-scoped camera-cut evidence.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "camera_cut_repair_sha256": shot["camera_cut_repair_sha256"],
+            })
         if strategy == "restore_static_camera_lens":
             camera = state.get("camera_lens_candidate") or {}
             if (camera.get("eligible") is not True
@@ -712,6 +761,38 @@ def build_graph(workspace: Path, job: dict[str, Any],
                     + "Reopened-project persistence and full parity remain unverified."
                 ),
             }
+        if state.get("chosen_strategy") == "restore_single_camera_cut_timing":
+            shot = state.get("camera_cut_candidate") or {}
+            valid = bool(
+                result.get("status")
+                == "CAMERA_SINGLE_CUT_SECTION_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("camera_cut_repair_sha256")
+                == shot.get("camera_cut_repair_sha256")
+                and result.get("native_section_binding_readback_verified") is True
+                and result.get("cinetwin_reopened_time_grid_verified_after_repair")
+                is False
+                and result.get("rendered_camera_switching_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common = {
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+                "history": (state.get("history") or []) + [{
+                    "request_id": request_id,
+                    "strategy": "restore_single_camera_cut_timing",
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified": False,
+                }],
+            }
+            if not valid:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                                       "Camera cut native readback failed")[:500]}
+            return {**common,
+                    "status": "CAMERA_CUT_SAVED_REOPENED_CINETWIN_PENDING",
+                    "reasoning": "Only native source-bound section bounds passed; "
+                                 "reopened camera-switching and rendered shot "
+                                 "equivalence remain unverified."}
         if state.get("chosen_strategy") == "restore_static_camera_lens":
             camera = state.get("camera_lens_candidate") or {}
             value = result.get("native_property_fov_error_after_degrees")
