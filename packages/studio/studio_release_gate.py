@@ -453,6 +453,134 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
             native_status=compared,
         )
 
+    # Element 3 native consent and post-reopen measurement are separate
+    # release checks. A native builder receipt is not individual readback,
+    # and no measured-domain PASS can establish full cinematic fidelity.
+    if (candidate / "element-workflow-active.json").exists():
+        tools_path = str(Path(__file__).resolve().parents[2] / "tools")
+        if tools_path not in sys.path:
+            sys.path.insert(0, tools_path)
+        try:
+            import studio_element_workflow
+            import studio_element_native_execution as native_actions
+
+            permission, manifest = studio_element_workflow.verify_native_job(
+                root, job,
+            )
+            record(
+                "element3_native_action_consent", "PASS",
+                "Exact registered native actions were separately authorized "
+                "for the active source-bound candidate; this is not playback verification.",
+                approved_action_count=manifest["action_count"],
+                legacy_unattributed_count=manifest["unattributed_count"],
+            )
+            native_receipt_path = candidate / (
+                "unreal-runtime-receipt-" + job_id + ".json"
+            )
+            dispatch_path = candidate / (
+                "element-native-dispatch-" + job_id + ".json"
+            )
+            if not native_receipt_path.is_file() or not dispatch_path.is_file():
+                record(
+                    "element3_native_builder_dispatch", "INCOMPLETE",
+                    "No completed real Unreal builder receipt and source-bound "
+                    "per-action dispatch ledger are both available.",
+                )
+            else:
+                expected_dispatch = native_actions.receipt(
+                    permission, manifest, _read(native_receipt_path),
+                    job_id=job_id, native_receipt_sha256=_sha(native_receipt_path),
+                )
+                recorded = _read(dispatch_path)
+                if (recorded != expected_dispatch
+                        or job.get("element_native_dispatch_status")
+                        != "REGISTERED_BUILDER_COMPLETED_INDIVIDUAL_READBACK_UNVERIFIED"
+                        or Path(str(job.get("element_native_dispatch_receipt") or "")).resolve()
+                        != dispatch_path.resolve()):
+                    raise ReleaseEvidenceError(
+                        "Element 3 native action dispatch evidence is stale or tampered."
+                    )
+                record(
+                    "element3_native_builder_dispatch", "PASS",
+                    "Exact native builder completed registered actions, but individual "
+                    "action readback remains unverified.",
+                    action_count=expected_dispatch["action_count"],
+                )
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            record(
+                "element3_native_action_consent", "FAIL",
+                "Native action consent is missing, changed or refers to a different "
+                "candidate: " + type(exc).__name__,
+            )
+            record(
+                "element3_native_builder_dispatch", "FAIL",
+                "Cannot accept builder execution without unchanged source-bound consent.",
+            )
+        if not accepted:
+            record(
+                "element3_native_reopened_attribution", "INCOMPLETE",
+                "No independent different-editor CineTwin target sampling is available.",
+            )
+        else:
+            try:
+                import studio_element_workflow
+                import studio_element_cinetwin
+
+                snapshot = studio_element_workflow._active(root)
+                source_csir = _read(csir_path)
+                native_plan = _read(sampling_file)
+                source_capture = _read(capture_path)
+                observed_target = _read(target_file)
+                measured = studio_element_cinetwin.build(
+                    source_csir, snapshot["element_plan"], native_plan,
+                    source_capture, observed_target,
+                )
+                if (comparison.get("element3_workflow_sha256")
+                        != snapshot["workflow_sha256"]
+                        or comparison.get("element3_native_authorization_sha256")
+                        != job.get("element_native_authorization_sha256")
+                        or comparison.get("element3_source_occurrence_count")
+                        != measured["source_occurrence_count"]
+                        or measured.get("full_cutscene_fidelity_verified") is not False):
+                    raise ReleaseEvidenceError(
+                        "Reopened Element 3 provenance does not match the real engine observations."
+                    )
+                record(
+                    "element3_native_reopened_attribution", "PASS",
+                    "All source occurrences were independently re-attributed "
+                    "from the real reopened native target samples. This is "
+                    "measured-scope accounting, not full-cutscene fidelity.",
+                    source_occurrence_count=measured["source_occurrence_count"],
+                    measured_difference_count=sum(
+                        row["measurement_status"] == "DIRECT_MEASURED_DIFFERENCE"
+                        for row in measured["occurrences"]
+                    ),
+                    unmeasured_or_unresolved_count=sum(
+                        row["measurement_status"] not in {
+                            "DIRECT_MEASURED_NO_FLAGGED_DIFFERENCE",
+                            "DIRECT_MEASURED_DIFFERENCE",
+                        } for row in measured["occurrences"]
+                    ),
+                    attribution_sha256=measured["attribution_sha256"],
+                    measured_native_fidelity_verified=False,
+                )
+            except (ValueError, KeyError, TypeError, OSError) as exc:
+                record(
+                    "element3_native_reopened_attribution", "FAIL",
+                    "Source-bound post-reopen CineTwin evidence is altered or incomplete: "
+                    + type(exc).__name__,
+                )
+    else:
+        for element_check in (
+            "element3_native_action_consent",
+            "element3_native_builder_dispatch",
+            "element3_native_reopened_attribution",
+        ):
+            record(
+                element_check, "NOT_APPLICABLE",
+                "This legacy job did not opt into the new Element 3 workflow.",
+            )
+
     for domain, explanation in {
         "rendered_frame_parity": "Matched-time source and target images/camera projections are not independently compared.",
         "full_skeletal_pose": "All animated joint transforms, reference poses and retargeting remain unverified.",

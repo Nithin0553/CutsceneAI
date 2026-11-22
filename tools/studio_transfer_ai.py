@@ -275,6 +275,30 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
         feedback_store=Path.home() / ".cutsceneai-studio" / "ced-experiences.jsonl",
     )
     evidence["ced_knowledge"] = knowledge
+    # Every extracted CSIR occurrence is independently inventoried before
+    # any agent call. This is advisory and never overrides the native compiler.
+    evidence["element_plan"] = _agent_module("studio_element_plan").prepare(
+        csir, knowledge, native_capabilities,
+    )
+    # The dependency graph is derived from the same source-bound plan and is
+    # informational only. It does not reorder or authorize native builder calls.
+    evidence["element_schedule"] = _agent_module("studio_element_schedule").build(
+        evidence["element_plan"], csir,
+    )
+    # Element 3.3 uses the existing CED ranking and native source branch,
+    # but comparisons never grant native actions or fidelity claims.
+    evidence["element_strategy"] = _agent_module("studio_element_strategy").build(
+        evidence["element_plan"], evidence["element_schedule"],
+        knowledge, csir, native_capabilities,
+    )
+    # Complete, read-only per-occurrence investigation inventory. Existing
+    # preflight discovery registry remains the only registry for novel cases.
+    evidence["element_investigation"] = _agent_module(
+        "studio_element_investigation"
+    ).build(
+        evidence["element_plan"], evidence["element_schedule"],
+        evidence["element_strategy"], knowledge, csir, native_capabilities,
+    )
     return evidence
 
 
@@ -416,6 +440,130 @@ def decide(config: dict, census_path: str, worker: dict,
         raise TransferAIError("Pre-transfer AI reasoning failed: " + str(exc)[:500]) from exc
     strategy = answer["strategy"]
     summary = evidence["summary"]
+    element_planner = _agent_module("studio_element_plan")
+    element_plan = evidence["element_plan"]
+    element_response_hashes = []
+    # Phase 3.1 rollout: the full source inventory and immutable safety
+    # contract run for everyone. Per-occurrence additional model invocations
+    # are explicitly opt-in until multi-element cost/latency UX is accepted.
+    planning_mode = os.environ.get("CUTSCENEAI_ELEMENT_PLANNING", "inventory")
+    if planning_mode not in {"inventory", "model"}:
+        raise TransferAIError("Invalid CUTSCENEAI_ELEMENT_PLANNING setting.")
+    if reasoner is None and planning_mode == "model":
+        # Large scenes save every independently validated redacted model page.
+        # A bounded interrupted run is resumable, but NEVER a native approval.
+        try:
+            provider = _agent_module("studio_model_provider")
+            large = element_plan["source_occurrence_count"] > 256
+            checkpoint_path = None
+            model_identity = "unspecified"
+            page_budget = None
+            if large:
+                provider_name = provider.provider_name()
+                # Bind durable pages to the source/knowledge/capability snapshot,
+                # ranked options and selected provider/model, not only source IDs.
+                model_identity = hashlib.sha256((
+                    provider_name + "/" + provider._model_name(provider_name) +
+                    "/" + evidence["element_strategy"]["comparison_sha256"]
+                ).encode("utf-8")).hexdigest()
+                checkpoint_path = (
+                    Path.home() / ".cutsceneai-studio" / "element-reviews" /
+                    (element_plan["element_plan_sha256"] + ".json")
+                )
+                raw_limit = os.environ.get("CUTSCENEAI_ELEMENT_REVIEW_MAX_NEW_PAGES", "32")
+                if not re.fullmatch(r"[1-9][0-9]{0,3}", raw_limit):
+                    raise TransferAIError("Invalid per-run model review page budget.")
+                page_budget = int(raw_limit)
+            blocking_statuses = {
+                "SOURCE_DEPENDENCY_MISSING", "DEPENDENCY_CYCLE",
+                "UPSTREAM_BLOCKED", "OWNERSHIP_CONFLICT",
+            }
+            blockers = {
+                row["occurrence_id"]: row["status"]
+                for row in evidence["element_schedule"]["nodes"]
+                if row["status"] in blocking_statuses
+            }
+            element_plan, element_response_hashes = element_planner.review_with_model(
+                element_plan, provider=provider, checkpoint_path=checkpoint_path,
+                model_identity=model_identity, max_new_pages=page_budget,
+                blocked_occurrences=blockers,
+                strategy_hints=_agent_module(
+                    "studio_element_strategy"
+                ).proposal_hints(evidence["element_strategy"]),
+            )
+        except Exception as exc:
+            raise TransferAIError(
+                "Per-element AI planning failed before native execution: "
+                + str(exc)[:400]
+            ) from exc
+    source_csir = _read(Path(config["csir"]))
+    element_planner.verify(
+        element_plan, source_csir,
+        evidence["ced_knowledge"],
+        evidence["summary"]["target_native_capabilities"],
+    )
+    element_schedule = _agent_module("studio_element_schedule").build(
+        element_plan, source_csir,
+    )
+    element_strategy = _agent_module("studio_element_strategy").build(
+        element_plan, element_schedule, evidence["ced_knowledge"], source_csir,
+        evidence["summary"]["target_native_capabilities"],
+    )
+    investigator = _agent_module("studio_element_investigation")
+    element_investigation = investigator.build(
+        element_plan, element_schedule, element_strategy,
+        evidence["ced_knowledge"], source_csir,
+        evidence["summary"]["target_native_capabilities"],
+    )
+    investigation_hashes = []
+    investigation_mode = os.environ.get(
+        "CUTSCENEAI_ELEMENT_INVESTIGATION", "inventory"
+    )
+    if investigation_mode not in {"inventory", "model"}:
+        raise TransferAIError("Invalid CUTSCENEAI_ELEMENT_INVESTIGATION setting.")
+    if reasoner is None and investigation_mode == "model":
+        try:
+            provider = _agent_module("studio_model_provider")
+            case_count = sum(bool(r["available_investigation_steps"])
+                             for r in element_investigation["findings"])
+            large = case_count > 256
+            checkpoint_path = None
+            model_identity = "unspecified"
+            page_budget = None
+            if large:
+                provider_name = provider.provider_name()
+                model_identity = hashlib.sha256((
+                    provider_name + "/" + provider._model_name(provider_name)
+                    + "/" + element_investigation["investigation_sha256"]
+                ).encode("utf-8")).hexdigest()
+                checkpoint_path = (
+                    Path.home() / ".cutsceneai-studio" / "element-investigations" /
+                    (element_investigation["investigation_sha256"] + ".json")
+                )
+                raw_limit = os.environ.get(
+                    "CUTSCENEAI_ELEMENT_INVESTIGATION_MAX_NEW_PAGES", "32"
+                )
+                if not re.fullmatch(r"[1-9][0-9]{0,3}", raw_limit):
+                    raise TransferAIError("Invalid per-run investigation model page budget.")
+                page_budget = int(raw_limit)
+            element_investigation, investigation_hashes = investigator.review_with_model(
+                element_investigation, plan=element_plan,
+                schedule=element_schedule, strategy=element_strategy,
+                knowledge=evidence["ced_knowledge"], csir=source_csir,
+                target_capabilities=evidence["summary"]["target_native_capabilities"],
+                provider=provider, checkpoint_path=checkpoint_path,
+                model_identity=model_identity, max_new_pages=page_budget,
+            )
+        except Exception as exc:
+            raise TransferAIError(
+                "Read-only element investigation failed before native execution: "
+                + str(exc)[:400]
+            ) from exc
+    investigator.verify(
+        element_investigation, element_plan, element_schedule, element_strategy,
+        evidence["ced_knowledge"], source_csir,
+        evidence["summary"]["target_native_capabilities"],
+    )
     # Never let model preference disable the existing source-material import
     # guarantee when provenance documents source materials. This policy is a
     # deterministic safety floor, not an LLM decision.
@@ -433,6 +581,29 @@ def decide(config: dict, census_path: str, worker: dict,
         "conversion_options": options,
         "ced_knowledge_sha256": evidence["ced_knowledge"]["knowledge_sha256"],
         "ced_retrieved_concepts": evidence["ced_knowledge"]["retrieved_count"],
+        "element_plan": element_plan,
+        "element_plan_sha256": element_plan["element_plan_sha256"],
+        "element_schedule": element_schedule,
+        "element_schedule_sha256": element_schedule["schedule_sha256"],
+        "element_scheduling_advisory_only": True,
+        "element_strategy": element_strategy,
+        "element_strategy_sha256": element_strategy["comparison_sha256"],
+        "element_strategy_advisory_only": True,
+        "element_investigation": element_investigation,
+        "element_investigation_sha256": element_investigation["investigation_sha256"],
+        "element_investigation_advisory_only": True,
+        "element_investigation_model_reviewed_count": element_investigation[
+            "model_reviewed_count"],
+        "element_investigation_model_response_sha256s": investigation_hashes,
+        "element_investigation_mode": (
+            "MODEL_REVIEWED" if investigation_hashes else "INVENTORY_ONLY"
+        ),
+        "element_model_reviewed_count": element_plan["model_reviewed_count"],
+        "element_model_response_sha256s": element_response_hashes,
+        "element_planning_mode": (
+            "MODEL_REVIEWED" if element_response_hashes else "INVENTORY_ONLY"
+        ),
+        "element_decisions_advisory_only": True,
         "model_invoked": True,
         "model_provider": (answer.get("_provider_name") or "INJECTED_REASONER")
         if reasoner is None else "INJECTED_REASONER",
@@ -491,6 +662,107 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
     }
     if opts != expected:
         raise TransferAIError("AI conversion options do not match supported native policy.")
+    if (decision.get("element_decisions_advisory_only") is not True
+            or decision.get("element_plan_sha256") !=
+            (decision.get("element_plan") or {}).get("element_plan_sha256")):
+        raise TransferAIError("Per-element AI evidence or read-only guard is missing.")
+    element_planner = _agent_module("studio_element_plan")
+    try:
+        element_planner.verify(
+            decision["element_plan"], _read(Path(config["csir"])),
+            current["ced_knowledge"],
+            current["summary"]["target_native_capabilities"],
+        )
+    except element_planner.ElementPlanError as exc:
+        raise TransferAIError("Per-element AI plan is stale or tampered: " + str(exc)) from exc
+    schedule = decision.get("element_schedule")
+    if (decision.get("element_scheduling_advisory_only") is not True
+            or not isinstance(schedule, dict)
+            or decision.get("element_schedule_sha256") != schedule.get("schedule_sha256")):
+        raise TransferAIError("Dependency schedule evidence or read-only guard is missing.")
+    scheduler = _agent_module("studio_element_schedule")
+    try:
+        scheduler.verify(schedule, decision["element_plan"],
+                         _read(Path(config["csir"])))
+    except scheduler.ElementScheduleError as exc:
+        raise TransferAIError("Dependency schedule is stale or tampered: " + str(exc)) from exc
+    comparison = decision.get("element_strategy")
+    if (decision.get("element_strategy_advisory_only") is not True
+            or not isinstance(comparison, dict)
+            or decision.get("element_strategy_sha256") != comparison.get("comparison_sha256")):
+        raise TransferAIError("Adaptive element strategy evidence or safety guard is missing.")
+    adaptive = _agent_module("studio_element_strategy")
+    try:
+        adaptive.verify(
+            comparison, decision["element_plan"], schedule,
+            current["ced_knowledge"], _read(Path(config["csir"])),
+            current["summary"]["target_native_capabilities"],
+        )
+        options_by_id = adaptive.proposal_hints(comparison)
+        for row in decision["element_plan"]["elements"]:
+            if (row["selected_action"] != "report_only"
+                    and row["selected_action"] not in {
+                        alt["action"] for alt in options_by_id[
+                            row["occurrence_id"]]["alternatives"]
+                    }):
+                raise adaptive.AdaptiveStrategyError(
+                    "AI selected an action excluded by current source-route strategy evidence."
+                )
+    except adaptive.AdaptiveStrategyError as exc:
+        raise TransferAIError("Adaptive element strategy is stale or unsafe: " + str(exc)) from exc
+    investigation = decision.get("element_investigation")
+    if (decision.get("element_investigation_advisory_only") is not True
+            or not isinstance(investigation, dict)
+            or decision.get("element_investigation_sha256")
+            != investigation.get("investigation_sha256")):
+        raise TransferAIError("Source investigation record or read-only guard is missing.")
+    investigator = _agent_module("studio_element_investigation")
+    try:
+        investigator.verify(
+            investigation, decision["element_plan"], schedule, comparison,
+            current["ced_knowledge"], _read(Path(config["csir"])),
+            current["summary"]["target_native_capabilities"],
+        )
+    except investigator.ElementInvestigationError as exc:
+        raise TransferAIError(
+            "Source investigation is stale, incomplete or unsafe: " + str(exc)
+        ) from exc
+    investigation_reviewed = investigation["model_reviewed_count"]
+    if (decision.get("element_investigation_model_reviewed_count")
+            != investigation_reviewed
+            or decision.get("element_investigation_mode") != (
+                "MODEL_REVIEWED" if investigation_reviewed else "INVENTORY_ONLY"
+            )):
+        raise TransferAIError("Source investigation model review count is inconsistent.")
+    investigation_digests = decision.get("element_investigation_model_response_sha256s")
+    eligible_cases = sum(bool(r["available_investigation_steps"])
+                         for r in investigation["findings"])
+    if (not isinstance(investigation_digests, list)
+            or any(not isinstance(d, str)
+                   or not re.fullmatch(r"[0-9a-f]{64}", d)
+                   for d in investigation_digests)
+            or (not investigation_digests and investigation_reviewed != 0)
+            or (investigation_digests
+                and investigation_reviewed != eligible_cases)
+            or (investigation_digests and len(investigation_digests) != (
+                eligible_cases + investigator.BATCH_SIZE - 1
+            ) // investigator.BATCH_SIZE)):
+        raise TransferAIError("Source investigation model provenance is incomplete.")
+    reviewed = decision["element_plan"]["model_reviewed_count"]
+    if decision.get("element_planning_mode") != (
+            "MODEL_REVIEWED" if reviewed else "INVENTORY_ONLY"):
+        raise TransferAIError("Element agent mode contradicts verified model evidence.")
+    digests = decision.get("element_model_response_sha256s")
+    if (decision.get("element_model_reviewed_count") != reviewed
+            or not isinstance(digests, list)
+            or any(not isinstance(value, str) or
+                   not re.fullmatch(r"[0-9a-f]{64}", value) for value in digests)
+            or (not digests and reviewed != 0)
+            or (digests and reviewed != decision["element_plan"]["source_occurrence_count"])
+            or (digests and len(digests) != (
+                reviewed + element_planner.MODEL_BATCH_SIZE - 1
+            ) // element_planner.MODEL_BATCH_SIZE)):
+        raise TransferAIError("Per-element model provenance is missing or incomplete.")
     report = current.get("character_compatibility")
     if report is not None or decision.get("character_compatibility_sha256") or decision.get("animation_conversion"):
         policy = character_policy()
