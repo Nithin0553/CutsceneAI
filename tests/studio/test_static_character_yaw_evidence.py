@@ -64,14 +64,22 @@ def _sample(degrees, index, *, target=False):
 
 def fixture(monkeypatch, tmp_path):
     root = tmp_path / "runs"
-    folder = root / "candidates" / "fake" / "native-acceptance-one"
-    candidate = folder.parent
+    candidate_id = "20261122T200000Z_deadbeef"
+    candidate = root / "candidates" / candidate_id
+    folder = candidate / "native-acceptance-one"
     job = {
         "job_id": "a" * 32,
-        "candidate_id": "20261122T200000Z_deadbeef",
+        "kind": "cutsceneai.studio.local_unreal_job",
+        "candidate_id": candidate_id,
         "candidate_dir": str(candidate),
         "capture": str(tmp_path / "unity-capture.json"),
         "sequence_path": "/Game/Stage/LS",
+        "expected_project": str(tmp_path / "NativeTest.uproject"),
+        "expected_level": "/Game/Stage/L_Static",
+        "setup_receipt_file": str(candidate / "setup-static-yaw-test.json"),
+        "ai_agents_enabled": True,
+        "generation_status": "GENERATED_UNVERIFIED",
+        "automatic_setup": True,
     }
     csir = {
         "entities": [{
