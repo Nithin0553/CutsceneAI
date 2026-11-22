@@ -535,23 +535,33 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
                     source_csir, snapshot["element_plan"], native_plan,
                     source_capture, observed_target,
                 )
-                proof_file = folder / "element-native-attribution.json"
-                if (not proof_file.is_file()
-                        or proof_file.is_symlink()
-                        or comparison.get("element3_native_attribution_sha256")
-                        != _sha(proof_file)
-                        or _read(proof_file) != measured
+                if (comparison.get("element3_workflow_sha256")
+                        != snapshot["workflow_sha256"]
+                        or comparison.get("element3_native_authorization_sha256")
+                        != job.get("element_native_authorization_sha256")
                         or comparison.get("element3_source_occurrence_count")
-                        != measured["source_occurrence_count"]):
+                        != measured["source_occurrence_count"]
+                        or measured.get("full_cutscene_fidelity_verified") is not False):
                     raise ReleaseEvidenceError(
-                        "Reopened Element 3 report is not grounded in exact native captures."
+                        "Reopened Element 3 provenance does not match the real engine observations."
                     )
                 record(
                     "element3_native_reopened_attribution", "PASS",
-                    "Every source occurrence is accounted for against independently "
-                    "sampled target data. Only measured domains were compared; "
-                    "other cinematic semantics remain unverified.",
+                    "All source occurrences were independently re-attributed "
+                    "from the real reopened native target samples. This is "
+                    "measured-scope accounting, not full-cutscene fidelity.",
                     source_occurrence_count=measured["source_occurrence_count"],
+                    measured_difference_count=sum(
+                        row["measurement_status"] == "DIRECT_MEASURED_DIFFERENCE"
+                        for row in measured["occurrences"]
+                    ),
+                    unmeasured_or_unresolved_count=sum(
+                        row["measurement_status"] not in {
+                            "DIRECT_MEASURED_NO_FLAGGED_DIFFERENCE",
+                            "DIRECT_MEASURED_DIFFERENCE",
+                        } for row in measured["occurrences"]
+                    ),
+                    attribution_sha256=measured["attribution_sha256"],
                     measured_native_fidelity_verified=False,
                 )
             except (ValueError, KeyError, TypeError, OSError) as exc:
