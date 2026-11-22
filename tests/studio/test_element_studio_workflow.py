@@ -300,3 +300,30 @@ def test_http_element_review_requires_local_session_token_and_rejects_native_byp
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+
+def test_element4_studio_review_never_calls_inventory_a_validated_model_strategy(tmp_path):
+    work, worker, _target = _setup(tmp_path)
+    report = workflow.prepare(work, worker)
+    assert report["element4_strategy_validation"]["status"] == (
+        "NO_MODEL_STRATEGY_DECISION"
+    )
+    assert report["element4_strategy_validation"]["independently_recomputed"] is False
+    assert report["element4_strategy_validation"]["native_execution_authorized"] is False
+
+    location = work / "candidates" / report["candidate_id"]
+    _write(location / "ai-conversion-decision.json", {
+        "kind": "cutsceneai.studio.ai_conversion_decision",
+        "element4_validation": {"validation_sha256": "a" * 64},
+        "input_sha256": {},
+    })
+    changed = workflow.current(work, worker)
+    assert changed["element4_strategy_validation"]["status"] == (
+        "MODEL_STRATEGY_EVIDENCE_STALE_OR_UNVERIFIABLE"
+    )
+    assert changed["element4_strategy_validation"][
+        "independently_recomputed"
+    ] is False
+    assert changed["native_execution_authorized"] is False
+    assert changed["full_cutscene_fidelity_verified"] is False
