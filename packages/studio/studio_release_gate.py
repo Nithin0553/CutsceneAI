@@ -735,15 +735,15 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
             final = studio_element9_outcome.build(root, job_id)
             record(
                 "element9_final_outcome_accounting", "PASS",
-            "All original source occurrences and required unverified domains "
-            "are independently enumerated. Native observation/repair gaps "
-            "remain limitations, not successful conversions.",
-            final_status=final["status"],
-            outcome_sha256=final["outcome_sha256"],
-            source_occurrence_count=final["source_occurrence_count"],
-            native_observation_count=final["native_observation_count"],
-            source_outcome_counts=final["source_outcome_counts"],
-            automatic_native_retry_authorized=False,
+                "All original source occurrences and required unverified domains "
+                "are independently enumerated. Native observation/repair gaps "
+                "remain limitations, not successful conversions.",
+                final_status=final["status"],
+                outcome_sha256=final["outcome_sha256"],
+                source_occurrence_count=final["source_occurrence_count"],
+                native_observation_count=final["native_observation_count"],
+                source_outcome_counts=final["source_outcome_counts"],
+                automatic_native_retry_authorized=False,
                 full_cutscene_fidelity_verified=False,
             )
         except (ValueError, KeyError, TypeError, OSError) as exc:
