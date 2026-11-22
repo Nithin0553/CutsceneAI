@@ -605,6 +605,9 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         sys.path.insert(0, tool_module_dir)
     import studio_element_workflow
     studio_element_workflow.require_acknowledgment(folder, heartbeat, candidate_id)
+    element_native_sha = studio_element_workflow.require_native_action_authorization(
+        folder, heartbeat, candidate_id,
+    )
     job_id = uuid.uuid4().hex
     job = {'kind': 'cutsceneai.studio.local_unreal_job', 'schema_version': '0.1.0',
            'job_id': job_id, 'status': 'QUEUED', 'candidate_id': candidate_id,
@@ -620,6 +623,7 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
            'created_at': datetime.now(timezone.utc).isoformat(),
            'ai_agents_enabled': selected_agent,
            'ai_conversion_decision_sha256': conversion_sha,
+           'element_native_authorization_sha256': element_native_sha,
            'generation_status': 'NOT_STARTED', 'fidelity_verified': False}
     if character_record_sha:
         job['character_compatibility_sha256'] = character_record_sha
@@ -645,6 +649,8 @@ def job_status(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         'visual_audit_status', 'visual_audit_error', 'closed_loop_status',
         'closed_loop_report_file', 'closed_loop_error', 'repair_iterations',
         'repair_changes', 'repair_status', 'repair_error', 'ai_agents_enabled',
+        'element_native_authorization_sha256', 'element_native_dispatch_receipt',
+        'element_native_dispatch_status',
         'execution_stage', 'failure_stage')}
     # Read only the exact receipt belonging to this job's candidate.
     # Expose the actionable failed operation without publishing a traceback
@@ -1121,6 +1127,20 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         result = studio_element_workflow.acknowledge(
                             folder, worker_connected(folder),
                             data['workflow_sha256'])
+                    elif route == '/api/elements/approve-native-actions':
+                        import studio_element_workflow
+                        if set(data) != {
+                            'workflow_sha256', 'action_inventory_sha256',
+                            'review_all', 'accept_legacy_unattributed',
+                        }:
+                            raise ValueError('Explicit full prepared-action approval contract required.')
+                        result = studio_element_workflow.approve_native_actions(
+                            folder, worker_connected(folder),
+                            workflow_sha256=data['workflow_sha256'],
+                            inventory_sha256=data['action_inventory_sha256'],
+                            review_all=data['review_all'],
+                            accept_legacy_unattributed=data['accept_legacy_unattributed'],
+                        )
                     elif route == '/api/elements/verify-target':
                         import studio_element_workflow
                         if set(data) != {'path'} or not isinstance(data['path'], str):
