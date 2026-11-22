@@ -176,6 +176,14 @@ def report(workspace: Path, csir: Path | None = None) -> dict:
     """Read verified mapping suggestions, not learned executable commands."""
     trials_dir = _dir(workspace, "learning/trials")
     count = len(list(trials_dir.glob("[0-9a-f]" * 32 + ".json"))) if trials_dir.is_dir() else 0
+    measured_dir = _dir(workspace, "learning/measured-outcomes")
+    measured_count = len(list(measured_dir.glob("*.json"))) if measured_dir.is_dir() else 0
+    failures = 0
+    if trials_dir.is_dir():
+        for recorded in sorted(trials_dir.glob("*.json"))[:8000]:
+            data = json.loads(recorded.read_text(encoding="utf-8"))
+            if data.get("native_failure_category") == "FAILED_NATIVE_STEP":
+                failures += 1
     sys.path.insert(0, str(CASE_MEMORY)) if str(CASE_MEMORY) not in sys.path else None
     import case_memory
 
@@ -194,6 +202,8 @@ def report(workspace: Path, csir: Path | None = None) -> dict:
     return {
         "kind": "cutsceneai.learning.status",
         "completed_trials_recorded": count,
+        "independent_measurement_records": measured_count,
+        "recorded_native_failures": failures,
         "verified_mapping_cases": len(verified),
         "suggestions": suggestions,
         "proposal_only": True,
