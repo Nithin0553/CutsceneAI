@@ -280,6 +280,11 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
     evidence["element_plan"] = _agent_module("studio_element_plan").prepare(
         csir, knowledge, native_capabilities,
     )
+    # The dependency graph is derived from the same source-bound plan and is
+    # informational only. It does not reorder or authorize native builder calls.
+    evidence["element_schedule"] = _agent_module("studio_element_schedule").build(
+        evidence["element_plan"], csir,
+    )
     return evidence
 
 
@@ -431,21 +436,52 @@ def decide(config: dict, census_path: str, worker: dict,
     if planning_mode not in {"inventory", "model"}:
         raise TransferAIError("Invalid CUTSCENEAI_ELEMENT_PLANNING setting.")
     if reasoner is None and planning_mode == "model":
-        # The real configured AI must review every occurrence, not merely the
-        # global strategy. A missing page fails before any native submission.
+        # Large scenes save every independently validated redacted model page.
+        # A bounded interrupted run is resumable, but NEVER a native approval.
         try:
+            provider = _agent_module("studio_model_provider")
+            large = element_plan["source_occurrence_count"] > 256
+            checkpoint_path = None
+            model_identity = "unspecified"
+            page_budget = None
+            if large:
+                provider_name = provider.provider_name()
+                model_identity = provider_name + "/" + provider._model_name(provider_name)
+                checkpoint_path = (
+                    Path.home() / ".cutsceneai-studio" / "element-reviews" /
+                    (element_plan["element_plan_sha256"] + ".json")
+                )
+                raw_limit = os.environ.get("CUTSCENEAI_ELEMENT_REVIEW_MAX_NEW_PAGES", "32")
+                if not re.fullmatch(r"[1-9][0-9]{0,3}", raw_limit):
+                    raise TransferAIError("Invalid per-run model review page budget.")
+                page_budget = int(raw_limit)
+            blocking_statuses = {
+                "SOURCE_DEPENDENCY_MISSING", "DEPENDENCY_CYCLE",
+                "UPSTREAM_BLOCKED", "OWNERSHIP_CONFLICT",
+            }
+            blockers = {
+                row["occurrence_id"]: row["status"]
+                for row in evidence["element_schedule"]["nodes"]
+                if row["status"] in blocking_statuses
+            }
             element_plan, element_response_hashes = element_planner.review_with_model(
-                element_plan, provider=_agent_module("studio_model_provider"),
+                element_plan, provider=provider, checkpoint_path=checkpoint_path,
+                model_identity=model_identity, max_new_pages=page_budget,
+                blocked_occurrences=blockers,
             )
         except Exception as exc:
             raise TransferAIError(
                 "Per-element AI planning failed before native execution: "
                 + str(exc)[:400]
             ) from exc
+    source_csir = _read(Path(config["csir"]))
     element_planner.verify(
-        element_plan, _read(Path(config["csir"])),
+        element_plan, source_csir,
         evidence["ced_knowledge"],
         evidence["summary"]["target_native_capabilities"],
+    )
+    element_schedule = _agent_module("studio_element_schedule").build(
+        element_plan, source_csir,
     )
     # Never let model preference disable the existing source-material import
     # guarantee when provenance documents source materials. This policy is a
@@ -466,6 +502,9 @@ def decide(config: dict, census_path: str, worker: dict,
         "ced_retrieved_concepts": evidence["ced_knowledge"]["retrieved_count"],
         "element_plan": element_plan,
         "element_plan_sha256": element_plan["element_plan_sha256"],
+        "element_schedule": element_schedule,
+        "element_schedule_sha256": element_schedule["schedule_sha256"],
+        "element_scheduling_advisory_only": True,
         "element_model_reviewed_count": element_plan["model_reviewed_count"],
         "element_model_response_sha256s": element_response_hashes,
         "element_planning_mode": (
@@ -543,6 +582,17 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
         )
     except element_planner.ElementPlanError as exc:
         raise TransferAIError("Per-element AI plan is stale or tampered: " + str(exc)) from exc
+    schedule = decision.get("element_schedule")
+    if (decision.get("element_scheduling_advisory_only") is not True
+            or not isinstance(schedule, dict)
+            or decision.get("element_schedule_sha256") != schedule.get("schedule_sha256")):
+        raise TransferAIError("Dependency schedule evidence or read-only guard is missing.")
+    scheduler = _agent_module("studio_element_schedule")
+    try:
+        scheduler.verify(schedule, decision["element_plan"],
+                         _read(Path(config["csir"])))
+    except scheduler.ElementScheduleError as exc:
+        raise TransferAIError("Dependency schedule is stale or tampered: " + str(exc)) from exc
     reviewed = decision["element_plan"]["model_reviewed_count"]
     if decision.get("element_planning_mode") != (
             "MODEL_REVIEWED" if reviewed else "INVENTORY_ONLY"):

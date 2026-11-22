@@ -25,7 +25,7 @@ if STUDIO not in sys.path:
 import feature_dispatch
 
 MAX_OCCURRENCES = 30000
-MAX_MODEL_OCCURRENCES = 256
+MAX_MODEL_OCCURRENCES = MAX_OCCURRENCES
 MODEL_BATCH_SIZE = 12
 _SEMANTIC = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,127}\Z")
 _ACTION_CAPABILITY = {
@@ -352,88 +352,150 @@ def verify(plan: dict[str, Any], csir: dict[str, Any],
 
 
 def review_with_model(plan: dict[str, Any], *,
-                      provider: Any) -> tuple[dict[str, Any], list[str]]:
-    """Ask the configured AI to select an advisory action for EACH occurrence.
+                      provider: Any, checkpoint_path: Path | None = None,
+                      model_identity: str = "unspecified",
+                      max_new_pages: int | None = None,
+                      blocked_occurrences: dict[str, str] | None = None,
+                      ) -> tuple[dict[str, Any], list[str]]:
+    """Review every source occurrence in resumable, exact-membership pages.
 
-    No raw Unity identifiers, component values or paths cross this API.
-    Full occurrence coverage and exact response membership are enforced for
-    every bounded request; model failures do not authorize native fallback.
+    Checkpoints store only anonymous registered selections and response hashes.
+    Every cached page is replayed through apply_choices; a skipped, stale or
+    forged action is not permitted. Partial review never reaches native prepare.
     """
-    if not isinstance(plan, dict) or plan.get("no_native_execution_permission") is not True:
+    from contextlib import nullcontext
+    from studio_element_review_checkpoint import ReviewCheckpoint
+
+    if not isinstance(plan, dict):
         raise ElementPlanError("Untrusted per-element plan cannot be sent to a model.")
-    source = plan.get("elements")
-    if not isinstance(source, list) or len(source) != plan.get("source_occurrence_count"):
-        raise ElementPlanError("Element plan lost occurrence inventory.")
-    if len(source) > MAX_MODEL_OCCURRENCES:
-        raise ElementPlanError(
-            "The selected cutscene exceeds the bounded per-element AI review "
-            "budget. Every element remains inventoried, but no native AI "
-            "submission is allowed until planning is paged durably."
-        )
+    _validate_contract(plan)
+    if (plan["no_native_execution_permission"] is not True
+            or plan["native_conversion_executed"] is not False
+            or plan["element_plan_sha256"] != _digest({
+                k: v for k, v in plan.items() if k != "element_plan_sha256"
+            })):
+        raise ElementPlanError("Per-element model review requires exact immutable evidence.")
+    source = plan["elements"]
+    if len(source) != plan["source_occurrence_count"] or len(source) > MAX_MODEL_OCCURRENCES:
+        raise ElementPlanError("Element model review inventory is incomplete or exceeds 30000.")
     if not callable(getattr(provider, "complete_json", None)):
         raise ElementPlanError("Per-element planning requires a configured JSON model.")
+    if (max_new_pages is not None
+            and (type(max_new_pages) is not int or max_new_pages < 1)):
+        raise ElementPlanError("A per-run model page limit must be a positive integer.")
+    blockers = blocked_occurrences if blocked_occurrences is not None else {}
+    ids = {row["occurrence_id"] for row in source}
+    if (not isinstance(blockers, dict)
+            or any(ident not in ids or not isinstance(reason, str)
+                   or reason not in {
+                       "SOURCE_DEPENDENCY_MISSING", "DEPENDENCY_CYCLE",
+                       "UPSTREAM_BLOCKED", "OWNERSHIP_CONFLICT",
+                   } for ident, reason in blockers.items())):
+        raise ElementPlanError("Model blockers must be source-grounded schedule statuses.")
+    context = (
+        ReviewCheckpoint(
+            checkpoint_path,
+            plan_sha256=plan["element_plan_sha256"],
+            batch_size=MODEL_BATCH_SIZE,
+            model_identity=model_identity,
+        )
+        if checkpoint_path is not None else nullcontext(None)
+    )
     output = plan
     response_hashes: list[str] = []
-    for position in range(0, len(source), MODEL_BATCH_SIZE):
-        batch = source[position:position + MODEL_BATCH_SIZE]
-        payload = {
-            "source_occurrence_count": len(source),
-            "page_index": position // MODEL_BATCH_SIZE,
-            "elements": [{
-                "occurrence_id": item["occurrence_id"],
-                "ced": item["ced"],
-                "source_kind": item["source_kind"],
-                "state": item["state"],
-                "dependencies": item["dependencies"],
-                "unresolved_dependencies": item["unresolved_dependencies"],
-                "candidate_actions": item["candidate_actions"],
-                "missing_target_capabilities": item["missing_target_capabilities"],
-            } for item in batch],
-        }
-        result = provider.complete_json(
-            task="cutsceneai_element_conversion_choices",
-            instructions=(
-                "You are a read-only Unity-to-Unreal cinematic conversion "
-                "planner. For EACH source occurrence, choose exactly one "
-                "registered candidate native action or report_only. The "
-                "options are only conversion candidates; actual native "
-                "preflight, mapping and fidelity verification have not "
-                "happened. Choose report_only for unknown semantics, absent "
-                "actions, missing dependencies or uncertain feasibility. "
-                "Do not invent APIs, identifiers, code, project assets, "
-                "pathnames, conversions or execution results. Return only "
-                "the exact structured JSON choices."
-            ),
-            payload=payload,
-            schema={
-                "type": "object", "additionalProperties": False,
-                "properties": {
-                    "choices": {
-                        "type": "array",
-                        "items": {
-                            "type": "object", "additionalProperties": False,
-                            "properties": {
-                                "occurrence_id": {"type": "string"},
-                                "action": {"type": "string"},
+    expected_pages = (len(source) + MODEL_BATCH_SIZE - 1) // MODEL_BATCH_SIZE
+    new_pages = 0
+    with context as checkpoint:
+        if checkpoint is not None and len(checkpoint.pages) > expected_pages:
+            raise ElementPlanError("Checkpoint contains excess model pages.")
+        for page_index, position in enumerate(range(0, len(source), MODEL_BATCH_SIZE)):
+            batch = source[position:position + MODEL_BATCH_SIZE]
+            expected_ids = [item["occurrence_id"] for item in batch]
+            if checkpoint is not None and page_index < len(checkpoint.pages):
+                cached = checkpoint.pages[page_index]
+                choices = cached["choices"]
+                response_digest = cached["model_response_sha256"]
+            else:
+                if max_new_pages is not None and new_pages >= max_new_pages:
+                    raise ElementPlanError(
+                        "Bounded model review is incomplete; saved validated pages "
+                        "are resumable, but native submission remains blocked."
+                    )
+                payload = {
+                    "source_occurrence_count": len(source),
+                    "page_index": page_index,
+                    "elements": [{
+                        "occurrence_id": item["occurrence_id"],
+                        "ced": item["ced"],
+                        "source_kind": item["source_kind"],
+                        "state": item["state"],
+                        "dependencies": item["dependencies"],
+                        "unresolved_dependencies": item["unresolved_dependencies"],
+                        "candidate_actions": (
+                            [] if item["occurrence_id"] in blockers
+                            else item["candidate_actions"]
+                        ),
+                        "schedule_blocker": blockers.get(item["occurrence_id"], "none"),
+                        "missing_target_capabilities": item["missing_target_capabilities"],
+                    } for item in batch],
+                }
+                result = provider.complete_json(
+                    task="cutsceneai_element_conversion_choices",
+                    instructions=(
+                        "You are a read-only Unity-to-Unreal cinematic conversion "
+                        "planner. For EACH source occurrence choose exactly one "
+                        "listed candidate action or report_only. Always choose "
+                        "report_only for any schedule_blocker other than none. "
+                        "Dependencies, ownership and Timeline blending are NOT "
+                        "native-execution permissions. Native preflight, mapping "
+                        "and fidelity remain independently unverified. Do not "
+                        "invent APIs, identifiers, code, project assets, source "
+                        "paths, conversions or execution results. Return only JSON."
+                    ),
+                    payload=payload,
+                    schema={
+                        "type": "object", "additionalProperties": False,
+                        "properties": {
+                            "choices": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object", "additionalProperties": False,
+                                    "properties": {
+                                        "occurrence_id": {"type": "string"},
+                                        "action": {"type": "string"},
+                                    },
+                                    "required": ["occurrence_id", "action"],
+                                },
                             },
-                            "required": ["occurrence_id", "action"],
                         },
+                        "required": ["choices"],
                     },
-                },
-                "required": ["choices"],
-            },
-        )
-        answer = getattr(result, "answer", None)
-        if not isinstance(answer, dict) or set(answer) != {"choices"}:
-            raise ElementPlanError("AI element review returned invalid top-level data.")
-        output = apply_choices(
-            output, answer["choices"],
-            expected_ids=[item["occurrence_id"] for item in batch],
-        )
-        digest = getattr(result, "response_sha256", None)
-        if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
-            raise ElementPlanError("Agent element response is missing a bounded evidence digest.")
-        response_hashes.append(digest)
+                )
+                answer = getattr(result, "answer", None)
+                if not isinstance(answer, dict) or set(answer) != {"choices"}:
+                    raise ElementPlanError("AI element review returned invalid top-level data.")
+                choices = answer["choices"]
+                response_digest = getattr(result, "response_sha256", None)
+            # Run EXACTLY the same action/identity checks for disk-replayed
+            # and freshly generated batches before advancing the checkpoint.
+            output = apply_choices(output, choices, expected_ids=expected_ids)
+            for choice in choices:
+                if (choice["occurrence_id"] in blockers
+                        and choice["action"] != "report_only"):
+                    raise ElementPlanError(
+                        "Agent proposed an action blocked by source dependency "
+                        "or unverified Timeline ownership."
+                    )
+            if (not isinstance(response_digest, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", response_digest)):
+                raise ElementPlanError("Agent model response lacks a valid evidence digest.")
+            if checkpoint is not None and page_index >= len(checkpoint.pages):
+                checkpoint.add_page(
+                    page_index=page_index, choices=choices,
+                    model_response_sha256=response_digest,
+                )
+                new_pages += 1
+            response_hashes.append(response_digest)
     if output["model_reviewed_count"] != len(source):
         raise ElementPlanError("AI model omitted part of the source cutscene.")
     return output, response_hashes
