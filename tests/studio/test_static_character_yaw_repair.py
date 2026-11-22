@@ -354,3 +354,131 @@ def test_native_executor_rejects_unauthorized_actor_write_before_dispatch(
             project=job["expected_project"], level=job["expected_level"],
         )
     assert actor.writes == []
+
+
+def test_langgraph_dispatch_and_editor_claim_are_source_id_only_no_replay(
+        tmp_path, monkeypatch):
+    import studio_agent_feedback
+    import studio_agent_graph
+    import studio_character_facing_review
+    from test_langgraph_agent_integration import staged as graph_staged
+
+    workspace, candidate, job, _ = graph_staged(tmp_path)
+    studio_agent_feedback.submit(
+        workspace, job, "Please fix the character facing direction."
+    )
+    proof = {
+        "kind": evidence.KIND, "eligible": True,
+        "source_entity_id": "guard",
+        "source_character_name": "Guard",
+        "target_actor_label": "GuardTarget",
+        "character_yaw_repair_sha256": "c" * 64,
+        "sample_count": 5,
+        "native_edit_authorized": False,
+    }
+    monkeypatch.setattr(evidence, "build", lambda *_: proof)
+    monkeypatch.setattr(studio_character_facing_review, "build", lambda *_: {
+        "kind": studio_character_facing_review.KIND,
+        "status": "REOPENED_CHARACTER_OWNER_DIAGNOSTIC_ONLY",
+        "native_owner_observation_available": True,
+        "native_edit_authorized": False,
+        "model_command_authorized": False,
+    })
+    seen = []
+    choice = lambda summary: (
+        seen.append(summary) or {
+            "strategy": "restore_static_character_actor_yaw",
+            "reason": "Only one calibrated static actor and approved native owner.",
+        }
+    )
+    state = studio_agent_graph.run_once(workspace, job, choice)
+    assert state["status"] == "WAITING_FOR_UNREAL_AGENT_REPAIR"
+    assert state["chosen_strategy"] == "restore_static_character_actor_yaw"
+    assert state["intent_routing"]["safe_strategies"] == [
+        "report_only", "restore_static_character_actor_yaw",
+    ]
+    assert seen[0]["verified_static_character_yaw_candidate"]["eligible"] is True
+    assert seen[0]["verified_static_character_yaw_candidate"]["native_edit_authorized"] is False
+    request_files = list(candidate.glob("agent-request-*.json"))
+    assert len(request_files) == 1
+    payload = json.loads(request_files[0].read_text())
+    assert payload["character_yaw_repair_sha256"] == "c" * 64
+    assert payload["source_entity_id"] == "guard"
+    assert not any("yaw_" in k or "rotation" in k for k in payload)
+
+    executed = []
+    def once(api, root, original, requested):
+        claim = candidate / ("agent-claim-" + requested["request_id"] + ".json")
+        assert claim.is_file()
+        executed.append(requested["request_id"])
+        return {
+            "status": "STATIC_CHARACTER_YAW_SAVED_REOPENED_CINETWIN_PENDING",
+            "changes": 1, "full_cutscene_fidelity_verified": False,
+            "cinetwin_reopened_time_grid_verified_after_repair": False,
+        }
+
+    monkeypatch.setattr(native, "attempt", once)
+    api = ns(
+        EditorAssetLibrary=ns(does_asset_exist=lambda _: True),
+        log_warning=lambda _: None,
+    )
+    def writer(path, data):
+        path.write_text(json.dumps(data), encoding="utf-8")
+    assert studio_agent_executor.service_one(
+        api, workspace, project=job["expected_project"],
+        level=job["expected_level"], save=writer,
+    ) is True
+    assert executed == [payload["request_id"]]
+    assert studio_agent_executor.service_one(
+        api, workspace, project=job["expected_project"],
+        level=job["expected_level"], save=writer,
+    ) is False
+    receipt = json.loads((candidate / (
+        "agent-receipt-" + payload["request_id"] + ".json"
+    )).read_text())
+    assert receipt["full_cutscene_fidelity_verified"] is False
+    assert receipt["status"] == "STATIC_CHARACTER_YAW_SAVED_REOPENED_CINETWIN_PENDING"
+
+
+def test_stale_claim_stops_new_static_character_yaw_attempt(
+        tmp_path, monkeypatch):
+    import studio_agent_feedback
+    import studio_agent_graph
+    from test_langgraph_agent_integration import staged as graph_staged
+
+    workspace, candidate, job, _ = graph_staged(tmp_path)
+    studio_agent_feedback.submit(
+        workspace, job, "Please fix the character facing direction."
+    )
+    monkeypatch.setattr(evidence, "build", lambda *_: {
+        "kind": evidence.KIND, "eligible": True,
+        "source_entity_id": "guard", "character_yaw_repair_sha256": "c" * 64,
+        "native_edit_authorized": False,
+    })
+    result = studio_agent_graph.run_once(workspace, job, lambda _: {
+        "strategy": "restore_static_character_actor_yaw",
+        "reason": "Independent static character pose.",
+    })
+    assert result["status"] == "WAITING_FOR_UNREAL_AGENT_REPAIR"
+    receipt_id = result["pending_request"]
+    (candidate / ("agent-claim-" + receipt_id + ".json")).write_text(
+        '{"status":"interrupted prior native write"}', encoding="utf-8",
+    )
+    monkeypatch.setattr(native, "attempt", lambda *_: pytest.fail(
+        "Interrupted native actor yaw must never be replayed."
+    ))
+    def writer(path, data):
+        path.write_text(json.dumps(data), encoding="utf-8")
+    api = ns(
+        EditorAssetLibrary=ns(does_asset_exist=lambda _: True),
+        log_warning=lambda _: None,
+    )
+    assert studio_agent_executor.service_one(
+        api, workspace, project=job["expected_project"],
+        level=job["expected_level"], save=writer,
+    ) is True
+    persisted = json.loads((candidate / (
+        "agent-receipt-" + receipt_id + ".json"
+    )).read_text())
+    assert persisted["status"] == "REPAIR_FAILED_OR_BLOCKED"
+    assert "no automatic replay" in persisted["error"]
