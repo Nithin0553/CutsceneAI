@@ -285,6 +285,12 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
     evidence["element_schedule"] = _agent_module("studio_element_schedule").build(
         evidence["element_plan"], csir,
     )
+    # Element 3.3 uses the existing CED ranking and native source branch,
+    # but comparisons never grant native actions or fidelity claims.
+    evidence["element_strategy"] = _agent_module("studio_element_strategy").build(
+        evidence["element_plan"], evidence["element_schedule"],
+        knowledge, csir, native_capabilities,
+    )
     return evidence
 
 
@@ -446,7 +452,12 @@ def decide(config: dict, census_path: str, worker: dict,
             page_budget = None
             if large:
                 provider_name = provider.provider_name()
-                model_identity = provider_name + "/" + provider._model_name(provider_name)
+                # Bind durable pages to the source/knowledge/capability snapshot,
+                # ranked options and selected provider/model, not only source IDs.
+                model_identity = hashlib.sha256((
+                    provider_name + "/" + provider._model_name(provider_name) +
+                    "/" + evidence["element_strategy"]["comparison_sha256"]
+                ).encode("utf-8")).hexdigest()
                 checkpoint_path = (
                     Path.home() / ".cutsceneai-studio" / "element-reviews" /
                     (element_plan["element_plan_sha256"] + ".json")
@@ -468,6 +479,9 @@ def decide(config: dict, census_path: str, worker: dict,
                 element_plan, provider=provider, checkpoint_path=checkpoint_path,
                 model_identity=model_identity, max_new_pages=page_budget,
                 blocked_occurrences=blockers,
+                strategy_hints=_agent_module(
+                    "studio_element_strategy"
+                ).proposal_hints(evidence["element_strategy"]),
             )
         except Exception as exc:
             raise TransferAIError(
@@ -482,6 +496,10 @@ def decide(config: dict, census_path: str, worker: dict,
     )
     element_schedule = _agent_module("studio_element_schedule").build(
         element_plan, source_csir,
+    )
+    element_strategy = _agent_module("studio_element_strategy").build(
+        element_plan, element_schedule, evidence["ced_knowledge"], source_csir,
+        evidence["summary"]["target_native_capabilities"],
     )
     # Never let model preference disable the existing source-material import
     # guarantee when provenance documents source materials. This policy is a
@@ -505,6 +523,9 @@ def decide(config: dict, census_path: str, worker: dict,
         "element_schedule": element_schedule,
         "element_schedule_sha256": element_schedule["schedule_sha256"],
         "element_scheduling_advisory_only": True,
+        "element_strategy": element_strategy,
+        "element_strategy_sha256": element_strategy["comparison_sha256"],
+        "element_strategy_advisory_only": True,
         "element_model_reviewed_count": element_plan["model_reviewed_count"],
         "element_model_response_sha256s": element_response_hashes,
         "element_planning_mode": (
@@ -593,6 +614,30 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
                          _read(Path(config["csir"])))
     except scheduler.ElementScheduleError as exc:
         raise TransferAIError("Dependency schedule is stale or tampered: " + str(exc)) from exc
+    comparison = decision.get("element_strategy")
+    if (decision.get("element_strategy_advisory_only") is not True
+            or not isinstance(comparison, dict)
+            or decision.get("element_strategy_sha256") != comparison.get("comparison_sha256")):
+        raise TransferAIError("Adaptive element strategy evidence or safety guard is missing.")
+    adaptive = _agent_module("studio_element_strategy")
+    try:
+        adaptive.verify(
+            comparison, decision["element_plan"], schedule,
+            current["ced_knowledge"], _read(Path(config["csir"])),
+            current["summary"]["target_native_capabilities"],
+        )
+        options_by_id = adaptive.proposal_hints(comparison)
+        for row in decision["element_plan"]["elements"]:
+            if (row["selected_action"] != "report_only"
+                    and row["selected_action"] not in {
+                        alt["action"] for alt in options_by_id[
+                            row["occurrence_id"]]["alternatives"]
+                    }):
+                raise adaptive.AdaptiveStrategyError(
+                    "AI selected an action excluded by current source-route strategy evidence."
+                )
+    except adaptive.AdaptiveStrategyError as exc:
+        raise TransferAIError("Adaptive element strategy is stale or unsafe: " + str(exc)) from exc
     reviewed = decision["element_plan"]["model_reviewed_count"]
     if decision.get("element_planning_mode") != (
             "MODEL_REVIEWED" if reviewed else "INVENTORY_ONLY"):
