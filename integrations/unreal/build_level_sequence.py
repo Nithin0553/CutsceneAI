@@ -724,7 +724,13 @@ def _add_camera_fov(sequence: unreal.LevelSequence, actor: unreal.Actor, action:
         str(fov_spec["property_path"]),
     )
     section = track.add_section()
-    section.set_range(0, sequence.get_playback_end())
+    end_frame = int(sequence.get_playback_end())
+    # Preserve an authenticated source capture at the exclusive playback
+    # end. Without a native terminal key, the last active interval may use
+    # stale lens values rather than the final source-authored FOV trajectory.
+    terminal = any(int(key["frame"]) == end_frame
+                   for key in action["keys"])
+    section.set_range(0, end_frame + (1 if terminal else 0))
     channels = unreal_compat.get_section_channels(section)
     if len(channels) != 1:
         raise UnrealBuildError("Unexpected camera lens channel layout; expected one float/double channel.")
