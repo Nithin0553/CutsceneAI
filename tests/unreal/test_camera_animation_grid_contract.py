@@ -5,7 +5,6 @@ All tests are software-only; no Unity or Unreal Editor was launched.
 from __future__ import annotations
 
 import copy
-import math
 import sys
 from pathlib import Path
 
