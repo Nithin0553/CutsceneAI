@@ -439,9 +439,12 @@ def _current_native_status(report: dict, config: dict, worker: dict) -> bool:
 
 
 def _preview(report: dict, folder: Path, worker: dict,
-             *, offset: int = 0) -> dict[str, Any]:
+             *, offset: int = 0, action_offset: int = 0) -> dict[str, Any]:
     if type(offset) is not int or offset < 0 or offset > studio_element_plan.MAX_OCCURRENCES:
         raise ElementWorkflowError("Invalid element review page offset.")
+    if (type(action_offset) is not int or action_offset < 0
+            or action_offset > native_actions.MAX_ACTIONS):
+        raise ElementWorkflowError("Invalid native action review page offset.")
     config, _candidate, location, _source, _mapping = _workspace(folder)
     rows = _case_rows(report)
     selected = rows[offset: offset + PAGE_SIZE]
@@ -505,7 +508,10 @@ def _preview(report: dict, folder: Path, worker: dict,
             "unattributed_count": manifest["unattributed_count"],
             "registered_action_counts": manifest["registered_action_counts"],
             "action_inventory_sha256": native_actions.digest(manifest),
-            "candidate_actions": manifest["actions"][offset:offset + PAGE_SIZE],
+            "action_offset": action_offset,
+            "action_page_size": PAGE_SIZE,
+            "has_more_actions": action_offset + PAGE_SIZE < manifest["action_count"],
+            "candidate_actions": manifest["actions"][action_offset:action_offset + PAGE_SIZE],
             "approved_for_existing_native_preflight": approval is not None,
             "native_builder_executed": False,
             "native_execution_authorized_by_review_alone": False,
@@ -570,7 +576,8 @@ def prepare(folder: Path, worker: dict) -> dict[str, Any]:
     return _preview(report, folder, worker)
 
 
-def current(folder: Path, worker: dict, *, offset: int = 0) -> dict[str, Any]:
+def current(folder: Path, worker: dict, *, offset: int = 0,
+            action_offset: int = 0) -> dict[str, Any]:
     try:
         report = _active(folder)
     except ElementWorkflowError as exc:
@@ -578,7 +585,9 @@ def current(folder: Path, worker: dict, *, offset: int = 0) -> dict[str, Any]:
             return {"available": False, "status": "NOT_PREPARED",
                     "native_execution_authorized": False}
         raise
-    return _preview(report, folder, worker, offset=offset)
+    return _preview(
+        report, folder, worker, offset=offset, action_offset=action_offset,
+    )
 
 
 def acknowledge(folder: Path, worker: dict, workflow_sha256: str) -> dict:
