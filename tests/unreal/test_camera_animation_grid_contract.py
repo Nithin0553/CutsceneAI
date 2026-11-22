@@ -271,3 +271,58 @@ def test_ordinary_prop_motion_retains_legacy_sparse_source_keys():
     assert len(prop["keys"])==3
     assert prop.get("source_behavior_strategy")!=contract.STRATEGY
     assert len(contract.validate_plan(plan))==1
+
+
+
+def test_eased_camera_clip_refuses_local_curve_inference_without_capture():
+    csir,mapping=_fixture()
+    _camera(csir)["sections"][0]["native_payload"]={
+        "ease_in_seconds":0.4,"blend_in_seconds":-1,
+    }
+    with pytest.raises(csir_plan.PlanError,match="evaluated CineTwin"):
+        csir_plan.build_plan(csir,mapping)
+
+
+def test_camera_parent_with_its_own_animation_requires_evaluated_world_capture():
+    csir,mapping=_fixture()
+    csir["entities"].append({
+        "entity_id":"entity:camera_rig",
+        "name":"MovingCameraRig","ced_type":"entity.prop",
+        "metadata":{"world_transform":{
+            "position":{"x":0,"y":0,"z":0},
+            "rotation":{"x":0,"y":0,"z":0,"w":1},
+            "scale":{"x":1,"y":1,"z":1},
+        }},
+    })
+    camera=next(e for e in csir["entities"] if e["ced_type"]=="entity.camera")
+    camera["parent_entity_id"]="entity:camera_rig"
+    csir["tracks"].append({
+        "track_id":"rig:anim","ced_type":"animation.track",
+        "binding_entity_id":"entity:camera_rig",
+        "sections":[{
+            "start":_rt(0),"end":_rt(10),
+            "payload":{"animation":{"curves":[
+                _curve("transform.position.y",[(0,0),(10,2)])
+            ]}},
+        }],
+    })
+    mapping["entities"]["MovingCameraRig"]={"actor_label":"UECameraRig"}
+    with pytest.raises(csir_plan.PlanError,match="parent trajectory"):
+        csir_plan.build_plan(csir,mapping)
+
+
+def test_duplicate_unity_euler_hint_and_raw_axis_is_rejected():
+    csir,mapping=_fixture()
+    curves=_camera(csir)["sections"][0]["payload"]["animation"]["curves"]
+    curves.append(_curve("transform.rotation.euler_native",[(0,10)],
+                        property_name="m_LocalEulerAnglesHint.x"))
+    with pytest.raises(csir_plan.PlanError,match="Duplicate camera"):
+        csir_plan.build_plan(csir,mapping)
+
+
+def test_unknown_camera_semantic_with_known_prefix_must_be_rejected():
+    csir,mapping=_fixture()
+    curves=_camera(csir)["sections"][0]["payload"]["animation"]["curves"]
+    curves.append(_curve("transform.rotation.unknown_euler_axis",[(0,10)]))
+    with pytest.raises(csir_plan.PlanError,match="Unrecognized"):
+        csir_plan.build_plan(csir,mapping)
