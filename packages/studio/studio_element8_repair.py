@@ -228,6 +228,23 @@ def build(workspace: Path, job_id: str,
                 "automatic_native_retry_authorized": False,
                 "full_cutscene_fidelity_verified": False,
             })
+    # Native lens and cut findings are GLOBAL measurements. They must not
+    # be assigned causal blame to an individual Timeline track/section.
+    latest_proof = proofs[-1]
+    domain_findings = [{
+        "domain": domain, "status": latest_proof[field],
+        "advisory_strategy": (
+            strategy if latest_proof[field] in ("FAIL", "INCOMPLETE")
+            else "REPORT_LIMITATION"
+        ),
+        "source_track_causality_verified": False,
+        "native_edit_authorized": False,
+    } for domain, field, strategy in (
+        ("camera_lens", "camera_lens_status",
+         "INSPECT_NATIVE_CAMERA_LENS"),
+        ("camera_cuts", "camera_cuts_status",
+         "INSPECT_NATIVE_CAMERA_CUT_BINDINGS"),
+    )]
     any_difference = any(
         entry["measured_scope_status"]
         == "MEASURED_NATIVE_DIFFERENCES_DETECTED"
@@ -297,6 +314,7 @@ def build(workspace: Path, job_id: str,
             for row in outcomes
         ),
         "per_occurrence": outcomes,
+        "domain_findings": domain_findings,
         "unverified_domains": sorted(set(
             domain for proof in proofs
             for domain in proof["unverified_domains"]
@@ -309,6 +327,10 @@ def build(workspace: Path, job_id: str,
         "full_cutscene_fidelity_verified": False,
         "independent_engine_attestation_verified": False,
     }
+    if any(
+        finding["status"] == "FAIL" for finding in domain_findings
+    ) and status == "SOURCE_GAPS_OR_UNMEASURED_DOMAINS_REMAIN":
+        public["status"] = "NATIVE_CAMERA_DOMAIN_REQUIRES_MANUAL_INVESTIGATION"
     public["repair_plan_sha256"] = _hash(public)
     return public
 
