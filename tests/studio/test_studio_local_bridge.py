@@ -924,3 +924,25 @@ def test_verification_endpoint_fails_closed_on_invalid_active_job_pointer(servic
                        {'job_id': 'b' * 32})
     status, mismatch = call(base + '/api/verification')
     assert status == 409 and 'does not match' in mismatch['error'].lower()
+
+
+def test_closed_loop_endpoint_refuses_foreign_or_stale_native_job(service):
+    """One old native job pointer cannot become another job's repair feedback."""
+    base, tmp = service
+    work = tmp / 'work'
+    status, absent = call(base + '/api/closed-loop')
+    assert status == 200 and absent['status'] == 'NOT_GENERATED'
+
+    bridge.atomic_json(work / 'active-job.json', {'job_id': '../foreign'})
+    status, invalid = call(base + '/api/closed-loop')
+    assert status == 409 and 'identity' in invalid['error'].lower()
+
+    job_id = 'c' * 32
+    bridge.atomic_json(work / 'active-job.json', {'job_id': job_id})
+    status, missing = call(base + '/api/closed-loop')
+    assert status == 409 and 'unavailable' in missing['error'].lower()
+
+    bridge.atomic_json(work / 'jobs' / (job_id + '.json'),
+                       {'job_id': 'd' * 32})
+    status, mismatch = call(base + '/api/closed-loop')
+    assert status == 409 and 'does not match' in mismatch['error'].lower()
