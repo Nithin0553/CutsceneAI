@@ -25,7 +25,8 @@ MAX_USER_COMMENT = 1200
 ALLOWED_STRATEGIES = {
     "restore_source_albedo", "restore_constant_actor_offset",
     "restore_static_camera_lens", "restore_single_camera_cut_timing",
-    "restore_static_camera_position", "report_only",
+    "restore_static_camera_position", "restore_static_character_actor_yaw",
+    "report_only",
 }
 
 
@@ -59,6 +60,7 @@ class AgentState(TypedDict, total=False):
     camera_cut_candidate: dict[str, Any]
     camera_position_candidate: dict[str, Any]
     character_facing_candidate: dict[str, Any]
+    static_character_yaw_candidate: dict[str, Any]
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -438,7 +440,22 @@ def build_graph(workspace: Path, job: dict[str, Any],
         cut_proof = None
         camera_position_proof = None
         facing_review = None
+        static_yaw_proof = None
         if comment:
+            import studio_static_character_yaw_evidence
+            if studio_static_character_yaw_evidence.message_requests_static_yaw(
+                    user_message):
+                try:
+                    static_yaw_proof = studio_static_character_yaw_evidence.build(
+                        workspace, job,
+                    )
+                except (studio_static_character_yaw_evidence.StaticCharacterYawError,
+                        ValueError, OSError, KeyError, TypeError) as exc:
+                    static_yaw_proof = {
+                        "eligible": False,
+                        "reason": "Static character actor yaw is not source-proven: "
+                                  + str(exc)[:220],
+                    }
             import studio_camera_position_evidence
             if studio_camera_position_evidence.message_requests_position(user_message):
                 try:
@@ -523,6 +540,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 camera_cut_repair_evidence=cut_proof,
                 camera_position_repair_evidence=camera_position_proof,
                 character_facing_review=facing_review,
+                static_character_yaw_evidence=static_yaw_proof,
                 adapter_catalog=feedback.get("component_adapter_catalog"),
                 fallback_observation_scope=(
                     "character" if "character_material_slots_engine_default" in visual
@@ -564,6 +582,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "camera_cut_candidate": cut_proof or {},
             "camera_position_candidate": camera_position_proof or {},
             "character_facing_candidate": facing_review or {},
+            "static_character_yaw_candidate": static_yaw_proof or {},
             "element8_review": element8 or {},
         }
         if not issues:
@@ -634,6 +653,16 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 "native_edit_authorized": False,
                 "reopened_cinetwin_verified": False,
             },
+            "verified_static_character_yaw_candidate": {
+                "eligible": state.get("static_character_yaw_candidate", {}).get(
+                    "eligible"
+                ) is True,
+                "sample_count": state.get("static_character_yaw_candidate", {}).get(
+                    "sample_count", 0
+                ),
+                "native_edit_authorized": False,
+                "cinetwin_after_native_repair_verified": False,
+            },
             "verified_character_facing_owner_review": {
                 "status": state.get("character_facing_candidate", {}).get("status"),
                 "native_owner_observation_available": bool(
@@ -681,6 +710,15 @@ def build_graph(workspace: Path, job: dict[str, Any],
         ):
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
                     "failure": "Transform proposal was not independently authorized.",
+                    "chosen_strategy": "report_only"}
+        if strategy == "restore_static_character_actor_yaw" and not (
+            comment and state.get("feedback_id")
+            and state.get("static_character_yaw_candidate", {}).get("eligible") is True
+            and "restore_static_character_actor_yaw"
+            in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Static character yaw lacks native/source/rest-pose proof.",
                     "chosen_strategy": "report_only"}
         if strategy == "restore_static_camera_position" and not (
             comment and state.get("feedback_id")
@@ -733,6 +771,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "restore_static_camera_lens",
             "restore_single_camera_cut_timing",
             "restore_static_camera_position",
+            "restore_static_character_actor_yaw",
         }:
             return {"status": "UNRESOLVED_NO_SAFE_STRATEGY"}
         request_id = uuid.uuid4().hex
@@ -748,6 +787,16 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "iteration": state.get("iterations", 0) + 1,
             "baseline_fallback": state.get("last_fallback", 0),
         }
+        if strategy == "restore_static_character_actor_yaw":
+            char_yaw = state.get("static_character_yaw_candidate") or {}
+            if char_yaw.get("eligible") is not True or not state.get("feedback_id"):
+                raise AgentError("Source-bound character actor yaw approval missing.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "source_entity_id": char_yaw["source_entity_id"],
+                "character_yaw_repair_sha256":
+                    char_yaw["character_yaw_repair_sha256"],
+            })
         if strategy == "restore_static_camera_position":
             camera = state.get("camera_position_candidate") or {}
             if camera.get("eligible") is not True or not state.get("feedback_id"):
