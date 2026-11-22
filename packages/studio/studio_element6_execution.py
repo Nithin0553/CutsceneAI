@@ -28,7 +28,7 @@ STAGES = (
     "PREPARED_SOURCE_AND_ACTIONS_VERIFIED",
     "EDITOR_PREFLIGHT_COMPLETE",
     "DESTINATION_MUTATION_STARTED",
-    "ASSET_AND_ACTOR_SETUP_COMPLETED",
+    "DESTINATION_SETUP_COMPLETE_OR_NOT_REQUIRED",
     "NATIVE_SEQUENCE_BUILDER_STARTED",
     "NATIVE_SEQUENCE_BUILDER_RETURNED",
     "POST_GENERATION_DIAGNOSTICS_STARTED",
@@ -276,6 +276,14 @@ def verify_claim(workspace: Path, job: dict, claim_record: dict) -> None:
     active = _read(workspace / "active-job.json")
     if active.get("job_id") != job["job_id"]:
         raise GuardedExecutionError("Native attempt lost active-job ownership.")
+
+
+def load_claim(workspace: Path, job: dict) -> dict:
+    """Reopen and revalidate the original claimed job in the live editor."""
+    candidate, _ = _paths(Path(workspace), job)
+    record = _read(_claim_path(candidate, job["job_id"]))
+    verify_claim(Path(workspace), job, record)
+    return record
 
 
 def step(workspace: Path, job: dict, claim_record: dict, stage: str) -> dict:
