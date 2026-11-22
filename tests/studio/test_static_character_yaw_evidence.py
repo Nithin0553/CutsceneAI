@@ -158,6 +158,7 @@ def fixture(monkeypatch, tmp_path):
         "repair_plan_sha256": "8" * 64,
     }
     documents = {
+        "source-scratch": csir,
         "comparison.json": comparison,
         "unity-capture.json": source,
         "target-behavior.json": target,
@@ -166,8 +167,9 @@ def fixture(monkeypatch, tmp_path):
         "native-character-facing-ownership.json": owner,
         "sampling-plan.json": sampling,
     }
+    canonical = copy.deepcopy(job)
     monkeypatch.setattr(evidence.outcome, "_context", lambda *_: (
-        root, candidate, job, csir, mapping, compiled,
+        root, candidate, canonical, csir, mapping, compiled,
     ))
     monkeypatch.setattr(evidence.outcome, "discover", lambda *_: [folder])
     monkeypatch.setattr(evidence.repair, "build", lambda *_: bounded)
@@ -215,7 +217,7 @@ def test_static_yaw_uses_approved_source_anatomy_and_reopened_owner(monkeypatch,
 @pytest.mark.parametrize("mutation,description", [
     (lambda j, d, o, c, b, n: j.update(job_id="f" * 32), "Stale job"),
     (lambda j, d, o, c, b, n: d["mesh-forward-approval.json"].update(
-        reviewed_anatomical_axes=False), "approved"),
+        reviewed_anatomical_axes=False), "approval"),
     (lambda j, d, o, c, b, n: c.pop("mesh_forward_approval_sha256"), "proof"),
     (lambda j, d, o, c, b, n: o["characters"][0].update(
         status="BLOCKED_UNVERIFIED_OWNER"), "owner"),
@@ -248,20 +250,16 @@ def test_static_yaw_evidence_refuses_unproven_or_moving_rig(
     root, job, docs, owner, comparison, bounded, native = fixture(
         monkeypatch, tmp_path,
     )
-    # The fake source object is deliberately addressable for authored-track
-    # mutation, but not used as a faux real engine readback.
-    if "source-scratch" in docs:
-        pass
-    with pytest.raises((evidence.StaticCharacterYawError, KeyError),
-                       match=description):
-        mutation(job, docs, owner, comparison, bounded, native)
+    # These fake inputs exercise evidence policy only, not engine authenticity.
+    mutation(job, docs, owner, comparison, bounded, native)
+    with pytest.raises((evidence.StaticCharacterYawError, KeyError,
+                        evidence.MeshForwardError), match=description):
         evidence.build(root, job)
 
 
 def test_moving_source_or_target_bones_refuses_actor_yaw(monkeypatch, tmp_path):
     root, job, docs, *_ = fixture(monkeypatch, tmp_path)
-    bones = docs["source-scratch"] if "source-scratch" in docs else None
-    del bones
+    assert docs["source-scratch"]["tracks"] == []
     target = docs["target-behavior.json"]
     target["samples"][2]["skeletal_poses"][0]["bones"][0][
         "world_position_m"
