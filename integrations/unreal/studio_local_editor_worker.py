@@ -54,6 +54,18 @@ def _dependency_fingerprint():
     return result.hexdigest()
 
 
+def _native_attempt_guard():
+    """Canonical stdlib-only one-attempt barrier; never load from candidate paths."""
+    package = str(ROOT / 'packages/studio')
+    if package not in sys.path:
+        sys.path.insert(0, package)
+    import studio_element6_execution as guard
+    expected = (ROOT / 'packages/studio/studio_element6_execution.py').resolve()
+    if Path(getattr(guard, '__file__', '')).resolve() != expected:
+        raise RuntimeError('Guarded native execution module is from another checkout.')
+    return guard
+
+
 DEPENDENCY_SOURCE_SHA256 = _dependency_fingerprint()
 LAST_DEPENDENCY_CHECK = 0.0
 
@@ -254,6 +266,16 @@ def _execute(job):
     if collider_actions and not job.get('automatic_setup'):
         raise RuntimeError('Native collider geometry requires the guarded automatic scene setup.')
     studio_collider_shapes.preflight(unreal, collider_actions)
+    # A durable exclusive claim was recorded by the queue before _execute.
+    # Recheck the exact original job + source/target/action fingerprints here.
+    # A changed claim, mapping or approval must not reach editor mutation.
+    element6_guard = _native_attempt_guard()
+    element6_claim = element6_guard.load_claim(
+        WORKSPACE, job, editor_pid=os.getpid(),
+    )
+    element6_guard.step(
+        WORKSPACE, job, element6_claim, 'PREPARED_SOURCE_AND_ACTIONS_VERIFIED',
+    )
     if job.get('automatic_setup'):
         # Essential source-content and adapter verification MUST precede
         # _ensure_target_level, which can create an empty Unreal map.
@@ -276,6 +298,12 @@ def _execute(job):
                         'editor_pid': os.getpid(),
                         'worker_version': WORKER_PROTOCOL, 'scene_inventory': _native_level_inventory()},
             )
+    element6_guard.step(
+        WORKSPACE, job, element6_claim, 'EDITOR_PREFLIGHT_COMPLETE',
+    )
+    element6_guard.step(
+        WORKSPACE, job, element6_claim, 'DESTINATION_MUTATION_STARTED',
+    )
     if character is not None:
         studio_character_execution.begin(job, checked_plan)
     job['execution_stage'] = 'PREPARING_DESTINATION_LEVEL'
@@ -308,6 +336,10 @@ def _execute(job):
         if character is not None:
             job['execution_stage'] = 'VERIFYING_STAGED_CHARACTER_MOTION'
             studio_character_execution.validate_staged(unreal, job, checked_plan)
+    element6_guard.step(
+        WORKSPACE, job, element6_claim,
+        'DESTINATION_SETUP_COMPLETE_OR_NOT_REQUIRED',
+    )
     # Last-second check: an actor may have been removed after the UI approved
     # this job. Report a setup state, not a failed engine generation.
     job['execution_stage'] = 'CHECKING_DESTINATION_READINESS'
@@ -320,12 +352,18 @@ def _execute(job):
         job['generation_status'] = 'NOT_STARTED'
         return job
     job['execution_stage'] = 'GENERATING_EDITABLE_LEVEL_SEQUENCE'
+    element6_guard.step(
+        WORKSPACE, job, element6_claim, 'NATIVE_SEQUENCE_BUILDER_STARTED',
+    )
     result = build_level_sequence.build_prepared_files(
         job['csir'], job['mapping'], str(candidate_dir / 'transfer-plan.json'),
         str(candidate_dir / 'coverage-report.json'),
         str(candidate_dir / 'evidence.json'), str(receipt),
         expected_project_path=job['expected_project'],
         expected_level_path=job['expected_level'],
+    )
+    element6_guard.step(
+        WORKSPACE, job, element6_claim, 'NATIVE_SEQUENCE_BUILDER_RETURNED',
     )
     job['generation_status'] = 'GENERATED_UNVERIFIED'
     if element_dispatch is not None:
@@ -382,6 +420,10 @@ def _execute(job):
     # Independent persistence needs the target reopened in another process;
     # a Python module reload in this same editor cannot spoof that evidence.
     job['execution_stage'] = 'POST_GENERATION_AUDITS'
+    element6_guard.step(
+        WORKSPACE, job, element6_claim,
+        'POST_GENERATION_DIAGNOSTICS_STARTED',
+    )
     job['generation_editor_pid'] = os.getpid()
     job['receipt_file'] = str(receipt)
     _save(WORKSPACE / 'jobs' / (job['job_id'] + '.json'), job)
@@ -777,32 +819,116 @@ def _tick(_delta):
         jobs_folder = WORKSPACE / 'jobs'
         if not jobs_folder.is_dir():
             return
+        if jobs_folder.is_symlink() or len(list(jobs_folder.glob('*.json'))) > 10000:
+            raise RuntimeError('Native job queue is unsafe or unbounded.')
         for path in sorted(jobs_folder.glob('*.json')):
+            if path.is_symlink() or not path.is_file():
+                # A hostile queue entry must not become a native operation.
+                continue
             job = _load(path)
             if job.get('status') != 'QUEUED':
                 continue
             BUSY = True
+            native_guard = None
+            attempt = None
+            other_claim_exists = False
             try:
+                native_guard = _native_attempt_guard()
+                # Durable write-ahead claim happens BEFORE RUNNING status,
+                # import, level creation, actor changes or sequence generation.
+                # Two editors racing the same queue cannot both create it.
+                attempt = native_guard.claim(
+                    WORKSPACE, job, editor_pid=os.getpid(),
+                )
+                job['element6_claim_sha256'] = attempt['claim_sha256']
+                job['element6_guard_status'] = 'CLAIMED_NO_REPLAY'
                 job['status'] = 'RUNNING'
                 _save(path, job)
                 job = _execute(job)
             except Exception as exc:
-                job['failure_stage'] = job.get('execution_stage', 'UNKNOWN_NATIVE_STAGE')
-                job['status'] = ('PARTIAL_SETUP_MUST_INSPECT'
-                                 if job.get('setup_status') == 'PARTIAL_SETUP_MUST_INSPECT'
-                                 else 'BLOCKED_OR_FAILED')
-                job['error'] = str(exc)
-                job['traceback'] = traceback.format_exc()
-                job['fidelity_verified'] = False
-                if (Path(job['candidate_dir']) / 'character-native-attempt.json').exists():
-                    try:
-                        import studio_character_execution
-                        studio_character_execution.attempt_status(job, 'FAILED_NO_REPLAY', reason=str(exc))
-                    except Exception as attempt_error:
-                        job['character_attempt_record_error'] = str(attempt_error)
-                unreal.log_error('[CutSceneAI Studio] Job stopped: ' + str(exc))
+                # Another editor may have claimed the QUEUED job before it
+                # changed the shared job file to RUNNING. Never let the losing
+                # editor overwrite the owner's live status or native receipt.
+                candidate_id = job.get('candidate_id')
+                job_id = job.get('job_id')
+                if (attempt is None and native_guard is not None
+                        and isinstance(candidate_id, str)
+                        and isinstance(job_id, str)
+                        and native_guard.CANDIDATE.fullmatch(candidate_id)
+                        and native_guard.JOB_ID.fullmatch(job_id)):
+                    other_claim_exists = (
+                        WORKSPACE / 'candidates' / candidate_id /
+                        ('element6-native-claim-' + job_id + '.json')
+                    ).is_file()
+                if other_claim_exists:
+                    unreal.log_warning(
+                        '[CutSceneAI Studio] Existing native attempt owns this '
+                        'queue item. Do not replay or overwrite its job status.'
+                    )
+                else:
+                    job['failure_stage'] = job.get('execution_stage', 'UNKNOWN_NATIVE_STAGE')
+                    job['status'] = ('PARTIAL_SETUP_MUST_INSPECT'
+                                     if job.get('setup_status') == 'PARTIAL_SETUP_MUST_INSPECT'
+                                     else 'BLOCKED_OR_FAILED')
+                    job['error'] = str(exc)
+                    job['traceback'] = traceback.format_exc()
+                    job['fidelity_verified'] = False
+                    if attempt is not None:
+                        job['element6_guard_status'] = (
+                            'INCOMPLETE_OR_FAILED_NO_AUTOMATIC_REPLAY'
+                        )
+                    candidate = Path(str(job.get('candidate_dir') or ''))
+                    if (candidate / 'character-native-attempt.json').exists():
+                        try:
+                            import studio_character_execution
+                            studio_character_execution.attempt_status(
+                                job, 'FAILED_NO_REPLAY', reason=str(exc),
+                            )
+                        except Exception as attempt_error:
+                            job['character_attempt_record_error'] = str(attempt_error)
+                    unreal.log_error('[CutSceneAI Studio] Job stopped: ' + str(exc))
             finally:
-                _save(path, job)
+                if attempt is not None and native_guard is not None:
+                    try:
+                        if (job.get('generation_status') == 'GENERATED_UNVERIFIED'
+                                and job.get('status') not in
+                                native_guard.FINAL_FAILURE_STATES):
+                            native_guard.step(
+                                WORKSPACE, job, attempt,
+                                'TERMINAL_EVIDENCE_RECORDED',
+                            )
+                        proof = native_guard.terminal(WORKSPACE, job, attempt)
+                        job['element6_guard_status'] = proof['status']
+                        if (not proof['native_builder_completed']
+                                and job.get('generation_status') == 'GENERATED_UNVERIFIED'
+                                and job.get('status') not in
+                                native_guard.FINAL_FAILURE_STATES):
+                            # A builder returning a sequence without a
+                            # verifiable runtime receipt is not a successful
+                            # Studio execution; preserve it for inspection.
+                            job['status'] = (
+                                'GENERATED_GUARD_EVIDENCE_INCOMPLETE_REVIEW_REQUIRED'
+                            )
+                            job['fidelity_verified'] = False
+                        job['element6_runtime_receipt_sha256'] = proof[
+                            'runtime_receipt_sha256'
+                        ]
+                        job['element6_receipt_sha256'] = proof['receipt_sha256']
+                        job['element6_replay_allowed'] = False
+                    except Exception as guard_error:
+                        # Never mask a missing/tampered attempt receipt as an
+                        # otherwise successful native transfer.
+                        job['element6_guard_status'] = (
+                            'RECEIPT_UNAVAILABLE_MANUAL_INSPECTION_REQUIRED'
+                        )
+                        job['element6_guard_error'] = type(guard_error).__name__
+                        if job.get('generation_status') == 'GENERATED_UNVERIFIED':
+                            job['status'] = (
+                                'GENERATED_GUARD_EVIDENCE_INCOMPLETE_REVIEW_REQUIRED'
+                            )
+                        job['fidelity_verified'] = False
+                if not other_claim_exists:
+                    _save(path, job)
                 BUSY = False
             break
     except Exception as exc:
