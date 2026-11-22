@@ -11,6 +11,8 @@ import math
 from typing import Any
 
 STRATEGY = "source_frame_baked_camera_transform_v1"
+CAPTURE_STRATEGY = "verified_cinetwin_camera_world_pose"
+CAMERA_STRATEGIES = frozenset({STRATEGY, CAPTURE_STRATEGY})
 MAX_KEYS = 100_001
 MAX_ANGLE_STEP_DEGREES = 150.0
 
@@ -55,11 +57,13 @@ def _orientation_delta(a: tuple[float,...], b: tuple[float,...]) -> float:
 
 def validate_action(action: dict[str, Any], *, duration_frames: int) -> dict[str, Any]:
     """Check one actual compiled camera source action, never a model proposal."""
+    strategy = action.get("source_behavior_strategy") if isinstance(action, dict) else None
     if (not isinstance(action, dict)
             or action.get("kind") != "transform"
-            or action.get("source_behavior_strategy") != STRATEGY
+            or strategy not in CAMERA_STRATEGIES
             or action.get("baked_source_curves") is not True
-            or action.get("native_transform_channels_required") != 9
+            or (strategy == STRATEGY
+                and action.get("native_transform_channels_required") != 9)
             or not isinstance(action.get("entity_name"), str)
             or not action.get("entity_name")
             or not isinstance(action.get("actor_label"), str)
@@ -70,9 +74,16 @@ def validate_action(action: dict[str, Any], *, duration_frames: int) -> dict[str
             "Animated camera action is not a source-authored nine-channel bake."
         )
     keys = action.get("keys")
-    start = action.get("frame_grid_first")
-    end = action.get("frame_grid_last")
-    count = action.get("frame_grid_sample_count")
+    if strategy == CAPTURE_STRATEGY:
+        # The original independently validated CineTwin world grid spans
+        # the entire playback, not merely a subset of authored clip frames.
+        # It is the preferred source of truth when Unity local curves have
+        # blending, parenting or ambiguous actor base transforms.
+        start, end, count = 0, duration_frames, len(keys) if isinstance(keys,list) else None
+    else:
+        start = action.get("frame_grid_first")
+        end = action.get("frame_grid_last")
+        count = action.get("frame_grid_sample_count")
     if (not isinstance(keys, list)
             or not 2 <= len(keys) <= MAX_KEYS
             or any(type(x) is not int for x in (start,end,count))
@@ -106,7 +117,7 @@ def validate_action(action: dict[str, Any], *, duration_frames: int) -> dict[str
             raise CameraMotionContractError("Camera world position is unbounded.")
     return {
         "kind": "cutsceneai.studio.camera_motion_preflight",
-        "strategy": STRATEGY,
+        "strategy": strategy,
         "status": "SOURCE_GRID_VALIDATED_NATIVE_UNVERIFIED",
         "sample_count": count,
         "source_frame_first": start,
@@ -125,7 +136,7 @@ def validate_plan(plan: dict[str, Any]) -> list[dict[str, Any]]:
     for action in plan["actions"]:
         if not isinstance(action, dict):
             raise CameraMotionContractError("Prepared native action is malformed.")
-        if action.get("source_behavior_strategy") == STRATEGY:
+        if action.get("source_behavior_strategy") in CAMERA_STRATEGIES:
             identity = action.get("entity_name")
             if identity in actors:
                 raise CameraMotionContractError(
