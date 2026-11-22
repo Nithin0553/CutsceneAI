@@ -374,3 +374,54 @@ def test_unsupported_multishot_proposal_never_reaches_native_editor(
     })
     assert state["status"] == "REJECTED_UNSUPPORTED_STRATEGY"
     assert list(candidate.glob("agent-request-*.json")) == []
+
+
+
+def test_two_shot_agent_claim_prevents_replay_after_interrupted_native_write(
+        monkeypatch, tmp_path):
+    from test_langgraph_agent_integration import staged as agent_staged
+
+    workspace, candidate, job, _ = agent_staged(tmp_path)
+    studio_agent_feedback.submit(
+        workspace, job, "Please fix the camera cut timing."
+    )
+    monkeypatch.setattr(evidence, "build", lambda *_: {
+        "kind": evidence.KIND,
+        "eligible": True,
+        "camera_count": 2, "switch_count": 1,
+        "two_shot_cut_repair_sha256": "d" * 64,
+        "native_edit_authorized": False,
+    })
+    state = studio_agent_graph.run_once(workspace, job, lambda _: {
+        "strategy": "restore_two_shot_camera_switch",
+        "reason": "One bounded two-shot camera switch mismatch.",
+    })
+    assert state["status"] == "WAITING_FOR_UNREAL_AGENT_REPAIR"
+    claim = candidate / ("agent-claim-" + state["pending_request"] + ".json")
+    claim.write_text(
+        '{"status":"interrupted editor native mutation"}', encoding="utf-8"
+    )
+    monkeypatch.setattr(native, "attempt", lambda *_: pytest.fail(
+        "Interrupted camera-cut section changes may never replay."
+    ))
+    api = NS(
+        EditorAssetLibrary=NS(does_asset_exist=lambda _: True),
+        log_warning=lambda _: None,
+    )
+    def save(path, document):
+        path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert studio_agent_executor.service_one(
+        api, workspace, project=job["expected_project"],
+        level=job["expected_level"], save=save,
+    ) is True
+    result_path = candidate / (
+        "agent-receipt-" + state["pending_request"] + ".json"
+    )
+    receipt = json.loads(result_path.read_text(encoding="utf-8"))
+    assert receipt["status"] == "REPAIR_FAILED_OR_BLOCKED"
+    assert "no automatic replay" in receipt["error"]
+    assert studio_agent_executor.service_one(
+        api, workspace, project=job["expected_project"],
+        level=job["expected_level"], save=save,
+    ) is False
