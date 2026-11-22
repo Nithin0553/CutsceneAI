@@ -105,6 +105,27 @@ def _local_rules(store: Path | None) -> list[dict[str, Any]]:
     return rulebook.approved_rules(store)
 
 
+def _signed_rules() -> list[dict[str, Any]]:
+    """Include only locally installed releases with pre-pinned publisher trust."""
+    root = Path.home() / ".cutsceneai-studio"
+    store = root / "ced-shared-releases"
+    active = store / "active.json"
+    if not active.exists():
+        return []
+    trust = root / "ced-trust" / "publisher.pem"
+    if not trust.is_file() or trust.is_symlink():
+        raise KnowledgeServiceError(
+            "An installed shared CED release requires an explicitly trusted publisher."
+        )
+    from shared_distribution import DistributionError, installed_rules
+    try:
+        return installed_rules(store, trust_key_file=trust)
+    except DistributionError as exc:
+        raise KnowledgeServiceError(
+            "Installed shared CED release failed signature or native adapter verification."
+        ) from exc
+
+
 def _private_cases(csir: dict[str, Any], store: Path | None) -> list[dict[str, Any]]:
     if store is None or not store.is_dir():
         return []
@@ -225,6 +246,12 @@ def retrieve(
     # collides. Approval loaders independently reject conflicting rules.
     rules = [(rule, "BASELINE_REGISTERED_UNVERIFIED") for rule in baseline]
     rules.extend((rule, "LOCAL_REVIEWED_NATIVE_MAPPING") for rule in approved)
+    signed = _signed_rules()
+    baseline_ids = {item["rule_id"] for item in baseline}
+    local_ids = {item["rule_id"] for item in approved}
+    if any(row["rule_id"] in baseline_ids | local_ids for row in signed):
+        raise KnowledgeServiceError("Signed shared CED rule conflicts with local knowledge.")
+    rules.extend((rule, "SHARED_SIGNED_APPROVED_ADVISORY") for rule in signed)
     for rule, origin in rules:
         if not isinstance(rule, dict) or not isinstance(rule.get("ced"), str):
             raise KnowledgeServiceError("Malformed " + origin + " CED rule.")
@@ -517,7 +544,11 @@ def redact_for_model(result: dict[str, Any]) -> dict[str, Any]:
             ]
             native_id = item.get("rule_id")
             if native_id not in baseline_ids:
-                item["rule_id"] = "local_reviewed_rule_" + str(index + 1)
+                item["rule_id"] = (
+                    "shared_reviewed_rule_" if item.get("origin")
+                    == "SHARED_SIGNED_APPROVED_ADVISORY"
+                    else "local_reviewed_rule_"
+                ) + str(index + 1)
             if item.get("resolver") not in baseline_resolvers:
                 item["resolver"] = "reviewed_native_resolver"
             recipe = item.get("strategy_recipe")
