@@ -73,7 +73,9 @@ def test_immutable_stage5_accounts_for_every_source_occurrence_and_native_action
     assert plan["source_occurrences"][3]["source_kind"] == "entities"
     camera = next(row for row in plan["source_occurrences"]
                   if row["source_location"] == "entities[2]")
-    assert camera["mapping_status"] == "TARGET_REFERENCE_DECLARED_UNVERIFIED"
+    # This synthetic CSIR uses only entity_id, not an exported Unity name.
+    # A mapping keyed by an ID alone must not be promoted to a native actor.
+    assert camera["mapping_status"] == "NO_TARGET_REFERENCE"
     assert camera["explicitly_attributed_action_ids"] == ["A00000"]
     assert camera["conversion_plan_state"] == (
         "EXPLICIT_NATIVE_SOURCE_PROVENANCE_PREPARED_UNVERIFIED"
