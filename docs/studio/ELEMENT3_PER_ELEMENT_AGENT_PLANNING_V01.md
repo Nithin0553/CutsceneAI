@@ -9,6 +9,8 @@ Existing LangGraph `studio_conversion_graph.select` deliberately chooses among t
 
 ## Implemented contract
 
+The portable, versioned contract is defined in `packages/contracts/agent/element-conversion-plan-v1.schema.json` and is validated at construction, model selection and pre-native verification.
+
 `packages/studio/studio_element_plan.py` builds a source-bound `cutsceneai.studio.element_conversion_plan` v1 from the exact Unity CSIR and the complete, immutable CED knowledge snapshot. This contract:
 
 - enumerates each asset, entity, track, section, animation curve and relationship **separately**;
