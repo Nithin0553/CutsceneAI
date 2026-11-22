@@ -36,7 +36,7 @@ _SOURCE_BAD_TRACKS = frozenset({
 _FIX = re.compile(r"\b(?:fix|correct|repair|restore|align|rotate|turn|adjust)\b", re.I)
 _NEGATE = re.compile(r"\b(?:don't|dont|do not|without|never|stop|avoid)\b", re.I)
 _UNSAFE = re.compile(
-    r"\b(?:moving|walk|walking|run|running|animated|animating|"
+    r"\b(?:moving|walk|walking|run|running|animation|animated|animating|"
     r"root.motion|retarget|ik|bone|skeletal|rig|camera|lens|cut|"
     r"translate|position|move|physics|material|mesh.asset|import)\b", re.I,
 )
