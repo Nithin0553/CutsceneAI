@@ -56,11 +56,15 @@
     const hostState=host.status==='BLOCKED_INVALID_CODE'?'Studio code needs review':
       host.status==='DEFERRED_ACTIVE_TRANSFER'?'Studio update deferred during transfer':
       'Studio reconnecting after code update';
+    const unityReason=!unityReady&&unityPath
+      ?'<p class="subnote" role="note">Unity: '+esc(source.status||'WAITING_FOR_UNITY_EDITOR')+
+        (source.next_action?' — '+esc(source.next_action):'')+'</p>':'';
     return '<p class="subnote" role="status" aria-label="Live editor connections">'+
       'Unity bridge: '+esc(unityReady?'Connected · '+source.editor_mode:'Waiting for running editor')+
       ' &nbsp;·&nbsp; Unreal bridge: '+esc(unrealReady?'Connected':'Waiting for running editor')+
       (updating?' &nbsp;·&nbsp; '+esc(hostState):'')+
-      '. Once enabled, supported code changes reconnect without restarting the editors.</p>';
+      '. Once enabled, supported code changes reconnect without restarting the editors.</p>'+
+      unityReason;
   }
   function progress(){
     const selected=state.screen==='results'?3:state.screen==='transfer'?2:state.candidate?1:0;

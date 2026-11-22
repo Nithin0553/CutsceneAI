@@ -1,0 +1,16 @@
+{
+  "kind": "cutsceneai.ced.shared_baseline_manifest",
+  "schema_version": "1",
+  "release_id": "ced-baseline-source-control-v0.1",
+  "release_status": "SOURCE_CONTROL_REVIEWED_BASELINE_NOT_NATIVE_FIDELITY_CERTIFIED",
+  "taxonomy": "cutscene-elements-v0.2.json",
+  "baseline_rules": "adaptive-rules-v0.1.json",
+  "rulebook": "ced-mapping-rulebook-v1.json",
+  "recipe_schema": "ced-strategy-recipe-v1.schema.json",
+  "distribution": "GIT_VERSIONED_READ_ONLY_NO_REMOTE_AUTO_UPDATE",
+  "private_data_policy": "NEVER_INCLUDE_PRIVATE_CSIR_OBJECT_NAMES_PATHS_ASSETS_RAW_CAPTURES_OR_USER_FILES",
+  "promotions": "MANUAL_REVIEW_AND_INDEPENDENT_NATIVE_EVIDENCE_REQUIRED",
+  "signature_status": "NO_DISTRIBUTION_SIGNATURE_YET; DO_NOT_AUTO_TRUST_DOWNLOADED_BUNDLES",
+  "runtime_execution_authority": false,
+  "unknown_concept_policy": "INVESTIGATE_PROPOSALS_IN_PRIVATE_STORE_NOT_EXECUTABLE"
+}

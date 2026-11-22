@@ -24,6 +24,25 @@ namespace CutsceneAI.UnityExtractor
         private const string DisableMenu = "Tools/CutsceneAI/Studio Bridge/Disable Source Bridge";
         private const string HeartbeatFile = "unity-editor.json";
         private static double _nextPoll;
+        private static string _lastPresenceError = "";
+
+        // EditorPrefs are shared across all projects installed on a workstation.
+        // Derive an opt-in key from the exact Unity project root so enabling one
+        // editor never silently authorizes another project's source extraction.
+        private static string PreferenceKey()
+        {
+            var root = Path.GetFullPath(Root()).TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+#if UNITY_EDITOR_WIN
+            root = root.ToUpperInvariant();
+#endif
+            using (var sha = SHA256.Create())
+            {
+                var digest = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(root));
+                return Preference + "." +
+                    BitConverter.ToString(digest).Replace("-", "").ToLowerInvariant();
+            }
+        }
 
         [Serializable]
         private sealed class Heartbeat
@@ -35,12 +54,25 @@ namespace CutsceneAI.UnityExtractor
             public int editor_pid;
             public bool source_bridge_enabled;
             public string editor_mode;
-            public string bridge_version = "unity-editor-v0.2";
+            public string bridge_version = "unity-editor-v0.3";
         }
 
         // Every assembly/domain reload re-runs InitializeOnLoad and registers
         // the polling callback again. EditorPrefs retains explicit opt-in.
-        private static void WritePresence(bool enabled)
+        private static void PresenceError(Exception error)
+        {
+            // Do not flood Unity Console every 0.7 seconds when a project is
+            // read-only, locked or its heartbeat file cannot be replaced.
+            var reason = error.GetType().Name + ": " + error.Message;
+            if (reason == _lastPresenceError)
+                return;
+            _lastPresenceError = reason;
+            Debug.LogWarning("[CutSceneAI] Source bridge heartbeat write failed for " +
+                             "the current Unity project: " + reason +
+                             ". Check project folder permissions and the StudioBridge directory.");
+        }
+
+        private static bool WritePresence(bool enabled)
         {
             try
             {
@@ -62,16 +94,18 @@ namespace CutsceneAI.UnityExtractor
                     File.Replace(temporary, target, null);
                 else
                     File.Move(temporary, target);
+                _lastPresenceError = "";
+                return true;
             }
-            catch (IOException)
+            catch (IOException ex)
             {
-                // Read-only source bridge cannot assume its presence is
-                // writable. Studio treats a missing/stale heartbeat as offline.
+                PresenceError(ex);
             }
-            catch (UnauthorizedAccessException)
+            catch (UnauthorizedAccessException ex)
             {
-                // No export request should run due to failed diagnostics.
+                PresenceError(ex);
             }
+            return false;
         }
 
         [Serializable]
@@ -112,24 +146,29 @@ namespace CutsceneAI.UnityExtractor
         [MenuItem(EnableMenu, priority = 120)]
         private static void Enable()
         {
-            EditorPrefs.SetBool(Preference, true);
-            WritePresence(true);
-            Debug.Log("[CutSceneAI] Opt-in source bridge enabled; reconnects automatically after script reload.");
+            EditorPrefs.SetBool(PreferenceKey(), true);
+            if (WritePresence(true))
+                Debug.Log("[CutSceneAI] Opt-in source bridge enabled for this Unity project; " +
+                          "reconnects automatically after script reload.");
+            else
+                Debug.LogError("[CutSceneAI] Source bridge was enabled but its heartbeat " +
+                               "could not be written. Studio cannot connect until the " +
+                               "Unity project folder is writable.");
         }
 
         [MenuItem(DisableMenu, priority = 121)]
         private static void Disable()
         {
-            EditorPrefs.SetBool(Preference, false);
+            EditorPrefs.SetBool(PreferenceKey(), false);
             WritePresence(false);
             Debug.Log("[CutSceneAI] Source bridge disabled. No queued request will run.");
         }
 
         [MenuItem(EnableMenu, validate = true)]
-        private static bool CanEnable() { return !EditorPrefs.GetBool(Preference, false); }
+        private static bool CanEnable() { return !EditorPrefs.GetBool(PreferenceKey(), false); }
 
         [MenuItem(DisableMenu, validate = true)]
-        private static bool CanDisable() { return EditorPrefs.GetBool(Preference, false); }
+        private static bool CanDisable() { return EditorPrefs.GetBool(PreferenceKey(), false); }
 
         private static string Root()
         {
@@ -189,7 +228,7 @@ namespace CutsceneAI.UnityExtractor
 
         private static void Poll()
         {
-            if (!EditorPrefs.GetBool(Preference, false) ||
+            if (!EditorPrefs.GetBool(PreferenceKey(), false) ||
                 EditorApplication.isCompiling || EditorApplication.isUpdating)
                 return;
             if (EditorApplication.timeSinceStartup < _nextPoll)
@@ -199,7 +238,8 @@ namespace CutsceneAI.UnityExtractor
             // Emits a project-bound heartbeat even if there are no requests.
             // The host can show reconnection after Unity domain reload without
             // opening/restarting the Editor or executing an old request twice.
-            WritePresence(true);
+            if (!WritePresence(true))
+                return;  // No source export while its connection is undetectable.
             var requests = Path.Combine(bridge, "requests");
             if (!Directory.Exists(requests))
                 return;
