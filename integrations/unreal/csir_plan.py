@@ -919,7 +919,7 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
         if entity["name"] in mapping.get("entities", {}):
             plan["bindings"][entity["name"]] = _mapping_actor(mapping, entity["name"])
 
-    for entity in csir.get("entities", []):
+    for entity_index, entity in enumerate(csir.get("entities", [])):
         if entity.get("ced_type") != "entity.camera":
             continue
         if entity["name"] not in mapping.get("entities", {}):
@@ -934,6 +934,10 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
         plan["actions"].append(
             {
                 "kind": "camera_setup",
+                # This action is authored exclusively from this source camera
+                # occurrence, not guessed by matching an Unreal actor name.
+                "source_location": f"entities[{entity_index}]",
+                "source_ced": "entity.camera",
                 "entity_name": entity["name"],
                 "actor_label": _mapping_actor(mapping, entity["name"]),
                 "projection": "orthographic" if bool(camera.get("orthographic", False)) else "perspective",
