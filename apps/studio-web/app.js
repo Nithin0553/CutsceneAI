@@ -184,7 +184,18 @@
         item('Legacy actions without exact-source attribution',size(r.native_actions?.unattributed_count))+
         item('Blocked actions requiring source/target evidence',size(r.native_actions?.blocked_action_count))+
         item('Native action approval',r.native_actions?.approved_for_existing_native_preflight?'APPROVED · ENGINE PREFLIGHT REQUIRED':'NOT AUTHORIZED')+
-        '<p class="hint">Only the immutable registered Unreal builder action set can run. Actions without explicit source-location metadata are not described as per-element verified. Partial plan changes require a NEW candidate.</p>'+
+        '<details class="element-list"><summary>Review exact native actions ('+size(r.native_actions?.action_count)+')</summary>'+
+        (r.native_actions?.candidate_actions||[]).map(a=>
+          '<div class="element-review-row"><strong>'+esc(a.action_id+' · '+a.kind)+'</strong>'+
+          '<p class="hint">Source: '+esc(a.source_occurrence_ids?.join(', ')||'UNATTRIBUTED LEGACY ACTION')+'</p>'+
+          '<p class="hint">Status: '+esc(a.native_action_eligible?'REGISTERED · PREFLIGHT PENDING':a.native_action_blocker||'BLOCKED')+'</p>'+
+          '<p class="hint">Immutable action fingerprint: '+esc(a.action_sha256?.slice(0,16)||'missing')+'</p></div>'
+        ).join('')+'</details>'+
+        '<div class="form-actions">'+
+          btn('Previous actions','elements-native-prev','secondary',state.busy||!r.native_actions?.action_offset)+
+          btn('Next actions','elements-native-next','secondary',state.busy||!r.native_actions?.has_more_actions)+
+        '</div>'+
+        '<p class="hint">Only the immutable registered Unreal builder action set can run. Actions without explicit source-location metadata are not per-element verified. Partial changes require a NEW candidate.</p>'+
         (r.native_actions?.approved_for_existing_native_preflight?
           statusLabel('EXACT ACTION SET AUTHORIZED','good'):
           btn('Approve all prepared native actions','approve-native-elements','secondary',
@@ -451,10 +462,22 @@
       }catch(err){notice(err.message,true)}
       finally{state.busy=false;render()}return;
     }
+    if(name==='elements-native-next'||name==='elements-native-prev'){
+      const r=state.elementReview;if(!r?.available)return;
+      const native=r.native_actions||{};
+      const actionOffset=Math.max(0,(native.action_offset||0)+
+        (name==='elements-native-next'?(native.action_page_size||60):-(native.action_page_size||60)));
+      state.busy=true;render();try{
+        state.elementReview=await api('elements?offset='+r.offset+'&action_offset='+actionOffset);
+      }catch(err){notice(err.message,true)}finally{state.busy=false;render()}return;
+    }
     if(name==='elements-next'||name==='elements-prev'){
       const r=state.elementReview;if(!r?.available)return;
       const offset=Math.max(0,r.offset+(name==='elements-next'?r.page_size:-r.page_size));
-      state.busy=true;render();try{state.elementReview=await api('elements?offset='+offset)}
+      state.busy=true;render();try{
+        state.elementReview=await api('elements?offset='+offset+
+          '&action_offset='+(r.native_actions?.action_offset||0))
+      }
       catch(err){notice(err.message,true)}finally{state.busy=false;render()}return;
     }
     if(name==='approve-native-elements'){
