@@ -226,15 +226,19 @@ def attempt(api: Any, workspace: Path, job: dict, request: dict) -> dict:
     saved = False
     try:
         modified = True  # Unreal notifications can mutate then raise.
+        # Preserve CURRENT native roll/pitch exactly. Source pitch/roll
+        # were separately checked within 0.25 degrees, but writing their
+        # approximate source values would violate a yaw-only mutation.
+        target_rpy = (original_rpy[0], original_rpy[1], new_rpy[2])
         result = actor.set_actor_rotation(
-            api.Rotator(new_rpy[1], new_rpy[2], new_rpy[0]), True,
+            api.Rotator(target_rpy[1], target_rpy[2], target_rpy[0]), True,
         )
         if result is not True:
             raise StaticCameraYawRepairError(
                 "Native CineCamera yaw setter did not confirm its mutation."
             )
         actual_rpy = _rotator(actor)
-        if (not _same_rpy(actual_rpy, new_rpy)
+        if (not _same_rpy(actual_rpy, target_rpy)
                 or math.dist(_vec3(actor.get_actor_location()), original_pos) > 0.1
                 or max(abs(s-1) for s in _vec3(actor.get_actor_scale3d())) > 0.01):
             raise StaticCameraYawRepairError(
