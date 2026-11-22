@@ -225,13 +225,13 @@ def test_unobserved_editor_capabilities_cannot_grant_native_actions(tmp_path):
 def test_worker_checks_action_grant_before_editor_mutation():
     worker = (ROOT / "integrations" / "unreal" /
               "studio_local_editor_worker.py").read_text(encoding="utf-8")
-    assert worker.index("studio_element_workflow.verify_native_job(WORKSPACE, job)") < (
+    assert worker.index("studio_element_native_gate.verify_job(") < (
         worker.index("_ensure_target_level(job)", worker.index("def _execute(job):"))
     )
     assert worker.index("studio_element_workflow.verify_native_job(WORKSPACE, job)") < (
         worker.index("studio_auto_scene.run(")
     )
-    assert worker.index("studio_element_workflow.record_native_job(WORKSPACE, job)") > (
+    assert worker.index("studio_element_native_gate.record_job(") > (
         worker.index("build_level_sequence.build_prepared_files(")
     )
 
@@ -240,6 +240,11 @@ def test_engine_reopen_acceptance_recomputes_real_source_bound_occurrences():
     src = (ROOT / "integrations" / "unreal" /
            "studio_native_acceptance.py").read_text(encoding="utf-8")
     assert "target['target']['editor_pid'] != os.getpid()" in src
-    assert "studio_element_cinetwin.build(" in src
-    assert "element-native-attribution.json" in src
+    assert "studio_element_native_gate.verify_job(" in src
+    assert "element3_native_authorization_sha256" in src
+    assert "element3_source_occurrence_count" in src
     assert "full_cutscene_fidelity_verified': False" in src
+    host = (ROOT / "packages" / "studio" /
+            "studio_release_gate.py").read_text(encoding="utf-8")
+    assert "studio_element_cinetwin.build(" in host
+    assert "element3_native_reopened_attribution" in host
