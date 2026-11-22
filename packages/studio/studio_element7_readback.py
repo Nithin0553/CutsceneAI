@@ -33,9 +33,6 @@ VERSION = "1"
 JOB_ID = re.compile(r"[a-f0-9]{32}\Z")
 CANDIDATE = re.compile(r"[0-9]{8}T[0-9]{6}Z_[a-f0-9]{8}\Z")
 MAX_BYTES = 128 * 1024 * 1024
-MEASURED = frozenset({"actor_transform", "skeletal_motion", "camera_lens", "camera_cuts"})
-
-
 class Element7ReadbackError(ValueError):
     """Target/source/native evidence is missing, foreign, stale or untrusted."""
 
@@ -248,9 +245,13 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
         "persistence_sha256": persistence_sha,
         "generation_editor_pid": job.get("generation_editor_pid"),
     }
-    if any(recorded.get(k) != v for k, v in expected_recorded.items()):
+    if (any(recorded.get(k) != v for k, v in expected_recorded.items())
+            or recorded.get("native_persistence_status")
+            != persistence.get("status")
+            or recorded.get("full_cutscene_fidelity_verified") is not False):
         raise Element7ReadbackError(
-            "Native readback comparison has a foreign input, job, or editor identity."
+            "Native readback comparison has a foreign input, stale persistence, "
+            "invalid editor identity or unsupported fidelity claim."
         )
     target_info = target.get("target") or {}
     generation_pid = job.get("generation_editor_pid")
@@ -276,7 +277,8 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
         str(project_file.resolve()).encode("utf-8")
         + b"\x00" + project_bytes
     ).hexdigest()
-    if (target_info.get("project_file_sha256") != project_sha
+    if (target_info.get("engine") != "unreal"
+            or target_info.get("project_file_sha256") != project_sha
             or target_info.get("project_identity_sha256") != identity
             or persistence.get("expected_project") != job["expected_project"]
             or persistence.get("expected_level") != job.get("expected_level")
@@ -400,6 +402,8 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
             or persistence.get("restart_verified") is not True
             or persistence.get("native_structure_status") != "PASS"
             or persistence.get("provenance_status") != "COMPLETE"
+            or persistence.get("status")
+            != "STRUCTURAL_READBACK_PASS_DIFFERENT_EDITOR_PROCESS"
             or computed["evaluation"]["unmapped_entity_count"] != 0
             or any(row["joint_positions"].get("status") != "PASS"
                    for row in computed["rig_motion_diagnostics"])
