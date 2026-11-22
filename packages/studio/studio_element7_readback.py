@@ -286,21 +286,50 @@ def build(workspace: Path, job_id: str, evidence_folder: Path) -> dict[str, Any]
         raise Element7ReadbackError(
             "Measured target is not the reopened prepared Unreal project/level."
         )
-    if recorded.get("acceptance_status") not in {
-        "DIFFERENCES_DETECTED", "INCOMPLETE_MEASURED_SCOPE",
-        "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE",
-    }:
-        raise Element7ReadbackError("Reopened comparator has an unknown measured status.")
+    # Reproduce native acceptance's measured-scope classification, rather
+    # than trusting a comparison.json "PASS" label with newly calculated
+    # hashes. Valid JSON documents alone cannot attest actual engine origin.
+    joint_statuses = [
+        row["joint_positions"].get("status")
+        for row in computed["rig_motion_diagnostics"]
+    ]
+    calibrated = [
+        row["joint_reference_orientation"].get("status")
+        for row in computed["rig_motion_diagnostics"]
+    ]
+    forward = [
+        row["anatomical_mesh_forward"].get("status")
+        for row in computed["rig_motion_diagnostics"]
+    ]
+    character = recorded.get("character_conversion") or {}
+    character_status = (
+        character.get("reopened_character_readback_status")
+        if job.get("character_native_readback_status") == "PASS" else "PASS"
+    )
     if (computed["evaluation"]["status"] == "DIFFERENCES_DETECTED"
-            and recorded["acceptance_status"] != "DIFFERENCES_DETECTED"):
+            or persistence.get("native_structure_status") == "FAIL"
+            or character_status == "FAIL"
+            or computed["camera_optics"]["status"] == "FAIL"
+            or computed["camera_cut_timing"]["status"] == "FAIL"):
+        expected_status = "DIFFERENCES_DETECTED"
+    elif (persistence.get("restart_verified") is not True
+          or computed["evaluation"]["unmapped_entity_count"]
+          or "INCOMPLETE" in joint_statuses
+          or ("pose_calibration" in extras
+              and (not calibrated or "INCOMPLETE" in calibrated))
+          or ("mesh_forward_approval" in extras
+              and (not forward or "INCOMPLETE" in forward))
+          or (target.get("quality") or {}).get("status") == "SUSPECT"
+          or character_status != "PASS"
+          or computed["camera_optics"]["status"] == "INCOMPLETE"
+          or computed["camera_cut_timing"]["status"] == "INCOMPLETE"):
+        expected_status = "INCOMPLETE_MEASURED_SCOPE"
+    else:
+        expected_status = "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE"
+    if recorded.get("acceptance_status") != expected_status:
         raise Element7ReadbackError(
-            "CineTwin differences were hidden by a purported passing native report."
-        )
-    if (persistence.get("restart_verified") is not True
-            and recorded.get("acceptance_status")
-            == "STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE"):
-        raise Element7ReadbackError(
-            "Same-process native capture cannot claim post-reopen measured success."
+            "Native acceptance status differs from the independently "
+            "recomputed source/target/native measurements."
         )
     quality = target.get("quality") or {}
     tick_observed = (
