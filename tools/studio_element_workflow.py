@@ -228,7 +228,9 @@ def _review_ack(location: Path, digest: str) -> bool:
 def _native_inventory(folder: Path, report: dict) -> tuple[dict, Path]:
     _config, _candidate, location, _source, _mapping = _workspace(folder)
     prepared = _read(location / "transfer-plan.json")
-    return native_actions.inventory(prepared, report["element_plan"]), location
+    return native_actions.inventory(
+        prepared, report["element_plan"], report["element_strategy"],
+    ), location
 
 
 def _native_approval(folder: Path, report: dict, manifest: dict) -> dict | None:
