@@ -4,6 +4,7 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 
 ## Start here
 
+- [Consolidated Elements 1–9 technical audit and guarded autonomous repair expansion](studio/ELEMENT1_TO_9_INTEGRATED_AUDIT_AND_REPAIR_EXPANSION_V01.md) — cross-element trust contracts, supported native adapters, measured vs unverified capability matrix and engine acceptance plan
 - [Element 9: final remeasurement and limitation outcome](studio/ELEMENT9_FINAL_REMEASUREMENT_LIMITATIONS_V01.md) — complete source status, measured vs unverified domains and strict repair stop decisions
 - [Element 8: bounded CineTwin repair agent](studio/ELEMENT8_BOUNDED_REPAIR_AGENT_V01.md) — read-only source-bound triage, measured progress/stop budget and guarded existing repair adapters
 - [Element 7: native readback + CineTwin](studio/ELEMENT7_NATIVE_READBACK_CINETWIN_V01.md) — source-bound independent native observation, per-occurrence attribution and exact Element 6 receipt
