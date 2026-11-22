@@ -886,10 +886,14 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         })
                     params = parse_qs(urlparse(self.path).query)
                     raw = params.get('offset', ['0'])
-                    if len(raw) != 1 or not raw[0].isdigit():
-                        raise ValueError('Invalid occurrence page offset.')
+                    actions_raw = params.get('action_offset', ['0'])
+                    if (len(raw) != 1 or not raw[0].isdigit()
+                            or len(actions_raw) != 1
+                            or not actions_raw[0].isdigit()):
+                        raise ValueError('Invalid occurrence or action page offset.')
                     result = studio_element_workflow.current(
-                        folder, worker_connected(folder), offset=int(raw[0]))
+                        folder, worker_connected(folder),
+                        offset=int(raw[0]), action_offset=int(actions_raw[0]))
                     return self.reply(200, result)
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:
                     return self.reply(409, {
