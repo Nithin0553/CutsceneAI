@@ -326,7 +326,8 @@
       '<p class="body-copy">After generating, Save All and reopen the staging map in a different Unreal Editor process once. This command captures independent CineTwin measurements. Rendered frame, audio, event and complete skeletal fidelity remain separately gated.</p>'+
       '<pre class="command" id="element-native-acceptance-command">'+esc(script)+'</pre>'+
       '<div class="form-actions">'+btn('Copy native acceptance command','copy-native-acceptance-command','secondary')+
-      btn('Check release evidence','check-native-acceptance','secondary',state.busy)+'</div>'+
+      btn('Check release evidence','check-native-acceptance','secondary',state.busy)+
+      btn('Check final source outcome','check-final-outcome','secondary',state.busy)+'</div>'+
       (r?item('Release gate',r.status)+
         '<div class="rule"></div><h3>Element 7 · Native readback + CineTwin</h3>'+
         item('Original engine execution chain',r.checks?.element7_native_execution_chain?.status||'INCOMPLETE')+
