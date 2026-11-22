@@ -148,21 +148,26 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
                 character_proof['before'] = _character_metrics(compare(plan, source, baseline), identifier)
                 character_proof['baseline_status'] = 'MATCHED_SOURCE_GRID_AND_UNREAL_PROJECT'
                 character_proof['baseline_sha256'] = persistence._sha(Path(baseline_target))
-        # Optional Element 3 occurrence attribution comes from the SAME
-        # real, different-editor tick-synchronized target observation.
-        # Recreate the exact source/CED review rather than trust saved JSON
-        # or fabricate any native-per-element success claims.
-        element_acceptance = None
+        # Reopened native acceptance records source-bound intent/provenance,
+        # not a fake per-element parity result. The Studio host (which has
+        # JSON-schema/CED dependencies) recomputes per-occurrence CineTwin
+        # attribution from these ACTUAL tick-synchronized native samples.
+        element_permission = None
+        element_source_count = None
         if (candidate / 'element-workflow-active.json').is_file():
-            import studio_element_workflow
-            import studio_element_cinetwin
-            audited_workflow = studio_element_workflow._active(root)
-            source_csir = persistence._json(Path(job['csir']))
-            element_acceptance = studio_element_cinetwin.build(
-                source_csir, audited_workflow['element_plan'], plan, source, target,
+            import studio_element_native_gate
+            import studio_local_editor_worker as editor_worker
+            element_permission, _ = studio_element_native_gate.verify_job(
+                root, job, editor_worker._native_level_inventory(),
             )
-            element_file = folder / 'element-native-attribution.json'
-            _write(element_file, element_acceptance)
+            saved_pointer = persistence._json(
+                candidate / 'element-workflow-active.json',
+            )
+            snapshot = persistence._json(
+                candidate / ('element-workflow-' +
+                             saved_pointer['workflow_sha256'] + '.json')
+            )
+            element_source_count = snapshot['element_plan']['source_occurrence_count']
         evaluation = comparison['evaluation']
         joints = [row['joint_positions']['status'] for row in comparison['rig_motion_diagnostics']]
         calibration_results = [
@@ -200,14 +205,15 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
             'rig_calibration_statuses': calibration_results,
             'mesh_forward_approval_sha256': forward_approval_sha,
             'mesh_forward_statuses': forward_results,
-            'element3_native_attribution_sha256': (
-                persistence._sha(folder / 'element-native-attribution.json')
-                if element_acceptance is not None else None
+            'element3_workflow_sha256': (
+                element_permission['workflow_sha256']
+                if element_permission is not None else None
             ),
-            'element3_source_occurrence_count': (
-                element_acceptance['source_occurrence_count']
-                if element_acceptance is not None else None
+            'element3_native_authorization_sha256': (
+                element_permission['authorization_sha256']
+                if element_permission is not None else None
             ),
+            'element3_source_occurrence_count': element_source_count,
             'full_cutscene_fidelity_verified': False,
             **({'character_conversion': character_proof} if character_proof else {}),
         })
