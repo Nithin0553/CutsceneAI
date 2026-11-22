@@ -320,3 +320,58 @@ def test_unreal_hot_reload_includes_exact_source_plan_and_gate_without_restart()
     assert modules.index("prepared_transfer") < (
         modules.index("studio_element_native_gate")
     )
+
+
+
+def test_full_deterministic_compiler_plan_reconciles_against_actual_ced_eligibility():
+    import ced_agent_knowledge as ced
+    import studio_element_plan as source_planner
+    import studio_element_schedule as schedule_tool
+    import studio_element_strategy as strategies
+    import studio_element_native_execution as native
+    import transfer_backend
+    from test_transfer_backend import mapping, source
+
+    scene = source()
+    target = mapping()
+    compiled, _coverage = transfer_backend.compose(scene, target)
+    caps = {
+        "fbx_asset_import": True, "cine_camera_actor": True,
+        "sequencer_skeletal_animation_track": True,
+        "sequencer_visibility_track": True,
+    }
+    knowledge = ced.retrieve_all(scene, target_capabilities=caps)
+    occurrence_plan = source_planner.prepare(scene, knowledge, caps)
+    schedule = schedule_tool.build(occurrence_plan, scene)
+    strategies_doc = strategies.build(
+        occurrence_plan, schedule, knowledge, scene, caps,
+    )
+    cases = investigation.build(
+        occurrence_plan, schedule, strategies_doc, knowledge, scene, caps,
+    )
+    validated = validation.build(
+        occurrence_plan, schedule, strategies_doc, cases, knowledge, scene, caps,
+        global_strategy="native_source",
+        allowed_strategies=["native_source", "source_materials"],
+    )
+    provenance = stage5.build(
+        scene, target, compiled, occurrence_plan,
+        schedule, strategies_doc, validated,
+    )
+    assert provenance["action_count"] == len(compiled["actions"])
+    assert provenance["explicit_source_action_count"] >= 3
+    assert provenance["source_occurrence_count"] == (
+        occurrence_plan["source_occurrence_count"]
+    )
+    source_evidence = native.inventory(compiled, occurrence_plan, strategies_doc)
+    assert provenance["native_action_inventory_sha256"] == native.digest(source_evidence)
+    # The source camera's native setup is one-to-one with entities[1].
+    camera = next(row for row in provenance["native_actions"]
+                  if row["kind"] == "camera_setup")
+    expected = next(row["occurrence_id"] for row in occurrence_plan["elements"]
+                    if row["source_location"] == "entities[1]")
+    assert camera["source_occurrence_ids"] == [expected]
+    stage5.verify(
+        provenance, scene, target, compiled, occurrence_plan,
+        schedule, strategies_doc, validated,
+    )
