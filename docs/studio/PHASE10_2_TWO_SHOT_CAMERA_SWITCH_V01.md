@@ -71,7 +71,11 @@ claims cannot be replayed automatically.
 3. One native camera-cut master track, two section UObject instances, bounded
    master/bound Sequencer track inventory, no nested shot/subsequence/time
    dilation/warp control. No track creation/removal or camera binding setter.
-4. Native section ranges and actual camera-binding IDs re-read through
+4. **Each native section camera-binding GUID resolves to the exact newly
+   staged CineCamera UObject path**, not merely an actor with the same label.
+   The active world, binding ID, label, object path and native class must all
+   match the original source-created actor; missing API denies the repair.
+5. Native section ranges and actual camera-binding IDs re-read through
    `cinetwin_camera_cuts.inspect` must match the original exact observation.
 
 For a switch moving **earlier**, the first shot is shortened before the
