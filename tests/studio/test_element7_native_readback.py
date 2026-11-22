@@ -58,6 +58,8 @@ def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False):
     source["source"] = copy.deepcopy(sampling["source"])
     target["source"] = copy.deepcopy(sampling["source"])
     target["skeletal_bone_maps"] = {"character": {"hips": "pelvis"}}
+    target["coverage"]["source_entity_count"] = len(sampling["entities"])
+    target["coverage"]["mapped_entity_count"] = 2 + int(complete)
     target["target"] = {
         "engine": "unreal", "engine_version": "5.8",
         "sequence_asset_path": "/Game/Acceptance/LS_Test.LS_Test",
@@ -102,8 +104,10 @@ def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False):
         "entities": {
             "Alice": {"actor_label": "AliceUnreal"},
             "Camera": {"actor_label": "CameraUnreal"},
-            "Sound": {"actor_label": "NativeAudioActor"},
+            **({"Sound": {"actor_label": "NativeAudioActor"}}
+               if complete else {}),
         },
+        "skeletal_bone_maps": {"character": {"hips": "pelvis"}},
     }
     _put(mapping_file, mapping)
     candidate_id = "20261121T183000Z_deadbeef"
@@ -286,6 +290,9 @@ def test_element7_measured_scope_is_reconstructed_but_never_full_fidelity(tmp_pa
     assert report["distinct_reopened_editor_observed"] is True
     assert report["target_tick_sampling_status"] == (
         "TICK_SYNCHRONIZED_FULL_GRID_CLAIMED"
+    )
+    assert report["source_target_mapping_status"] == (
+        "EXACT_PREPARED_MAPPING_OBSERVED"
     )
     assert report["measured_scope_status"] == "NATIVE_MEASURED_SCOPE_INCOMPLETE"
     assert report["sampling_count"] == 5
