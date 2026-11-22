@@ -177,7 +177,6 @@ def build(csir: dict, conversion: dict, sampling: dict,
         raise ElementCineTwinError("Unexpected CineTwin behavior comparator.")
     if comparison.get("evaluation", {}).get("overall_cutscene_fidelity") != "NOT_ESTABLISHED":
         raise ElementCineTwinError("A source sample cannot claim whole-cutscene fidelity.")
-    entities = csir.get("entities", [])
     by_eid = {row["entity_id"]: row for row in comparison["entities"]}
     rigs = {row["entity_id"]: row for row in comparison["rig_motion_diagnostics"]}
     optics = {row["source_entity_id"]: row
@@ -187,20 +186,15 @@ def build(csir: dict, conversion: dict, sampling: dict,
             or len(rigs) != len(comparison["rig_motion_diagnostics"])
             or len(optics) != len(comparison["camera_optics"]["per_camera"])):
         raise ElementCineTwinError("CineTwin comparison duplicated source identity.")
-    eid_to_occurrence = {
-        entity.get("entity_id"): conversion["elements"][i]["occurrence_id"]
-        for i, entity in enumerate(entities)
-        if isinstance(entity, dict) and isinstance(entity.get("entity_id"), str)
-        # The source inventory adds assets before entities; never assume
-        # entity index and occurrence index are identical.
-    }
-    eid_to_occurrence.clear()
+    # Entity indices never equal occurrence indices if source assets precede
+    # entities. Use the independently checked location/occurrence pairs.
+    eid_to_occurrence: dict[str, str] = {}
     for row, item in zip(rows, conversion["elements"]):
         if row["kind"] == "entities" and row["raw_id"] is not None:
             if row["raw_id"] in eid_to_occurrence:
                 raise ElementCineTwinError("Duplicated source entity identity.")
             eid_to_occurrence[row["raw_id"]] = item["occurrence_id"]
-    if not set(by_eid) | unmapped == set(eid_to_occurrence):
+    if (set(by_eid) | unmapped) != set(eid_to_occurrence):
         raise ElementCineTwinError("CineTwin observation omitted source entities.")
     # Infer only which track is *bound* to which source entity, not which
     # track caused a measured actor or skeletal discrepancy.
@@ -352,7 +346,7 @@ def remeasure(csir: dict, conversion: dict, sampling: dict,
         elif no_progress:
             result = "STOP_REPEATED_NO_MEASURED_IMPROVEMENT"
         elif ended == "DIRECT_MEASURED_NO_FLAGGED_DIFFERENCE":
-            result = ("MEASURED_DOMAINS_IMPROVED_PENDING_NATIVE_PERSISTENCE"
+            result = ("MEASURED_FLAGS_CLEARED_PERSISTENCE_UNVERIFIED"
                       if independent_identity else
                       "MEASURED_IMPROVEMENT_TARGET_PROVENANCE_INCOMPLETE")
         elif ended == "DIRECT_MEASURED_DIFFERENCE":
@@ -374,6 +368,10 @@ def remeasure(csir: dict, conversion: dict, sampling: dict,
         })
     if len(target_captures) - 1 >= MAX_REMEASURE_ATTEMPTS:
         stop = True
+    if not any(row["result"] in {
+        "PARTIAL_OR_DIFFERENT_MEASURED_DISCREPANCY_REMAINS"
+    } for row in records):
+        stop = True
     summary = {
         "kind": "cutsceneai.studio.element_cinetwin_remeasurement",
         "schema_version": VERSION,
@@ -385,7 +383,7 @@ def remeasure(csir: dict, conversion: dict, sampling: dict,
         "baseline_attribution_sha256": reports[0]["attribution_sha256"],
         "latest_attribution_sha256": reports[-1]["attribution_sha256"],
         "remeasurement_attempts": len(target_captures) - 1,
-        "target_project_and_sequence_identity_bound": bool(independent_identity),
+        "target_project_and_sequence_identity_claim_consistent": bool(independent_identity),
         "further_automatic_repair_or_retry_authorized": False,
         "next_attempt_recommended": not stop,
         "full_cutscene_fidelity_verified": False,
