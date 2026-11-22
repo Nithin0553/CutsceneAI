@@ -143,7 +143,9 @@ def verify_job(workspace: Path, job: dict, native_inventory: dict) -> tuple[dict
                 k: v for k, v in receipt.items() if k != "receipt_sha256"
             })):
         raise NativeElementGateError("Exact source review was not acknowledged.")
-    manifest = approval_policy.inventory(plan, source_plan)
+    manifest = approval_policy.inventory(
+        plan, source_plan, workflow["element_strategy"],
+    )
     permission = _read(candidate / "element-native-approval.json")
     approval_policy.verify_authorization(
         permission, manifest, candidate_id=job["candidate_id"],
