@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import feature_dispatch
-import studio_element_plan
 
 KIND = "cutsceneai.studio.element_native_dispatch_authorization"
 RECEIPT_KIND = "cutsceneai.studio.element_native_dispatch_receipt"
@@ -28,7 +27,10 @@ class ElementNativeExecutionError(ValueError):
 
 
 def digest(value: Any) -> str:
-    return studio_element_plan._digest(value)
+    return hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")).hexdigest()
 
 
 def sha(path: Path) -> str:
