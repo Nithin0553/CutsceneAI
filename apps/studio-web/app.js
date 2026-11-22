@@ -182,12 +182,14 @@
         '<div class="rule"></div><h3>Exact native action authorization</h3>'+
         item('Registered prepared actions',size(r.native_actions?.action_count))+
         item('Legacy actions without exact-source attribution',size(r.native_actions?.unattributed_count))+
+        item('Blocked actions requiring source/target evidence',size(r.native_actions?.blocked_action_count))+
         item('Native action approval',r.native_actions?.approved_for_existing_native_preflight?'APPROVED · ENGINE PREFLIGHT REQUIRED':'NOT AUTHORIZED')+
         '<p class="hint">Only the immutable registered Unreal builder action set can run. Actions without explicit source-location metadata are not described as per-element verified. Partial plan changes require a NEW candidate.</p>'+
         (r.native_actions?.approved_for_existing_native_preflight?
           statusLabel('EXACT ACTION SET AUTHORIZED','good'):
           btn('Approve all prepared native actions','approve-native-elements','secondary',
-              state.busy||!r.review_acknowledged||!r.target_capability_evidence_current||!r.target_capabilities_observed))+
+              state.busy||!r.review_acknowledged||!r.target_capability_evidence_current||
+              !r.target_capabilities_observed||r.native_actions?.blocked_action_count>0))+
         '<p class="hint">Acknowledgment confirms issue review only; it does not authorize native or AI tool execution.</p>'+
         (r.review_acknowledged?statusLabel('REVIEW ACKNOWLEDGED','good'):
           btn('Acknowledge known source limitations','ack-elements','secondary',
