@@ -50,6 +50,7 @@ class AgentState(TypedDict, total=False):
     feedback_id: str
     intent_routing: dict[str, Any]
     transform_candidate: dict[str, Any]
+    element8_review: dict[str, Any]
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -325,6 +326,56 @@ def _material_feedback_scope(message: str) -> bool:
     ))
 
 
+def _element8_review(workspace: Path, candidate: Path,
+                     job: dict[str, Any]) -> dict[str, Any] | None:
+    """Only compare existing source-bound, reopened native CineTwin captures.
+
+    This is model-visible advisory evidence, never engine edit permission.
+    Legacy jobs without Element 7 readback continue under their separately
+    validated, explicitly user-approved native policies.
+    """
+    verified = sorted(
+        candidate.glob("native-acceptance-*/element7-readback.json"),
+        key=lambda item: (item.stat().st_mtime_ns, item.parent.name),
+    )
+    if not verified:
+        return None
+    if len(verified) > 3 or any(
+        path.is_symlink() or path.parent.is_symlink()
+        for path in verified
+    ):
+        raise AgentError("Element 8 native remeasurement budget or evidence path is unsafe.")
+    import studio_element8_repair
+
+    try:
+        proof = studio_element8_repair.build(
+            workspace, job["job_id"], [path.parent for path in verified],
+        )
+    except (studio_element8_repair.BoundedRepairError, OSError, ValueError,
+            KeyError, TypeError) as exc:
+        raise AgentError(
+            "Element 8 raw source/target recovery evidence failed verification."
+        ) from exc
+    return {
+        "status": proof["status"],
+        "repair_plan_sha256": proof["repair_plan_sha256"],
+        "remeasurement_attempts": proof["remeasurement_attempts"],
+        "remaining_manual_observation_budget":
+            proof["remaining_manual_observation_budget"],
+        "native_character_offset_review_available":
+            proof["native_repair_adapter_available_for_review"],
+        "per_occurrence_advisory": [{
+            "occurrence_id": row["occurrence_id"],
+            "strategy": row["advisory_strategy"],
+            "latest_status": row["latest_status"],
+            "remeasurement_result": row["remeasurement_result"],
+        } for row in proof["per_occurrence"][:30]],
+        "native_repair_authorized": False,
+        "automatic_native_retry_authorized": False,
+        "full_cutscene_fidelity_verified": False,
+    }
+
+
 def build_graph(workspace: Path, job: dict[str, Any],
                 reasoner: Callable[[dict[str, Any]], dict[str, str]] | None = None):
     """Return an actual compiled LangGraph StateGraph with conditional retry loop."""
@@ -360,6 +411,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 }],
             }, {})
         count = _valid_fallback(visual)
+        element8 = _element8_review(workspace, candidate, job)
         transform_proof = None
         if (comment and agent_intent_router.recognize(user_message)["domains"] == ["transform"]):
             import agent_transform_evidence
@@ -426,6 +478,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "eligible_repair": eligible,
             "intent_routing": routing,
             "transform_candidate": transform_proof or {},
+            "element8_review": element8 or {},
         }
         if not issues:
             return {**base, "status": "NO_DETECTED_GAPS_FIDELITY_UNVERIFIED"}
@@ -462,6 +515,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "verified_ced_precedents": _approved_precedents(workspace, job),
             "approved_ced_rulebook_precedents": _approved_ced_rulebook_precedents(workspace, job),
             "verified_transform_candidate": state.get("transform_candidate", {}),
+            "element8_native_readback": state.get("element8_review", {}),
         }
         try:
             suggestion = choose(summary)
@@ -480,6 +534,18 @@ def build_graph(workspace: Path, job: dict[str, Any],
             comment and state.get("transform_candidate", {}).get("eligible")
             and "restore_constant_actor_offset" in
             state["intent_routing"]["safe_strategies"]
+            and (
+                not state.get("element8_review")
+                or (
+                    state["element8_review"].get(
+                        "native_character_offset_review_available"
+                    ) is True
+                    and state["element8_review"].get("status") not in {
+                        "STOP_MEASURED_REGRESSION_OR_NO_PROGRESS",
+                        "STOP_REMEASUREMENT_BUDGET_EXHAUSTED",
+                    }
+                )
+            )
         ):
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
                     "failure": "Transform proposal was not independently authorized.",

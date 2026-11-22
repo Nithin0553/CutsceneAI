@@ -666,6 +666,55 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
                     "reconstructed from the saved Unity/Unreal samples.",
                 )
 
+    # Element 8 never implies a native repair or replay permission. It
+    # independently derives a bounded diagnostic from actual source-bound
+    # Element 7 files, and refuses to rank an invalid/rehashed comparison.
+    if not accepted or not (
+        chosen.parent / "element7-readback.json"
+    ).is_file():
+        record(
+            "element8_bounded_repair_triage", "INCOMPLETE",
+            "No independently reconstructed post-reopen Element 7 readback "
+            "is available for bounded repair triage.",
+        )
+    else:
+        try:
+            import studio_element8_repair
+
+            decision = studio_element8_repair.build(
+                root, job_id, [chosen.parent],
+            )
+            existing = candidate / (
+                "element8-repair-plan-" + decision["repair_plan_sha256"] + ".json"
+            )
+            if existing.exists():
+                studio_element8_repair.verify(
+                    _read(existing), root, job_id, [chosen.parent],
+                )
+            record(
+                "element8_bounded_repair_triage", "PASS",
+                "One exact-source native capture was classified using a bounded "
+                "read-only strategy policy. This is NOT a native repair grant, "
+                "action readback, automatic retry or cinematic fidelity proof.",
+                diagnostic_status=decision["status"],
+                source_occurrence_count=decision["source_occurrence_count"],
+                manual_observation_budget=decision[
+                    "remaining_manual_observation_budget"
+                ],
+                user_authorized_character_offset_review_possible=decision[
+                    "native_repair_adapter_available_for_review"
+                ],
+                native_repair_authorized=False,
+                automatic_native_retry_authorized=False,
+                repair_plan_sha256=decision["repair_plan_sha256"],
+            )
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            record(
+                "element8_bounded_repair_triage", "FAIL",
+                "Element 8 native comparison/repair evidence is missing, "
+                "stale or corrupted: " + type(exc).__name__,
+            )
+
     for domain, explanation in {
         "rendered_frame_parity": "Matched-time source and target images/camera projections are not independently compared.",
         "full_skeletal_pose": "All animated joint transforms, reference poses and retargeting remain unverified.",

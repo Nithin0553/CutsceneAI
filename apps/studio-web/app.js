@@ -335,6 +335,14 @@
         (r.checks?.element7_cinetwin_recomputation?.unmapped_actors!=null?
           item('Unmapped source actors',size(r.checks.element7_cinetwin_recomputation.unmapped_actors)):'')+
         '<p class="hint">Element 7 recomputes stored native observations against the exact Unity capture, prepared plan, and source-bound Element 6 attempt. Even a measured-domain PASS is not proof of rendered, audio, event, or complete cinematic fidelity.</p>'+
+        '<div class="rule"></div><h3>Element 8 · Bounded repair agent</h3>'+
+        item('Verified read-only recovery triage',r.checks?.element8_bounded_repair_triage?.status||'INCOMPLETE')+
+        (r.checks?.element8_bounded_repair_triage?.diagnostic_status?
+          item('Recovery decision',r.checks.element8_bounded_repair_triage.diagnostic_status):'')+
+        (r.checks?.element8_bounded_repair_triage?.manual_observation_budget!=null?
+          item('Remaining bounded remeasurements',size(r.checks.element8_bounded_repair_triage.manual_observation_budget)):'')+
+        item('Automatic native retry / new edit','NOT AUTHORIZED')+
+        '<p class="hint">Element 8 only classifies independently reconstructed discrepancies. Existing character-offset and material adapters still require their own exact-source preflight, explicit user request, editor approval and fresh measurement. No arbitrary AI Unreal commands or full fidelity claims.</p>'+
         '<details><summary>Independent domain checks ('+size(checks.length)+')</summary>'+
         checks.map(([name,check])=>'<p class="hint"><strong>'+esc(name.replaceAll('_',' '))+
           '</strong> · '+esc(check.status)+' · '+esc(check.explanation||'')+'</p>').join('')+

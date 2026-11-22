@@ -191,6 +191,14 @@ def recover_latest(workspace: str | Path | None = None, *, unreal_api: Any = Non
     candidate = Path(job["candidate_dir"]).resolve()
     if not candidate.is_relative_to((root / "candidates").resolve()):
         raise GenerationRecoveryError("Job candidate is outside the Studio workspace.")
+    # Element 6 owns native generation once it has claimed this exact job.
+    # Even a legacy readiness-import workaround cannot retry a partially
+    # modified scene when its exclusive native claim exists.
+    if (candidate / ("element6-native-claim-" + job_id + ".json")).exists():
+        raise GenerationRecoveryError(
+            "Guarded native execution already claimed this job; inspect "
+            "its irreversible stages and native receipts. Never replay."
+        )
     attempt = candidate / ("generation-recovery-" + job_id + ".json")
     backup = candidate / ("job-before-recovery-" + job_id + ".json")
     receipt_path = candidate / ("unreal-runtime-receipt-" + job_id + ".json")
