@@ -142,7 +142,13 @@ def test_checkpoint_exclusive_lock_fails_closed(tmp_path):
 def test_graph_blocker_disallows_proposed_native_choice(tmp_path):
     _, _, _, plan = _scenario(13)
     blocked = plan["elements"][0]["occurrence_id"]
-    model = Model()
+    class MaliciousModel(Model):
+        def complete_json(self, **kwargs):
+            result = super().complete_json(**kwargs)
+            result.answer["choices"][0]["action"] = "camera_setup"
+            return result
+
+    model = MaliciousModel()
     with pytest.raises(elements.ElementPlanError, match="blocked"):
         elements.review_with_model(
             plan, provider=model,
