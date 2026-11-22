@@ -9,7 +9,8 @@
     selectedFolders:{unity:'',unreal:''}, discovery:null, selectedCutscene:'', selectedLevel:'', selectedUnrealProject:'', sourceRightsConfirmed:false,
     capabilities:null, sourceSurfaces:null, censusIdentity:'', selectedCensus:'', strictSourceCensus:true,
     visibilityFallback:false, importFbxMaterials:false, verification:null,
-    elementReview:null, elementReviewCandidateId:'', elementReviewError:'', releaseReadiness:null };
+    elementReview:null, elementReviewCandidateId:'', elementReviewError:'', releaseReadiness:null,
+    finalOutcome:null, finalOutcomeJobId:'', finalOutcomeError:'' };
   const steps = [['connect','Connect'],['select','Select'],['review','Review'],['transfer','Transfer'],['results','Results']];
   const mark = `<svg viewBox="0 0 36 36" fill="currentColor" aria-hidden="true"><path d="M18 2 3 30h11l4-7h-5l7-14zM23 18l10 12H19l-4-4h8l-4-5z"/></svg>`;
   const icons = {
