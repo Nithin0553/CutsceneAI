@@ -35,6 +35,7 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
                 "restore_source_albedo", "restore_constant_actor_offset",
                 "restore_static_camera_lens",
                 "restore_single_camera_cut_timing",
+                "restore_two_shot_camera_switch",
                 "restore_static_camera_position",
                 "restore_static_character_actor_yaw",
             }
@@ -108,6 +109,11 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
     if request["strategy"] == "restore_single_camera_cut_timing":
         import studio_camera_cut_repair
         return studio_camera_cut_repair.attempt(
+            api, workspace, job, request,
+        )
+    if request["strategy"] == "restore_two_shot_camera_switch":
+        import studio_two_shot_cut_repair
+        return studio_two_shot_cut_repair.attempt(
             api, workspace, job, request,
         )
     if request["strategy"] == "restore_static_camera_position":
