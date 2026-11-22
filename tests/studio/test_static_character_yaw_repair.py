@@ -103,6 +103,9 @@ class Actor:
     def get_actor_label(self):
         return "GuardTarget"
 
+    def get_path_name(self):
+        return "/Game/Stage/L_Static.L_Static:PersistentLevel.GuardTarget"
+
     def get_class(self):
         return ns(get_name=lambda: "SkeletalMeshActor")
 
@@ -202,6 +205,8 @@ def staged(monkeypatch, tmp_path):
     receipt_path.write_text('{"actors_created": []}', encoding="utf-8")
     docs[receipt_path.name] = {"actors_created": [{
         "kind": "entity.character", "name": "Guard", "label": "GuardTarget",
+        "native_actor_path":
+            "/Game/Stage/L_Static.L_Static:PersistentLevel.GuardTarget",
     }]}
     (workspace / "jobs").mkdir()
     (workspace / "jobs" / (job["job_id"]+".json")).write_text(
@@ -253,7 +258,7 @@ def test_native_editor_static_yaw_one_edit_source_derived_and_pending_reopen(
 
 
 @pytest.mark.parametrize("case", [
-    "stale_proof", "stale_feedback", "unsafe_message",
+    "stale_proof", "stale_feedback", "unsafe_message", "wrong_staged_actor",
     "skeletal_track", "control_rig", "nested_shot", "imported_mesh_rotation",
     "animation_blueprint", "postprocess", "single_node",
     "single_mode", "physics", "stale_actor_rotation", "bad_world_basis",
@@ -271,6 +276,10 @@ def test_native_preflight_refuses_unsafe_root_or_retarget_owner(
         docs["user-feedback-" + request["feedback_id"] + ".json"]["message"] = (
             "Please fix the moving character facing."
         )
+    elif case == "wrong_staged_actor":
+        docs[Path(job["setup_receipt_file"]).name]["actors_created"][0][
+            "native_actor_path"
+        ] = "/Game/Stage/L_Static.L_Static:PersistentLevel.DifferentActor"
     elif case == "skeletal_track":
         api = editor(actor, tracks=["MovieSceneSkeletalAnimationTrack"])
     elif case == "control_rig":
