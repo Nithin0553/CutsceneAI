@@ -309,3 +309,65 @@ def test_native_unreal_gate_keeps_host_optional_dependencies_out_of_editor_impor
     assert "import jsonschema" not in src
     assert "feature_dispatch._source_rows(csir)" in src
     assert "native_inventory.get(\"available\") is not True" in src
+
+
+
+def test_localhost_native_action_approval_is_explicit_and_session_scoped(tmp_path):
+    from datetime import UTC, datetime
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    from test_studio_local_bridge import bridge, call
+
+    work, worker, _target, _report, _manifest_doc = _manifest(tmp_path)
+    _write(work / "unreal-worker.json", {
+        "heartbeat": datetime.now(UTC).isoformat(),
+        "project": worker["project"],
+        "level": worker["level"],
+        "scene_inventory": worker["scene_inventory"],
+    })
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("Studio", encoding="utf-8")
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), bridge.create_handler(web, work)
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = "http://127.0.0.1:" + str(server.server_port)
+        token = call(base + "/api/status")[1]["token"]
+        prepared_code, prepared = call(
+            base + "/api/elements/prepare", {}, token,
+        )
+        assert prepared_code == 200
+        assert prepared["native_actions"]["action_count"] == 1
+        assert prepared["target_capabilities_observed"] is True
+        approval = {
+            "workflow_sha256": prepared["workflow_sha256"],
+            "action_inventory_sha256": prepared["native_actions"][
+                "action_inventory_sha256"],
+            "review_all": True,
+            "accept_legacy_unattributed": False,
+        }
+        route = base + "/api/elements/approve-native-actions"
+        assert call(route, approval)[0] == 403
+        assert call(route, approval, token, "https://hostile.example")[0] == 403
+        assert call(route, approval, token)[0] == 422
+        assert call(base + "/api/elements/acknowledge", {
+            "workflow_sha256": prepared["workflow_sha256"], "reviewed": True,
+        }, token)[0] == 200
+        wrong = dict(approval, review_all=False)
+        assert call(route, wrong, token)[0] == 422
+        injected = dict(approval, command="import unreal; delete_all_assets()")
+        assert call(route, injected, token)[0] == 422
+        status, approved = call(route, approval, token)
+        assert status == 200
+        assert approved["approved_for_existing_native_preflight"] is True
+        assert approved["native_builder_executed"] is False
+        assert call(base + "/api/elements")[1]["native_actions"][
+            "approved_for_existing_native_preflight"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
