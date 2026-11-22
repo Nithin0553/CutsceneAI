@@ -30,6 +30,8 @@ import studio_element_native_execution as native_actions
 import studio_element_plan
 import studio_element_schedule
 import studio_element_strategy
+import studio_element4_validation
+import studio_element5_plan
 from sampling_plan import build_plan
 
 KNOWN_CAPABILITIES = (
@@ -157,6 +159,19 @@ def _build(folder: Path, caps: dict[str, bool], observed: bool,
     investigation = studio_element_investigation.build(
         plan, schedule, strategy, knowledge, csir, caps,
     )
+    # Element 4's baseline inventory gate does not impersonate an invoked
+    # model; it records all report-only limitations and rejects unsafe
+    # combinations before Element 5 binds the deterministic native compiler.
+    baseline_gate = studio_element4_validation.build(
+        plan, schedule, strategy, investigation, knowledge, csir, caps,
+        global_strategy="native_source",
+        allowed_strategies=["native_source", "source_materials"],
+    )
+    native_plan = _read(location / "transfer-plan.json")
+    mapping = _read(mapping_path)
+    source_bound = studio_element5_plan.build(
+        csir, mapping, native_plan, plan, schedule, strategy, baseline_gate,
+    )
     report = {
         "kind": "cutsceneai.studio.element_workflow",
         "schema_version": "1",
@@ -176,6 +191,8 @@ def _build(folder: Path, caps: dict[str, bool], observed: bool,
         "element_schedule": schedule,
         "element_strategy": strategy,
         "element_investigation": investigation,
+        "element4_baseline_validation": baseline_gate,
+        "element5_source_bound_plan": source_bound,
         "native_execution_authorized": False,
         "full_cutscene_fidelity_verified": False,
     }
@@ -308,6 +325,9 @@ def require_native_action_authorization(folder: Path, worker: dict,
             "Native action submission needs a fresh acknowledged Element 3 source review."
         )
     manifest, _ = _native_inventory(folder, report)
+    if native_actions.digest(manifest) != report["element5_source_bound_plan"][
+            "native_action_inventory_sha256"]:
+        raise ElementWorkflowError("Element 5 source-bound compiled action evidence changed.")
     approval = _native_approval(folder, report, manifest)
     if approval is None:
         raise ElementWorkflowError(
@@ -530,6 +550,11 @@ def _preview(report: dict, folder: Path, worker: dict,
     selected = rows[offset: offset + PAGE_SIZE]
     index = _index(folder, report)
     manifest, _ = _native_inventory(folder, report)
+    if (native_actions.digest(manifest) != report["element5_source_bound_plan"][
+            "native_action_inventory_sha256"]):
+        raise ElementWorkflowError(
+            "Element 5 native action list diverged from the immutable source-bound plan."
+        )
     approval = _native_approval(folder, report, manifest)
     latest = None
     if index["observations"]:
@@ -584,6 +609,32 @@ def _preview(report: dict, folder: Path, worker: dict,
         "target_capability_evidence_current": _current_native_status(report, config, worker),
         "review_acknowledged": _review_ack(location, report["workflow_sha256"]),
         "element4_strategy_validation": _element4_model_gate(folder, report),
+        "element5_source_bound_plan": {
+            "status": "SOURCE_BOUND_ADVISORY_PLAN_NATIVE_PREFLIGHT_PENDING",
+            "source_bound_plan_sha256":
+                report["element5_source_bound_plan"]["source_bound_plan_sha256"],
+            "source_occurrence_count":
+                report["element5_source_bound_plan"]["source_occurrence_count"],
+            "action_count": report["element5_source_bound_plan"]["action_count"],
+            "explicit_source_action_count":
+                report["element5_source_bound_plan"]["explicit_source_action_count"],
+            "legacy_unattributed_action_count":
+                report["element5_source_bound_plan"]["legacy_unattributed_action_count"],
+            "missing_target_reference_count":
+                report["element5_source_bound_plan"]["missing_target_reference_count"],
+            "blocked_action_count":
+                report["element5_source_bound_plan"]["blocked_action_count"],
+            "source_plan_states":
+                report["element5_source_bound_plan"]["source_plan_states"],
+            "source_page": report["element5_source_bound_plan"][
+                "source_occurrences"][offset:offset + PAGE_SIZE],
+            "native_action_page": report["element5_source_bound_plan"][
+                "native_actions"][action_offset:action_offset + PAGE_SIZE],
+            "native_builder_action_order_preserved": True,
+            "native_execution_authorized": False,
+            "target_readback_verified": False,
+            "full_cutscene_fidelity_verified": False,
+        },
         "native_actions": {
             "action_count": manifest["action_count"],
             "unattributed_count": manifest["unattributed_count"],
