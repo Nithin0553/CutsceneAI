@@ -4,6 +4,7 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 
 ## Start here
 
+- [Element 3 Studio workflow integration](studio/ELEMENT3_STUDIO_WORKFLOW_INTEGRATION_V01.md) — candidate-bound source review, explicit acknowledgment and persistent CineTwin readback
 - [Element 3.5: CineTwin per-element discrepancy attribution and bounded recovery](studio/ELEMENT3_CINETWIN_ATTRIBUTION_RECOVERY_V01.md) — fresh native observation comparisons and non-executable per-element recovery review
 - [Element 3.4: Source-bound investigation and registered alternatives](studio/ELEMENT3_INVESTIGATION_AND_ALTERNATIVES_V01.md) — complete diagnostic cases, opt-in model triage, strict evidence/permissions
 - [Element 3.3: Adaptive CED strategy decisions](studio/ELEMENT3_ADAPTIVE_CED_STRATEGY_V01.md) — ranked evidence, source-native routing, bounded model alternatives, and independent verification
