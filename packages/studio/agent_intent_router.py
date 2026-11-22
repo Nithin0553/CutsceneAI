@@ -139,6 +139,7 @@ def route(
     transform_repair_evidence: dict[str, Any] | None = None,
     camera_lens_repair_evidence: dict[str, Any] | None = None,
     camera_cut_repair_evidence: dict[str, Any] | None = None,
+    two_shot_cut_repair_evidence: dict[str, Any] | None = None,
     camera_position_repair_evidence: dict[str, Any] | None = None,
     character_facing_review: dict[str, Any] | None = None,
     static_character_yaw_evidence: dict[str, Any] | None = None,
@@ -215,6 +216,24 @@ def route(
             "camera_cut_repair_sha256"
         ), str)
     )
+    two_shot_eligible = False
+    if isinstance(two_shot_cut_repair_evidence, dict):
+        from studio_two_shot_cut_evidence import message_requests_two_shot
+        two_shot_eligible = bool(
+            message_requests_two_shot(message)
+            and intent["mode"] == "user_feedback"
+            and domains == ["camera"] and not intent["ambiguous"]
+            and generation_complete and completed_repairs < repair_budget
+            and two_shot_cut_repair_evidence.get("eligible") is True
+            and two_shot_cut_repair_evidence.get("kind")
+            == "cutsceneai.studio.two_shot_camera_boundary_review"
+            and two_shot_cut_repair_evidence.get("camera_count") == 2
+            and two_shot_cut_repair_evidence.get("switch_count") == 1
+            and two_shot_cut_repair_evidence.get("native_edit_authorized") is False
+            and isinstance(two_shot_cut_repair_evidence.get(
+                "two_shot_cut_repair_sha256"
+            ), str)
+        )
     camera_position_request_valid = False
     if isinstance(camera_position_repair_evidence, dict):
         # A multi-domain message (e.g. "camera position and lens") may share
@@ -288,6 +307,17 @@ def route(
             "transform and explicit current user consent before one edit."
         )
         allowed = ["report_only", "restore_static_camera_position"]
+    elif two_shot_eligible:
+        disposition = "GUARDED_TWO_SHOT_SWITCH_BOUNDARY_AVAILABLE"
+        reason = (
+            "Two source-authored, frame-aligned, uniquely bound CineCameras "
+            "have a single mismatched shared switch frame within eight frames. "
+            "All outer frames, shot order and native bindings match. "
+            "Unreal must recheck exact staged camera objects, native Sequencer "
+            "track ownership and current consent, then repair both ranges "
+            "with rollback and independent reopen verification pending."
+        )
+        allowed = ["report_only", "restore_two_shot_camera_switch"]
     elif camera_cut_eligible:
         disposition = "GUARDED_ONE_CAMERA_CUT_TIMING_AVAILABLE"
         reason = (
@@ -377,7 +407,8 @@ def route(
         "safe_strategies": allowed,
         "requires_editor_receipt": (
             eligibility or transform_eligible or camera_eligible
-            or camera_cut_eligible or camera_position_eligible
+            or camera_cut_eligible or two_shot_eligible
+            or camera_position_eligible or static_character_yaw_eligible
         ),
         "user_observation_verified": False,
         "native_fidelity_verified": False,

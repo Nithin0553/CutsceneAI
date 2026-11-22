@@ -26,7 +26,7 @@ ALLOWED_STRATEGIES = {
     "restore_source_albedo", "restore_constant_actor_offset",
     "restore_static_camera_lens", "restore_single_camera_cut_timing",
     "restore_static_camera_position", "restore_static_character_actor_yaw",
-    "report_only",
+    "restore_two_shot_camera_switch", "report_only",
 }
 
 
@@ -58,6 +58,7 @@ class AgentState(TypedDict, total=False):
     element8_review: dict[str, Any]
     camera_lens_candidate: dict[str, Any]
     camera_cut_candidate: dict[str, Any]
+    two_shot_cut_candidate: dict[str, Any]
     camera_position_candidate: dict[str, Any]
     character_facing_candidate: dict[str, Any]
     static_character_yaw_candidate: dict[str, Any]
@@ -298,7 +299,15 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
             "rewrites are permitted. restore_single_camera_cut_timing "
             "requires an exact source-authored single shot, known camera "
             "binding, small sampled frame discrepancy and separate native "
-            "section readback. No multi-shot/subsequence rewrites. "
+            "section readback. No generic multi-shot/subsequence rewrites. "
+            "restore_two_shot_camera_switch supports exactly TWO source-bound "
+            "camera-cut sections with unique native bindings, a shared switch "
+            "boundary misaligned by at most eight frames, original outer "
+            "boundaries unchanged and no camera reordering. The editor "
+            "must recheck the exact two newly staged camera UObject paths, "
+            "then move the shared boundary without overlap and rollback "
+            "both sections on failure. No shot insertion, nested sequences, "
+            "camera retargeting or rendered-equivalence claims. "
             "restore_static_camera_position requires one source-mapped, "
             "unparented CineCamera with constant captured world positions, "
             "matching rotation/scale and verified source/native offset. "
@@ -447,6 +456,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
         transform_proof = None
         camera_proof = None
         cut_proof = None
+        two_shot_proof = None
         camera_position_proof = None
         facing_review = None
         static_yaw_proof = None
@@ -488,6 +498,19 @@ def build_graph(workspace: Path, job: dict[str, Any],
                     camera_proof = {
                         "eligible": False,
                         "reason": "No exact-source native static lens proof: "
+                                  + str(exc)[:200],
+                    }
+            import studio_two_shot_cut_evidence
+            if studio_two_shot_cut_evidence.message_requests_two_shot(user_message):
+                try:
+                    two_shot_proof = studio_two_shot_cut_evidence.build(
+                        workspace, job,
+                    )
+                except (studio_two_shot_cut_evidence.TwoShotEvidenceError,
+                        ValueError, TypeError, OSError, KeyError) as exc:
+                    two_shot_proof = {
+                        "eligible": False,
+                        "reason": "No exact-source two-shot switch proof: "
                                   + str(exc)[:200],
                     }
             import studio_camera_cut_evidence
@@ -547,6 +570,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 transform_repair_evidence=transform_proof,
                 camera_lens_repair_evidence=camera_proof,
                 camera_cut_repair_evidence=cut_proof,
+                two_shot_cut_repair_evidence=two_shot_proof,
                 camera_position_repair_evidence=camera_position_proof,
                 character_facing_review=facing_review,
                 static_character_yaw_evidence=static_yaw_proof,
@@ -589,6 +613,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "transform_candidate": transform_proof or {},
             "camera_lens_candidate": camera_proof or {},
             "camera_cut_candidate": cut_proof or {},
+            "two_shot_cut_candidate": two_shot_proof or {},
             "camera_position_candidate": camera_position_proof or {},
             "character_facing_candidate": facing_review or {},
             "static_character_yaw_candidate": static_yaw_proof or {},
@@ -641,6 +666,19 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 ).get("measured_native_fov_error_degrees"),
                 "native_edit_authorized": False,
                 "full_cutscene_fidelity_verified": False,
+            },
+            "verified_two_shot_cut_candidate": {
+                "eligible": state.get("two_shot_cut_candidate", {}).get(
+                    "eligible"
+                ) is True,
+                "switch_count": state.get("two_shot_cut_candidate", {}).get(
+                    "switch_count", 0
+                ),
+                "maximum_frame_boundary_error": state.get(
+                    "two_shot_cut_candidate", {},
+                ).get("maximum_frame_boundary_error"),
+                "native_edit_authorized": False,
+                "reopened_cinetwin_verified": False,
             },
             "verified_camera_cut_candidate": {
                 "eligible": bool(
@@ -738,6 +776,15 @@ def build_graph(workspace: Path, job: dict[str, Any],
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
                     "failure": "Static camera placement lacks source/native proof.",
                     "chosen_strategy": "report_only"}
+        if strategy == "restore_two_shot_camera_switch" and not (
+            comment and state.get("feedback_id")
+            and state.get("two_shot_cut_candidate", {}).get("eligible") is True
+            and "restore_two_shot_camera_switch"
+            in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Two-shot native binding and shared-frame proof missing.",
+                    "chosen_strategy": "report_only"}
         if strategy == "restore_single_camera_cut_timing" and not (
             comment and state.get("feedback_id")
             and state.get("camera_cut_candidate", {}).get("eligible") is True
@@ -779,6 +826,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "restore_source_albedo", "restore_constant_actor_offset",
             "restore_static_camera_lens",
             "restore_single_camera_cut_timing",
+            "restore_two_shot_camera_switch",
             "restore_static_camera_position",
             "restore_static_character_actor_yaw",
         }:
@@ -814,6 +862,15 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 "feedback_id": state["feedback_id"],
                 "camera_position_repair_sha256": camera["camera_position_repair_sha256"],
                 "source_camera_occurrence_id": camera["source_camera_occurrence_id"],
+            })
+        if strategy == "restore_two_shot_camera_switch":
+            shot = state.get("two_shot_cut_candidate") or {}
+            if (shot.get("eligible") is not True
+                    or not state.get("feedback_id")):
+                raise AgentError("Missing verified two-shot camera switch proof.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "two_shot_cut_repair_sha256": shot["two_shot_cut_repair_sha256"],
             })
         if strategy == "restore_single_camera_cut_timing":
             shot = state.get("camera_cut_candidate") or {}
@@ -941,6 +998,44 @@ def build_graph(workspace: Path, job: dict[str, Any],
                     "reasoning": "Only native CineCamera base placement passed; "
                                  "reopened shot composition, track time grid and "
                                  "rendered framing remain unverified."}
+        if state.get("chosen_strategy") == "restore_two_shot_camera_switch":
+            shot = state.get("two_shot_cut_candidate") or {}
+            valid = bool(
+                result.get("status")
+                == "TWO_SHOT_SWITCH_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("two_shot_cut_repair_sha256")
+                == shot.get("two_shot_cut_repair_sha256")
+                and result.get("source_camera_count") == 2
+                and result.get("native_section_binding_readback_verified") is True
+                and result.get("native_shot_order_preserved") is True
+                and result.get("cinetwin_reopened_time_grid_verified_after_repair")
+                is False
+                and result.get("rendered_camera_switching_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common = {
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+                "history": (state.get("history") or []) + [{
+                    "request_id": request_id,
+                    "strategy": "restore_two_shot_camera_switch",
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified": False,
+                }],
+            }
+            if not valid:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                                       "Two-shot native switch readback failed")[:500]}
+            return {
+                **common,
+                "status": "TWO_SHOT_SWITCH_SAVED_REOPENED_CINETWIN_PENDING",
+                "reasoning": (
+                    "Two source-bound sections and bound camera identities "
+                    "were re-read. Real reopened target switching and rendered "
+                    "shot continuity remain unverified."
+                ),
+            }
         if state.get("chosen_strategy") == "restore_single_camera_cut_timing":
             shot = state.get("camera_cut_candidate") or {}
             valid = bool(
