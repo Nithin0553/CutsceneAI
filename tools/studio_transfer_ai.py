@@ -564,6 +564,42 @@ def decide(config: dict, census_path: str, worker: dict,
         evidence["ced_knowledge"], source_csir,
         evidence["summary"]["target_native_capabilities"],
     )
+    # Element 4: independently validate the WHOLE selected source graph,
+    # including native-route eligibility, ownership and selected dependencies.
+    # An invalid global combination is not a source-bound conversion plan.
+    gate_module = _agent_module("studio_element4_validation")
+    gate = gate_module.build(
+        element_plan, element_schedule, element_strategy,
+        element_investigation, evidence["ced_knowledge"], source_csir,
+        evidence["summary"]["target_native_capabilities"],
+        global_strategy=strategy, allowed_strategies=evidence["allowed_strategies"],
+    )
+    alternative_audit = []
+    if not gate["accepted_for_source_bound_plan"]:
+        if reasoner is not None or planning_mode != "model":
+            raise TransferAIError(
+                "Element 4 rejected the selected source graph; "
+                "enable bounded per-element model review or report the limitation."
+            )
+        try:
+            provider = _agent_module("studio_model_provider")
+            (element_plan, element_schedule, element_strategy,
+             element_investigation, gate, alternative_audit) = (
+                gate_module.reason_bounded(
+                    element_plan, evidence["ced_knowledge"], source_csir,
+                    evidence["summary"]["target_native_capabilities"],
+                    global_strategy=strategy,
+                    allowed_strategies=evidence["allowed_strategies"],
+                    provider=provider,
+                )
+            )
+        except gate_module.StrategyValidationError as exc:
+            raise TransferAIError(
+                "Element 4 bounded alternative reasoning failed before "
+                "native preparation: " + str(exc)[:350]
+            ) from exc
+    if not gate["accepted_for_source_bound_plan"]:
+        raise TransferAIError("Element 4 refused an unvalidated source-bound strategy.")
     # Never let model preference disable the existing source-material import
     # guarantee when provenance documents source materials. This policy is a
     # deterministic safety floor, not an LLM decision.
@@ -592,6 +628,11 @@ def decide(config: dict, census_path: str, worker: dict,
         "element_investigation": element_investigation,
         "element_investigation_sha256": element_investigation["investigation_sha256"],
         "element_investigation_advisory_only": True,
+        "element4_validation": gate,
+        "element4_validation_sha256": gate["validation_sha256"],
+        "element4_validation_advisory_only": True,
+        "element4_alternative_reasoning_audit": alternative_audit,
+        "element4_alternative_reasoning_limit": gate_module.MAX_REASONING_ROUNDS,
         "element_investigation_model_reviewed_count": element_investigation[
             "model_reviewed_count"],
         "element_investigation_model_response_sha256s": investigation_hashes,
@@ -727,6 +768,75 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
         raise TransferAIError(
             "Source investigation is stale, incomplete or unsafe: " + str(exc)
         ) from exc
+    # The gate is a PREPARED STRATEGY decision, never a native runtime
+    # assertion. Rebuild all source/knowledge/target/graph facts again.
+    gate_module = _agent_module("studio_element4_validation")
+    candidate_gate = decision.get("element4_validation")
+    if (decision.get("element4_validation_advisory_only") is not True
+            or not isinstance(candidate_gate, dict)
+            or decision.get("element4_validation_sha256")
+            != candidate_gate.get("validation_sha256")):
+        raise TransferAIError("Element 4 validation gate provenance is absent.")
+    try:
+        gate_module.verify(
+            candidate_gate, decision["element_plan"], schedule, comparison,
+            investigation, current["ced_knowledge"], _read(Path(config["csir"])),
+            current["summary"]["target_native_capabilities"],
+            global_strategy=decision["strategy"],
+            allowed_strategies=current["allowed_strategies"],
+        )
+        if not candidate_gate["accepted_for_source_bound_plan"]:
+            raise gate_module.StrategyValidationError(
+                "An unsafe combination of selected source actions cannot proceed."
+            )
+    except gate_module.StrategyValidationError as exc:
+        raise TransferAIError(
+            "Element 4 source strategy validation failed: " + str(exc)[:300]
+        ) from exc
+    reasoning = decision.get("element4_alternative_reasoning_audit")
+    if (not isinstance(reasoning, list)
+            or len(reasoning) > gate_module.MAX_REASONING_ROUNDS
+            or decision.get("element4_alternative_reasoning_limit")
+            != gate_module.MAX_REASONING_ROUNDS):
+        raise TransferAIError("Element 4 bounded retry provenance is invalid.")
+    for round_no, item in enumerate(reasoning, 1):
+        if (not isinstance(item, dict)
+                or set(item) != {
+                    "round", "rejected_count", "validated_replacement_count",
+                    "previous_validation_sha256", "new_plan_sha256",
+                    "responses", "native_execution_authorized",
+                }
+                or item["round"] != round_no
+                or type(item["rejected_count"]) is not int
+                or type(item["validated_replacement_count"]) is not int
+                or not 1 <= item["validated_replacement_count"] <= item["rejected_count"]
+                or item["rejected_count"] > candidate_gate["source_occurrence_count"]
+                or item["native_execution_authorized"] is not False
+                or not all(isinstance(item[key], str)
+                           and re.fullmatch(r"[a-f0-9]{64}", item[key])
+                           for key in ("previous_validation_sha256", "new_plan_sha256"))
+                or not isinstance(item["responses"], list)
+                or not 1 <= len(item["responses"]) <= (
+                    item["rejected_count"] + gate_module.BATCH_SIZE - 1
+                ) // gate_module.BATCH_SIZE):
+            raise TransferAIError("Element 4 bounded attempt record is invalid.")
+        for index, response in enumerate(item["responses"]):
+            if (not isinstance(response, dict)
+                    or set(response) != {
+                        "page_index", "response_sha256", "reviewed_count",
+                    }
+                    or response["page_index"] != index
+                    or type(response["reviewed_count"]) is not int
+                    or not 1 <= response["reviewed_count"] <= gate_module.BATCH_SIZE
+                    or not isinstance(response["response_sha256"], str)
+                    or not re.fullmatch(r"[a-f0-9]{64}", response["response_sha256"])):
+                raise TransferAIError("Element 4 alternative page provenance is invalid.")
+        if sum(x["reviewed_count"] for x in item["responses"]) != item["rejected_count"]:
+            raise TransferAIError("Element 4 alternative model omitted source occurrences.")
+    if reasoning and (
+            reasoning[-1]["new_plan_sha256"] != candidate_gate["element_plan_sha256"]
+            or decision.get("element_planning_mode") != "MODEL_REVIEWED"):
+        raise TransferAIError("Element 4 alternatives are not bound to final reviewed plan.")
     investigation_reviewed = investigation["model_reviewed_count"]
     if (decision.get("element_investigation_model_reviewed_count")
             != investigation_reviewed
