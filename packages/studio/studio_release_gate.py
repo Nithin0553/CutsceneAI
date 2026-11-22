@@ -581,6 +581,91 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
                 "This legacy job did not opt into the new Element 3 workflow.",
             )
 
+    # Element 7 is distinct from the legacy camera/motion acceptance status:
+    # it independently reconstructs the complete source-bound CineTwin
+    # comparison from persisted raw native capture, checks the exact Element 6
+    # one-attempt claim/receipt, and (where available) attributes EVERY source
+    # occurrence. Builder completion alone is never a readback PASS.
+    if not accepted:
+        record(
+            "element7_native_execution_chain", "INCOMPLETE",
+            "No reopened native observation is available for Element 7.",
+        )
+        record(
+            "element7_cinetwin_recomputation", "INCOMPLETE",
+            "No separate source-bound raw-sample verification has completed.",
+        )
+    else:
+        evidence_file = chosen.parent / "element7-readback.json"
+        if not evidence_file.exists():
+            record(
+                "element7_native_execution_chain", "INCOMPLETE",
+                "A legacy reopened comparison lacks the new Element 7 "
+                "source-bound execution contract.",
+            )
+            record(
+                "element7_cinetwin_recomputation", "INCOMPLETE",
+                "Independent Element 7 per-domain and per-occurrence "
+                "recomputation is not attached.",
+            )
+        else:
+            try:
+                import studio_element7_readback
+
+                proof = _read(evidence_file)
+                studio_element7_readback.verify(
+                    proof, root, job_id, chosen.parent,
+                )
+                native_chain = proof["native_attempt"]
+                chain_status = (
+                    "PASS" if native_chain["status"]
+                    == "SOURCE_BOUND_NATIVE_BUILDER_COMPLETED"
+                    else "INCOMPLETE"
+                )
+                measured = proof["measured_scope_status"]
+                measured_status = (
+                    "FAIL" if measured == "MEASURED_NATIVE_DIFFERENCES_DETECTED"
+                    else "PASS" if measured
+                    == "MEASURED_NATIVE_SCOPE_WITHIN_TOLERANCE"
+                    else "INCOMPLETE"
+                )
+                record(
+                    "element7_native_execution_chain", chain_status,
+                    "Exact candidate, Element 6 exclusive attempt and real "
+                    "native builder receipt are independently bound. "
+                    "Legacy or incomplete attempts remain unverified.",
+                    native_attempt_status=native_chain["status"],
+                )
+                record(
+                    "element7_cinetwin_recomputation", measured_status,
+                    "Recomputed full-time-grid actor/root/joint/camera "
+                    "measurements and optional anonymous per-source attribution. "
+                    "No whole-cutscene fidelity or independent engine attestation "
+                    "is inferred from stored JSON alone.",
+                    measured_scope_status=measured,
+                    sampled_frames=proof["sampling_count"],
+                    mapped_actors=proof["mapped_entity_count"],
+                    unmapped_actors=proof["unmapped_entity_count"],
+                    unverified_domains=proof["unverified_domains"],
+                    source_occurrence_count=(
+                        proof["element_occurrence_attribution"][
+                            "source_occurrence_count"
+                        ] if proof["element_occurrence_attribution"] else None
+                    ),
+                    readback_sha256=proof["readback_sha256"],
+                )
+            except (ValueError, TypeError, KeyError, OSError) as exc:
+                record(
+                    "element7_native_execution_chain", "FAIL",
+                    "Element 7 native execution or receipt evidence was altered: "
+                    + type(exc).__name__,
+                )
+                record(
+                    "element7_cinetwin_recomputation", "FAIL",
+                    "Element 7 raw CineTwin evidence cannot be independently "
+                    "reconstructed from the saved Unity/Unreal samples.",
+                )
+
     for domain, explanation in {
         "rendered_frame_parity": "Matched-time source and target images/camera projections are not independently compared.",
         "full_skeletal_pose": "All animated joint transforms, reference poses and retargeting remain unverified.",

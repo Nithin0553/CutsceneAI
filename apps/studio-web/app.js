@@ -327,6 +327,14 @@
       '<div class="form-actions">'+btn('Copy native acceptance command','copy-native-acceptance-command','secondary')+
       btn('Check release evidence','check-native-acceptance','secondary',state.busy)+'</div>'+
       (r?item('Release gate',r.status)+
+        '<div class="rule"></div><h3>Element 7 · Native readback + CineTwin</h3>'+
+        item('Original engine execution chain',r.checks?.element7_native_execution_chain?.status||'INCOMPLETE')+
+        item('Independent source/target remeasurement',r.checks?.element7_cinetwin_recomputation?.status||'INCOMPLETE')+
+        (r.checks?.element7_cinetwin_recomputation?.sampled_frames!=null?
+          item('Matched-time observations',size(r.checks.element7_cinetwin_recomputation.sampled_frames)):'')+
+        (r.checks?.element7_cinetwin_recomputation?.unmapped_actors!=null?
+          item('Unmapped source actors',size(r.checks.element7_cinetwin_recomputation.unmapped_actors)):'')+
+        '<p class="hint">Element 7 recomputes stored native observations against the exact Unity capture, prepared plan, and source-bound Element 6 attempt. Even a measured-domain PASS is not proof of rendered, audio, event, or complete cinematic fidelity.</p>'+
         '<details><summary>Independent domain checks ('+size(checks.length)+')</summary>'+
         checks.map(([name,check])=>'<p class="hint"><strong>'+esc(name.replaceAll('_',' '))+
           '</strong> · '+esc(check.status)+' · '+esc(check.explanation||'')+'</p>').join('')+
