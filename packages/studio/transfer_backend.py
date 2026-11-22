@@ -429,40 +429,27 @@ def compose(
                         "baked_source_curves": True,
                         "source_behavior_strategy": "verified_cinetwin_camera_world_pose",
                     }]
-                    # FOV is a separate camera component owner. If its
-                    # authored curve is present, preserve exactly observed
-                    # source camera lens samples instead of dropping FOV when
-                    # local transform source metadata is incomplete.
-                    animated_lens = any(
-                        str(curve.get("canonical_semantic") or "")
-                        == "camera.vertical_fov_degrees"
-                        or str(curve.get("property_name") or "").lower()
-                        == "field of view"
-                        for section in track.get("sections", [])
-                        for curve in section.get(
-                            "payload", {}
-                        ).get("animation", {}).get("curves", [])
-                        if isinstance(curve, dict)
-                    )
-                    if animated_lens:
-                        camera_metadata = entity.get("metadata", {}).get("camera", {})
-                        native_actions.append({
-                            "kind": "camera_fov",
-                            "entity_name": entity["name"],
-                            "actor_label": str(
-                                mapping["entities"][entity["name"]]["actor_label"]
-                            ),
-                            "source_fov_axis": "vertical",
-                            "target_output_aspect": plan["output_aspect"],
-                            "observed_source_aspect":
-                                camera_metadata.get("aspect"),
-                            "keys": _scalar_bake_keys(
-                                csir, capture, entity,
-                                component_name="camera",
-                                field_name="vertical_fov_degrees",
-                            ),
-                            "baked_source_curves": True,
-                        })
+                    # FOV is a separate native component owner. Capture
+                    # all independently evaluated source lens samples, even
+                    # when the Timeline extractor omitted camera FOV curves
+                    # entirely. Never silently discard observed lens behavior.
+                    camera_metadata = entity.get("metadata", {}).get("camera", {})
+                    native_actions.append({
+                        "kind": "camera_fov",
+                        "entity_name": entity["name"],
+                        "actor_label": str(
+                            mapping["entities"][entity["name"]]["actor_label"]
+                        ),
+                        "source_fov_axis": "vertical",
+                        "target_output_aspect": plan["output_aspect"],
+                        "observed_source_aspect": camera_metadata.get("aspect"),
+                        "keys": _scalar_bake_keys(
+                            csir, capture, entity,
+                            component_name="camera",
+                            field_name="vertical_fov_degrees",
+                        ),
+                        "baked_source_curves": True,
+                    })
                     status = "BAKED_PARTIAL"
                     reasons.append(
                         "Source-authenticated Unity evaluated CineTwin world "
