@@ -122,13 +122,21 @@ def build(workspace: Path, job: dict[str, Any]) -> dict[str, Any]:
                      if isinstance(t, dict) and t.get("ced_type") == "camera.cut"]
     if (len(source_tracks) != 2 or any(
             t.get("muted") is True
-            or len(t.get("sections", [])) != 1
+            or not isinstance(t.get("sections"), list)
+            or len(t["sections"]) != 1
+            or not isinstance(t["sections"][0], dict)
+            or not isinstance(t.get("track_id"), str)
+            or not t["track_id"]
             for t in source_tracks
     ) or len({t.get("track_id") for t in source_tracks}) != 2
             or len({t.get("binding_entity_id") for t in source_tracks}) != 2):
         raise TwoShotEvidenceError(
             "Source has ambiguous, muted, repeated or nested cut ownership."
         )
+    authored_by_id = {
+        t["binding_entity_id"]: t["sections"][0].get("section_id")
+        for t in source_tracks
+    }
     cameras = []
     camera_entities = [e for e in csir.get("entities", [])
                        if isinstance(e, dict) and e.get("ced_type") == "entity.camera"]
@@ -143,10 +151,8 @@ def build(workspace: Path, job: dict[str, Any]) -> dict[str, Any]:
         if (not isinstance(name, str) or not name or len(name) > 128
                 or not isinstance(label, str) or not label or len(label) > 256
                 or dst.get("actor_label") != label
-                or (src.get("source_section_id")
-                    != source_tracks[0 if source_tracks[0].get("binding_entity_id")
-                                     == ident else 1].get("sections", [{}])[0].get(
-                                         "section_id"))):
+                or not isinstance(authored_by_id.get(ident), str)
+                or src.get("source_section_id") != authored_by_id[ident]):
             raise TwoShotEvidenceError(
                 "Source section identity or native camera binding differs."
             )
