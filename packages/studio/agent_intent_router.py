@@ -138,6 +138,7 @@ def route(
     fallback_observation_scope: str = "character",
     transform_repair_evidence: dict[str, Any] | None = None,
     camera_lens_repair_evidence: dict[str, Any] | None = None,
+    camera_cut_repair_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Choose *admissible strategies*, not a repair or an engine operation.
 
@@ -199,7 +200,28 @@ def route(
         == "cutsceneai.studio.static_camera_lens_review"
         and isinstance(camera_lens_repair_evidence.get("camera_repair_sha256"), str)
     )
-    if camera_eligible:
+    camera_cut_eligible = bool(
+        intent["mode"] == "user_feedback"
+        and domains == ["camera"] and not intent["ambiguous"]
+        and generation_complete and completed_repairs < repair_budget
+        and isinstance(camera_cut_repair_evidence, dict)
+        and camera_cut_repair_evidence.get("eligible") is True
+        and camera_cut_repair_evidence.get("kind")
+        == "cutsceneai.studio.single_camera_cut_repair_review"
+        and isinstance(camera_cut_repair_evidence.get(
+            "camera_cut_repair_sha256"
+        ), str)
+    )
+    if camera_cut_eligible:
+        disposition = "GUARDED_ONE_CAMERA_CUT_TIMING_AVAILABLE"
+        reason = (
+            "An exact-source frame-aligned single camera cut was observed "
+            "with a bounded native start/end discrepancy. Native Sequencer "
+            "binding ownership must be independently rechecked; only an "
+            "explicit user-scoped one-section edit is eligible."
+        )
+        allowed = ["report_only", "restore_single_camera_cut_timing"]
+    elif camera_eligible:
         disposition = "GUARDED_STATIC_CAMERA_LENS_REPAIR_AVAILABLE"
         reason = (
             "An exact-source, single native CineCamera has an independently "
@@ -268,6 +290,7 @@ def route(
         "safe_strategies": allowed,
         "requires_editor_receipt": (
             eligibility or transform_eligible or camera_eligible
+            or camera_cut_eligible
         ),
         "user_observation_verified": False,
         "native_fidelity_verified": False,
