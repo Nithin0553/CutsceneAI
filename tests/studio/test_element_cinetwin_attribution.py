@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -275,3 +277,65 @@ def test_no_entity_is_misclassified_as_native_repaired_when_only_rig_moves():
     assert "SOURCE_MOVES_BUT_TARGET_ACTOR_STATIC" in character["discrepancy_flags"]
     assert character["recovery_hint"] == "DIAGNOSTIC_REVIEW_ONLY"
     assert character["native_repair_authorized"] is False
+
+
+
+def test_standalone_cinetwin_element_cli_never_overwrites_source_or_existing_report(tmp_path):
+    csir, conversion, _, source, target = _inputs()
+    source_path = tmp_path / "source.csir.json"
+    raw_csir = json.dumps(csir, sort_keys=True).encode("utf-8")
+    source_path.write_bytes(raw_csir)
+    sampling = build_plan(
+        csir, csir_sha256=hashlib.sha256(raw_csir).hexdigest(),
+    )
+    source["source"] = dict(sampling["source"])
+    target["source"] = dict(sampling["source"])
+    evidence = {
+        "element_plan": conversion,
+        "sampling_plan": sampling,
+        "source_capture": source,
+        "target_capture": target,
+    }
+    paths = {"csir": source_path}
+    for key, value in evidence.items():
+        path = tmp_path / (key + ".json")
+        path.write_text(json.dumps(value), encoding="utf-8")
+        paths[key] = path
+    command = [sys.executable, str(ROOT / "tools" / "cinetwin.py"),
+               "element-verify", *[
+                   str(paths[key]) for key in (
+                       "csir", "element_plan", "sampling_plan",
+                       "source_capture", "target_capture",
+                   )
+               ]]
+    output = tmp_path / "direct-attribution.json"
+    result = subprocess.run(
+        [*command, str(output)], capture_output=True,
+        text=True, check=False, timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["native_repair_authorized"] is False
+    assert report["source_occurrence_count"] == len(conversion["elements"])
+    again = subprocess.run(
+        [*command, str(output)], capture_output=True,
+        text=True, check=False, timeout=20,
+    )
+    assert again.returncode == 1
+    assert "File exists" in again.stderr
+    unsafe = subprocess.run(
+        [*command, str(source_path)], capture_output=True,
+        text=True, check=False, timeout=20,
+    )
+    assert unsafe.returncode == 1
+    assert source_path.read_bytes() == raw_csir
+
+    # Replacing only the CSIR byte layout, without re-exporting the native
+    # source capture and plan, must fail even if the JSON object is equivalent.
+    source_path.write_text(json.dumps(csir, indent=2), encoding="utf-8")
+    stale = subprocess.run(
+        [*command, str(tmp_path / "stale-attribution.json")],
+        capture_output=True, text=True, check=False, timeout=20,
+    )
+    assert stale.returncode == 1
+    assert "identity" in stale.stderr
