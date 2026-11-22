@@ -358,9 +358,15 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
             # character yaw writer. An actor with the same display label
             # must not silently replace the originally staged character.
             get_path=getattr(actor,'get_path_name',None)
-            if callable(get_path):
-                native_actor_path=str(get_path())
-                if native_actor_path and len(native_actor_path)<=1024:
+            if kind=='entity.character' and callable(get_path):
+                try:
+                    native_actor_path=str(get_path())
+                except (AttributeError,TypeError,RuntimeError,ValueError):
+                    # Staging should still work when a plugin omits UObject
+                    # path introspection. The optional static yaw repair then
+                    # refuses rather than guessing an actor from its label.
+                    native_actor_path=''
+                if native_actor_path.startswith('/Game/') and len(native_actor_path)<=1024:
                     staged_identity['native_actor_path']=native_actor_path
             receipt['actors_created'].append(staged_identity)
             created_by_label[row['label']]=actor
