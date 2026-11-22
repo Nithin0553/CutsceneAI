@@ -26,6 +26,10 @@ NEGATION = re.compile(
     r"\b(?:do not|don't|dont|without)\s+"
     r"(?:modify|edit|change|fix|repair|correct|adjust|move)", re.I,
 )
+UNSUPPORTED_REQUEST = re.compile(
+    r"\b(?:zoom|fov|focal|lens|focus|exposure|"
+    r"animation|animated|blend|blending|rotate|rotation)\b", re.I,
+)
 
 
 class CameraCutEvidenceError(ValueError):
@@ -44,7 +48,8 @@ def message_requests_cut(message: Any) -> bool:
         isinstance(message, str) and 0 < len(message) <= 1200
         and bool(FIX.search(message) and CAMERA.search(message)
                  and CUT.search(message))
-        and not bool(NEGATION.search(message))
+        and not bool(NEGATION.search(message)
+                     or UNSUPPORTED_REQUEST.search(message))
         and "\x00" not in message
     )
 
