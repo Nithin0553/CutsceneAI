@@ -74,6 +74,20 @@ def test_constant_native_mesh_basis_offset_remains_diagnostic_only():
     assert measured["suggestion_applied"] is False
 
 
+def test_yaw_wrap_across_positive_negative_180_is_not_false_instability():
+    src, dst = _rows([0, 0], [179.99, -180.01])
+    result = compare_mesh_forward(src, dst, "guard", _profile((1, 0, 0)))
+    assert result["status"] == "FAIL"
+    assert result["constant_yaw_diagnostic_status"] == (
+        "STABLE_SAMPLED_YAW_DIAGNOSTIC_ONLY"
+    )
+    assert abs(result["suggested_target_actor_yaw_correction_degrees"]) == (
+        pytest.approx(179.99, abs=0.01)
+    )
+    assert result["max_sampled_yaw_variation_degrees"] < 0.001
+    assert result["native_actor_yaw_repair_authorized"] is False
+
+
 def test_time_varying_mesh_orientation_never_yields_single_actor_yaw():
     src, dst = _rows([0, 0, 0], [0, 15, 40])
     measured = compare_mesh_forward(src, dst, "guard", _profile())
