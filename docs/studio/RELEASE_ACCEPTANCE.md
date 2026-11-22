@@ -105,6 +105,18 @@ remain diagnostic-only or unsupported. See [Elements 1–9 audit](ELEMENT1_TO_9_
 [Phase 10.2 static character yaw scope](PHASE10_2_GUARDED_STATIC_CHARACTER_YAW_V01.md)
 and [Phase 10.2 two-shot camera switch scope](PHASE10_2_TWO_SHOT_CAMERA_SWITCH_V01.md), and
 [Phase 10.2 static camera yaw scope](PHASE10_2_STATIC_CAMERA_YAW_V01.md).
+Animated camera world-trajectory reconstruction now has a distinct
+[source-frame and native nine-channel motion contract](PHASE10_2_ANIMATED_CAMERA_FRAME_GRID_V01.md):
+the independent evaluated Unity CineTwin capture is authoritative when
+available, otherwise a complete, nonblended source-local camera curve is
+baked on every exact display frame. The native writer preflights contiguous
+source frames, absolute transform channels, and scale defaults **before
+editor mutation**. Unknown camera curves, missing world baselines,
+overlapping/gapped/eased clips, moving camera parents and ambiguous local
+curve ownership fail closed unless original evaluated source capture is
+available. **This is conversion-layer hardening, not a ninth autonomous
+native post-generation repair.** True Unreal reopens and rendered parity
+remain unverified.
 No arbitrary Unity script, proprietary shader, animation rig or camera
 control may be reconstructed simply because an LLM identifies a mismatch.
 

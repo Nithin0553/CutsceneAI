@@ -756,13 +756,77 @@ def _section_curve_channels(section: dict[str, Any]) -> tuple[
     return position, quaternion, euler
 
 
+def _validate_camera_curve_ownership(section: dict[str, Any]) -> None:
+    """Reject unsupported, duplicate or nested camera curve owners.
+
+    Historical conversion silently ignored nested or unknown curves. A
+    source-bound full-frame camera trajectory may never omit them.
+    """
+    curves = section.get("payload", {}).get("animation", {}).get("curves", [])
+    if not isinstance(curves, list) or len(curves) > 4096:
+        raise PlanError("Camera curve inventory is absent or unbounded.")
+    seen = set()
+    euler_names = {"localeuleranglesraw."+axis for axis in "xyz"} | {
+        "m_localeulerangleshint."+axis for axis in "xyz"
+    }
+    for curve in curves:
+        if not isinstance(curve, dict):
+            raise PlanError("Malformed camera source animation curve.")
+        if str(curve.get("path") or "").strip():
+            raise PlanError("Nested camera/rig curve requires a separate native owner.")
+        semantic = str(curve.get("canonical_semantic") or "")
+        native = str(curve.get("property_name") or "").lower()
+        euler = native if native in euler_names else ""
+        allowed_semantics = {
+            *(f"transform.position.{axis}" for axis in "xyz"),
+            *(f"transform.rotation.{axis}" for axis in "xyzw"),
+            *(f"transform.{offset}.position.{axis}"
+              for offset in ("track_offset", "clip_offset", "infinite_offset")
+              for axis in "xyz"),
+            *(f"transform.{offset}.rotation.{axis}"
+              for offset in ("track_offset", "clip_offset", "infinite_offset")
+              for axis in "xyzw"),
+            "camera.vertical_fov_degrees",
+        }
+        allowed = (
+            semantic in allowed_semantics
+            or (semantic == "transform.rotation.euler_native" and bool(euler))
+            or (not semantic and native == "field of view")
+            or (not semantic and bool(euler))
+        )
+        if not allowed:
+            raise PlanError(
+                "Unrecognized animated camera property is not safe to omit: "
+                + str(semantic or native)[:100]
+            )
+        if semantic == "transform.rotation.euler_native" and not euler:
+            raise PlanError("Camera native Euler curve has no known source axis.")
+        if euler and semantic not in {"", "transform.rotation.euler_native"}:
+            raise PlanError("Camera Euler channel semantic and source axis conflict.")
+        key = ("euler:"+euler.rsplit(".", 1)[-1]) if euler else (
+            semantic if semantic else "property:"+native
+        )
+        if key in seen:
+            raise PlanError("Duplicate camera source transform property: " + key)
+        seen.add(key)
+        if any("weighted_mode" in k and int(k["weighted_mode"]) != 0
+               for k in curve.get("keys", [])):
+            raise PlanError(
+                "Weighted camera animation tangents need a dedicated evaluator."
+            )
+
+
 def _sample_section_transform(
     section: dict[str, Any],
     entity: dict[str, Any],
     entities: dict[str, dict[str, Any]],
     fps_n: int,
     fps_d: int,
+    *,
+    camera_frame_bake: bool = False,
 ) -> tuple[list[dict[str, Any]], bool]:
+    if camera_frame_bake:
+        _validate_camera_curve_ownership(section)
     curves = _curve_map(section)
     position_curves, quaternion_curves, euler_curves = _section_curve_channels(section)
     active_curves = [c for c in [*position_curves.values(),
@@ -773,48 +837,173 @@ def _sample_section_transform(
     has_quat = any(quaternion_curves.values())
     if has_quat and not all(quaternion_curves.values()):
         raise PlanError("Partial quaternion animation cannot be reconstructed safely.")
+    if camera_frame_bake and has_quat and any(euler_curves.values()):
+        raise PlanError(
+            "Camera quaternion and Euler rotation channels conflict; do not guess an owner."
+        )
 
     source_start = rational_seconds(section.get(
         "source_offset", {"value": 0, "rate": {"numerator": 1, "denominator": 1}}))
     time_scale = float(section.get("time_scale", 1.0))
-    if time_scale <= 0:
-        raise PlanError("Non-positive transform clip speed is unsupported.")
+    if not math.isfinite(time_scale) or time_scale <= 0:
+        raise PlanError("Nonfinite or non-positive transform clip speed is unsupported.")
     section_start = rational_seconds(section["start"])
     section_end = rational_seconds(section["end"])
     source_end = source_start + (section_end - section_start) * time_scale
-    bake = any(c.get("native_keys") for c in active_curves)
+    if (not all(math.isfinite(t) for t in (
+            source_start, source_end, section_start, section_end))
+            or section_start < 0 or section_end <= section_start):
+        raise PlanError("Animated camera source or timeline interval is invalid.")
+    bake = camera_frame_bake or any(c.get("native_keys") for c in active_curves)
+    if camera_frame_bake:
+        native_blend = section.get("native_payload", {})
+        if not isinstance(native_blend, dict):
+            raise PlanError("Camera Timeline easing metadata is invalid.")
+        if (timeline_clip_easing_seconds(native_blend, "in") > 0
+                or timeline_clip_easing_seconds(native_blend, "out") > 0):
+            raise PlanError(
+                "Eased/blended Unity camera clips require evaluated CineTwin capture."
+            )
+        # One source-authoritative transform per display frame. Sparse Unity
+        # channel keys must not be interpolated again with Unreal auto tangents.
+        # Rounding arbitrary Timeline boundaries would silently shift a shot.
+        first = seconds_to_frame(section_start, fps_n, fps_d)
+        last = seconds_to_frame(section_end, fps_n, fps_d)
+        if (last <= first or last-first > 100_000
+                or abs(first * fps_d / fps_n - section_start) > 1e-6
+                or abs(last * fps_d / fps_n - section_end) > 1e-6):
+            raise PlanError(
+                "Camera transform clip endpoints must align to source display frames."
+            )
     sample_source_times = set()
     for curve in active_curves:
         for key in curve.get("keys", []):
             time_value = float(key["time_seconds"])
             if source_start <= time_value <= source_end:
                 sample_source_times.add(time_value)
-    if bake:
-        start_frame = seconds_to_frame(section_start, fps_n, fps_d)
-        end_frame = seconds_to_frame(section_end, fps_n, fps_d)
-        for frame in range(start_frame, end_frame + 1):
-            timeline_time = frame * fps_d / fps_n
-            if section_start <= timeline_time <= section_end:
-                sample_source_times.add(source_start + (timeline_time - section_start) * time_scale)
+    if camera_frame_bake:
+        sample_source_times = {
+            source_start + (frame * fps_d / fps_n - section_start) * time_scale
+            for frame in range(first, last + 1)
+        }
+        # Source-key times MAY be off the display grid. The evaluator uses
+        # authored Hermite/legacy-linear values at every actual display frame;
+        # never round off-grid authored keys into duplicate native frames.
+    else:
+        if bake:
+            start_frame = seconds_to_frame(section_start, fps_n, fps_d)
+            end_frame = seconds_to_frame(section_end, fps_n, fps_d)
+            for frame in range(start_frame, end_frame + 1):
+                timeline_time = frame * fps_d / fps_n
+                if section_start <= timeline_time <= section_end:
+                    sample_source_times.add(
+                        source_start + (timeline_time - section_start) * time_scale
+                    )
+            sample_source_times.update((source_start, source_end))
+        # Unity holds endpoint values for trimmed clips, even when no authored
+        # key falls within their source-time window.
         sample_source_times.update((source_start, source_end))
-    # Unity holds endpoint values for trimmed clips, even when no authored
-    # key falls within their source-time window.
-    sample_source_times.update((source_start, source_end))
 
     track_position = _vector_offset(curves, "transform.track_offset.position")
     infinite_position = _vector_offset(curves, "transform.infinite_offset.position")
-    base_position = tuple(track_position[i] + infinite_position[i] for i in range(3))
     track_rotation = _quat_offset(curves, "transform.track_offset.rotation")
     infinite_rotation = _quat_offset(curves, "transform.infinite_offset.rotation")
-    base_rotation = _quat_mul(track_rotation, infinite_rotation)
+    clip_position = (
+        _vector_offset(curves, "transform.clip_offset.position")
+        if camera_frame_bake else (0.0, 0.0, 0.0)
+    )
+    clip_rotation = (
+        _quat_offset(curves, "transform.clip_offset.rotation")
+        if camera_frame_bake else (0.0, 0.0, 0.0, 1.0)
+    )
+    base_position = tuple(
+        track_position[i] + infinite_position[i] + clip_position[i]
+        for i in range(3)
+    )
+    base_rotation = _quat_mul(_quat_mul(track_rotation, clip_rotation), infinite_rotation)
     parent_position, parent_rotation, parent_scale = parent_world_transform(entity, entities)
+    fallback_position: tuple[float, float, float] | None = None
+    if camera_frame_bake:
+        # Track/clip/infinite offsets are static authoring state, not curves
+        # whose first key can be quietly substituted for later varying keys.
+        for semantic, curve in curves.items():
+            if semantic.startswith(("transform.track_offset.",
+                                    "transform.clip_offset.",
+                                    "transform.infinite_offset.")):
+                if len(curve.get("keys", [])) != 1:
+                    raise PlanError(
+                        "Animated camera offsets need dedicated track-aware ownership."
+                    )
+        metadata = entity.get("metadata", {}).get("world_transform")
+        no_position_offsets = not any(
+            semantic.startswith((
+                "transform.track_offset.position.",
+                "transform.clip_offset.position.",
+                "transform.infinite_offset.position.",
+            )) for semantic in curves
+        )
+        no_rotation_offsets = not any(
+            semantic.startswith((
+                "transform.track_offset.rotation.",
+                "transform.clip_offset.rotation.",
+                "transform.infinite_offset.rotation.",
+            )) for semantic in curves
+        )
+        needs_position_baseline = (
+            no_position_offsets and not all(position_curves.values())
+        )
+        needs_rotation_baseline = (
+            no_rotation_offsets and not has_quat
+            and not any(euler_curves.values())
+        )
+        if needs_position_baseline or needs_rotation_baseline:
+            if entity.get("parent_entity_id"):
+                raise PlanError(
+                    "Parented camera has missing authored local channels; "
+                    "cannot substitute a world-space baseline."
+                )
+            if not isinstance(metadata, dict):
+                raise PlanError(
+                    "Source camera static world transform is missing for unanimated axes."
+                )
+            if needs_position_baseline:
+                location = metadata.get("position")
+                if (not isinstance(location, dict)
+                        or any(k not in location for k in "xyz")):
+                    raise PlanError(
+                        "Source camera baseline position lacks a complete world transform."
+                    )
+                fallback_position = tuple(float(location[k]) for k in "xyz")
+                if any(not math.isfinite(v) for v in fallback_position):
+                    raise PlanError("Source camera baseline position is nonfinite.")
+            if needs_rotation_baseline:
+                orientation = metadata.get("rotation")
+                if (not isinstance(orientation, dict)
+                        or any(k not in orientation for k in "xyzw")):
+                    raise PlanError(
+                        "Source camera baseline rotation lacks a complete quaternion."
+                    )
+                base_rotation = _normalize_quat(
+                    tuple(float(orientation[k]) for k in "xyzw")
+                )
+        if any(abs(v-1) > 1e-5 for v in parent_scale):
+            raise PlanError(
+                "Animated camera parent scale needs separate native scale calibration."
+            )
 
     by_frame: dict[int, dict[str, Any]] = {}
     for source_time in sorted(sample_source_times):
         timeline_time = section_start + (source_time - source_start) / time_scale
         frame = seconds_to_frame(timeline_time, fps_n, fps_d)
         relative = tuple(_curve_value(position_curves[axis], source_time) for axis in "xyz")
-        local_position = tuple(base_position[i] + relative[i] for i in range(3))
+        local_position = tuple(
+            base_position[i] + (
+                relative[i] if position_curves["xyz"[i]]
+                else fallback_position[i] if fallback_position is not None
+                else 0.0
+            )
+            for i in range(3)
+        )
         if has_quat:
             sampled = _normalize_quat(tuple(
                 _curve_value(quaternion_curves[axis], source_time, 1.0 if axis == "w" else 0.0)
@@ -826,6 +1015,13 @@ def _sample_section_transform(
         local_rotation = _quat_mul(base_rotation, delta_q)
         world_position, world_rotation, _ = compose_canonical_transform(
             parent_position, parent_rotation, parent_scale, local_position, local_rotation)
+        if (camera_frame_bake and (
+                frame in by_frame
+                or frame < first or frame > last
+                or not math.isfinite(timeline_time))):
+            raise PlanError(
+                "Camera sampling collided or escaped exact native display frames."
+            )
         by_frame[frame] = {
             "frame": frame,
             "time_seconds": timeline_time,
@@ -845,6 +1041,19 @@ def _sample_section_transform(
     return result, bake
 
 
+def _quat_to_matrix_for_rpy(rpy: tuple[float,float,float] | list[float]) -> tuple[float, ...]:
+    # A local pure-python matrix avoids guessing Euler equivalence at poles.
+    roll, pitch, yaw = (math.radians(v) for v in rpy)
+    cr, sr = math.cos(roll), math.sin(roll)
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    return (
+        cp*cy, -sy*cr - sp*cy*sr, sy*sr - sp*cy*cr,
+        cp*sy, cy*cr - sp*sy*sr, -cy*sr - sp*sy*cr,
+        sp, cp*sr, cp*cr,
+    )
+
+
 def _transform_action(
     track: dict[str, Any],
     entity: dict[str, Any],
@@ -852,6 +1061,8 @@ def _transform_action(
     fps_n: int,
     fps_d: int,
     entities: dict[str, dict[str, Any]],
+    *,
+    camera_frame_bake: bool = False,
 ) -> dict[str, Any] | None:
     """Compile every non-overlapping animated section in timeline coordinates."""
     keys_by_frame: dict[int, dict[str, Any]] = {}
@@ -862,23 +1073,69 @@ def _transform_action(
         start, end = rational_seconds(section["start"]), rational_seconds(section["end"])
         if last_end is not None and start < last_end - 1e-8:
             raise PlanError(f"Overlapping transform clips on {entity['name']} need explicit blending.")
+        if camera_frame_bake and last_end is not None and abs(start-last_end) > 1e-6:
+            raise PlanError(
+                "Camera clip gaps need explicit hold or extrapolation; never interpolate across gaps."
+            )
         section_keys, section_baked = _sample_section_transform(
-            section, entity, entities, fps_n, fps_d)
+            section, entity, entities, fps_n, fps_d,
+            camera_frame_bake=camera_frame_bake,
+        )
         if section_keys:
             baked = baked or section_baked
             for key in section_keys:
-                keys_by_frame[int(key["frame"])] = key
+                frame = int(key["frame"])
+                previous = keys_by_frame.get(frame)
+                if previous is not None and camera_frame_bake:
+                    if (math.dist(previous["location_cm"], key["location_cm"]) > 1e-4
+                            or any(abs(a-b) > 1e-4 for a,b in zip(
+                                _quat_to_matrix_for_rpy(
+                                    previous["rotation_rpy_degrees"]
+                                ),
+                                _quat_to_matrix_for_rpy(
+                                    key["rotation_rpy_degrees"]
+                                ),
+                            ))):
+                        raise PlanError(
+                            "Adjacent camera clips have a discontinuous shared pose; "
+                            "a dedicated blend or cut is required."
+                        )
+                keys_by_frame[frame] = key
         last_end = end
     if not keys_by_frame:
         return None
-    return {
+    sorted_keys = [keys_by_frame[frame] for frame in sorted(keys_by_frame)]
+    if camera_frame_bake:
+        # Continuous equivalent Euler values must be selected ACROSS sections,
+        # not only within each clip, to avoid a pitch-pole 180-degree flip.
+        previous_rotation = None
+        for key in sorted_keys:
+            key["rotation_rpy_degrees"] = continuous_unreal_rotator(
+                previous_rotation, key["rotation_rpy_degrees"]
+            )
+            previous_rotation = key["rotation_rpy_degrees"]
+        if sorted_keys[-1]["frame"] - sorted_keys[0]["frame"] + 1 != len(sorted_keys):
+            raise PlanError("Animated camera display-frame coverage contains a gap.")
+    action = {
         "kind": "transform",
         "track_name": track.get("name", ""),
         "entity_name": entity["name"],
         "actor_label": actor_label,
-        "keys": [keys_by_frame[frame] for frame in sorted(keys_by_frame)],
+        "keys": sorted_keys,
         "baked_source_curves": baked,
     }
+    if camera_frame_bake:
+        action.update({
+            "source_behavior_strategy": "source_frame_baked_camera_transform_v1",
+            "camera_source_track_id": track.get("track_id"),
+            "frame_grid_first": sorted_keys[0]["frame"],
+            "frame_grid_last": sorted_keys[-1]["frame"],
+            "frame_grid_sample_count": len(sorted_keys),
+            "native_transform_channels_required": 9,
+            "reopened_cinetwin_verified": False,
+            "rendered_camera_motion_verified": False,
+        })
+    return action
 
 
 
@@ -949,6 +1206,53 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                 "far_clip": float(camera.get("far_clip", 0.0)),
             }
         )
+
+    # One native camera transform owner per camera. Two separate Unity
+    # animation tracks would create competing native transform sections even
+    # if their authored curve samples happen to match.
+    camera_track_owners: set[str] = set()
+    for owner in csir.get("tracks", []):
+        if owner.get("muted") is True:
+            continue
+        ident = owner.get("binding_entity_id")
+        camera_entity = entities.get(ident)
+        if (camera_entity and camera_entity.get("ced_type") == "entity.camera"
+                and owner.get("ced_type") in {"camera.transform", "animation.track"}):
+            if ident in camera_track_owners:
+                raise PlanError(
+                    "Multiple active source camera transform tracks require ownership/blend resolution."
+                )
+            camera_track_owners.add(ident)
+
+    # A camera parent may move even if the camera's own local curve appears
+    # static. Composing a parent's original static metadata is incorrect when
+    # a Timeline owner animates any ancestor. Only independent captured Unity
+    # WORLD camera poses can resolve that motion.
+    active_track_owners = {
+        owner.get("binding_entity_id") for owner in csir.get("tracks", [])
+        if owner.get("muted") is not True
+        and owner.get("sections")
+        and owner.get("ced_type") != "camera.cut"
+    }
+    for camera_id in camera_track_owners:
+        child = entities[camera_id]
+        visited = {camera_id}
+        parent_id = child.get("parent_entity_id")
+        while parent_id:
+            if parent_id in visited:
+                raise PlanError(
+                    "Animated camera hierarchy contains a parent cycle."
+                )
+            visited.add(parent_id)
+            if parent_id in active_track_owners:
+                raise PlanError(
+                    "Animated camera parent trajectory requires evaluated "
+                    "CineTwin world-motion capture."
+                )
+            parent = entities.get(parent_id)
+            if parent is None:
+                raise PlanError("Animated camera parent source entity is missing.")
+            parent_id = parent.get("parent_entity_id")
 
     for track in csir.get("tracks", []):
         # A muted source Timeline track contributes no evaluated behavior.
@@ -1032,8 +1336,13 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
                     plan["actions"].append(action)
                 continue
 
+            is_camera_transform = (
+                entity.get("ced_type") == "entity.camera"
+                and ced_type in {"camera.transform", "animation.track"}
+            )
             transform = _transform_action(
-                track, entity, actor_label, fps_n, fps_d, entities
+                track, entity, actor_label, fps_n, fps_d, entities,
+                camera_frame_bake=is_camera_transform,
             )
             if transform:
                 plan["actions"].append(transform)
