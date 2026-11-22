@@ -45,7 +45,8 @@ def _sha(path: Path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False):
+def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False,
+              ai_agents_enabled=False, automatic_setup=False):
     csir, _conversion, _sampling, source, target = _inputs()
     work = tmp_path / "runs"
     original = tmp_path / "source.csir.json"
@@ -210,7 +211,8 @@ def _scenario(tmp_path, *, attempt=True, complete=False, with_element3=False):
         "mapping": str(mapping_file),
         "status": "QUEUED", "generation_status": "NOT_STARTED",
         "generation_editor_pid": 1111,
-        "ai_agents_enabled": False,
+        "ai_agents_enabled": ai_agents_enabled,
+        "automatic_setup": automatic_setup,
         "ai_conversion_decision_sha256": "",
         "element_native_authorization_sha256": native_permission,
     }
