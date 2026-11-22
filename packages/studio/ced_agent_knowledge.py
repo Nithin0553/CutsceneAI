@@ -23,6 +23,7 @@ def retrieve(csir: dict[str, Any], *, target_capabilities: dict[str, Any],
              source_version: str = "", target_version: str = "",
              approved_store: Path | None = None,
              case_store: Path | None = None,
+             feedback_store: Path | None = None,
              source_capabilities: dict[str, Any] | None = None,
              page: int = 0, page_size: int = MAX_CONCEPTS) -> dict[str, Any]:
     if CED_PACKAGE not in sys.path:
@@ -33,6 +34,7 @@ def retrieve(csir: dict[str, Any], *, target_capabilities: dict[str, Any],
             csir, target_capabilities=target_capabilities,
             source_version=source_version, target_version=target_version,
             approved_store=approved_store, case_store=case_store,
+            feedback_store=feedback_store,
             source_capabilities=source_capabilities,
             page=page, page_size=page_size,
         )
@@ -48,5 +50,28 @@ def model_projection(result: dict[str, Any]) -> dict[str, Any]:
     from knowledge_service import KnowledgeServiceError, redact_for_model
     try:
         return redact_for_model(result)
+    except KnowledgeServiceError as exc:
+        raise KnowledgeError(str(exc)) from exc
+
+
+
+def retrieve_all(csir: dict[str, Any], *, target_capabilities: dict[str, Any],
+                 source_version: str = "", target_version: str = "",
+                 approved_store: Path | None = None,
+                 case_store: Path | None = None,
+                 feedback_store: Path | None = None,
+                 source_capabilities: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Retrieve all pages and bind them to one immutable knowledge snapshot."""
+    if CED_PACKAGE not in sys.path:
+        sys.path.insert(0, CED_PACKAGE)
+    from knowledge_service import KnowledgeServiceError, retrieve_all as fetch_all
+    try:
+        return fetch_all(
+            csir, target_capabilities=target_capabilities,
+            source_version=source_version, target_version=target_version,
+            approved_store=approved_store, case_store=case_store,
+            feedback_store=feedback_store,
+            source_capabilities=source_capabilities,
+        )
     except KnowledgeServiceError as exc:
         raise KnowledgeError(str(exc)) from exc
