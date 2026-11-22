@@ -62,6 +62,14 @@ def validated_bundle(value: Any) -> dict[str, Any]:
             or not isinstance(value.get("rules"), list)
             or not 1 <= len(value["rules"]) <= 32):
         raise ReviewError("CED bundle must be the inert, sanitized staging format.")
+    expected_bundle_fields = {
+        "kind", "schema_version", "status", "source",
+        "raw_private_evidence_attached", "verified_shared_release",
+        "native_execution_permission", "new_engine_adapter_permission",
+        "required_review", "rules", "bundle_sha256",
+    }
+    if set(value) != expected_bundle_fields:
+        raise ReviewError("Staged CED bundle contains unreviewed extra fields.")
     saved = value.get("bundle_sha256")
     unsigned = {k: v for k, v in value.items() if k != "bundle_sha256"}
     if not isinstance(saved, str) or saved != digest(unsigned):
@@ -76,6 +84,12 @@ def validated_bundle(value: Any) -> dict[str, Any]:
     seen: set[str] = set()
     for row in value["rules"]:
         if (not isinstance(row, dict)
+                or set(row) != {
+                    "rule", "origin", "review_evidence_sha256",
+                    "local_candidate_id", "human_reviewed_native_receipt_claim",
+                    "independent_authenticity_recheck_required", "runtime_authorized",
+                }
+                or row.get("human_reviewed_native_receipt_claim") is not True
                 or row.get("origin") != "PRIVATELY_APPROVED_PENDING_SHARED_REVIEW"
                 or row.get("runtime_authorized") is not False
                 or row.get("independent_authenticity_recheck_required") is not True
