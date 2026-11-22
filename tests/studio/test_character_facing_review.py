@@ -145,3 +145,23 @@ def test_mixed_character_camera_feedback_or_exhausted_budget_stays_report_only(t
         )
         assert routed["safe_strategies"] == ["report_only"]
         assert routed["model_can_authorize_native_commands"] is False
+
+
+
+def test_unrelated_animation_cannot_borrow_a_valid_facing_owner_report(tmp_path):
+    workspace, job, _ = _workspace(tmp_path)
+    result = review.build(workspace, job)
+    for message in (
+        "The character is walking incorrectly.",
+        "The character has a different animation.",
+    ):
+        routed = agent_intent_router.route(
+            message, generation_complete=True, native_material_fallback_slots=0,
+            source_albedo_provenance=False, completed_repairs=0,
+            repair_budget=2, independent_issues=[],
+            character_facing_review=result,
+        )
+        assert routed["disposition"] != (
+            "NATIVE_CHARACTER_ROTATION_OWNERSHIP_REVIEW_ONLY"
+        )
+        assert routed["safe_strategies"] == ["report_only"]
