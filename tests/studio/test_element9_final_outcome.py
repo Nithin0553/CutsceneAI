@@ -209,7 +209,7 @@ def test_synthetic_evidence_legacy_attempt_cannot_be_marked_verified(tmp_path):
     _put(folder / "element7-readback.json", element7.build(
         work, job["job_id"], folder,
     ))
-    with pytest.raises(outcome.OutcomeError, match="recovery evidence is invalid"):
+    with pytest.raises(outcome.OutcomeError, match="bounded repair evidence is invalid"):
         outcome.build(work, job["job_id"])
 
 
