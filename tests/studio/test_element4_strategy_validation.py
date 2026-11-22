@@ -219,4 +219,7 @@ def test_global_strategy_must_be_explicit_and_cannot_grant_native_execution():
         _gate(case, global_strategy="run_arbitrary_python")
     with pytest.raises(gate.StrategyValidationError, match="allowed"):
         _gate(case, allowed_strategies=["native_source", "native_source"])
+    with pytest.raises(gate.StrategyValidationError, match="registered"):
+        _gate(case, global_strategy="run_arbitrary_python",
+              allowed_strategies=["run_arbitrary_python"])
     assert _gate(case)["full_cutscene_fidelity_verified"] is False
