@@ -23,9 +23,9 @@ CINETWIN = str(HERE.parent / "cinetwin")
 if CINETWIN not in sys.path:
     sys.path.insert(0, CINETWIN)
 
-import studio_element_cinetwin
 import studio_element5_plan as source_plan
 import studio_element6_execution as native_guard
+import studio_element_cinetwin
 import studio_element_native_execution as native_actions
 from behavior_compare import BehavioralComparisonError, compare
 from sampling_plan import SamplingPlanError, build_plan, validate_capture
