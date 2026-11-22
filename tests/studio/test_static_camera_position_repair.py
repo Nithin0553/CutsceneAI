@@ -151,7 +151,7 @@ def _editor(proof, *, tracks=(), roots=()):
 
 
 def test_source_position_review_requires_constant_exact_camera_and_user_intent(tmp_path):
-    workspace, job, folder = _offset_camera(tmp_path)
+    workspace, job, _folder = _offset_camera(tmp_path)
     proof = evidence.build(workspace, job)
     assert proof["eligible"] is True
     assert proof["max_world_offset_cm"] == pytest.approx(30)
@@ -215,7 +215,7 @@ def test_camera_placement_rejects_native_transform_owner_and_stale_consent(
         native.attempt(api, workspace, job, request)
     assert actor.coords == pytest.approx(proof["native_world_before_cm"])
     forged = dict(request, camera_position_repair_sha256="f"*64)
-    api, actor, saved = _editor(proof)
+    api, actor, _saved = _editor(proof)
     with pytest.raises(native.StaticCameraNativeRepairError, match="proof"):
         native.attempt(api, workspace, job, forged)
     assert actor.coords == pytest.approx(proof["native_world_before_cm"])
@@ -229,7 +229,7 @@ def test_camera_placement_mutation_failure_rolls_back(tmp_path):
     with pytest.raises(native.StaticCameraNativeRepairError, match="did not reach"):
         native.attempt(api, workspace, job, request)
     assert actor.coords == pytest.approx(proof["native_world_before_cm"])
-    api, actor, saved = _editor(proof)
+    api, actor, _saved = _editor(proof)
     actor.fail_after_set = True
     with pytest.raises(RuntimeError, match="setter failed"):
         native.attempt(api, workspace, job, request)
