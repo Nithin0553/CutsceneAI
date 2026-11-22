@@ -26,6 +26,7 @@ for package in ("studio", "ced", "cinetwin"):
 import ced_agent_knowledge
 import studio_element_cinetwin
 import studio_element_investigation
+import studio_element_native_execution as native_actions
 import studio_element_plan
 import studio_element_schedule
 import studio_element_strategy
@@ -223,6 +224,142 @@ def _review_ack(location: Path, digest: str) -> bool:
             }))
 
 
+
+def _native_inventory(folder: Path, report: dict) -> tuple[dict, Path]:
+    _config, _candidate, location, _source, _mapping = _workspace(folder)
+    prepared = _read(location / "transfer-plan.json")
+    return native_actions.inventory(prepared, report["element_plan"]), location
+
+
+def _native_approval(folder: Path, report: dict, manifest: dict) -> dict | None:
+    _config, _candidate, location, _source, _mapping = _workspace(folder)
+    path = location / "element-native-approval.json"
+    if not path.exists():
+        return None
+    authorization = _read(path)
+    native_actions.verify_authorization(
+        authorization, manifest, candidate_id=report["candidate_id"],
+        workflow_sha256=report["workflow_sha256"],
+        transfer_plan_sha256=report["transfer_plan_sha256"],
+    )
+    return authorization
+
+
+def approve_native_actions(folder: Path, worker: dict, *, workflow_sha256: str,
+                           inventory_sha256: str, review_all: bool,
+                           accept_legacy_unattributed: bool) -> dict:
+    """Explicit all-prepared-actions consent. This does not dispatch anything."""
+    report = _active(folder)
+    config, _candidate, location, _source, _mapping = _workspace(folder)
+    manifest, _ = _native_inventory(folder, report)
+    if (report["workflow_sha256"] != workflow_sha256
+            or native_actions.digest(manifest) != inventory_sha256
+            or review_all is not True
+            or not report["target_capabilities_observed"]
+            or not _current_native_status(report, config, worker)
+            or not _review_ack(location, report["workflow_sha256"])):
+        raise ElementWorkflowError(
+            "Native action authorization requires an exact current review, live "
+            "native capability evidence and separate explicit operator consent."
+        )
+    approved = native_actions.authorize(
+        manifest, candidate_id=report["candidate_id"],
+        workflow_sha256=report["workflow_sha256"],
+        transfer_plan_sha256=report["transfer_plan_sha256"],
+        approved_action_ids=[row["action_id"] for row in manifest["actions"]],
+        accept_legacy_unattributed=accept_legacy_unattributed,
+    )
+    target = location / "element-native-approval.json"
+    if target.exists() and _read(target) != approved:
+        raise ElementWorkflowError(
+            "A different native approval already exists for this candidate; "
+            "prepare a fresh candidate rather than silently replacing consent."
+        )
+    if not target.exists():
+        _write_new(target, approved)
+    return {
+        "candidate_id": report["candidate_id"],
+        "action_count": manifest["action_count"],
+        "unattributed_count": manifest["unattributed_count"],
+        "native_action_authorization_sha256": approved["authorization_sha256"],
+        "approved_for_existing_native_preflight": True,
+        "native_builder_executed": False,
+        "full_cutscene_fidelity_verified": False,
+    }
+
+
+def require_native_action_authorization(folder: Path, worker: dict,
+                                        candidate_id: str) -> str:
+    """Queue gate for prepared Element 3 candidates, legacy jobs unchanged."""
+    if not isinstance(candidate_id, str) or not CANDIDATE_ID.fullmatch(candidate_id):
+        raise ElementWorkflowError("Invalid native candidate identity.")
+    path = folder / "candidates" / candidate_id / "element-workflow-active.json"
+    if not path.exists():
+        return ""
+    report = _active(folder)
+    config, _candidate, location, _source, _mapping = _workspace(folder)
+    if (report["candidate_id"] != candidate_id
+            or not report["target_capabilities_observed"]
+            or not _current_native_status(report, config, worker)
+            or not _review_ack(location, report["workflow_sha256"])):
+        raise ElementWorkflowError(
+            "Native action submission needs a fresh acknowledged Element 3 source review."
+        )
+    manifest, _ = _native_inventory(folder, report)
+    approval = _native_approval(folder, report, manifest)
+    if approval is None:
+        raise ElementWorkflowError(
+            "Approve the exact registered native action set separately before Generate."
+        )
+    return approval["authorization_sha256"]
+
+
+def verify_native_job(folder: Path, job: dict) -> tuple[dict, dict]:
+    """Unreal worker pre-mutation, independent of HTTP consent or model."""
+    expected = job.get("element_native_authorization_sha256") or ""
+    if not expected:
+        raise ElementWorkflowError("Submitted job has no Element 3 native action consent.")
+    report = _active(folder)
+    candidate = job.get("candidate_id")
+    if report["candidate_id"] != candidate:
+        raise ElementWorkflowError("Native job references another Element 3 candidate.")
+    config, _candidate, _location, _source, _mapping = _workspace(folder)
+    if (job.get("expected_project") != config.get("target_project")
+            or job.get("sequence_path") != _candidate["sequence_path"]
+            or job.get("csir") != config.get("csir")
+            or job.get("mapping") != _candidate["mapping_copy"]):
+        raise ElementWorkflowError("Native job does not match the prepared source/target.")
+    manifest, _ = _native_inventory(folder, report)
+    approval = _native_approval(folder, report, manifest)
+    if (approval is None or approval["authorization_sha256"] != expected):
+        raise ElementWorkflowError("Native job's approved action bytes changed.")
+    return approval, manifest
+
+
+def record_native_job(folder: Path, job: dict) -> dict:
+    """Append a builder dispatch ledger only after genuine runtime receipt."""
+    approval, manifest = verify_native_job(folder, job)
+    _config, _candidate, location, _source, _mapping = _workspace(folder)
+    job_id = job.get("job_id")
+    if not isinstance(job_id, str) or not re.fullmatch("[a-f0-9]{32}", job_id):
+        raise ElementWorkflowError("Unexpected native job ID.")
+    path = location / ("unreal-runtime-receipt-" + job_id + ".json")
+    runtime = _read(path)
+    native_digest = _sha_file(path)
+    report = native_actions.receipt(
+        approval, manifest, runtime, job_id=job_id,
+        native_receipt_sha256=native_digest,
+    )
+    output = location / ("element-native-dispatch-" + job_id + ".json")
+    if output.exists():
+        if _read(output) != report:
+            raise ElementWorkflowError("Native dispatch receipt differs from saved report.")
+    else:
+        _write_new(output, report)
+    return report
+
+
+
 def _case_rows(report: dict) -> list[dict]:
     plan = report["element_plan"]["elements"]
     nodes = {row["occurrence_id"]: row for row in report["element_schedule"]["nodes"]}
@@ -307,6 +444,8 @@ def _preview(report: dict, folder: Path, worker: dict,
     rows = _case_rows(report)
     selected = rows[offset: offset + PAGE_SIZE]
     index = _index(folder, report)
+    manifest, _ = _native_inventory(folder, report)
+    approval = _native_approval(folder, report, manifest)
     latest = None
     if index["observations"]:
         csir, source_capture, sampling, target_captures = _readback_inputs(
@@ -359,6 +498,17 @@ def _preview(report: dict, folder: Path, worker: dict,
         "target_capabilities_observed": report["target_capabilities_observed"],
         "target_capability_evidence_current": _current_native_status(report, config, worker),
         "review_acknowledged": _review_ack(location, report["workflow_sha256"]),
+        "native_actions": {
+            "action_count": manifest["action_count"],
+            "unattributed_count": manifest["unattributed_count"],
+            "registered_action_counts": manifest["registered_action_counts"],
+            "action_inventory_sha256": native_actions.digest(manifest),
+            "candidate_actions": manifest["actions"][offset:offset + PAGE_SIZE],
+            "approved_for_existing_native_preflight": approval is not None,
+            "native_builder_executed": False,
+            "native_execution_authorized_by_review_alone": False,
+            "full_cutscene_fidelity_verified": False,
+        },
         "native_execution_authorized": False,
         "full_cutscene_fidelity_verified": False,
         "elements": selected,
