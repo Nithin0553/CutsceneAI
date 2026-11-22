@@ -35,7 +35,6 @@ class Mesh:
 
     def get_editor_property(self, key):
         assert key == "post_process_anim_blueprint"
-        return None
 
 
 class Component:
@@ -261,7 +260,7 @@ def test_native_editor_static_yaw_one_edit_source_derived_and_pending_reopen(
 ])
 def test_native_preflight_refuses_unsafe_root_or_retarget_owner(
         tmp_path, monkeypatch, case):
-    workspace, job, request, proof, docs = staged(monkeypatch, tmp_path)
+    workspace, job, request, _proof, docs = staged(monkeypatch, tmp_path)
     actor = Actor()
     api = editor(actor)
     if case == "stale_proof":
@@ -334,7 +333,7 @@ def test_native_yaw_rollback_prevents_partial_editor_mutation(
 
 def test_native_yaw_agent_request_never_contains_model_authored_orientation(
         tmp_path, monkeypatch):
-    workspace, job, request, proof, docs = staged(monkeypatch, tmp_path)
+    _workspace, _job, request, proof, _docs = staged(monkeypatch, tmp_path)
     assert request["character_yaw_repair_sha256"] == proof["character_yaw_repair_sha256"]
     assert "native_yaw_after_degrees" not in request
     assert "derived_yaw_correction_degrees" not in request
@@ -404,7 +403,10 @@ def test_langgraph_dispatch_and_editor_claim_are_source_id_only_no_replay(
     payload = json.loads(request_files[0].read_text())
     assert payload["character_yaw_repair_sha256"] == "c" * 64
     assert payload["source_entity_id"] == "guard"
-    assert not any("yaw_" in k or "rotation" in k for k in payload)
+    assert {key for key in payload if "yaw" in key} == {
+        "character_yaw_repair_sha256",
+    }
+    assert not any("rotation" in key for key in payload)
 
     executed = []
     def once(api, root, original, requested):
