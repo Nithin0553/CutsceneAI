@@ -98,17 +98,22 @@ def _character_facing_ownership_report(api, job, comparison, approved_axes,
         elif global_failure:
             row['blocking_reasons'] = ['NATIVE_EDITOR_OWNER_INSPECTION_FAILED_' + global_failure]
         else:
-            matches = [actor for actor in scene_actors
-                       if str(actor.get_actor_label()) == label]
-            if len(matches) != 1:
-                row['blocking_reasons'] = ['AMBIGUOUS_NATIVE_CHARACTER_ACTOR']
-            else:
-                row = {'entity_id': ident, **ownership.inspect(
-                    api, sequence, matches[0],
-                    expected_actor_label=label,
-                    expected_mesh_asset_path=mesh,
-                    all_level_actors=scene_actors,
-                )}
+            try:
+                matches = [actor for actor in scene_actors
+                           if str(actor.get_actor_label()) == label]
+                if len(matches) != 1:
+                    row['blocking_reasons'] = ['AMBIGUOUS_NATIVE_CHARACTER_ACTOR']
+                else:
+                    row = {'entity_id': ident, **ownership.inspect(
+                        api, sequence, matches[0],
+                        expected_actor_label=label,
+                        expected_mesh_asset_path=mesh,
+                        all_level_actors=scene_actors,
+                    )}
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                row['blocking_reasons'] = [
+                    'READ_ONLY_NATIVE_CHARACTER_INSPECTION_FAILED'
+                ]
         report['characters'].append(row)
     if len(native_rigs) > 64:
         report['status'] = 'NATIVE_CHARACTER_INVENTORY_EXCEEDS_BUDGET'
