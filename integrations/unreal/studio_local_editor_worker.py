@@ -899,6 +899,17 @@ def _tick(_delta):
                             )
                         proof = native_guard.terminal(WORKSPACE, job, attempt)
                         job['element6_guard_status'] = proof['status']
+                        if (not proof['native_builder_completed']
+                                and job.get('generation_status') == 'GENERATED_UNVERIFIED'
+                                and job.get('status') not in
+                                native_guard.FINAL_FAILURE_STATES):
+                            # A builder returning a sequence without a
+                            # verifiable runtime receipt is not a successful
+                            # Studio execution; preserve it for inspection.
+                            job['status'] = (
+                                'GENERATED_GUARD_EVIDENCE_INCOMPLETE_REVIEW_REQUIRED'
+                            )
+                            job['fidelity_verified'] = False
                         job['element6_runtime_receipt_sha256'] = proof[
                             'runtime_receipt_sha256'
                         ]
