@@ -4,6 +4,7 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 
 ## Start here
 
+- [Element 5: source-bound conversion plan](studio/ELEMENT5_SOURCE_BOUND_CONVERSION_PLAN_V01.md) — complete CSIR-to-deterministic-native action reconciliation, source provenance, independent editor gate
 - [Element 4: validated strategy and bounded alternative reasoning](studio/ELEMENT4_VALIDATED_STRATEGY_BOUNDED_ALTERNATIVES_V01.md) — independently revalidated decisions and a strict No → alternative → revalidate loop
 - [Element 3 consolidated native execution and acceptance](studio/ELEMENT3_CONSOLIDATED_NATIVE_ACCEPTANCE_V01.md) — source-bound action authorization, real Unreal dispatch evidence and different-editor CineTwin validation
 - [Element 3 Studio workflow integration](studio/ELEMENT3_STUDIO_WORKFLOW_INTEGRATION_V01.md) — candidate-bound source review, explicit acknowledgment and persistent CineTwin readback
