@@ -26,6 +26,10 @@ WORKSPACE = Path.home() / '.cutsceneai-studio' / 'runs'
 MAX_BODY = 64 * 1024
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.RLock()
+# Engine editors are separate long-lived processes. Reloading the host never
+# starts or stops them, and never requeues an immutable native job.
+SOURCE_WATCHER = None
+HOST_RESTARTING = threading.Event()
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -143,6 +147,8 @@ def worker_connected(folder: Path = WORKSPACE) -> dict[str, Any]:
                 'worker_source_sha256': data.get('worker_source_sha256'),
                 'checkout_root': data.get('checkout_root'),
                 'scene_inventory': data.get('scene_inventory'), 'editor_pid': data.get('editor_pid'),
+                'live_reload_state': data.get('live_reload_state', 'LEGACY_WORKER'),
+                'live_reload_error': data.get('live_reload_error'),
                 'age_seconds': round(age, 1)}
     except (ValueError, KeyError, OSError):
         return {'connected': False}
@@ -186,13 +192,39 @@ def worker_code_mismatch(worker: dict[str, Any]) -> str | None:
     if actual_sha != hashlib.sha256(expected_worker.read_bytes()).hexdigest():
         return ('Unreal companion has cached an outdated Python worker from '
                 'before the latest Studio update.')
+    live = worker.get('live_reload_state')
+    if live in {'BLOCKED', 'DEFERRED_NATIVE_JOB'}:
+        return ('Unreal companion Python refresh is ' + str(live) + ': ' +
+                str(worker.get('live_reload_error') or 'inspect the native job and code state'))
     return None
 
 
+def _unity_live_status(folder: Path) -> dict[str, Any]:
+    """Read project-bound Unity editor presence; never initiate Play Mode."""
+    import studio_unity_bridge
+    connected = folder / 'connection.json'
+    if connected.is_file():
+        project = load_json(connected).get('unity_project')
+    else:
+        state = folder / 'autopilot-active.json'
+        project = load_json(state).get('unity_project') if state.is_file() else None
+    return (studio_unity_bridge.editor_status(project)
+            if project else {'connected': False, 'status': 'NO_SELECTED_UNITY_PROJECT'})
+
+
 def companion_upgrade_action(reason: str) -> str:
-    return (reason + ' Save the target project, completely close Unreal Editor, '
-            'restart Unreal Editor, and start the Python companion from this exact checkout. '
-            'Prepare a new transfer candidate after reconnecting.')
+    return (
+        reason + ' Keep Unreal Editor open. A current Studio worker refreshes '
+        'changed Python automatically when idle, normally on the next heartbeat. '
+        'If this is a worker started before the live-reload upgrade, and no native '
+        'job is running, use the Unreal Python console once: '
+        'import importlib, studio_local_editor_worker as w; '
+        'w.stop(); importlib.reload(w); w.start(). '
+        'This reconnects the bridge without restarting Unreal. '
+        'Never retry an interrupted native candidate; inspect its receipt. '
+        'If a prepared plan is stale after code or source changes, create a '
+        'new transfer candidate after reconnecting; never modify the old one.'
+    )
 
 
 def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
@@ -237,15 +269,15 @@ def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
     if not plan_file.is_file():
         return unavailable('Prepared transfer plan is missing. Return to Review and prepare a new plan.')
     if not report_file.is_file():
-        return unavailable('The Unreal companion is connected, but has not produced a scene inspection. Check its Python log and restart the companion if needed.')
+        return unavailable('The connected Unreal companion has not produced a scene inspection. It will retry automatically; inspect its Python log if it stays unavailable.')
     try:
         report = load_json(report_file)
         stamp = datetime.fromisoformat(str(report['checked_at']).replace('Z', '+00:00'))
         age = (datetime.now(timezone.utc) - stamp).total_seconds()
         if not 0 <= age < 8 or report.get('kind') != 'cutsceneai.studio.destination_readiness':
-            return unavailable('The scene inspection has expired or is invalid. Check the Unreal Python log and restart the editor companion.')
+            return unavailable('The Unreal scene inspection expired; leave the Editor open while its companion refreshes the native snapshot.')
         if report.get('candidate_id') != candidate_id or report.get('sequence_path') != candidate.get('sequence_path'):
-            return unavailable('Inspection belongs to a different transfer candidate. Restart the Unreal companion to inspect this plan.')
+            return unavailable('Inspection belongs to another candidate. The connected companion will observe the new plan on its next tick.')
         if report.get('plan_sha256') != hashlib.sha256(plan_file.read_bytes()).hexdigest():
             return unavailable('The transfer plan changed after inspection. Return to Review and prepare a fresh plan.')
         if (os.path.normcase(str(report.get('expected_project', ''))) != os.path.normcase(connected['target_project'])
@@ -257,7 +289,7 @@ def destination_readiness(folder: Path = WORKSPACE) -> dict[str, Any]:
                     'next_action': 'Open the connected Unreal project and selected level.'}
         return report
     except (KeyError, ValueError, OSError, TypeError):
-        return unavailable('Unreal inspection report could not be read. Check the Unreal Python log and reconnect the editor companion.')
+        return unavailable('Unreal inspection report could not be read; the connected companion will retry. Inspect the Python log if this persists.')
 
 
 def review_flags(config: dict[str, Any], action_counts: dict[str, int]) -> list[str]:
@@ -627,6 +659,20 @@ def job_status(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
                     result['setup_error'] = setup_error.get('message')
         except (OSError, ValueError, KeyError, TypeError):
             pass
+    # Observe terminal native jobs and store private, source-hash-bound
+    # learning diagnostics. Do not retrigger an Unreal job or award positive
+    # learning credit. Failures must not mask the actual native job status.
+    if job.get('status') not in {'RUNNING', 'QUEUED', 'PENDING', 'NEW'}:
+        try:
+            import studio_continual_learning
+            result['private_learning_trial'] = studio_continual_learning.record_terminal(
+                folder, job
+            )['status']
+            measured = studio_continual_learning.record_measured_outcome(folder, job)
+            result['private_native_measurement'] = measured['status']
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            result['private_learning_trial'] = 'EVIDENCE_REVIEW_REQUIRED'
+            result['private_learning_diagnostic'] = type(exc).__name__
     return result
 
 
@@ -734,6 +780,9 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
     tools_dir = str(ROOT / 'tools')
     if tools_dir not in sys.path:
         sys.path.insert(0, tools_dir)
+    readiness_dir = str(ROOT / 'packages' / 'readiness')
+    if readiness_dir not in sys.path:
+        sys.path.insert(0, readiness_dir)
     import studio_project_discovery
     class StudioHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -781,6 +830,22 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                     return self.reply(200, studio_agent_feedback.conversation(folder, job))
                 except (ValueError, OSError, KeyError, TypeError) as exc:
                     return self.reply(409, {'error': 'Agent conversation unavailable: ' + str(exc)})
+            if path == '/api/ced-rulebook':
+                import ced_rulebook
+                try:
+                    knowledge_store = folder.parent / 'ced-knowledge'
+                    approved = ced_rulebook.approved_rules(knowledge_store)
+                    inventory = ced_rulebook.coverage(approved)
+                    return self.reply(200, {
+                        'kind': inventory['kind'], 'schema_version': inventory['schema_version'],
+                        'total_concepts': inventory['total_concepts'],
+                        'concepts_with_candidate_rules': inventory['concepts_with_candidate_rules'],
+                        'unmapped_concepts': inventory['unmapped_concepts'],
+                        'approved_user_rules': len(approved),
+                        'user_submissions_are_not_automatically_executable': True,
+                    })
+                except (ValueError, OSError) as exc:
+                    return self.reply(409, {'error': 'CED mapping knowledge unavailable: ' + str(exc)})
             if path == '/api/capabilities':
                 import studio_ui_features
                 return self.reply(200, studio_ui_features.capabilities())
@@ -813,8 +878,13 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                 cfg = folder / 'connection.json'
                 return self.reply(200, {'service': 'CutSceneAI Studio Local Companion',
                                         'repo_root': str(ROOT), 'token': TOKEN, 'connected': cfg.is_file(),
+                                        'host_reload': SOURCE_WATCHER.status() if SOURCE_WATCHER else {
+                                            'status': 'NOT_ENABLED', 'engine_restart_required': False,
+                                            'native_job_replayed': False,
+                                        },
                                         'connection': load_json(cfg) if cfg.is_file() else None,
                                         'unreal_worker': worker_connected(folder),
+                                        'unity_editor': _unity_live_status(folder),
                                         'destination_readiness': destination_readiness(folder),
                                         'candidate': load_json(folder / 'active-candidate.json') if (folder / 'active-candidate.json').is_file() else None,
                                         'active_job': load_json(folder / 'active-job.json').get('job_id') if (folder / 'active-job.json').is_file() else None,
@@ -915,6 +985,10 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                     raise ValueError('Expected JSON request object.')
                 route = urlparse(self.path).path
                 with LOCK:
+                    if HOST_RESTARTING.is_set():
+                        return self.reply(503, {'error': 'Studio localhost is reconnecting after a code update. Unity and Unreal stay open.'})
+                    if SOURCE_WATCHER is not None and not SOURCE_WATCHER.mutation_safe():
+                        return self.reply(503, {'error': 'Studio source changed. New mutating requests are paused until a safe localhost reload: ' + SOURCE_WATCHER.status()['reason']})
                     if route == '/api/pick-folder':
                         selected = studio_project_discovery.browse_project_folder(str(data.get('kind') or ''))
                         result = {'path': selected, 'cancelled': not bool(selected)}
@@ -944,6 +1018,27 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         atomic_json(folder / 'connection.json', result)
                         for name in ('active-candidate.json', 'active-job.json', 'attached-observation.json', 'destination-readiness.json', 'one-click-approval.json'):
                             (folder / name).unlink(missing_ok=True)
+                    elif route == '/api/ced-rulebook/propose':
+                        # A new mapping can be suggested directly from Studio,
+                        # but never approved, executed or learned into a live
+                        # adapter by an unverified user HTTP request.
+                        import ced_rulebook
+                        raw_rule = data.get('rule')
+                        if not isinstance(raw_rule, dict):
+                            raise ValueError('Submit a structured CED mapping rule object.')
+                        canonical = json.dumps(
+                            raw_rule, sort_keys=True, separators=(',', ':'),
+                            allow_nan=False, ensure_ascii=False)
+                        fingerprint = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+                        candidate_id = ced_rulebook.propose(
+                            folder.parent / 'ced-knowledge', raw_rule,
+                            origin='USER', feature_sha256=fingerprint)
+                        result = {
+                            'candidate_id': candidate_id,
+                            'status': 'PROPOSED_NOT_EXECUTABLE',
+                            'next_step': 'Independent engine validation, registered adapter and human QA approval required.',
+                            'used_for_live_transfer': False,
+                        }
                     elif route == '/api/agent-feedback':
                         import studio_agent_feedback
                         active = folder / 'active-job.json'
@@ -955,6 +1050,11 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         job = load_json(folder / 'jobs' / (job_id + '.json'))
                         result = studio_agent_feedback.submit(
                             folder, job, data.get('message'))
+                    elif route == '/api/autopilot/cancel':
+                        import studio_autopilot
+                        result = studio_autopilot.cancel(
+                            folder, service=autopilot_service()
+                        )
                     elif route == '/api/autopilot/start':
                         import studio_autopilot
                         result = studio_autopilot.begin(
@@ -1004,12 +1104,14 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
 
 
 def main(argv=None) -> int:
-    global ROOT, WORKSPACE
+    global ROOT, WORKSPACE, SOURCE_WATCHER
     parser = argparse.ArgumentParser(description='CutSceneAI Studio localhost-only editor companion API')
     parser.add_argument('--repo', type=Path, default=ROOT, help='Repository root containing tools/studio_candidate.py')
     parser.add_argument('--web', type=Path, default=ROOT / 'apps/studio-web')
     parser.add_argument('--workspace', type=Path, default=WORKSPACE)
     parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--watch', action='store_true',
+                        help='Auto-rotate only the localhost Studio server on safe Python updates; use the supervising launcher.')
     args = parser.parse_args(argv)
     ROOT = args.repo.resolve()
     WORKSPACE = args.workspace.resolve()
@@ -1027,6 +1129,32 @@ def main(argv=None) -> int:
     autopilot_stop = studio_autopilot.start_daemon(WORKSPACE, service=autopilot_service())
     handler = create_handler(args.web.resolve(), WORKSPACE)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), handler)
+    reload_stop = threading.Event()
+    reload_thread = None
+    HOST_RESTARTING.clear()
+    if args.watch:
+        import studio_host_live_reload
+        SOURCE_WATCHER = studio_host_live_reload.HostCodeWatcher(ROOT, WORKSPACE)
+
+        def watch_source():
+            while not reload_stop.wait(2.0):
+                if not SOURCE_WATCHER.observe():
+                    continue
+                if not LOCK.acquire(blocking=False):
+                    continue
+                try:
+                    if not SOURCE_WATCHER.observe():
+                        continue
+                    HOST_RESTARTING.set()
+                finally:
+                    LOCK.release()
+                # Called from a separate thread, never from the HTTP server.
+                # The launcher reopens only the localhost Python process.
+                server.shutdown()
+                return
+
+        reload_thread = threading.Thread(target=watch_source, name='studio-host-reload', daemon=True)
+        reload_thread.start()
     print(f'CutSceneAI Studio: http://127.0.0.1:{args.port}')
     print('Only localhost is accessible. Close with Ctrl+C.')
     try:
@@ -1034,9 +1162,14 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        reload_stop.set()
         agent_stop.set()
+        autopilot_stop.set()
         server.server_close()
-    return 0
+        if reload_thread is not None:
+            reload_thread.join(timeout=5)
+        SOURCE_WATCHER = None
+    return 75 if HOST_RESTARTING.is_set() else 0
 
 
 if __name__ == '__main__':

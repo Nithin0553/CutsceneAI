@@ -150,6 +150,8 @@ namespace CutsceneAI.UnityExtractor
         public string guid;
         public string renderer_path;
         public string mesh_name;
+        public string source_sha256;
+        public string source_meta_sha256;
     }
 
     [Serializable]

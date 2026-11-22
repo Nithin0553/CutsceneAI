@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -45,6 +47,18 @@ def _read(path: Path) -> dict[str, Any]:
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@lru_cache(maxsize=1)
+def _trained_ced_advisor():
+    """Compile the checked-in CED policy once per host process for review only."""
+    learning = str(Path(__file__).resolve().parents[1] / "learning")
+    if learning not in sys.path:
+        sys.path.insert(0, learning)
+    import ced_pretraining
+    model = ced_pretraining.train()
+    ced_pretraining.validate(model)
+    return ced_pretraining, model
 
 
 def _fingerprint(kind: str, ced: str, native: str, semantic: str) -> str:
@@ -351,6 +365,33 @@ def audit(
         if row["state"] in {"UNKNOWN_CED", "UNKNOWN_NATIVE", "NEEDS_EVIDENCE"}
     ]
     fingerprints = sorted({row["feature_fingerprint"] for row in newly_discovered})
+    trained_candidates = []
+    if newly_discovered:
+        try:
+            advisor, learned_model = _trained_ced_advisor()
+            observed = set()
+            for finding in newly_discovered:
+                # Learned suggestions are advisory; bound extra scoring work
+                # even when a large Unity scene contains thousands of unknowns.
+                if len(trained_candidates) >= 32:
+                    break
+                fingerprint = finding["feature_fingerprint"]
+                if fingerprint in observed:
+                    continue
+                observed.add(fingerprint)
+                text = str(finding.get("native_type") or finding.get("ced") or "")
+                if not text:
+                    continue
+                trained_candidates.append({
+                    "feature_fingerprint": fingerprint,
+                    "suggestions": advisor.suggest(
+                        learned_model, text, engine="unity", limit=3),
+                    "proposal_only": True,
+                    "native_conversion_authorized": False,
+                })
+        except (OSError, ValueError, ImportError) as exc:
+            raise CEDPreflightError(
+                "Checked-in CED policy cannot be trusted for native discovery.") from exc
     # Group repetitive section and bone-curve observations for the user while
     # retaining every indexed source occurrence in the inspectable JSON.
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -385,6 +426,15 @@ def audit(
         "review_groups": review_groups,
         "unique_discovery_count": len(fingerprints),
         "discovery_fingerprints": fingerprints,
+        "trained_ced_proposals": {
+            "kind": "cutsceneai.ced.trained_suggestion_groups",
+            "proposal_only": True,
+            "native_conversion_authorized": False,
+            "groups": trained_candidates,
+            "max_suggestion_groups": 32,
+            "total_discovery_signatures": len(fingerprints),
+            "suggestions_truncated": len(fingerprints) > len(trained_candidates),
+        },
         "findings": findings,
         "note": (
             "Supported means a known structural converter exists, not target fidelity. "

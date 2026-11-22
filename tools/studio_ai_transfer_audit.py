@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +110,128 @@ def _decision(job: dict, candidate: Path) -> tuple[dict, dict, dict]:
     if not _same_sequence(job.get("sequence_path"), plan.get("sequence_asset_path")):
         raise AITransferAuditError("Prepared native plan is for a different Level Sequence.")
     return decision, plan, session
+
+
+def _character_conversion(
+    job: dict, candidate: Path, decision: dict, plan: dict,
+    *, native_builder_completed: bool,
+) -> dict[str, Any]:
+    """Join Friday's pre-transfer choice to a source-bound native readback.
+
+    An LLM-selected IK action is not a successful native conversion. The
+    built-in Unreal readback must be tied to this exact job and character.
+    """
+    selected = decision.get("animation_conversion")
+    report_sha = decision.get("character_compatibility_sha256")
+    result: dict[str, Any] = {
+        "compatibility_recorded": False,
+        "character_count": 0,
+        "compatibility_outcomes": {},
+        "selected": False,
+        "action": None,
+        "native_readback_status": "NOT_SELECTED",
+        "native_readback_passed": False,
+        "fidelity_verified": False,
+    }
+    mapping = _load(candidate.with_suffix(".mapping.json"))
+    if not report_sha:
+        if selected is not None or "ai_character_animation" in plan or "ai_character_animation" in mapping:
+            raise AITransferAuditError("An animation action lacks source-bound character evidence.")
+        return result
+
+    character_file = candidate / "character-compatibility.json"
+    if not character_file.is_file() or character_file.is_symlink():
+        raise AITransferAuditError("Character compatibility report is missing.")
+    report = _load(character_file)
+    file_sha = hashlib.sha256(character_file.read_bytes()).hexdigest()
+    canonical_sha = hashlib.sha256(json.dumps(
+        report, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+    if (report.get("kind") != "cutsceneai.studio.character_compatibility_report"
+            or report_sha != canonical_sha
+            or job.get("character_compatibility_sha256") != file_sha):
+        raise AITransferAuditError("Native character report differs from job-bound source evidence.")
+    rows = report.get("characters")
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise AITransferAuditError("Character compatibility report has malformed character rows.")
+    outcomes = {}
+    for row in rows:
+        outcome = str(row.get("status") or "UNKNOWN")[:60]
+        if outcome not in {
+            "COMPATIBLE", "COMPATIBLE_AFTER_APPROVED_RETARGET",
+            "INCOMPATIBLE", "INSUFFICIENT_EVIDENCE",
+        }:
+            raise AITransferAuditError("Unknown character compatibility outcome.")
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+    result.update({
+        "compatibility_recorded": True,
+        "character_count": len(rows),
+        "compatibility_outcomes": outcomes,
+    })
+    if selected is None:
+        if "ai_character_animation" in plan or "ai_character_animation" in mapping:
+            raise AITransferAuditError("Native plan selected retargeting without an AI decision.")
+        return result
+    if (not isinstance(selected, dict)
+            or selected.get("kind") != "cutsceneai.studio.ai_animation_conversion_decision"
+            or selected.get("action_id") not in ("use_approved_ik_retarget_profile", "bake_verified_actor_world_trajectory")
+            or selected.get("compatibility_report_sha256") != canonical_sha
+            or plan.get("ai_character_animation") != selected
+            or mapping.get("ai_character_animation") != selected):
+        raise AITransferAuditError("Prepared animation plan differs from the approved model decision.")
+    matches = [
+        row for row in rows
+        if row.get("id") == selected.get("choice_id")
+        and row.get("source_entity_id") == selected.get("source_entity_id")
+        and row.get("status") in ({"COMPATIBLE", "COMPATIBLE_AFTER_APPROVED_RETARGET"}
+                                  if selected.get("action_id") == "bake_verified_actor_world_trajectory"
+                                  else {"COMPATIBLE_AFTER_APPROVED_RETARGET"})
+    ]
+    if len(matches) != 1:
+        raise AITransferAuditError("Selected AI character is not uniquely compatible.")
+    result.update({
+        "selected": True,
+        "action": selected["action_id"],
+        "native_readback_status": "NOT_EXECUTED",
+    })
+
+    native_file = candidate / "character-native-execution.json"
+    if not native_file.is_file():
+        return result
+    native = _load(native_file)
+    status = native.get("status")
+    if (native.get("kind") != "cutsceneai.studio.character_native_readback"
+            or native.get("job_id") != job.get("job_id")
+            or native.get("sequence_path") != job.get("sequence_path")
+            or native.get("source_entity_id") != selected.get("source_entity_id")
+            or native.get("decision_file_sha256") != job.get("ai_conversion_decision_sha256")
+            or native.get("compatibility_file_sha256") != file_sha
+            or status not in {"PASS", "FAIL", "INSUFFICIENT_EVIDENCE"}
+            or native.get("fidelity_verified") is not False):
+        raise AITransferAuditError("Native IK retarget readback does not match this transfer.")
+    job_readback = job.get("character_native_readback_status")
+    if job_readback is not None and job_readback != status:
+        raise AITransferAuditError("Job and native character-readback statuses disagree.")
+    positive = bool(
+        native_builder_completed and status == "PASS" and job_readback == "PASS"
+        and native.get("duration_match") is True
+        and (native.get("skeleton") or {}).get("status") == "PASS"
+        and isinstance(native.get("observed_sections"), list)
+        and bool(native["observed_sections"])
+        and isinstance(native.get("expected_sections"), list)
+        and bool(native["expected_sections"])
+    )
+    if selected["action_id"] == "bake_verified_actor_world_trajectory":
+        studio = str(Path(__file__).resolve().parents[1] / "packages/studio")
+        if studio not in sys.path:
+            sys.path.insert(0, studio)
+        from character_motion import receipt_matches
+        positive = positive and receipt_matches(native, plan)
+        result["native_motion_readback_status"] = (native.get("motion") or {}).get("status", "MISSING")
+    result["native_readback_status"] = status if positive or status != "PASS" else "UNCONFIRMED_PASS"
+    result["native_readback_passed"] = positive
+    return result
 
 
 def _native_execution(job: dict, candidate: Path, plan: dict) -> dict[str, Any]:
@@ -248,6 +371,10 @@ def assess(workspace: str | Path, job_id: str) -> dict[str, Any]:
     if not isinstance(actions, list) or any(not isinstance(action, dict) for action in actions):
         raise AITransferAuditError("Prepared native plan has invalid action records.")
     native = _native_execution(job, candidate, plan)
+    character = _character_conversion(
+        job, candidate, decision, plan,
+        native_builder_completed=native["native_builder_completed"],
+    )
     visibility_count = sum(action.get("kind") == "actor_visibility" for action in actions)
     if decision["conversion_options"]["enable_actor_visibility_fallback"] and not visibility_count:
         raise AITransferAuditError("AI selected activation approximation but no native action was planned.")
@@ -275,6 +402,7 @@ def assess(workspace: str | Path, job_id: str) -> dict[str, Any]:
         "native_receipt_present": native["receipt_present"],
         "native_builder_completed": native["native_builder_completed"],
         "native_status": native["status"],
+        "character_conversion": character,
         "execution_stage": str(job.get("failure_stage") or job.get("execution_stage")
                                or "UNKNOWN")[:70],
         "cinetwin": measured,

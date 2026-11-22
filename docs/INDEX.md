@@ -4,8 +4,13 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 
 ## Start here
 
+- [Element 2: Hybrid CED completion, signed releases and learning acceptance](studio/CED_HYBRID_COMPLETION_V02.md) — four phases, operator CLI, readback gates, security and native acceptance gaps
+- [Hybrid CED knowledge service (shared baseline, local learning, reviewed promotion)](studio/CED_HYBRID_KNOWLEDGE_ARCHITECTURE_V1.md) — Element 2 contracts, contextual retrieval, privacy and validation gates
+- [Agent-centric CED knowledge, LangGraph orchestration and local-model architecture](studio/AGENT_CENTRIC_ARCHITECTURE_V1.md) — active experimental refactor, explicit native safety and remaining fidelity gates
 - [CED-first pre-conversion discovery](architecture/CED_FIRST_PREFLIGHT_V0_1.md)
 - [CED local discovery registry](architecture/CED_DISCOVERY_REGISTRY_V0_1.md) — opt-in, redacted, deduplicated unknown-element observations
+- [CED mapping rules book and offline RL feedback](studio/CED_MAPPING_RULEBOOK_AND_REINFORCEMENT_LEARNING.md) — complete semantic coverage, persistent approved user rules, candidate review and version-specific policy suggestions
+- [Executed CED semantic mapping pretraining](studio/CED_POLICY_TRAINING_EXPERIMENT.md) — reproducible model fit, native-alias holdout metrics, and non-executable transfer suggestions
 - [Executable CED adapter contract](architecture/CED_ADAPTER_EXECUTION.md) — source-bound handlers, native actions and verification gates
 - [Native component adapter handoff](handoffs/COMPONENT_ADAPTER_DEVELOPMENT.md) — implementation branches and remaining editor evidence
 - [Integrated Studio smoke-test and merge audit (#93)](studio/ISSUE_93_INTEGRATED_SMOKE_TEST.md) — unified source, CED, agent and release gates

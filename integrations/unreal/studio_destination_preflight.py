@@ -29,6 +29,11 @@ def assess(plan: dict[str, Any], actors: list[dict[str, Any]],
     bindings = plan.get('bindings') or {}
     if not isinstance(bindings, dict) or not bindings:
         raise ValueError('Prepared plan contains no target actor bindings.')
+    # Prepared mapping is name-keyed. A duplicated target label would let
+    # two independent source objects mutate the same native actor.
+    labels = [str(label) for label in bindings.values()]
+    if any(not label.strip() for label in labels) or len(set(labels)) != len(labels):
+        raise ValueError('Ambiguous or blank target actor binding in prepared plan.')
     actions = plan.get('actions') or []
     if not isinstance(actions, list):
         raise ValueError('Prepared actions must be a list.')
@@ -41,13 +46,23 @@ def assess(plan: dict[str, Any], actors: list[dict[str, Any]],
             raise ValueError('Invalid prepared action.')
         kind = str(action.get('kind') or '')
         entity = str(action.get('entity_name') or '')
-        if kind in ACTOR_ACTION_KINDS and entity:
+        if kind in ACTOR_ACTION_KINDS:
+            if not entity or entity not in bindings:
+                raise ValueError('Native actor action references an unknown source binding.')
             kinds.setdefault(entity, set()).add(ACTOR_ACTION_KINDS[kind])
+        if entity and 'actor_label' in action and kind != 'audio':
+            if entity not in bindings or str(action['actor_label']) != str(bindings[entity]):
+                raise ValueError('Native action actor label differs from prepared binding.')
         if kind in ASSET_KINDS:
             path = str(action.get('unreal_asset_path') or '')
             if not path.startswith('/Game/'):
                 raise ValueError('Prepared action has missing or invalid Unreal asset path.')
-            required_assets[path] = ASSET_KINDS[kind]
+            expected_class = ASSET_KINDS[kind]
+            if path in required_assets and required_assets[path] != expected_class:
+                raise ValueError(
+                    'One Unreal asset path cannot be both animation and audio: ' + path
+                )
+            required_assets[path] = expected_class
     missing_actors = []
     duplicate_actors = []
     wrong_actor_types = []

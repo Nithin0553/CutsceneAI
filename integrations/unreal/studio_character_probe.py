@@ -13,6 +13,7 @@ for directory in (ROOT / "tools", ROOT / "packages/studio", ROOT / "packages/cin
 
 import character_compatibility as compatibility
 import studio_ik_retarget
+import studio_character_motion
 
 
 def _asset_path(asset) -> str:
@@ -24,18 +25,7 @@ def _asset_class(asset) -> str:
 
 
 def package_files(project: Path, path: str) -> dict:
-    if not compatibility.PACKAGE_PATH.fullmatch(path):
-        raise compatibility.CompatibilityError("Unsafe or external Unreal package path.")
-    content = project.parent / "Content"
-    base = content / path.removeprefix("/Game/")
-    if not base.resolve().is_relative_to(content):
-        raise compatibility.CompatibilityError("Unreal package resolves outside project Content.")
-    files = {".uasset": compatibility.file_digest(base.with_suffix(".uasset"))}
-    for suffix in (".uexp", ".ubulk"):
-        sidecar = base.with_suffix(suffix)
-        if sidecar.exists() or sidecar.is_symlink():
-            files[suffix] = compatibility.file_digest(sidecar)
-    return files
+    return compatibility.package_files(project, path)
 
 
 def _bones(api, mesh, skeleton) -> list[list[str]]:
@@ -134,7 +124,8 @@ def inspect(api, request: dict, *, project: str, level: str) -> dict:
             "request_sha256": compatibility.digest(request), "profiles": profiles, "clips": clips,
             "observed_identity": {"project": str(selected), "level": level,
                                   "engine_version": str(api.SystemLibrary.get_engine_version()), "editor_pid": os.getpid(),
-                                  "native_skeletal_track": hasattr(api, "MovieSceneSkeletalAnimationTrack")}}
+                                  "native_skeletal_track": hasattr(api, "MovieSceneSkeletalAnimationTrack"),
+                                  "native_actor_motion": studio_character_motion.available(api)}}
 
 
 def service(workspace: Path, api, *, project: str, level: str, save) -> None:

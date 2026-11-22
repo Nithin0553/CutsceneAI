@@ -23,10 +23,14 @@ def _stem(path: str) -> str:
 
 def _candidates(source: str, available: list[tuple[str, str]]) -> dict[str, Any]:
     source_key = _normalize(source)
-    matches = sorted({
+    # Do NOT collapse duplicate editor actors into one "unique" target.
+    # Two distinct loaded actors can legally share one Unreal actor label,
+    # but a label-only mapper cannot tell them apart. Repeated exact asset
+    # paths are also kept ambiguous until an inventory is normalized.
+    matches = sorted(
         path for identity, path in available
         if source_key and _normalize(identity) == source_key
-    })
+    )
     if len(matches) == 1:
         outcome = "EXACT_UNIQUE_PROPOSAL"
     elif matches:

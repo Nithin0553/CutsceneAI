@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +23,17 @@ _LOCK = threading.RLock()
 ACTIVE = "autopilot-active.json"
 STAGES = frozenset({
     "WAITING_FOR_UNITY", "WAITING_FOR_UNITY_CAPTURE", "CONNECTING",
-    "ANALYZING_PROJECTS", "PREPARING",
+    "ANALYZING_PROJECTS", "WAITING_FOR_MODEL", "PREPARING",
     "WAITING_FOR_UNREAL", "UNREAL_RUNNING",
 })
-FINISHED = frozenset({"GENERATED_UNVERIFIED", "BLOCKED"})
+FINISHED = frozenset({"GENERATED_UNVERIFIED", "BLOCKED", "CANCELLED"})
+# Native read-only character inspection must not wait forever on an orphaned
+# editor request. Disconnects never authorize issuing a second native job.
+NATIVE_PROBE_TIMEOUT_SECONDS = 180
+# Manual Play Mode is explicitly requested; an orphaned request still needs an
+# eventual safe terminal outcome without repeatedly creating capture tickets.
+UNITY_CAPTURE_TIMEOUT_SECONDS = 3600
+JOB_ID_RE = re.compile(r"[a-f0-9]{32}\Z")
 
 
 class AutopilotError(ValueError):
@@ -68,6 +76,9 @@ def status(workspace: Path) -> dict[str, Any]:
         "ai_conversion_strategy": state.get("ai_conversion_strategy", ""),
         "ai_animation_action": state.get("ai_animation_action", ""),
         "error": state.get("error", ""),
+        "failure_category": state.get("failure_category", ""),
+        "recovery_action": state.get("recovery_action", ""),
+        "model_retry_attempts": state.get("model_retry_attempts", 0),
     }
 
 
@@ -115,6 +126,127 @@ def begin(workspace: Path, *, unity_folder: str, unreal_folder: str,
         return {**status(workspace), "instruction": request["instruction"]}
 
 
+def cancel(workspace: Path, *, service: Any) -> dict[str, Any]:
+    """Stop before the first native job, without deleting immutable evidence.
+
+    Never cancel a queued/running Unreal import: an interrupted engine write
+    may already have changed staging assets or actor state.
+    """
+    with service.lock, _LOCK:
+        path = workspace / ACTIVE
+        if not path.is_file():
+            return status(workspace)
+        state = _load(path)
+        if state["status"] == "CANCELLED":
+            return status(workspace)
+        active = workspace / "active-job.json"
+        if active.is_file():
+            identifier = str(_load(active).get("job_id") or "")
+            if identifier:
+                previous = service.job_status(identifier, workspace)
+                if previous["status"] in {"QUEUED", "RUNNING"}:
+                    raise AutopilotError(
+                        "An Unreal transfer is queued or running; native import "
+                        "cannot be interrupted safely. Inspect the job instead."
+                    )
+        if state["status"] == "UNREAL_RUNNING":
+            raise AutopilotError(
+                "Unreal execution has started; do not interrupt a partially imported candidate."
+            )
+        if state["status"] not in STAGES:
+            raise AutopilotError("No pre-execution transfer is available to cancel.")
+        state["status"] = "CANCELLED"
+        state["message"] = (
+            "Transfer cancelled before native execution. Existing Unity "
+            "snapshots and prepared candidates were preserved."
+        )
+        state["error"] = ""
+        _write(path, state)
+        return status(workspace)
+
+
+def _wait_timed_out(state: dict, timestamp_key: str, seconds: int) -> bool:
+    started = state.get(timestamp_key)
+    if not started:
+        return False
+    try:
+        timestamp = datetime.fromisoformat(str(started))
+    except ValueError as exc:
+        raise AutopilotError("Studio wait timeout state is invalid.") from exc
+    if timestamp.tzinfo is None:
+        raise AutopilotError("Studio wait timeout is missing timezone.")
+    elapsed = (datetime.now(timezone.utc) - timestamp).total_seconds()
+    return elapsed > seconds
+
+
+def _submitted_job(workspace: Path, candidate_id: str) -> str:
+    """Recover ONLY an already persisted job from the same immutable candidate.
+
+    A crash may happen after queue_trial writes jobs/<id>.json but before its
+    result reaches autopilot-active.json. Never submit a second native write in
+    that situation. Ambiguous or conflicting jobs require an explicit stop.
+    """
+    if (not isinstance(candidate_id, str) or not candidate_id.isascii()
+            or not candidate_id.replace("_", "").isalnum()):
+        raise AutopilotError("Invalid candidate identity during Unreal job recovery.")
+    candidate_root = (workspace / "candidates").resolve()
+    original_dir = workspace / "candidates" / candidate_id
+    expected_dir = original_dir.resolve()
+    if original_dir.is_symlink() or not expected_dir.is_relative_to(candidate_root):
+        raise AutopilotError("Prepared candidate path is unsafe for native job recovery.")
+
+    candidates = []
+    jobs_dir = workspace / "jobs"
+    for path in sorted(jobs_dir.glob("*.json")) if jobs_dir.is_dir() else ():
+        if path.is_symlink():
+            raise AutopilotError("Symlinked Unreal job evidence cannot be used for recovery.")
+        job = _load(path)
+        if job.get("candidate_id") != candidate_id:
+            continue
+        job_id = job.get("job_id")
+        if (job.get("kind") != "cutsceneai.studio.local_unreal_job"
+                or not isinstance(job_id, str) or not JOB_ID_RE.fullmatch(job_id)
+                or path.stem != job_id
+                or Path(str(job.get("candidate_dir") or "")).resolve() != expected_dir):
+            raise AutopilotError("Existing Unreal job identity disagrees with the prepared candidate.")
+        candidates.append((job_id, job))
+    if len(candidates) > 1:
+        raise AutopilotError("Multiple jobs reference the same candidate; refusing unsafe replay.")
+    active = workspace / "active-job.json"
+    if active.is_symlink():
+        raise AutopilotError("Symlinked active Unreal job pointer is unsafe.")
+    if active.is_file():
+        pointer = _load(active).get("job_id")
+        if not candidates or pointer != candidates[0][0]:
+            raise AutopilotError("Another Unreal job is active; refusing to queue or adopt a candidate.")
+    if not candidates:
+        return ""
+
+    # A job exists: verify immutable session/connection and candidate pointer
+    # before displaying or monitoring this already-submitted native work.
+    candidate_pointer = workspace / "active-candidate.json"
+    if candidate_pointer.is_symlink() or not candidate_pointer.is_file():
+        raise AutopilotError("Missing trusted active candidate for native job recovery.")
+    if _load(candidate_pointer).get("candidate_id") != candidate_id:
+        raise AutopilotError("Active candidate changed after the native job was submitted.")
+    config = _load(workspace / "connection.json")
+    session = _load(expected_dir / "session.json")
+    if (session.get("source", {}).get("csir_path") != config.get("csir")
+            or (session.get("source_capture") or {}).get("path") != config.get("capture")
+            or session.get("target", {}).get("project_path") != config.get("target_project")):
+        raise AutopilotError("Prepared session source or target changed during job recovery.")
+    job_id, job = candidates[0]
+    if (job.get("csir") != config.get("csir")
+            or job.get("capture") != config.get("capture")
+            or job.get("expected_project") != config.get("target_project")
+            or job.get("expected_level") != config.get("level_path")
+            or job.get("sequence_path") != session.get("target", {}).get("sequence_asset_path")
+            or job.get("mapping") != session.get("target", {}).get("mapping_path")):
+        raise AutopilotError("Submitted Unreal job source, target or mapping changed during recovery.")
+    if not active.is_file():
+        _write(active, {"job_id": job_id})
+    return job_id
+
 def _pick_level(record: dict, service: Any, workspace: Path) -> str:
     """Choose a proven active destination, never an arbitrary map in a project."""
     worker = service.worker_connected(workspace)
@@ -157,6 +289,7 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                         state["unity_project"], state["source_request_id"]
                     )
                     state["capture_request_id"] = request["request_id"]
+                    state["capture_wait_started_at"] = datetime.now(timezone.utc).isoformat()
                     state["status"] = "WAITING_FOR_UNITY_CAPTURE"
                     state["message"] = request["instruction"]
             elif phase == "WAITING_FOR_UNITY_CAPTURE":
@@ -166,15 +299,48 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                 if observed["status"] == "BLOCKED":
                     raise AutopilotError(observed["reason"])
                 if observed["status"] == "SUCCEEDED":
+                    state.pop("capture_wait_started_at", None)
                     state["capture_path"] = observed["capture_path"]
                     state["status"] = "CONNECTING"
                     state["message"] = (
                         "Source CineTwin samples verified. Resolving native transfer mappings."
                     )
                 else:
+                    if _wait_timed_out(
+                        state, "capture_wait_started_at", UNITY_CAPTURE_TIMEOUT_SECONDS,
+                    ):
+                        raise AutopilotError(
+                            "Unity source CineTwin capture timed out after 60 minutes. "
+                            "Check that the selected Unity Editor has the Studio Bridge "
+                            "enabled and is in Play Mode; start a fresh transfer. "
+                            "No Unreal candidate was submitted."
+                        )
                     state["message"] = str(observed.get(
                         "message", "Waiting for saved Unity Play Mode behavior capture."
                     ))[:500]
+            elif phase == "WAITING_FOR_MODEL":
+                # Only retry the pre-native AI call; there must be no candidate
+                # or queued native job to replay. The attempt budget is durable.
+                if state.get("job_id") or state.get("candidate_id"):
+                    raise AutopilotError(
+                        "Model recovery cannot repeat a submitted native candidate."
+                    )
+                import studio_recovery_policy as recovery
+                retries = int(state.get("model_retry_attempts", 0))
+                if retries >= recovery.MAX_MODEL_RETRIES:
+                    raise AutopilotError(
+                        "The local model did not recover within the safe retry budget."
+                    )
+                next_at = datetime.fromisoformat(state["next_model_retry_at"])
+                if next_at.tzinfo is None:
+                    raise AutopilotError("Model retry timestamp is invalid.")
+                if datetime.now(timezone.utc) >= next_at:
+                    state["model_retry_attempts"] = retries + 1
+                    state["status"] = "ANALYZING_PROJECTS"
+                    state["message"] = (
+                        "Retrying read-only AI conversion reasoning with the "
+                        "same source, CED knowledge and target evidence."
+                    )
             elif phase == "CONNECTING":
                 level = _pick_level(state, service, workspace)
                 if not level:
@@ -213,11 +379,32 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                     "require_complete_source_features": False,
                 })
                 worker = service.worker_connected(workspace)
+                if not worker.get("connected"):
+                    state["message"] = (
+                        "Unreal disconnected during read-only AI project analysis. "
+                        "Reconnect the same editor project and level; no native job "
+                        "has been submitted."
+                    )
+                    _write(file, state)
+                    return status(workspace)
                 requested, probe = studio_transfer_ai.target_probe(config, worker, workspace, state["run_id"], write=_write)
                 if requested and probe is None:
+                    if _wait_timed_out(
+                        state, "native_probe_wait_started_at", NATIVE_PROBE_TIMEOUT_SECONDS,
+                    ):
+                        raise AutopilotError(
+                            "Native Unreal character inspection timed out after 180 seconds. "
+                            "Inspect the editor worker and start a fresh transfer; "
+                            "no AI decision or native candidate was created."
+                        )
+                    state.setdefault(
+                        "native_probe_wait_started_at",
+                        datetime.now(timezone.utc).isoformat(),
+                    )
                     state["message"] = "Waiting for Unreal to inspect the mapped animation packages and approved rigs."
                     _write(file, state)
                     return status(workspace)
+                state.pop("native_probe_wait_started_at", None)
                 native_evidence = {"native_character_probe": probe} if probe is not None else {}
                 decision = studio_transfer_ai.decide(
                     config, state["census_path"], worker, **native_evidence
@@ -238,6 +425,11 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                 if state["ai_animation_action"]:
                     state["message"] = "AI selected an approved IK Retargeter for an evidence-matched in-place character."
             elif phase == "PREPARING":
+                if (workspace / "active-candidate.json").exists():
+                    raise AutopilotError(
+                        "A candidate was already prepared before Studio restarted. "
+                        "Inspect its immutable files; do not prepare or submit another candidate."
+                    )
                 import studio_ui_features
                 # Validate the exact Unity-emitted census. Partial component
                 # support is recorded, never misrepresented as full parity.
@@ -245,6 +437,14 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                 config = service.load_json(workspace / "connection.json")
                 decision = _load(workspace / "ai-conversion-decision.json")
                 worker = service.worker_connected(workspace)
+                if not worker.get("connected"):
+                    state["message"] = (
+                        "Unreal disconnected before immutable AI plan preparation. "
+                        "Reconnect the same project; the approved model decision "
+                        "is preserved and will be revalidated."
+                    )
+                    _write(file, state)
+                    return status(workspace)
                 native_evidence = {}
                 character_report = None
                 if decision.get("character_compatibility_sha256"):
@@ -281,6 +481,18 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
                 state["status"] = "WAITING_FOR_UNREAL"
                 state["message"] = "Plan ready. Waiting for the matching Unreal editor worker."
             elif phase == "WAITING_FOR_UNREAL":
+                # Recover a previously submitted job BEFORE any destination probe
+                # or queue attempt; a reboot may have lost only the UI transition.
+                submitted = _submitted_job(workspace, state["candidate_id"])
+                if submitted:
+                    state["job_id"] = submitted
+                    state["status"] = "UNREAL_RUNNING"
+                    state["message"] = (
+                        "Recovered the existing submitted Unreal job. "
+                        "No new native work was queued."
+                    )
+                    _write(file, state)
+                    return status(workspace)
                 worker = service.worker_connected(workspace)
                 if not worker.get("connected"):
                     state["message"] = "Open Unreal Editor and start its Studio worker to continue."
@@ -332,9 +544,29 @@ def advance(workspace: Path, *, service: Any) -> dict[str, Any]:
             else:
                 raise AutopilotError("Unknown transfer lifecycle state.")
         except (ValueError, KeyError, OSError, RuntimeError, ImportError) as exc:
-            state["status"] = "BLOCKED"
-            state["message"] = "Transfer stopped safely; inspect the precise error."
-            state["error"] = str(exc)[:700]
+            import studio_recovery_policy as recovery
+            diagnosis = recovery.classify(
+                str(exc), phase=phase,
+                native_submitted=bool(state.get("job_id")),
+            )
+            state["failure_category"] = diagnosis["category"]
+            state["recovery_action"] = diagnosis["next_action"]
+            retries = int(state.get("model_retry_attempts", 0))
+            if (diagnosis["safe_automatic_retry"]
+                    and retries < recovery.MAX_MODEL_RETRIES
+                    and not (workspace / "active-candidate.json").is_file()
+                    and not (workspace / "active-job.json").is_file()):
+                state["status"] = "WAITING_FOR_MODEL"
+                state["next_model_retry_at"] = (
+                    datetime.now(timezone.utc)
+                    + timedelta(seconds=recovery.OLLAMA_WAIT_SECONDS * (2 ** retries))
+                ).isoformat()
+                state["message"] = diagnosis["next_action"]
+                state["pending_model_error"] = str(exc)[:500]
+            else:
+                state["status"] = "BLOCKED"
+                state["message"] = "Transfer stopped safely; inspect the precise error."
+                state["error"] = str(exc)[:700]
         _write(file, state)
         return status(workspace)
 

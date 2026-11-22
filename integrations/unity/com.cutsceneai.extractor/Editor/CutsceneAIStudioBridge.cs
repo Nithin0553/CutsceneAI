@@ -22,7 +22,91 @@ namespace CutsceneAI.UnityExtractor
         private const string CaptureAction = "CAPTURE_SELECTED_TIMELINE_BEHAVIOR";
         private const string EnableMenu = "Tools/CutsceneAI/Studio Bridge/Enable Source Bridge";
         private const string DisableMenu = "Tools/CutsceneAI/Studio Bridge/Disable Source Bridge";
+        private const string HeartbeatFile = "unity-editor.json";
         private static double _nextPoll;
+        private static string _lastPresenceError = "";
+
+        // EditorPrefs are shared across all projects installed on a workstation.
+        // Derive an opt-in key from the exact Unity project root so enabling one
+        // editor never silently authorizes another project's source extraction.
+        private static string PreferenceKey()
+        {
+            var root = Path.GetFullPath(Root()).TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+#if UNITY_EDITOR_WIN
+            root = root.ToUpperInvariant();
+#endif
+            using (var sha = SHA256.Create())
+            {
+                var digest = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(root));
+                return Preference + "." +
+                    BitConverter.ToString(digest).Replace("-", "").ToLowerInvariant();
+            }
+        }
+
+        [Serializable]
+        private sealed class Heartbeat
+        {
+            public string kind = "cutsceneai.unity.editor_presence";
+            public string schema_version = "1";
+            public string project_root;
+            public string heartbeat;
+            public int editor_pid;
+            public bool source_bridge_enabled;
+            public string editor_mode;
+            public string bridge_version = "unity-editor-v0.3";
+        }
+
+        // Every assembly/domain reload re-runs InitializeOnLoad and registers
+        // the polling callback again. EditorPrefs retains explicit opt-in.
+        private static void PresenceError(Exception error)
+        {
+            // Do not flood Unity Console every 0.7 seconds when a project is
+            // read-only, locked or its heartbeat file cannot be replaced.
+            var reason = error.GetType().Name + ": " + error.Message;
+            if (reason == _lastPresenceError)
+                return;
+            _lastPresenceError = reason;
+            Debug.LogWarning("[CutSceneAI] Source bridge heartbeat write failed for " +
+                             "the current Unity project: " + reason +
+                             ". Check project folder permissions and the StudioBridge directory.");
+        }
+
+        private static bool WritePresence(bool enabled)
+        {
+            try
+            {
+                var root = Root();
+                var bridge = Path.Combine(root, "CutSceneAI", "StudioBridge");
+                Directory.CreateDirectory(bridge);
+                var target = Path.Combine(bridge, HeartbeatFile);
+                var temporary = target + ".tmp";
+                var payload = new Heartbeat
+                {
+                    project_root = Path.GetFullPath(root),
+                    heartbeat = DateTime.UtcNow.ToString("o"),
+                    editor_pid = System.Diagnostics.Process.GetCurrentProcess().Id,
+                    source_bridge_enabled = enabled,
+                    editor_mode = EditorApplication.isPlaying ? "PLAY_MODE" : "EDIT_MODE",
+                };
+                File.WriteAllText(temporary, JsonUtility.ToJson(payload, true));
+                if (File.Exists(target))
+                    File.Replace(temporary, target, null);
+                else
+                    File.Move(temporary, target);
+                _lastPresenceError = "";
+                return true;
+            }
+            catch (IOException ex)
+            {
+                PresenceError(ex);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                PresenceError(ex);
+            }
+            return false;
+        }
 
         [Serializable]
         private sealed class Request
@@ -62,22 +146,29 @@ namespace CutsceneAI.UnityExtractor
         [MenuItem(EnableMenu, priority = 120)]
         private static void Enable()
         {
-            EditorPrefs.SetBool(Preference, true);
-            Debug.Log("[CutSceneAI] Opt-in source bridge enabled for the current Unity Editor.");
+            EditorPrefs.SetBool(PreferenceKey(), true);
+            if (WritePresence(true))
+                Debug.Log("[CutSceneAI] Opt-in source bridge enabled for this Unity project; " +
+                          "reconnects automatically after script reload.");
+            else
+                Debug.LogError("[CutSceneAI] Source bridge was enabled but its heartbeat " +
+                               "could not be written. Studio cannot connect until the " +
+                               "Unity project folder is writable.");
         }
 
         [MenuItem(DisableMenu, priority = 121)]
         private static void Disable()
         {
-            EditorPrefs.SetBool(Preference, false);
+            EditorPrefs.SetBool(PreferenceKey(), false);
+            WritePresence(false);
             Debug.Log("[CutSceneAI] Source bridge disabled. No queued request will run.");
         }
 
         [MenuItem(EnableMenu, validate = true)]
-        private static bool CanEnable() { return !EditorPrefs.GetBool(Preference, false); }
+        private static bool CanEnable() { return !EditorPrefs.GetBool(PreferenceKey(), false); }
 
         [MenuItem(DisableMenu, validate = true)]
-        private static bool CanDisable() { return EditorPrefs.GetBool(Preference, false); }
+        private static bool CanDisable() { return EditorPrefs.GetBool(PreferenceKey(), false); }
 
         private static string Root()
         {
@@ -137,13 +228,18 @@ namespace CutsceneAI.UnityExtractor
 
         private static void Poll()
         {
-            if (!EditorPrefs.GetBool(Preference, false) ||
+            if (!EditorPrefs.GetBool(PreferenceKey(), false) ||
                 EditorApplication.isCompiling || EditorApplication.isUpdating)
                 return;
             if (EditorApplication.timeSinceStartup < _nextPoll)
                 return;
             _nextPoll = EditorApplication.timeSinceStartup + 0.7;
             var bridge = Path.Combine(Root(), "CutSceneAI", "StudioBridge");
+            // Emits a project-bound heartbeat even if there are no requests.
+            // The host can show reconnection after Unity domain reload without
+            // opening/restarting the Editor or executing an old request twice.
+            if (!WritePresence(true))
+                return;  // No source export while its connection is undetectable.
             var requests = Path.Combine(bridge, "requests");
             if (!Directory.Exists(requests))
                 return;

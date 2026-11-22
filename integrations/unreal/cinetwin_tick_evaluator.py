@@ -26,6 +26,7 @@ for directory in (HERE, HERE.parents[1] / "packages" / "cinetwin"):
         sys.path.insert(0, str(directory))
 
 import cinetwin_target_evaluator as base
+import cinetwin_camera_cuts
 import cinetwin_motion_layers
 import target_observation_plan
 from motion_layers import analyze_motion_layers
@@ -156,6 +157,9 @@ class _TickSession:
                 "world_transform": base._actor_transform(
                     self.actors[entry["entity_id"]]
                 ),
+                **({"camera": base.camera_optics.observe_native_camera(
+                    self.actors[entry["entity_id"]]
+                )} if entry["ced_type"] == "entity.camera" else {}),
             }
             for entry in self.request["bound"]
         ]
@@ -181,6 +185,10 @@ class _TickSession:
         self.samples.append({
             "time_seconds": time_seconds,
             "entities": entities,
+            "skeletal_mesh_component_bases": [
+                base._mesh_component_basis(self.components[rig_id], rig_id)
+                for rig_id in self.rig_bones
+            ],
             "skeletal_poses": poses,
             **({"motion_layers": motion_layers} if motion_layers is not None else {}),
             # Diagnostic only. Editor API reports playhead as a playback-params
@@ -241,6 +249,7 @@ class _TickSession:
             },
             "native_rigs": self.rigs,
             "skeletal_bone_maps": self.request["skeletal_bone_maps"],
+            "camera_cut_sections": cinetwin_camera_cuts.inspect(self.sequence, unreal),
             "samples": self.samples,
             "quality": {
                 "method": "slate_post_tick_between_sequencer_seeks",

@@ -94,6 +94,50 @@ def _skeletal_entity_ids(csir: dict[str, Any]) -> list[str]:
     return sorted(result)
 
 
+def _camera_cut_sections(
+    csir: dict[str, Any], fps: Fraction, start: Fraction, end: Fraction,
+) -> list[dict[str, Any]]:
+    """Carry exact authored source-camera cut ranges into the identity-bound plan.
+
+    Unreal's source adapter rounds clip boundaries to integer sequence frames.
+    Preserve the original boundaries and mark off-grid or invalid camera cuts
+    unverified; never pretend rounding a subframe cut was lossless.
+    """
+    camera_ids = {
+        item["entity_id"] for item in csir.get("entities", [])
+        if item.get("ced_type") == "entity.camera"
+    }
+    rows = []
+    for track in csir.get("tracks", []):
+        if track.get("muted") is True or track.get("ced_type") != "camera.cut":
+            continue
+        identifier = str(track.get("binding_entity_id") or "")
+        for section in track.get("sections", []):
+            a, b = _seconds(section["start"]), _seconds(section["end"])
+            first, last = int(round(float(a * fps))), int(round(float(b * fps)))
+            exact = (abs(float(a * fps - first)) < 1e-6
+                     and abs(float(b * fps - last)) < 1e-6)
+            if identifier not in camera_ids or not (start <= a < b <= end) or last <= first:
+                status = "UNVERIFIED_SOURCE_CAMERA_OR_RANGE"
+            elif not exact:
+                status = "SUBFRAME_CUT_BOUNDARY_UNVERIFIED"
+            else:
+                status = "FRAME_ALIGNED"
+            rows.append({
+                "source_entity_id": identifier,
+                "source_section_id": str(section.get("section_id") or ""),
+                "start_frame": first,
+                "end_frame": last,
+                "start_seconds": _timestamp(a),
+                "end_seconds": _timestamp(b),
+                "status": status,
+            })
+    return sorted(rows, key=lambda row: (
+        row["start_frame"], row["end_frame"], row["source_entity_id"],
+        row["source_section_id"],
+    ))
+
+
 def build_plan(csir: dict[str, Any], *, csir_sha256: str = "") -> dict[str, Any]:
     """Make one generic frame+transition sampling request from source CSIR."""
     timing = csir["timing"]
@@ -192,6 +236,7 @@ def build_plan(csir: dict[str, Any], *, csir_sha256: str = "") -> dict[str, Any]
         },
         "entities": _entity_scope(csir),
         "skeletal_entity_ids": _skeletal_entity_ids(csir),
+        "camera_cuts": _camera_cut_sections(csir, fps, start, end),
         "capabilities": capabilities,
         "samples": samples,
     }

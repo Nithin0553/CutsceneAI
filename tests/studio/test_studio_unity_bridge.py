@@ -13,6 +13,7 @@ from studio_unity_bridge import (
     BRIDGE_KIND,
     CAPTURE_ACTION,
     UnityBridgeError,
+    _evidence,
     behavior_capture_status,
     request_behavior_capture,
     request_snapshot,
@@ -258,3 +259,74 @@ def test_studio_unity_companion_never_silently_starts_scripts_or_saves_scene():
     assert "public static class CineTwinBehaviorCapture" in capture_code
     assert "public static void CaptureForStudio(" in capture_code
     assert "FileMode.CreateNew" in capture_code
+
+
+
+def test_evidence_hash_streams_without_loading_large_file_into_memory(
+        project, monkeypatch):
+    directory = project / "CutSceneAI" / "StudioBridge" / "evidence"
+    directory.mkdir(parents=True)
+    data = (b'{"kind":"example","samples":[]}') * 1000
+    path = directory / "capture.cinetwin.behavior.json"
+    path.write_bytes(data)
+    sha = hashlib.sha256(data).hexdigest()
+    original_read_bytes = Path.read_bytes
+
+    def fail_unbounded_read(self):
+        if self == path:
+            pytest.fail("Evidence hash attempted to read an entire CineTwin file")
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_unbounded_read)
+    assert _evidence(
+        project, "CutSceneAI/StudioBridge/evidence/" + path.name,
+        sha, ".cinetwin.behavior.json",
+    ) == str(path.resolve())
+
+
+def test_oversized_sparse_capture_rejected_before_hashing(project, monkeypatch):
+    directory = project / "CutSceneAI" / "StudioBridge" / "evidence"
+    directory.mkdir(parents=True)
+    path = directory / "oversized.cinetwin.behavior.json"
+    with path.open("wb") as handle:
+        handle.truncate(129 * 1024 * 1024)
+    # The sparse file is intentionally untrusted. Reading/hash-processing any
+    # bytes would be unnecessary and dangerously memory/cpu-expensive.
+    original_open = Path.open
+
+    def reject_read(self, *args, **kwargs):
+        if self == path and (not args or args[0] == "rb"):
+            pytest.fail("Oversized CineTwin evidence was read before size validation")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", reject_read)
+    with pytest.raises(UnityBridgeError, match="128 MiB"):
+        _evidence(
+            project, "CutSceneAI/StudioBridge/evidence/" + path.name,
+            "0" * 64, ".cinetwin.behavior.json",
+        )
+
+
+
+def test_malformed_source_identity_is_classified_without_unhandled_attribute_error(project):
+    ticket = request_snapshot(project)["request_id"]
+    directory = project / "CutSceneAI" / "StudioBridge" / "evidence"
+    directory.mkdir(exist_ok=True)
+    csir = directory / (ticket + ".csir.json")
+    census = directory / (ticket + ".census.json")
+    csir.write_text(json.dumps({
+        "schema_version": "0.1.0", "source": ["malformed", "not an identity"],
+    }))
+    census.write_text(json.dumps({
+        "kind": "cutsceneai.engine.feature_surface",
+        "engine": "unity", "project_fingerprint": "source-1",
+    }))
+    _receipt(
+        project, ticket,
+        csir_path="CutSceneAI/StudioBridge/evidence/" + csir.name,
+        csir_sha256=hashlib.sha256(csir.read_bytes()).hexdigest(),
+        census_path="CutSceneAI/StudioBridge/evidence/" + census.name,
+        census_sha256=hashlib.sha256(census.read_bytes()).hexdigest(),
+    )
+    with pytest.raises(UnityBridgeError, match="not a supported Unity source"):
+        snapshot_status(project, ticket)

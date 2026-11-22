@@ -117,7 +117,9 @@ def bake_parent_local(
     }
     keys: list[dict[str, Any]] = []
     previous = None
-    for frame in range(count):
+    # Also bake the measured exclusive end boundary: the final interval of a
+    # moving/turning attached child cannot be inferred from the last active key.
+    for frame in range(count + 1):
         time = start + frame/hz
         sample = by_time.get(round(time, 8))
         if sample is None:
@@ -128,10 +130,9 @@ def bake_parent_local(
         parent = entities[parent_id]["world_transform"]
         child = entities[child_id]["world_transform"]
         position, quat = _relative(parent, child)
-        roll, pitch, yaw = csir_plan.canonical_quat_to_unreal_rotator(quat)
-        rpy = (roll, pitch, yaw)
-        if previous is not None:
-            rpy = tuple(_unwrap(a,b) for a,b in zip(previous,rpy))
+        rpy = csir_plan.continuous_unreal_rotator(
+            previous, csir_plan.canonical_quat_to_unreal_rotator(quat)
+        )
         previous = rpy
         keys.append({
             "frame": frame,

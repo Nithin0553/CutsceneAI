@@ -29,6 +29,9 @@ import source_surface_gap
 import adaptive_components
 import component_capability_ledger
 import scalar_property_adapter
+import character_motion
+import timeline_blend_policy
+import animation_format_policy
 
 NATIVE_GAPS = {
     "event.trigger": "Preserves event timestamp/identity as a marked frame, NOT executable payload.",
@@ -193,14 +196,21 @@ def _world_keys(
     end = csir_plan.rational_seconds(csir["timing"]["playback_end"])
     samples = capture["samples"]
     entity_id = entity["entity_id"]
-    by_time = {
-        round(float(sample["time_seconds"]), 8): sample
-        for sample in samples
-    }
+    by_time = {}
+    for sample in samples:
+        timestamp = round(float(sample["time_seconds"]), 8)
+        if timestamp in by_time:
+            raise TransferBackendError("Ambiguous repeated source timestamp in actor world capture.")
+        by_time[timestamp] = sample
     count = int(math.floor((end - start) * hz + 1e-7))
+    if count <= 0:
+        raise TransferBackendError("No complete source display frame to bake.")
     last_rpy = None
     result = []
-    for frame in range(count):
+    # The CineTwin grid includes the observed exclusive playback-end boundary.
+    # Its final key is necessary to interpolate the last active frame interval,
+    # especially when a character or camera is still turning.
+    for frame in range(count + 1):
         time_seconds = start + frame / hz
         sample = by_time.get(round(time_seconds, 8))
         if sample is None:
@@ -208,8 +218,12 @@ def _world_keys(
                 f"Missing exact evaluated source frame for {entity['name']} "
                 f"at t={time_seconds:.9f}s; cannot bake reliably."
             )
-        poses = {x["entity_id"]: x for x in sample["entities"]}
-        pose = poses.get(entity_id)
+        matches = [item for item in sample["entities"] if item.get("entity_id") == entity_id]
+        if len(matches) != 1:
+            raise TransferBackendError(
+                f"Missing or ambiguous source world pose for {entity['name']} at frame {frame}."
+            )
+        pose = matches[0]
         if pose is None:
             raise TransferBackendError(f"No evaluated world pose for {entity['name']}.")
         transform = pose["world_transform"]
@@ -220,9 +234,7 @@ def _world_keys(
             raise TransferBackendError(f"Non-finite evaluated pose for {entity['name']}.")
         # Unreal expects ROLL/PITCH/YAW in its three rotation channels.
         roll, pitch, yaw = csir_plan.canonical_quat_to_unreal_rotator(rotation)
-        rpy = (roll, pitch, yaw)
-        if last_rpy is not None:
-            rpy = tuple(_unwrap(p, c) for p, c in zip(last_rpy, rpy))
+        rpy = csir_plan.continuous_unreal_rotator(last_rpy, (roll, pitch, yaw))
         last_rpy = rpy
         result.append({
             "frame": frame,
@@ -324,6 +336,37 @@ def compose(
         raise TransferBackendError("Refusing to overwrite an existing Level Sequence.")
     if csir.get("schema_version") != "0.1.0" or csir.get("source", {}).get("engine") != "unity":
         raise TransferBackendError("This adapter supports source Unity CSIR v0.1.0.")
+    # Unity Timeline source evaluation is required for blending. A native
+    # Unreal section is not assumed to reproduce Unity ease, overlapping
+    # playable weights or multiple independent animation-track writers.
+    try:
+        blend_analysis = timeline_blend_policy.analyze(csir, mapping)
+    except timeline_blend_policy.TimelineBlendError as exc:
+        raise TransferBackendError("Invalid Unity Timeline blending evidence: " + str(exc)) from exc
+    for feature in blend_analysis["requires_capture"]:
+        if feature["policy"] == "REQUIRES_NATIVE_SKELETAL_BLEND_BAKE":
+            raise TransferBackendError(
+                "Layered/overlapping character animation for "
+                + feature["entity_name"] + " requires measured skeletal-pose native baking; "
+                "actor position capture alone cannot reconstruct blended bone poses."
+            )
+        if capture is None:
+            raise TransferBackendError(
+                "Unity Timeline blended actor " + feature["entity_name"]
+                + " needs a verified CineTwin evaluated-world capture before transfer."
+            )
+    animation_formats = animation_format_policy.inventory(csir)
+    for item in animation_formats["sections"]:
+        if not item["character_skeletal_animation"]:
+            continue
+        if item["policy"] in (
+                animation_format_policy.SKELETAL_BAKE,
+                animation_format_policy.EXTERNAL):
+            raise TransferBackendError(
+                "Source character clip " + item["source_asset_id"]
+                + " uses format " + item["format"] + " and requires a verified "
+                "native skeletal pose-baking/import adapter before Unreal transfer."
+            )
     # CED analysis MUST precede source-to-target action generation. Membership
     # in CED does not prove the Unreal adapter can execute that semantic.
     discovery = ced_preflight.audit(csir, mapping)
@@ -446,6 +489,18 @@ def compose(
                     "Installed CED adapter rejected source track: " + str(exc)
                 ) from exc
             except (ValueError, KeyError, TypeError, IndexError, ZeroDivisionError) as exc:
+                # A missing parent world transform must never silently erase
+                # an independently animated attached child's track. Without
+                # evaluated parent/child poses, this would create a falsely
+                # motionless actor at the wrong world position/facing.
+                if (capture is None and entity is not None
+                        and entity.get("parent_entity_id")
+                        and entity.get("name") in mapping.get("entities", {})
+                        and track.get("ced_type") in {"animation.track", "camera.transform"}):
+                    raise TransferBackendError(
+                        f"{entity['name']}: parented animation requires verified CineTwin "
+                        "capture to preserve world placement and facing direction."
+                    ) from exc
                 reasons.append(f"Native converter cannot represent track: {type(exc).__name__}: {exc}")
         if status == "SKIPPED" and capture is not None and entity is not None:
             if (entity.get("name") in mapping.get("entities", {})
@@ -549,6 +604,60 @@ def compose(
                 and action["kind"] in {"transform", "camera_fov", "light_intensity"}
                 for action in plan["actions"]
             )
+    # Reconstruct Unity's evaluated blend output as ONE native actor-world
+    # trajectory, never as competing Unreal track/section values. The file
+    # entrypoint has already checked the source capture fingerprint, timestamps
+    # and entity identities. Optical behavior is independently source-sampled.
+    for feature in blend_analysis["requires_capture"]:
+        entity = entities[feature["entity_id"]]
+        name = feature["entity_name"]
+        native_label = str(mapping["entities"][name]["actor_label"])
+        blended_keys = _world_keys(csir, capture, entity)
+        plan["actions"] = [
+            a for a in plan["actions"]
+            if not (a.get("kind") == "transform" and a.get("entity_name") == name)
+        ]
+        plan["actions"].append({
+            "kind": "transform", "entity_name": name, "actor_label": native_label,
+            "track_name": "CutSceneAI Evaluated Unity Timeline Blend",
+            "keys": blended_keys, "baked_source_curves": True,
+            "source_behavior_strategy": "verified_unity_blend_evaluated_actor_world",
+        })
+        if entity.get("ced_type") == "entity.camera":
+            # A blended camera pose does NOT imply its source FOV blend was
+            # preserved. Observe Unity's evaluated lens independently.
+            try:
+                lens_keys = _scalar_bake_keys(
+                    csir, capture, entity,
+                    component_name="camera", field_name="vertical_fov_degrees",
+                )
+            except (KeyError, IndexError, ValueError, TypeError) as exc:
+                raise TransferBackendError(
+                    f"Blended camera {name} has no complete evaluated lens evidence."
+                ) from exc
+            plan["actions"] = [
+                a for a in plan["actions"]
+                if not (a.get("kind") == "camera_fov" and a.get("entity_name") == name)
+            ]
+            plan["actions"].append({
+                "kind": "camera_fov", "entity_name": name, "actor_label": native_label,
+                "source_fov_axis": "vertical",
+                "target_output_aspect": plan["output_aspect"],
+                "keys": lens_keys, "baked_source_curves": True,
+                "source_behavior_strategy": "verified_unity_blend_evaluated_lens",
+            })
+        for index in feature["source_track_indices"]:
+            if ledger[index]["outcome"] == "INACTIVE":
+                continue
+            ledger[index]["outcome"] = "BAKED_PARTIAL"
+            ledger[index]["native_action_count"] = 0
+            ledger[index]["source_baked_action_count"] = 1
+            ledger[index]["details"].append(
+                "Overlapping/eased Unity Timeline actor world pose reconstructed "
+                "from verified source evaluated frames, not native track-weight guesses. "
+                "Skin deformation, rig mixing and rendered fidelity unverified."
+            )
+
     # An actor that plays a skeletal animation is not necessarily an actor
     # whose WORLD origin moves: skeletal motion can be entirely within its bones.
     # Persist source-authored static scene poses even for animated characters
@@ -773,6 +882,28 @@ def compose(
     }
     if "ai_character_animation" in mapping:
         plan["ai_character_animation"] = mapping["ai_character_animation"]
+        try:
+            character_motion.apply_plan(plan, mapping, csir, capture)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise TransferBackendError(str(exc)) from exc
+    # Sequencer gives independently added absolute 3D transform tracks no
+    # well-defined source blending order. Never let two independently planned
+    # writers compete over one character/camera/prop position and facing.
+    # Source-authenticated world baking and AI-owned moving-character plans
+    # replace their original tracks above before reaching this invariant.
+    transform_owner: dict[str, str] = {}
+    for action in plan["actions"]:
+        if action.get("kind") != "transform":
+            continue
+        label = str(action.get("actor_label") or "")
+        owner = str(action.get("track_name") or action.get("entity_name") or "")
+        if label in transform_owner:
+            raise TransferBackendError(
+                f"Multiple independent source transform tracks target Unreal actor {label!r} "
+                f"({transform_owner[label]!r} and {owner!r}); explicit composition "
+                "or measured-source single-owner baking is required."
+            )
+        transform_owner[label] = owner
     counts = dict(Counter(row["outcome"] for row in ledger))
     entity_coverage = [{
         "entity_id": str(e.get("entity_id", "")),
@@ -808,6 +939,8 @@ def compose(
         "relationship_fidelity_verified": False,
         "feature_dispatch": feature_dispatch.audit(csir, plan, handlers=handlers),
         "hierarchy_reconstruction": hierarchy_results,
+        "timeline_blend_analysis": blend_analysis,
+        "animation_format_inventory": animation_formats,
         "source_parent_resolution": source_parent_resolution.analyze(
             csir, mapping, plan["actions"]
         ),

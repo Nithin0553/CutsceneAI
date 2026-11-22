@@ -21,18 +21,35 @@ KINDS = frozenset({"native_source", "source_materials", "visual_activation_parti
 SCHEMA = "cutsceneai.studio.ai_conversion_decision"
 VERSION = "1"
 ROOT = Path(__file__).resolve().parents[1]
+# Keep small project documents bounded independently of source behavior data.
+# The Unity source bridge already validates CineTwin captures up to 128 MiB;
+# applying the generic 64 MiB cap again rejected valid 88 MiB captures.
+PROJECT_EVIDENCE_MAX_BYTES = 64 * 1024 * 1024
+CINETWIN_CAPTURE_MAX_BYTES = 128 * 1024 * 1024
 
 
 class TransferAIError(ValueError):
     pass
 
 
-def _read(path: Path) -> dict[str, Any]:
-    if not path.is_file() or path.is_symlink() or path.stat().st_size > 64 * 1024 * 1024:
-        raise TransferAIError("Required local source/target evidence is unavailable.")
+def _read(path: Path, *, kind: str = "project evidence") -> dict[str, Any]:
+    limit = (
+        CINETWIN_CAPTURE_MAX_BYTES if kind == "CineTwin capture"
+        else PROJECT_EVIDENCE_MAX_BYTES
+    )
+    if path.is_symlink() or not path.is_file():
+        raise TransferAIError(
+            f"{kind} is missing or unsafe; verify the selected project's evidence export."
+        )
+    if path.stat().st_size > limit:
+        raise TransferAIError(
+            f"{kind} exceeds the {limit // (1024 * 1024)} MiB evidence limit. "
+            "The source file was not modified; use a supported fresh export "
+            "rather than truncating animation evidence."
+        )
     result = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(result, dict):
-        raise TransferAIError("Malformed project evidence.")
+        raise TransferAIError(f"Malformed {kind} JSON evidence.")
     return result
 
 
@@ -160,9 +177,11 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
     mapping = Path(config["mapping"]).resolve()
     target = Path(config["target_project"]).resolve()
     census = Path(census_path).resolve()
-    docs = {key: _read(path) for key, path in (
-        ("csir", source), ("capture", capture), ("mapping", mapping),
-        ("census", census)
+    docs = {key: _read(path, kind=label) for key, path, label in (
+        ("csir", source, "Unity CSIR"),
+        ("capture", capture, "CineTwin capture"),
+        ("mapping", mapping, "Target mapping"),
+        ("census", census, "Unity source census"),
     )}
     csir, scene_mapping = docs["csir"], docs["mapping"]
     if (csir.get("source", {}).get("engine") != "unity"
@@ -237,75 +256,165 @@ def inspect(config: dict, census_path: str, worker: dict, *, native_character_pr
     }
     if config.get("unity_project") and any(entity.get("ced_type") == "entity.character" for entity in entities):
         policy = character_policy()
+        if native_character_probe is not None:
+            observed = native_character_probe.get("observed_identity") or {}
+            if (observed.get("editor_pid") != worker.get("editor_pid")
+                    or observed.get("project") != worker.get("project")
+                    or observed.get("level") != worker.get("level")):
+                raise TransferAIError("Character probe belongs to another native worker, project or map.")
         report = policy.compatibility.inspect(config, csir, docs["capture"], scene_mapping, fingerprints, native_character_probe)
         evidence["character_compatibility"] = report
         evidence["summary"]["character_compatibility"] = policy.report_for_model(report)
         evidence["animation_choices"] = policy.available_choices(report)
+    knowledge = _agent_module("ced_agent_knowledge").retrieve_all(
+        csir, target_capabilities=native_capabilities,
+        source_version=str(csir.get("source", {}).get("engine_version") or ""),
+        target_version=str(worker.get("engine_version") or ""),
+        approved_store=Path.home() / ".cutsceneai-studio" / "ced-knowledge",
+        case_store=Path.home() / ".cutsceneai-studio" / "ced-cases",
+        feedback_store=Path.home() / ".cutsceneai-studio" / "ced-experiences.jsonl",
+    )
+    evidence["ced_knowledge"] = knowledge
     return evidence
 
 
+def _agent_module(name: str):
+    location = str(ROOT / "packages" / "studio")
+    if location not in sys.path:
+        sys.path.insert(0, location)
+    return __import__(name)
+
+
 def _model_choose(summary: dict) -> dict:
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise TransferAIError("AI transfer requires OPENAI_API_KEY in the Studio server process.")
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
-        raise TransferAIError("Install the openai package in the Studio Python environment.") from exc
+    """Model reasoning with retrieved CED semantics, no raw source files."""
+    provider = _agent_module("studio_model_provider")
     properties = {"strategy": {"type": "string", "enum": summary["allowed_strategies"]},
                   "reason": {"type": "string"}}
     if summary.get("animation_choices"):
-        properties["animation_choice_id"] = {"type": "string", "enum": ["keep_native", *summary["animation_choices"]]}
-    response = OpenAI(timeout=25, max_retries=0).responses.create(
-        model=os.environ.get("CUTSCENEAI_AGENT_MODEL", "gpt-5-mini"),
+        properties["animation_choice_id"] = {
+            "type": "string",
+            "enum": ["keep_native", *summary["animation_choices"]],
+        }
+    public_knowledge = _agent_module("ced_agent_knowledge").model_projection(
+        summary["ced_knowledge"]
+    )
+    if public_knowledge.get("retrieval_complete") is not True:
+        raise TransferAIError("Incomplete CED page coverage cannot be accepted by the agent.")
+    entries = public_knowledge.get("entries")
+    if not isinstance(entries, list) or len(entries) != public_knowledge["source_ced_count"]:
+        raise TransferAIError("CED knowledge has missing source concepts.")
+    # Large source inventories are reviewed by the model in separate bounded
+    # batches, not silently trimmed to the first 48 concepts.
+    PAGE_SIZE = 24
+    page_notes = []
+    for index in range(0, len(entries), PAGE_SIZE):
+        if len(entries) <= PAGE_SIZE:
+            break
+        page_index = index // PAGE_SIZE
+        batch = entries[index:index + PAGE_SIZE]
+        observation = provider.complete_json(
+            task="cutsceneai_ced_page_review",
+            instructions=(
+                "You are CutSceneAI's read-only knowledge investigator. "
+                "For the supplied CED concept batch, identify native "
+                "capability gaps, semantic dependencies, and promising "
+                "installed conversion approaches. Unknown mappings are "
+                "investigation cases, not successful conversions. "
+                "Use only given facts, no project names or code execution. "
+                "Reply with JSON using the exact schema."
+            ),
+            payload={
+                "page_index": page_index,
+                "source_concepts": batch,
+                "allowed_strategies": summary["allowed_strategies"],
+            },
+            schema={
+                "type": "object", "additionalProperties": False,
+                "properties": {
+                    "page_index": {"type": "integer"},
+                    "risks": {"type": "string"},
+                    "candidate_approaches": {"type": "string"},
+                },
+                "required": ["page_index", "risks", "candidate_approaches"],
+            },
+        ).answer
+        if (type(observation.get("page_index")) is not int
+                or observation["page_index"] != page_index
+                or not all(isinstance(observation.get(key), str)
+                           and len(observation[key]) <= 750
+                           for key in ("risks", "candidate_approaches"))):
+            raise TransferAIError("AI returned an ungrounded CED page review.")
+        page_notes.append(observation)
+    if page_notes:
+        model_knowledge = {
+            "kind": public_knowledge["kind"],
+            "schema_version": public_knowledge["schema_version"],
+            "source_ced_count": len(entries),
+            "source_occurrence_count": public_knowledge["source_occurrence_count"],
+            "coverage_ledger_sha256": public_knowledge["coverage_ledger_sha256"],
+            "knowledge_sha256": public_knowledge["knowledge_sha256"],
+            "pages_reviewed": len(page_notes),
+            "expected_pages": (len(entries) + PAGE_SIZE - 1) // PAGE_SIZE,
+            "page_analyses": page_notes,
+            "native_write_permission": False,
+        }
+    else:
+        model_knowledge = public_knowledge
+    response = provider.complete_json(
+        task="cutsceneai_pretransfer_choice",
         instructions=(
-            "You are CutSceneAI's pre-conversion planning model. Analyze ONLY the "
-            "redacted Unity and Unreal evidence. Choose ONE registered native "
-            "conversion policy. 'native_source' preserves the existing safe "
-            "planner defaults. 'source_materials' requests the built-in embedded "
-            "FBX material importer. 'visual_activation_partial' requests the "
-            "explicitly lossy Unity ActivationTrack to Unreal visibility adapter; "
-            "it does NOT reproduce scripts, physics, or activation semantics. "
-            "Use partial activation ONLY if the provided installed adapter is "
-            "eligible; otherwise prefer source_materials for material references "
-            "and native_source for remaining scenes. When animation_choice_id is available, "
-            "choose a listed character only if its saved source/target rig evidence supports the "
-            "approved IK retarget action and the character is in place. Otherwise use keep_native. "
-            "Never invent mappings, "
-            "engine commands, new adapters, paths, imports or fidelity claims."
+            "You are CutSceneAI's conversion agent. Use the verified, redacted "
+            "Unity/Unreal capability evidence and the dynamically retrieved "
+            "CED knowledge. CED rule candidates grant NO execution permission. "
+            "Choose a registered native strategy, not a benchmark-specific "
+            "assumption. native_source uses the existing source-backed planner. "
+            "source_materials enables the registered FBX material importer. "
+            "visual_activation_partial is a deliberately lossy visibility "
+            "approximation and only eligible when registered and validated; it "
+            "does not replicate GameObject activation, scripts or physics. "
+            "Choose an animation_choice_id only for an independently validated "
+            "rig/motion action; otherwise keep_native. The approved in-place "
+            "IK action needs true in-place motion. The actor-world trajectory "
+            "action bake_verified_actor_world_trajectory needs a source-backed "
+            "actor-relative root and frame-matched translation/rotation. "
+            "Explore missing mapping "
+            "candidates in the evidence but never invent commands, classes, "
+            "asset paths, adapters or fidelity claims. Return only JSON."
         ),
-        input=json.dumps({
+        payload={
             "evidence": summary["summary"],
             "allowed_strategies": summary["allowed_strategies"],
-        }, sort_keys=True),
-        text={"format": {"type": "json_schema",
-                         "name": "cutsceneai_pretransfer_choice", "strict": True,
-                         "schema": {
-                             "type": "object", "additionalProperties": False,
-                             "properties": properties,
-                             "required": list(properties),
-                         }}},
+            "animation_choices": summary.get("animation_choices", []),
+            "ced_knowledge": model_knowledge,
+            "planning_feedback": summary.get("planning_feedback", ""),
+        },
+        schema={
+            "type": "object", "additionalProperties": False,
+            "properties": properties, "required": list(properties),
+        },
     )
-    answer = json.loads(response.output_text)
-    response_id = getattr(response, "id", None)
-    if isinstance(answer, dict) and response_id:
-        answer = {**answer, "_provider_response_id": response_id}
+    answer = dict(response.answer)
+    answer["_provider_name"] = response.provider
+    answer["_provider_model"] = response.model
+    answer["_provider_response_sha256"] = response.response_sha256
+    if response.response_id:
+        answer["_provider_response_id"] = response.response_id
     return answer
-
 
 def decide(config: dict, census_path: str, worker: dict,
            *, reasoner: Callable[[dict], dict] | None = None, native_character_probe: dict | None = None) -> dict:
     evidence = inspect(config, census_path, worker, native_character_probe=native_character_probe)
     try:
-        answer = (reasoner or _model_choose)(evidence)
+        # LangGraph owns evidence grounding, alternative-model proposals,
+        # registered-strategy validation, and a bounded planning retry loop.
+        graph = _agent_module("studio_conversion_graph")
+        answer = graph.select(
+            evidence, reasoner=reasoner or _model_choose,
+            attempts=1 if reasoner is not None else 2,
+        )
     except Exception as exc:
-        raise TransferAIError("Pre-transfer AI reasoning failed: " + str(exc)[:400]) from exc
-    if not isinstance(answer, dict) or answer.get("strategy") not in KINDS:
-        raise TransferAIError("AI returned an unregistered conversion strategy.")
-    if set(answer) - {"strategy", "reason", "animation_choice_id", "_provider_response_id"}:
-        raise TransferAIError("AI returned unregistered conversion data.")
+        raise TransferAIError("Pre-transfer AI reasoning failed: " + str(exc)[:500]) from exc
     strategy = answer["strategy"]
-    if strategy not in evidence["allowed_strategies"]:
-        raise TransferAIError("AI selected a strategy not supported by the Unity source.")
     summary = evidence["summary"]
     # Never let model preference disable the existing source-material import
     # guarantee when provenance documents source materials. This policy is a
@@ -322,14 +431,27 @@ def decide(config: dict, census_path: str, worker: dict,
         "input_sha256": evidence["fingerprints"],
         "summary": summary, "allowed_strategies": evidence["allowed_strategies"],
         "conversion_options": options,
-        "model_invoked": True, "model_provider": "OPENAI_RESPONSES" if reasoner is None else "INJECTED_REASONER",
+        "ced_knowledge_sha256": evidence["ced_knowledge"]["knowledge_sha256"],
+        "ced_retrieved_concepts": evidence["ced_knowledge"]["retrieved_count"],
+        "model_invoked": True,
+        "model_provider": (answer.get("_provider_name") or "INJECTED_REASONER")
+        if reasoner is None else "INJECTED_REASONER",
         "native_conversion_executed": False,
         "source_and_target_fidelity_verified": False,
         "activation_semantics_partial": options["enable_actor_visibility_fallback"],
     }
-    provider_id = answer.get("_provider_response_id")
-    if reasoner is None and isinstance(provider_id, str) and re.fullmatch(r"resp_[A-Za-z0-9_]{1,120}", provider_id):
-        decision["model_response_id"] = provider_id
+    if reasoner is None:
+        model = answer.get("_provider_model")
+        digest = answer.get("_provider_response_sha256")
+        if (isinstance(model, str) and model
+                and isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)):
+            decision["model_name"] = model
+            decision["model_response_sha256"] = digest
+        provider_id = answer.get("_provider_response_id")
+        if (decision["model_provider"] == "OPENAI_RESPONSES"
+                and isinstance(provider_id, str)
+                and re.fullmatch(r"resp_[A-Za-z0-9_]{1,120}", provider_id)):
+            decision["model_response_id"] = provider_id
     report = evidence.get("character_compatibility")
     choice = answer.get("animation_choice_id", "keep_native")
     if choice != "keep_native":
@@ -337,6 +459,10 @@ def decide(config: dict, census_path: str, worker: dict,
             raise TransferAIError("AI selected an animation action without eligible source and target evidence.")
         decision["animation_conversion"] = character_policy().decision_for(report, choice)
     if report is not None:
+        try:
+            character_policy().require_motion_choice(report, decision.get("animation_conversion"))
+        except ValueError as exc:
+            raise TransferAIError(str(exc)) from exc
         decision["character_compatibility_sha256"] = character_policy().compatibility.digest(report)
         decision["character_compatibility"] = report
     return decision
@@ -348,8 +474,12 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
     if (decision.get("kind") != SCHEMA
             or decision.get("schema_version") != VERSION
             or decision.get("input_sha256") != current["fingerprints"]
-            or decision.get("strategy") not in current["allowed_strategies"]):
-        raise TransferAIError("AI decision is stale or belongs to another source/target.")
+            or decision.get("strategy") not in current["allowed_strategies"]
+            or decision.get("ced_knowledge_sha256") !=
+            current["ced_knowledge"]["knowledge_sha256"]):
+        raise TransferAIError(
+            "AI decision or CED knowledge is stale or belongs to another source/target."
+        )
     strategy = decision["strategy"]
     opts = decision.get("conversion_options")
     expected = {
@@ -362,10 +492,14 @@ def verify(decision: dict, config: dict, census_path: str, worker: dict, *, nati
     if opts != expected:
         raise TransferAIError("AI conversion options do not match supported native policy.")
     report = current.get("character_compatibility")
-    if decision.get("character_compatibility_sha256") or decision.get("animation_conversion"):
+    if report is not None or decision.get("character_compatibility_sha256") or decision.get("animation_conversion"):
         policy = character_policy()
         if report is None or decision.get("character_compatibility_sha256") != policy.compatibility.digest(report):
             raise TransferAIError("The character compatibility report has stale source or target evidence.")
         if decision.get("animation_conversion") is not None:
             policy.selected(report, decision["animation_conversion"])
+        try:
+            policy.require_motion_choice(report, decision.get("animation_conversion"))
+        except ValueError as exc:
+            raise TransferAIError(str(exc)) from exc
     return expected

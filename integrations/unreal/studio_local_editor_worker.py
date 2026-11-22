@@ -32,6 +32,30 @@ HANDLE = None
 WORKSPACE = Path.home() / '.cutsceneai-studio' / 'runs'
 LAST_TICK = 0.0
 BUSY = False
+# Only module-level Python updates are refreshed automatically. Never reset a
+# native editor or an already-running/partially completed transfer.
+LIVE_RELOAD_STATE = 'CURRENT'
+LIVE_RELOAD_ERROR = ''
+# Reloading the worker alone is insufficient after a git pull changes adapters.
+# Capture a bounded fingerprint of code in the trusted repo at worker startup.
+def _dependency_fingerprint():
+    result = hashlib.sha256()
+    checked = 0
+    for relative in ('integrations/unreal', 'packages/studio', 'packages/cinetwin', 'tools'):
+        folder = ROOT / relative
+        for path in sorted(folder.glob('*.py')):
+            if path.is_symlink():
+                raise RuntimeError('A Studio Python dependency is a symlink: ' + relative)
+            checked += 1
+            if checked > 500 or path.stat().st_size > 4 * 1024 * 1024:
+                raise RuntimeError('Studio Python dependency inventory is out of bounds.')
+            result.update(str(path.relative_to(ROOT)).encode('utf-8'))
+            result.update(hashlib.sha256(path.read_bytes()).digest())
+    return result.hexdigest()
+
+
+DEPENDENCY_SOURCE_SHA256 = _dependency_fingerprint()
+LAST_DEPENDENCY_CHECK = 0.0
 
 
 def _load(path):
@@ -236,8 +260,11 @@ def _execute(job):
             character = studio_character_execution.preflight(
                 unreal, job, decision, mapped, checked_plan, inspected,
                 worker={'connected': True, 'project': _loaded_project(), 'level': _loaded_level(),
+                        'editor_pid': os.getpid(),
                         'worker_version': WORKER_PROTOCOL, 'scene_inventory': _native_level_inventory()},
             )
+    if character is not None:
+        studio_character_execution.begin(job, checked_plan)
     job['execution_stage'] = 'PREPARING_DESTINATION_LEVEL'
     _ensure_target_level(job)
     if job.get('automatic_setup'):
@@ -265,6 +292,9 @@ def _execute(job):
             job['actors_created_count'] = len(staged.get('actors_created') or [])
         if staged['status'] != 'SETUP_SAVED_UNVERIFIED':
             raise RuntimeError('Automatic setup not saved; sequence generation blocked.')
+        if character is not None:
+            job['execution_stage'] = 'VERIFYING_STAGED_CHARACTER_MOTION'
+            studio_character_execution.validate_staged(unreal, job, checked_plan)
     # Last-second check: an actor may have been removed after the UI approved
     # this job. Report a setup state, not a failed engine generation.
     job['execution_stage'] = 'CHECKING_DESTINATION_READINESS'
@@ -514,6 +544,145 @@ def _report_inspection_failure(error):
     })
 
 
+def _running_native_job_exists():
+    """Never refresh executable native code during an executing/orphaned job."""
+    jobs = WORKSPACE / 'jobs'
+    if not jobs.is_dir():
+        return False
+    paths = list(jobs.glob('*.json'))
+    # Unbounded or unreadable native history must not grant reload authority.
+    if len(paths) > 10000:
+        return True
+    for path in paths:
+        if path.is_symlink():
+            return True
+        try:
+            if _load(path).get('status') == 'RUNNING':
+                return True
+        except (OSError, ValueError, TypeError):
+            return True
+    return False
+
+
+def _refresh_dependency_modules():
+    """Refresh known source/target pipeline modules, never the native editor.
+
+    The existing planner synchronization already checks canonical module paths,
+    and protects against stale/shadowed versions before native mutation. The
+    supplementary observer and generator imports are similarly origin-pinned.
+    """
+    import studio_planner_sync
+    expected_sync = (ROOT / 'integrations/unreal/studio_planner_sync.py').resolve()
+    if Path(getattr(studio_planner_sync, '__file__', '')).resolve() != expected_sync:
+        raise RuntimeError('Reloaded Studio planner belongs to another checkout.')
+    importlib.reload(studio_planner_sync)
+    studio_planner_sync.synchronize()
+    extras = (
+        ('unreal_compat', 'integrations/unreal'),
+        ('studio_agent_executor', 'integrations/unreal'),
+        ('studio_auto_scene', 'integrations/unreal'),
+        ('build_level_sequence', 'integrations/unreal'),
+        ('cinetwin_target_evaluator', 'integrations/unreal'),
+        ('cinetwin_tick_evaluator', 'integrations/unreal'),
+        ('cinetwin_camera_cuts', 'integrations/unreal'),
+        ('behavior_compare', 'packages/cinetwin'),
+        ('camera_optics', 'packages/cinetwin'),
+        ('camera_cut_timing', 'packages/cinetwin'),
+        ('joint_motion_profile', 'packages/cinetwin'),
+    )
+    for name, relative in extras:
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        expected = (ROOT / relative / (name + '.py')).resolve()
+        if Path(getattr(module, '__file__', '')).resolve() != expected:
+            raise RuntimeError('A loaded Studio adapter comes from another checkout: ' + name)
+        importlib.reload(module)
+
+
+def _refresh_worker_python():
+    """Refresh changed repo Python inside the same editor, only when idle.
+
+    The existing Slate callback is a stable dispatcher into the live module.
+    Updating the source therefore does not require unregistering/re-registering
+    a callback on an active Unreal tick or restarting the Unreal Editor.
+    """
+    global LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR
+    global DEPENDENCY_SOURCE_SHA256, LAST_DEPENDENCY_CHECK
+    path = Path(__file__).resolve()
+    if Path(__file__).is_symlink():
+        LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'BLOCKED', 'Worker source is a symlink.'
+        return True
+    try:
+        source = path.read_bytes()
+        current_sha = hashlib.sha256(source).hexdigest()
+        if current_sha == WORKER_SOURCE_SHA256:
+            if time.monotonic() - LAST_DEPENDENCY_CHECK < 3.0:
+                return False
+            LAST_DEPENDENCY_CHECK = time.monotonic()
+            current_deps = _dependency_fingerprint()
+            if current_deps == DEPENDENCY_SOURCE_SHA256:
+                LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'CURRENT', ''
+                return False
+            if BUSY or _running_native_job_exists():
+                LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = (
+                    'DEFERRED_NATIVE_JOB', 'Adapter source changed while a native job is running.'
+                )
+                return True
+            _refresh_dependency_modules()
+            if _dependency_fingerprint() != current_deps:
+                LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'BLOCKED', (
+                    'Adapter source changed during the code refresh.'
+                )
+                return True
+            DEPENDENCY_SOURCE_SHA256 = current_deps
+            LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'AUTO_RELOADED', ''
+            unreal.log('[CutSceneAI Studio] Updated Studio Python adapters in the open Unreal Editor.')
+            return True
+        if BUSY or _running_native_job_exists():
+            LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = (
+                'DEFERRED_NATIVE_JOB', 'Code changed during native execution; preserve the job for inspection.'
+            )
+            return True
+        module = sys.modules.get(__name__)
+        if module is None or Path(getattr(module, '__file__', '')).resolve() != path:
+            LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'BLOCKED', 'Worker module origin cannot be verified.'
+            return True
+        # Compile the exact bytes read. A bad git pull never executes a queued
+        # candidate or partially updates the module's callable state.
+        compiled = compile(source, str(path), 'exec')
+        if hashlib.sha256(path.read_bytes()).hexdigest() != current_sha:
+            LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'BLOCKED', 'Worker changed while being inspected.'
+            return True
+        previous_handle, previous_workspace = HANDLE, WORKSPACE
+        exec(compiled, module.__dict__)
+        module.HANDLE = previous_handle
+        module.WORKSPACE = previous_workspace
+        module.LAST_TICK = time.monotonic()
+        module.LIVE_RELOAD_STATE = 'AUTO_RELOADED'
+        module.LIVE_RELOAD_ERROR = ''
+        # The compiled source recalculates the adapter fingerprint and receives
+        # the latest managed module functions on the next idle heartbeat.
+        module.LAST_DEPENDENCY_CHECK = 0.0
+        unreal.log('[CutSceneAI Studio] Updated Python companion in the running Unreal Editor; no restart.')
+        return True
+    except Exception as exc:
+        # Any syntax/import failure leaves the editor open but blocks native
+        # submission. Never execute a queued candidate through partial code.
+        LIVE_RELOAD_STATE, LIVE_RELOAD_ERROR = 'BLOCKED', (
+            'Python worker update is invalid: ' + str(exc)
+        )[:500]
+        unreal.log_error('[CutSceneAI Studio] Worker auto-refresh blocked: ' + LIVE_RELOAD_ERROR)
+        return True
+
+
+def _tick_dispatch(delta):
+    """Stable callback uses the current module handler after a code refresh."""
+    current = sys.modules.get(__name__)
+    handler = getattr(current, '_tick', _tick) if current is not None else _tick
+    return handler(delta)
+
+
 def _tick(_delta):
     global LAST_TICK, BUSY
     if BUSY or time.monotonic() - LAST_TICK < 1.0:
@@ -521,12 +690,26 @@ def _tick(_delta):
     LAST_TICK = time.monotonic()
     try:
         WORKSPACE.mkdir(parents=True, exist_ok=True)
+        if _refresh_worker_python():
+            # Always report the *currently executed* source SHA; the host will
+            # refuse stale/invalid worker code and not queue a second native job.
+            _save(WORKSPACE / 'unreal-worker.json', {
+                'heartbeat': _now(), 'project': _loaded_project(),
+                'level': _loaded_level(), 'worker': WORKER_PROTOCOL,
+                'editor_pid': os.getpid(), 'checkout_root': str(ROOT.resolve()),
+                'worker_source_sha256': WORKER_SOURCE_SHA256,
+                'live_reload_state': LIVE_RELOAD_STATE,
+                'live_reload_error': LIVE_RELOAD_ERROR,
+            })
+            return
         _save(WORKSPACE / 'unreal-worker.json', {
             'heartbeat': _now(), 'project': _loaded_project(),
             'level': _loaded_level(), 'worker': WORKER_PROTOCOL,
             'editor_pid': os.getpid(),
             'checkout_root': str(ROOT.resolve()),
             'worker_source_sha256': WORKER_SOURCE_SHA256,
+            'live_reload_state': LIVE_RELOAD_STATE,
+            'live_reload_error': LIVE_RELOAD_ERROR,
             'scene_inventory': _native_level_inventory(),
         })
         if (WORKSPACE / 'character-probe-request.json').is_file():
@@ -573,6 +756,12 @@ def _tick(_delta):
                 job['error'] = str(exc)
                 job['traceback'] = traceback.format_exc()
                 job['fidelity_verified'] = False
+                if (Path(job['candidate_dir']) / 'character-native-attempt.json').exists():
+                    try:
+                        import studio_character_execution
+                        studio_character_execution.attempt_status(job, 'FAILED_NO_REPLAY', reason=str(exc))
+                    except Exception as attempt_error:
+                        job['character_attempt_record_error'] = str(attempt_error)
                 unreal.log_error('[CutSceneAI Studio] Job stopped: ' + str(exc))
             finally:
                 _save(path, job)
@@ -593,8 +782,8 @@ def start(workspace=None):
         raise RuntimeError('Unreal Editor does not support Python Slate tick callbacks.')
     # Explicit approval to modify a staging Unreal project remains the user's
     # responsibility. Never start this worker on the only project copy.
-    HANDLE = unreal.register_slate_post_tick_callback(_tick)
-    unreal.log_warning('[CutSceneAI Studio] Local worker listening for explicit prepared trial jobs.')
+    HANDLE = unreal.register_slate_post_tick_callback(_tick_dispatch)
+    unreal.log_warning('[CutSceneAI Studio] Local worker listening; idle Python updates refresh automatically without restarting Unreal.')
 
 
 def stop():

@@ -11,6 +11,11 @@ import math
 from pathlib import Path
 from typing import Any
 
+from camera_cut_timing import compare_camera_cut_sections
+from camera_optics import compare_camera_optics
+from joint_motion_profile import compare_joint_angular_motion
+from rig_pose_calibration import (RigCalibrationError, bind_reference, compare_reference_calibrated)
+from mesh_forward_basis import MeshForwardError, bind_profile, compare_mesh_forward
 from sampling_plan import validate_capture
 from target_observation_plan import prepare_observation
 
@@ -270,6 +275,8 @@ def compare(
     *,
     position_tolerance_cm: float = 1.0,
     orientation_tolerance_degrees: float = 2.0,
+    pose_calibration: dict[str, Any] | None = None,
+    mesh_forward_approval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compare mapped native actors in common canonical world coordinates.
 
@@ -435,11 +442,61 @@ def compare(
         )
         if joints["status"] == "FAIL":
             flags.append("SKELETAL_WORLD_JOINT_POSITION_MISMATCH")
+        angular = compare_joint_angular_motion(
+            source_samples, target_samples, eid, joints,
+            tolerance_degrees=orientation_limit,
+        )
+        if angular["status"] == "FAIL":
+            flags.append("SKELETAL_JOINT_ANGULAR_MOTION_PROFILE_MISMATCH")
+        absolute_orientation = {
+            "status": "INCOMPLETE",
+            "reason": "INDEPENDENT_BIND_POSE_AND_BONE_AXIS_CALIBRATION_NOT_PROVIDED",
+        }
+        if pose_calibration is not None:
+            # A mapped pose is not calibrated by simply subtracting first
+            # animation-frame orientations. Exact native rest references and
+            # an explicitly approved axis basis are required for every bone.
+            try:
+                if len(joints.get("bones", [])) != len(source_rigs[eid]["bones"]):
+                    raise RigCalibrationError("Calibrated rig needs complete matched bone hierarchy.")
+                paired = {bone["source_bone_id"]: bone["target_bone_name"]
+                          for bone in joints["bones"]}
+                reference = bind_reference(pose_calibration, plan, target, eid, paired)
+                absolute_orientation = compare_reference_calibrated(
+                    source_samples, target_samples, eid, paired, reference,
+                    tolerance_degrees=orientation_limit,
+                )
+            except RigCalibrationError as exc:
+                raise BehavioralComparisonError(
+                    "Cannot trust native rig orientation calibration: " + str(exc)
+                ) from exc
+            if absolute_orientation["status"] == "FAIL":
+                flags.append("CALIBRATED_SKELETAL_JOINT_ORIENTATION_MISMATCH")
+        anatomical_forward = {
+            "status": "INCOMPLETE",
+            "reason": "SOURCE_TARGET_ANATOMICAL_MESH_FORWARD_NOT_INDEPENDENTLY_APPROVED",
+        }
+        if mesh_forward_approval is not None:
+            try:
+                profile = bind_profile(mesh_forward_approval, plan, target, eid)
+                anatomical_forward = compare_mesh_forward(
+                    source_samples, target_samples, eid, profile,
+                    tolerance_degrees=orientation_limit,
+                )
+            except MeshForwardError as exc:
+                raise BehavioralComparisonError(
+                    "Cannot trust native mesh forward approval: " + str(exc)
+                ) from exc
+            if anatomical_forward["status"] == "FAIL":
+                flags.append("CHARACTER_MESH_ANATOMICAL_FORWARD_MISMATCH")
         rig_diagnostics.append({
             "entity_id": eid, "source_name": by_id[eid].get("name", ""),
             "source": src_motion, "target": tgt_motion,
             "flags": flags,
             "joint_positions": joints,
+            "joint_angular_motion": angular,
+            "joint_reference_orientation": absolute_orientation,
+            "anatomical_mesh_forward": anatomical_forward,
             "skeletal_root_world": _skeletal_root_world(
                 source_samples, target_samples, source_rigs[eid], native_rigs[eid], joints, position_limit,
             ),
@@ -483,7 +540,13 @@ def compare(
                 "Possible motion ownership difference; this does not prove "
                 "that source trajectory or final pose matches."
             )
-    flags_present = any(item["flags"] for item in results + rig_diagnostics)
+    # Independently observed physical lens values; a matching transform
+    # cannot conceal a different camera FOV. Unsupported native camera shapes
+    # remain explicitly INCOMPLETE, never silently matching.
+    lens = compare_camera_optics(plan, source_samples, target_samples)
+    cuts = compare_camera_cut_sections(plan, target.get("camera_cut_sections"), bound)
+    flags_present = (any(item["flags"] for item in results + rig_diagnostics)
+                     or lens["status"] == "FAIL" or cuts["status"] == "FAIL")
 
     return {
         "schema_version": "0.1.0",
@@ -498,17 +561,31 @@ def compare(
             "unmapped_entity_count": len(missing_ids),
             "position_tolerance_cm": position_limit,
             "orientation_tolerance_degrees": orientation_limit,
+            "camera_optics_status": lens["status"],
+            "camera_cut_timing_status": cuts["status"],
         },
         "entities": results,
         "rig_motion_diagnostics": rig_diagnostics,
+        "camera_optics": lens,
+        "camera_cut_timing": cuts,
         "unmapped_source_entities": unmapped,
         "motion_ownership_policy": (
             "ACTOR_VS_NATIVE_SKELETON_DIAGNOSTIC_ONLY;"
             "NO_AUTOMATIC_ROOT_MOTION_REPAIR"
         ),
         "unverified_domains": [
-            "skeletal_joint_orientation_and_bind_pose",
-            "camera_optics",
+            "skeletal_joint_absolute_orientation_and_bind_pose"
+            if pose_calibration is None or any(
+                rig["joint_reference_orientation"]["status"] != "PASS"
+                for rig in rig_diagnostics
+            ) else "skeletal_skin_deformation_and_unverified_reference_authenticity",
+            "character_anatomical_mesh_forward"
+            if mesh_forward_approval is None or any(
+                rig["anatomical_mesh_forward"]["status"] != "PASS"
+                for rig in rig_diagnostics
+            ) else "mesh_surface_rendered_forward_appearance",
+            "camera_optics" if lens["status"] != "PASS" else "camera_projection_and_rendered_frame",
+            "camera_cut_timing" if cuts["status"] != "PASS" else "rendered_camera_cut_compositing",
             "light_appearance",
             "audio_output",
             "event_execution",
@@ -518,11 +595,16 @@ def compare(
         ],
         "notes": [
             "Mapped actor transforms and hierarchy-matched joint positions have comparable semantics.",
-            "Joint rotation and bind-pose fidelity require separately calibrated native bone bases.",
+            "Joint rotation amplitude and timing are independently compared per frame where bone mapping is proven.",
+            "Joint rotation axis, absolute orientation and bind-pose fidelity require calibrated native bone bases.",
             "An apparently static actor may contain skeletal root motion; examine "
             "bone motion diagnostics before diagnosing a missing translation.",
             "Source and target observation methods may not evaluate external script "
             "side effects or frame-dependent physics identically.",
+            "Camera FOV uses native CineCamera physical lens readback only; matched "
+            "FOV is not proof of exact projection or rendered image parity.",
+            "Camera cuts are compared using observed Sequencer binding IDs and "
+            "section bounds; they do not prove actual frame composition.",
             "This diagnostic report does not modify any source or target asset.",
         ],
     }

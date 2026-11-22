@@ -421,7 +421,8 @@ def test_connected_old_companion_explains_restart(tmp_path):
     })
     report = bridge.destination_readiness(work)
     assert report['status'] == 'UPGRADE_COMPANION'
-    assert 'restart unreal' in report['next_action'].lower()
+    assert 'keep unreal editor open' in report['next_action'].lower()
+    assert 'importlib.reload(w)' in report['next_action']
 
 
 def test_automatic_studio_preparation_requests_safe_hierarchy_reconstruction(tmp_path, monkeypatch):
@@ -616,7 +617,8 @@ def test_destination_readiness_blocks_older_editor_for_source_studio(tmp_path):
     report = bridge.destination_readiness(work)
     assert report['status'] == 'UPGRADE_COMPANION'
     assert report['ready'] is False
-    assert 'completely close Unreal Editor' in report['next_action']
+    assert 'Keep Unreal Editor open' in report['next_action']
+    assert 'w.stop(); importlib.reload(w); w.start()' in report['next_action']
     assert 'new transfer candidate' in report['next_action']
     current = _current_editor_heartbeat(config)
     bridge.atomic_json(work / 'unreal-worker.json', current)
@@ -737,3 +739,166 @@ def test_ai_transfer_audit_endpoint_reports_no_job_and_refuses_foreign_candidate
     assert status == 409
     assert 'candidate' in error['error'].lower()
 
+
+
+def test_autopilot_cancel_endpoint_requires_token_and_preserves_snapshot(service):
+    base, tmp = service
+    folder = tmp / "work"
+    marker = folder / "autopilot-active.json"
+    bridge.atomic_json(marker, {
+        "status": "ANALYZING_PROJECTS", "run_id": "a" * 32,
+        "message": "AI is analyzing the source and target.",
+    })
+    status, refused = call(base + "/api/autopilot/cancel", {})
+    assert status == 403
+    assert "token" in refused["error"].lower()
+    token = call(base + "/api/status")[1]["token"]
+    status, response = call(base + "/api/autopilot/cancel", {}, token)
+    assert status == 200
+    assert response["status"] == "CANCELLED"
+    assert bridge.load_json(marker)["status"] == "CANCELLED"
+    assert not (folder / "active-job.json").exists()
+
+
+def test_connected_source_status_recovers_automatically_after_unity_domain_reload(tmp_path):
+    import datetime
+
+    project = tmp_path / "Unity"
+    (project / "Assets").mkdir(parents=True)
+    (project / "ProjectSettings").mkdir()
+    work = tmp_path / "runs"
+    bridge.atomic_json(work / "autopilot-active.json", {
+        "unity_project": str(project), "status": "WAITING_FOR_UNITY",
+    })
+    marker = project / "CutSceneAI/StudioBridge/unity-editor.json"
+    bridge.atomic_json(marker, {
+        "kind": "cutsceneai.unity.editor_presence",
+        "schema_version": "1", "project_root": str(project.resolve()),
+        "heartbeat": datetime.datetime.now(datetime.UTC).isoformat(),
+        "editor_pid": 1234, "source_bridge_enabled": True,
+        "editor_mode": "EDIT_MODE", "bridge_version": "unity-editor-v0.3",
+    })
+    assert bridge._unity_live_status(work)["connected"] is True
+    bridge.atomic_json(marker, {
+        **bridge.load_json(marker),
+        "heartbeat": (
+            datetime.datetime.now(datetime.UTC) -
+            datetime.timedelta(seconds=30)
+        ).isoformat(),
+    })
+    assert bridge._unity_live_status(work)["connected"] is False
+    bridge.atomic_json(marker, {
+        **bridge.load_json(marker),
+        "heartbeat": datetime.datetime.now(datetime.UTC).isoformat(),
+    })
+    assert bridge._unity_live_status(work)["connected"] is True
+    assert not (work / "jobs").exists()
+
+
+def test_worker_rejects_an_explicitly_deferred_or_broken_live_reload():
+    import hashlib
+
+    stable = {
+        "worker_version": bridge.REQUIRED_WORKER_PROTOCOL,
+        "checkout_root": str(ROOT.resolve()),
+        "worker_source_sha256": hashlib.sha256(
+            (ROOT / "integrations/unreal/studio_local_editor_worker.py").read_bytes()
+        ).hexdigest(),
+    }
+    assert bridge.worker_code_mismatch({**stable, "live_reload_state": "CURRENT"}) is None
+    assert "DEFERRED_NATIVE_JOB" in bridge.worker_code_mismatch({
+        **stable, "live_reload_state": "DEFERRED_NATIVE_JOB",
+        "live_reload_error": "existing native job remains active",
+    })
+    assert "BLOCKED" in bridge.worker_code_mismatch({
+        **stable, "live_reload_state": "BLOCKED",
+        "live_reload_error": "invalid Python update",
+    })
+
+
+
+def test_host_source_update_blocks_new_mutations_without_disconnecting_engine_markers(
+    service, monkeypatch, tmp_path,
+):
+    import importlib.util
+
+    base, _ = service
+    reload_path = ROOT / "tools/studio_host_live_reload.py"
+    spec = importlib.util.spec_from_file_location("_studio_host_reload_api_test", reload_path)
+    assert spec is not None and spec.loader is not None
+    watch_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(watch_module)
+    repo = tmp_path / "checkout"
+    for relative in watch_module.DIRECTORIES:
+        (repo / relative).mkdir(parents=True)
+    code = repo / "tools/studio_local_bridge.py"
+    code.write_text("VERSION = 1\n", encoding="utf-8")
+    watcher = watch_module.HostCodeWatcher(repo, tmp_path / "runs")
+    monkeypatch.setattr(bridge, "SOURCE_WATCHER", watcher)
+    before, response = call(base + "/api/status")
+    assert before == 200
+    assert response["host_reload"]["status"] == "CURRENT"
+    assert response["host_reload"]["engine_restart_required"] is False
+    secret = response["token"]
+
+    # Syntax-invalid updates must not be executed or permitted to create an
+    # immutable transfer job. The HTTP process stays up to report diagnostics.
+    code.write_text("def invalid(:\n", encoding="utf-8")
+    status, rejected = call(base + "/api/connect", {"bad": "input"}, secret)
+    assert status == 503
+    assert "source changed" in rejected["error"].lower()
+    assert call(base + "/api/status")[1]["host_reload"]["status"] == "BLOCKED_INVALID_CODE"
+
+    # Once corrected, the watcher waits for a stable version before returning
+    # its special exit signal; no engine processes are restarted by this API.
+    code.write_text("VERSION = 2\n", encoding="utf-8")
+    assert watcher.observe() is False
+    assert watcher.observe() is True
+    assert watcher.status()["native_job_replayed"] is False
+
+
+def test_ced_rulebook_api_persists_user_proposal_without_auto_approval(service):
+    base, temp = service
+    code, overview = call(base + '/api/ced-rulebook')
+    assert code == 200
+    assert overview['total_concepts'] > 150
+    assert overview['unmapped_concepts'] > 0
+    assert overview['approved_user_rules'] == 0
+
+    baseline = json.loads((ROOT / 'packages/contracts/dictionary/adaptive-rules-v0.1.json').read_text())
+    rule = dict(baseline['rules'][0])
+    rule['rule_id'] = 'studio-user-proposed-quaternion'
+    rule['ced'] = 'transform.quaternion'
+    payload = {'rule': rule}
+    code, denied = call(base + '/api/ced-rulebook/propose', payload)
+    assert code == 403 and 'token' in denied['error'].lower()
+    token = call(base + '/api/status')[1]['token']
+    code, proposed = call(base + '/api/ced-rulebook/propose', payload, token)
+    assert code == 200
+    assert proposed['status'] == 'PROPOSED_NOT_EXECUTABLE'
+    assert proposed['used_for_live_transfer'] is False
+    identifier = proposed['candidate_id']
+    assert len(identifier) == 64
+    assert (temp / 'ced-knowledge' / 'candidates' / (identifier + '.json')).is_file()
+    assert call(base + '/api/ced-rulebook/propose', payload, token)[1]['candidate_id'] == identifier
+    assert not list((temp / 'ced-knowledge' / 'approvals').glob('*.json'))
+    assert call(base + '/api/ced-rulebook')[1]['approved_user_rules'] == 0
+
+
+def test_ced_rulebook_api_refuses_untrusted_executable_mapping(service):
+    base, _ = service
+    token = call(base + '/api/status')[1]['token']
+    suspicious = {
+        'rule': {
+            'rule_id': 'unsafe-code', 'ced': 'transform.position',
+            'source': {'engine': 'unity'}, 'target': {'engine': 'unreal'},
+            'resolution': {
+                'outcome': 'CONVERTED',
+                'resolver': "exec(__import__('os'))",
+                'required_evidence': ['source.coordinate_basis'],
+            },
+        },
+    }
+    code, response = call(base + '/api/ced-rulebook/propose', suspicious, token)
+    assert code == 422
+    assert 'conversion resolution' in response['error']

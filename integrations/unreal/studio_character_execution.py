@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import animation_conversion_policy as policy
 import studio_character_probe
 import studio_ik_retarget
 import studio_transfer_ai
+import studio_character_motion as native_motion
 
 
 def preflight(api, job: dict, decision: dict, mapping: dict, plan: dict, manifest: dict, *, worker: dict) -> dict:
@@ -19,7 +21,10 @@ def preflight(api, job: dict, decision: dict, mapping: dict, plan: dict, manifes
     report = policy.compatibility.read_json(report_file)
     if (policy.compatibility.file_digest(report_file) != job.get("character_compatibility_sha256")
             or policy.compatibility.digest(report) != decision.get("character_compatibility_sha256")
-            or not job.get("automatic_setup") or (root / policy.NATIVE_FILE).exists()):
+            or not job.get("automatic_setup") or (root / policy.NATIVE_FILE).exists()
+            or (root / "character-native-attempt.json").exists()
+            or (root / "character-native-attempt.json").is_symlink()
+            or plan["sequence_asset_path"] != job["sequence_path"]):
         raise RuntimeError("Missing, stale, or already executed AI character candidate evidence.")
     context = report["context"]
     if (manifest["source_project"] != context["unity_project"] or manifest["source_scope"] != context["source_scope"]
@@ -59,11 +64,69 @@ def preflight(api, job: dict, decision: dict, mapping: dict, plan: dict, manifes
     return row
 
 
+def begin(job, plan):
+    """Durable one-shot claim immediately before the first native mutation."""
+    if native_motion.action(plan) is None:
+        return
+    attempt = {"kind": "cutsceneai.studio.character_native_attempt", "schema_version": "1",
+               "job_id": job["job_id"], "sequence_path": job["sequence_path"], "editor_pid": os.getpid(),
+               "expected_project": job["expected_project"], "expected_level": job["expected_level"],
+               "decision_file_sha256": job["ai_conversion_decision_sha256"],
+               "compatibility_file_sha256": job["character_compatibility_sha256"],
+               "source_capture_sha256": plan["ai_character_motion_binding"]["source_capture_sha256"],
+               "plan_sha256": policy.compatibility.digest(plan), "status": "STARTED_NO_REPLAY",
+               "recovery": "Preserve this candidate and native receipts; inspect staged assets. Use a new candidate after recovery.",
+               "fidelity_verified": False}
+    with (Path(job["candidate_dir"]) / "character-native-attempt.json").open("x", encoding="utf-8") as handle:
+        json.dump(attempt, handle, indent=2, allow_nan=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def validate_staged(api, job, plan):
+    """Preserve root inspection even when native import/retarget evidence refuses."""
+    if native_motion.action(plan) is None:
+        return
+    report = {"kind": "cutsceneai.studio.character_staged_motion_check", "schema_version": "1",
+              "job_id": job["job_id"], "sequence_path": job["sequence_path"], "status": "FAIL",
+              "replay_allowed": False, "fidelity_verified": False}
+    try:
+        import studio_auto_assets
+        # Unity can save an FBX/importer while Unreal is importing it. Refuse
+        # before sequence generation if the just-used immutable inputs changed.
+        studio_auto_assets.verify(job["automatic_setup_manifest"], job["csir"], job["mapping"],
+                                  Path(job["candidate_dir"]) / "transfer-plan.json")
+        report["native_root_inspection"] = native_motion.validate_staged(api, plan)
+        report["status"] = "PASS"
+    except Exception as exc:
+        report["reason"] = str(exc)
+    with (Path(job["candidate_dir"]) / "character-staged-motion.json").open("x", encoding="utf-8") as handle:
+        json.dump(report, handle, indent=2, allow_nan=False)
+    if report["status"] != "PASS":
+        attempt_status(job, "STAGED_MOTION_FAILED_NO_REPLAY", reason=report["reason"])
+        raise RuntimeError("Staged character motion refused; preserve partial assets: " + report["reason"])
+
+
+def attempt_status(job, status, *, reason=""):
+    """Annotate this attempt only; never delete staged native packages or retry."""
+    path = Path(job["candidate_dir"]) / "character-native-attempt.json"
+    if not path.exists() and not path.is_symlink():
+        return
+    attempt = policy.compatibility.read_json(path, 64 * 1024)
+    if attempt.get("job_id") != job["job_id"] or attempt.get("sequence_path") != job["sequence_path"]:
+        raise RuntimeError("Cannot update a different native character attempt.")
+    attempt.update(status=status, reason=reason[:2000], execution_stage=job.get("execution_stage"))
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(attempt, handle, indent=2, allow_nan=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 def _path(asset) -> str:
     return str(asset.get_path_name()).split(".", 1)[0]
 
 
-def _native_sections(api, sequence, actor) -> list[dict]:
+def _native_sections(api, sequence, actor, *, include_post_roll=False) -> list[dict]:
     extensions = api.MovieSceneSequenceExtensions
     world = api.get_editor_subsystem(api.UnrealEditorSubsystem).get_editor_world()
     frequency = extensions.get_tick_resolution(sequence)
@@ -88,6 +151,8 @@ def _native_sections(api, sequence, actor) -> list[dict]:
                              "time_scale": round(float(rate if isinstance(rate, (float, int)) else rate.to_fixed_play_rate()), 6),
                              "source_trim_ticks": int(trim if isinstance(trim, int) else trim.value),
                              "ticks_per_second": ticks_per_second})
+                if include_post_roll:
+                    rows[-1]["post_roll_ticks"] = int(section.get_post_roll_frames())
     return rows
 
 
@@ -110,7 +175,8 @@ def record(api, job: dict, plan: dict, selected: dict, sequence, *, path: Path |
                     and a.get("entity_name") == selected["source_entity_name"]]
         clips = sorted({a["unreal_asset_path"] for a in expected})
         skeleton = studio_ik_retarget.inspect(api, selected["approved_profile"], clips, actor)
-        sections = _native_sections(api, sequence, actor)
+        moving = native_motion.action(plan) is not None
+        sections = _native_sections(api, sequence, actor, include_post_roll=moving)
         tick_rate = sections[0]["ticks_per_second"] if sections else 1
         expected_ranges = Counter((row["unreal_asset_path"], row["start_frame"], row["end_frame"],
                                    round(row["time_scale"], 6), round(row["source_offset_seconds"] * tick_rate))
@@ -123,14 +189,26 @@ def record(api, job: dict, plan: dict, selected: dict, sequence, *, path: Path |
                                                rel_tol=0, abs_tol=1 / source_clips[row["clip"]]["source_fps"])
                               for row in sections)
         passed = skeleton["status"] == "PASS" and bool(expected_ranges) and expected_ranges == observed_ranges and durations_match
+        if moving:
+            frequency = plan["display_rate"]
+            if any(row["post_roll_ticks"] != math.ceil(row["ticks_per_second"] * frequency["denominator"] / frequency["numerator"])
+                   for row in sections):
+                raise RuntimeError("Moving character has no native final-pose boundary hold.")
+            report["motion"] = native_motion.readback(api, sequence, actor, plan)
+            passed = passed and report["motion"]["status"] == "PASS"
+            report["measured_scope"] = "NATIVE_SKELETON_SECTIONS_AND_ACTOR_TRAJECTORY_READBACK"
         report.update(status="PASS" if passed else "FAIL", skeleton=skeleton, observed_sections=sections,
                       expected_sections=[{"clip": key[0], "start_frame": key[1], "end_frame": key[2],
                                           "time_scale": key[3], "source_trim_ticks": key[4], "count": n}
                                          for key, n in sorted(expected_ranges.items())], duration_match=durations_match)
-    except (KeyError, AttributeError, RuntimeError, ValueError, TypeError) as exc:
+    except (KeyError, AttributeError, RuntimeError, ValueError, TypeError, ZeroDivisionError, OverflowError) as exc:
         report["reason"] = str(exc)
+        if (plan.get("ai_character_animation") or {}).get("action_id") == policy.motion.ACTION:
+            report.update(status="FAIL", motion={"status": "FAIL", "reason": str(exc)})
     output = path if path is not None else Path(job["candidate_dir"]) / policy.NATIVE_FILE
     with output.open("x", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, allow_nan=False)
         handle.write("\n")
+    if not reopened and (plan.get("ai_character_animation") or {}).get("action_id") == policy.motion.ACTION:
+        attempt_status(job, "READBACK_" + report["status"] + "_NO_REPLAY", reason=report.get("reason", ""))
     return report

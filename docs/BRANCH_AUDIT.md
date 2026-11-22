@@ -35,3 +35,78 @@ Do not delete other remote refs just because their related draft PR was administ
 The connected GitHub actions support branch inspection and PR closure but **do not expose remote-ref deletion**. No direct branch deletion was attempted. Before later pruning candidates, record exact tip SHAs, verify needed commits are retained, inspect active worktrees and dependencies, preserve research rollback refs, and delete only the explicitly approved redundant remote names. Avoid `git push origin --delete` against all branches indiscriminately.
 
 When approved remote deletions have been completed in GitHub, local clones can run `git fetch --prune` to discard stale remote-tracking references.
+
+
+## Re-audit — November 20, 2026 (current release-candidate branch)
+
+This is an evidence-bound cleanup inventory, **not** a record of remote
+branch deletions. The live GitHub REST inventory returned **101 remote branches**
+and **15 open PRs**. All open PR head and base refs, `main`,
+`feature/studio-e2e-release-candidate-v0.1`, and the historical
+`backup/main-before-studio-consolidation-20261109` must remain intact.
+
+### Confirmed same-tip redundant aliases
+
+All five refs below point to **the exact same immutable commit**:
+`21881b02399752f26848cd1f57d26cd3548ec0f4`.
+
+| Branch | Disposition |
+| --- | --- |
+| `foundation/v0.1-final` | **Retain** as the single historical foundation ref |
+| `foundation/v0.1-ci` | Redundant name — deletion candidate |
+| `foundation/v0.1-clean` | Redundant name — deletion candidate |
+| `foundation/v0.1-pr` | Redundant name — deletion candidate |
+| `foundation/v0.1-review` | Redundant name — deletion candidate |
+
+None of these five branch names is an open PR head or base as of this audit.
+The shared commit has **16 commits not contained in the history of `main` or
+the active release candidate** (compare reports both branches as diverged);
+therefore **retain `foundation/v0.1-final`**. This is not permission to
+delete all historical foundation references.
+
+Before deleting any redundant alias on a local machine, confirm that no
+local worktree, external CI or deployment configuration refers to that
+specific branch name, and recheck that its remote SHA still equals the
+recorded value. If any name has moved, **do not delete it**.
+
+The connected GitHub API does not expose remote branch deletion; these
+candidate branches **have not been deleted**. An owner with push rights can
+use the reviewed commands below after checking local consumers:
+
+```powershell
+git fetch origin
+$expected = "21881b02399752f26848cd1f57d26cd3548ec0f4"
+$redundant = @(
+  "foundation/v0.1-ci"
+  "foundation/v0.1-clean"
+  "foundation/v0.1-pr"
+  "foundation/v0.1-review"
+)
+foreach ($name in $redundant) {
+  $line = @(git ls-remote --heads origin "refs/heads/$name")
+  if ($LASTEXITCODE -ne 0 -or $line.Count -ne 1) {
+    throw "Cannot verify remote branch $name; no deletion attempted."
+  }
+  $sha = ($line[0] -split "\s+")[0]
+  if ($sha -ne $expected) {
+    throw "Remote branch $name moved to $sha; no deletion attempted."
+  }
+}
+# Only after the exact SHA and consumer checks above:
+git push origin --delete foundation/v0.1-ci foundation/v0.1-clean foundation/v0.1-pr foundation/v0.1-review
+git fetch --prune origin
+```
+
+The checkout tree at the active release-candidate head had **zero tracked
+generated-artifact matches** under the repository-hygiene scan (Python
+caches, `.venv`, `node_modules`, Unity/Unreal caches, temporary logs, and
+generated movie/asset files). Do not delete source documents, frozen
+benchmark records, contract dictionaries, adapters, or research tests
+simply because they look old.
+
+The user's `CutsceneAI-Acceptance/` test snapshot and generated Unity
+`.meta` files were **untracked local files**, not GitHub history. The
+root acceptance directory is now ignored to prevent accidentally committing
+private evidence; neither that directory nor the `.meta` files were deleted.
+Unity `.meta` files can encode GUID relationships, so they were not
+globally ignored or removed without a Unity package-consumer audit.

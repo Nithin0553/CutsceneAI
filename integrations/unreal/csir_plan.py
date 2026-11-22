@@ -55,12 +55,68 @@ def seconds_to_frame(seconds: float, numerator: int, denominator: int) -> int:
     return int(round(seconds * numerator / denominator))
 
 
+def _unique_source_index(csir: dict[str, Any], collection: str, field: str) -> dict[str, dict[str, Any]]:
+    """Prevent duplicate native source identities from silently replacing evidence."""
+    result: dict[str, dict[str, Any]] = {}
+    for row in csir.get(collection, []):
+        identifier = row.get(field)
+        if not isinstance(identifier, str) or not identifier.strip() or identifier in result:
+            raise PlanError(f"Missing or duplicated source {field} in {collection}.")
+        result[identifier] = row
+    return result
+
+
 def _asset_index(csir: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {asset["asset_id"]: asset for asset in csir.get("assets", [])}
+    return _unique_source_index(csir, "assets", "asset_id")
 
 
 def _entity_index(csir: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {entity["entity_id"]: entity for entity in csir.get("entities", [])}
+    return _unique_source_index(csir, "entities", "entity_id")
+
+
+def validate_mapping_identity(
+    csir: dict[str, Any], mapping: dict[str, Any]
+) -> None:
+    """An actor label or asset name must never stand for two source identities.
+
+    The current mapping format keys source objects by name. A repeated mapped
+    source name cannot be distinguished by the editor or receipt, and two
+    mapped entities sharing a target label create competing Sequencer writers.
+    Unsupported source names are allowed to repeat when they are not mapped.
+    """
+    source_entities = csir.get("entities", [])
+    source_assets = csir.get("assets", [])
+    actor_map = mapping.get("entities", {})
+    asset_map = mapping.get("assets", {})
+    if not isinstance(actor_map, dict) or not isinstance(asset_map, dict):
+        raise PlanError("Target entity and asset mappings must be objects.")
+    _entity_index(csir)
+    _asset_index(csir)
+    by_name: dict[str, int] = {}
+    for entity in source_entities:
+        name = str(entity.get("name", ""))
+        if name in actor_map:
+            by_name[name] = by_name.get(name, 0) + 1
+    repeated = sorted(name for name, count in by_name.items() if count != 1)
+    if repeated:
+        raise PlanError("Ambiguous mapped source entity name(s): " + ", ".join(repeated))
+    target_owners: dict[str, str] = {}
+    for name in sorted(by_name):
+        label = _mapping_actor(mapping, name)
+        if label in target_owners:
+            raise PlanError(
+                f"Two source entities {target_owners[label]!r} and {name!r} "
+                f"map to the same Unreal actor label {label!r}."
+            )
+        target_owners[label] = name
+    asset_counts: dict[str, int] = {}
+    for asset in source_assets:
+        name = str(asset.get("name", ""))
+        if name in asset_map:
+            asset_counts[name] = asset_counts.get(name, 0) + 1
+    repeated_assets = sorted(name for name, count in asset_counts.items() if count != 1)
+    if repeated_assets:
+        raise PlanError("Ambiguous mapped source asset name(s): " + ", ".join(repeated_assets))
 
 
 def _mapping_asset(mapping: dict[str, Any], source_name: str) -> str:
@@ -72,18 +128,36 @@ def _mapping_asset(mapping: dict[str, Any], source_name: str) -> str:
 
 def _mapping_actor(mapping: dict[str, Any], entity_name: str) -> str:
     entry = mapping.get("entities", {}).get(entity_name)
-    if not isinstance(entry, dict) or not entry.get("actor_label"):
-        raise PlanError(f"No Unreal actor mapping for source entity: {entity_name}")
-    return str(entry["actor_label"])
+    label = entry.get("actor_label") if isinstance(entry, dict) else None
+    if not isinstance(label, str) or not label.strip() or label != label.strip():
+        raise PlanError(f"No unambiguous Unreal actor label for source entity: {entity_name}")
+    return label
 
 
 def _curve_map(section: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Only root-bound Unity curves can drive an Unreal actor transform.
+
+    Nested bone/child curves retain their CSIR path and must be handled by
+    skeletal conversion. Flattening paths corrupts actor placement and facing.
+    """
     curves = section.get("payload", {}).get("animation", {}).get("curves", [])
     result: dict[str, dict[str, Any]] = {}
     for curve in curves:
+        if not isinstance(curve, dict):
+            raise PlanError("Animation contains a non-object source curve.")
+        if str(curve.get("path") or "").strip():
+            continue
         semantic = curve.get("canonical_semantic") or curve.get("property_name")
         if semantic:
-            result[str(semantic)] = curve
+            name = str(semantic)
+            # The extractor intentionally gives Unity Euler X/Y/Z ONE
+            # placeholder semantic. Their native property names are resolved
+            # axis-by-axis below, so this placeholder is not a unique channel.
+            if name == "transform.rotation.euler_native":
+                continue
+            if name in result:
+                raise PlanError("Ambiguous duplicate root-level animation curve: " + name)
+            result[name] = curve
     return result
 
 
@@ -104,6 +178,12 @@ def _vector_offset(curves: dict[str, dict[str, Any]], prefix: str) -> tuple[floa
 
 
 def _quat_offset(curves: dict[str, dict[str, Any]], prefix: str) -> tuple[float, float, float, float]:
+    names = [prefix + "." + axis for axis in "xyzw"]
+    present = [name in curves for name in names]
+    if any(present) and not all(present):
+        raise PlanError(f"Partial source orientation offset for {prefix}; cannot infer missing axes.")
+    if any(present) and any(len(curves[name].get("keys", [])) != 1 for name in names):
+        raise PlanError(f"Source orientation offset for {prefix} requires one key per quaternion axis.")
     return _normalize_quat(
         (
             _single_value(curves, prefix + ".x", 0.0),
@@ -123,7 +203,22 @@ def _curve_value(curve: dict[str, Any] | None, time_seconds: float, default: flo
     """
     if not curve or not curve.get("keys"):
         return default
+    if not math.isfinite(float(time_seconds)):
+        raise PlanError("Non-finite source animation sample time.")
     keys = curve["keys"]
+    previous_time = -math.inf
+    for key in keys:
+        try:
+            timestamp, value = float(key["time_seconds"]), float(key["value"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PlanError("Source curve has an invalid time or value.") from exc
+        if not math.isfinite(timestamp) or not math.isfinite(value):
+            raise PlanError("Non-finite source animation key.")
+        if timestamp <= previous_time:
+            raise PlanError("Source animation key times must be strictly increasing.")
+        if curve.get("native_keys") and int(key.get("weighted_mode", 0)):
+            raise PlanError("Weighted Unity curve tangents require a dedicated evaluator.")
+        previous_time = timestamp
     if time_seconds <= float(keys[0]["time_seconds"]):
         return float(keys[0]["value"])
     if time_seconds >= float(keys[-1]["time_seconds"]):
@@ -157,9 +252,8 @@ def _source_root_delta_unreal_cm(
 ) -> tuple[float, float, float] | None:
     """Resolve Unity Animator RootT displacement into Unreal world-axis centimeters."""
     curves = {
-        str(curve.get("property_name")): curve
-        for curve in section.get("payload", {}).get("animation", {}).get("curves", [])
-        if str(curve.get("property_name", "")).startswith("RootT.")
+        name: curve for name, curve in _curve_map(section).items()
+        if name.startswith("RootT.")
     }
     required = ("RootT.x", "RootT.y", "RootT.z")
     if not all(name in curves for name in required):
@@ -187,9 +281,8 @@ def _source_root_samples_unreal_cm(
 ) -> list[dict[str, Any]]:
     """Sample source RootT displacement at authored key times in Unreal world axes."""
     curves = {
-        str(curve.get("property_name")): curve
-        for curve in section.get("payload", {}).get("animation", {}).get("curves", [])
-        if str(curve.get("property_name", "")).startswith("RootT.")
+        name: curve for name, curve in _curve_map(section).items()
+        if name.startswith("RootT.")
     }
     required = ("RootT.x", "RootT.y", "RootT.z")
     if not all(name in curves for name in required):
@@ -249,9 +342,8 @@ def _source_root_profile_unreal_cm(
     section so a jump-like clip is not misclassified from a near-zero end displacement.
     """
     curves = {
-        str(curve.get("property_name")): curve
-        for curve in section.get("payload", {}).get("animation", {}).get("curves", [])
-        if str(curve.get("property_name", "")).startswith("RootT.")
+        name: curve for name, curve in _curve_map(section).items()
+        if name.startswith("RootT.")
     }
     required = ("RootT.x", "RootT.y", "RootT.z")
     if not all(name in curves for name in required):
@@ -342,13 +434,14 @@ def select_actor_root_motion_alignments(
 
 def _target_output_profile(mapping: dict[str, Any]) -> tuple[int, int, str]:
     value = mapping.get("output_resolution")
-    if isinstance(value, (list, tuple)) and len(value) == 2:
-        width = int(value[0])
-        height = int(value[1])
-        if width > 0 and height > 0:
-            return width, height, "mapping.output_resolution"
-    # Benchmark validation needs a stable output gate. Do not reuse Unity Camera.aspect:
-    # it is commonly derived from the current editor/game view rather than camera intent.
+    if value is not None:
+        if (not isinstance(value, (list, tuple)) or len(value) != 2
+                or any(type(dimension) is not int for dimension in value)
+                or any(dimension < 1 or dimension > 16384 for dimension in value)):
+            raise PlanError("Explicit output_resolution must contain two positive integer pixels <= 16384.")
+        return value[0], value[1], "mapping.output_resolution"
+    # Only an omitted output gate uses the benchmark default. An explicitly
+    # invalid mapping cannot silently change camera framing/aspect.
     return 1920, 1080, "benchmark_default_1920x1080"
 
 
@@ -360,9 +453,11 @@ def canonical_position_to_unreal_cm(position: tuple[float, float, float]) -> tup
 
 
 def _normalize_quat(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    if len(q) != 4 or not all(math.isfinite(v) for v in q):
+        raise PlanError("Canonical rotation quaternion must have four finite components.")
     length = math.sqrt(sum(component * component for component in q))
     if length <= 1e-12:
-        return (0.0, 0.0, 0.0, 1.0)
+        raise PlanError("Zero-length source quaternion cannot determine facing direction.")
     return tuple(component / length for component in q)  # type: ignore[return-value]
 
 
@@ -429,17 +524,25 @@ def parent_world_transform(
     tuple[float, float, float],
 ]:
     """Return the source parent's canonical world transform, or identity."""
-    parent = entities.get(str(entity.get("parent_entity_id", "")))
-    if not parent:
+    parent_id = entity.get("parent_entity_id")
+    if not parent_id:
         return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
+    parent = entities.get(str(parent_id))
+    if parent is None:
+        raise PlanError("Parent entity is missing; cannot reconstruct child world position or facing.")
 
     transform = parent.get("metadata", {}).get("world_transform")
     if not isinstance(transform, dict):
-        return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (1.0, 1.0, 1.0)
+        raise PlanError("Parent world transform is missing; cannot assume an identity parent.")
 
-    position = transform.get("position", {})
-    rotation = transform.get("rotation", {})
-    scale = transform.get("scale", {})
+    position = transform.get("position")
+    rotation = transform.get("rotation")
+    scale = transform.get("scale")
+    if not all(isinstance(part, dict) for part in (position, rotation, scale)):
+        raise PlanError("Incomplete parent world transform; cannot place the attached child.")
+    if any(axis not in position or axis not in scale or axis not in rotation
+           for axis in "xyz") or "w" not in rotation:
+        raise PlanError("Missing parent position, scale or facing component.")
     return (
         (
             float(position.get("x", 0.0)),
@@ -557,9 +660,21 @@ def canonical_quat_to_unreal_rotator(
     Unreal Pitch is positive when looking up, so a Unity camera with +X=25°
     (looking down) correctly becomes Unreal Pitch=-25°.
     """
+    # An invalid source rotation must never silently become "facing forward".
+    # Unity's serialized capture is normalized; allow only small float error.
+    try:
+        raw = tuple(float(v) for v in q)
+    except (TypeError, ValueError) as exc:
+        raise PlanError("Canonical rotation quaternion is not numeric.") from exc
+    if len(raw) != 4 or not all(math.isfinite(v) for v in raw):
+        raise PlanError("Canonical rotation quaternion must have four finite components.")
+    norm = math.sqrt(sum(v * v for v in raw))
+    if not 0.95 <= norm <= 1.05:
+        raise PlanError("Canonical source facing quaternion is not unit length.")
+
     # Canonical +X -> UE +Y, +Y -> UE +Z, +Z -> UE -X.
     basis = [[0.0, 0.0, -1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
-    rotation = _mat_mul(_mat_mul(basis, _quat_to_matrix(q)), _transpose(basis))
+    rotation = _mat_mul(_mat_mul(basis, _quat_to_matrix(raw)), _transpose(basis))
 
     # Matrix columns are the rotated Unreal local X/Y/Z axes in world space.
     forward = (rotation[0][0], rotation[1][0], rotation[2][0])
@@ -589,6 +704,40 @@ def canonical_quat_to_unreal_rotator(
     return (math.degrees(roll), math.degrees(pitch), math.degrees(yaw))
 
 
+def continuous_unreal_rotator(
+    previous: tuple[float, float, float] | None,
+    current: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    """Choose equivalent Roll/Pitch/Yaw angles closest to the previous key.
+
+    Unreal's standard decomposition restricts pitch to [-90, 90]. Crossing
+    that pole changes *both* roll and yaw by 180 degrees. Unwrapping each
+    channel independently creates a false half-turn between two neighboring
+    keys even though the source direction changed only a few degrees.
+
+    The alternate (roll+180, 180-pitch, yaw+180) represents the SAME 3D
+    orientation. Choose the closest equivalent triple; no source orientation
+    or native actor basis is guessed or calibrated.
+    """
+    if len(current) != 3 or not all(math.isfinite(float(v)) for v in current):
+        raise PlanError("Cannot bake a non-finite Unreal facing rotation.")
+    values = tuple(float(v) for v in current)
+    if previous is None:
+        return values
+    if len(previous) != 3 or not all(math.isfinite(float(v)) for v in previous):
+        raise PlanError("Previous native facing direction is invalid.")
+
+    def near(value: float, old: float) -> float:
+        return old + (value - old + 180.0) % 360.0 - 180.0
+
+    alternatives = (values, (values[0] + 180.0, 180.0 - values[1], values[2] + 180.0))
+    candidates = [tuple(near(v, float(p)) for v, p in zip(option, previous))
+                  for option in alternatives]
+    return min(candidates, key=lambda option: sum(
+        (v - float(p)) ** 2 for v, p in zip(option, previous)
+    ))
+
+
 def _section_curve_channels(section: dict[str, Any]) -> tuple[
     dict[str, dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]]
 ]:
@@ -597,7 +746,8 @@ def _section_curve_channels(section: dict[str, Any]) -> tuple[
     quaternion = {axis: curves.get("transform.rotation." + axis) for axis in "xyzw"}
     euler = {
         axis: next((c for c in section.get("payload", {}).get("animation", {}).get("curves", [])
-                    if str(c.get("property_name", "")).lower() in {
+                    if not str(c.get("path") or "").strip()
+                    and str(c.get("property_name", "")).lower() in {
                         "localeuleranglesraw." + axis,
                         "m_localeulerangleshint." + axis,
                     }), None)
@@ -647,8 +797,9 @@ def _sample_section_transform(
             if section_start <= timeline_time <= section_end:
                 sample_source_times.add(source_start + (timeline_time - section_start) * time_scale)
         sample_source_times.update((source_start, source_end))
-    if not sample_source_times:
-        return [], False
+    # Unity holds endpoint values for trimmed clips, even when no authored
+    # key falls within their source-time window.
+    sample_source_times.update((source_start, source_end))
 
     track_position = _vector_offset(curves, "transform.track_offset.position")
     infinite_position = _vector_offset(curves, "transform.infinite_offset.position")
@@ -681,7 +832,17 @@ def _sample_section_transform(
             "location_cm": canonical_position_to_unreal_cm(world_position),
             "rotation_rpy_degrees": canonical_quat_to_unreal_rotator(world_rotation),
         }
-    return [by_frame[frame] for frame in sorted(by_frame)], bake
+    # Preserve a continuous native facing trajectory across pitch poles.
+    # The keys' original quaternion-equivalent directions remain unchanged.
+    previous_rpy = None
+    result = []
+    for frame in sorted(by_frame):
+        key = by_frame[frame]
+        current_rpy = continuous_unreal_rotator(previous_rpy, key["rotation_rpy_degrees"])
+        key["rotation_rpy_degrees"] = current_rpy
+        previous_rpy = current_rpy
+        result.append(key)
+    return result, bake
 
 
 def _transform_action(
@@ -731,6 +892,11 @@ def build_plan(csir: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
     fps_n = int(source_rate["numerator"])
     fps_d = int(source_rate["denominator"])
     duration = float(csir["timing"]["duration_seconds"])
+    if (fps_n <= 0 or fps_d <= 0 or not math.isfinite(duration)
+            or duration <= 0 or duration > 36000
+            or not (1 <= seconds_to_frame(duration, fps_n, fps_d) <= 100_000)):
+        raise PlanError("Invalid or unbounded source timeline duration/display rate.")
+    validate_mapping_identity(csir, mapping)
     assets = _asset_index(csir)
     entities = _entity_index(csir)
     output_width, output_height, output_profile_source = _target_output_profile(mapping)
