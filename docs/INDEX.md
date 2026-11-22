@@ -4,6 +4,7 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 
 ## Start here
 
+- [Element 3.3: Adaptive CED strategy decisions](studio/ELEMENT3_ADAPTIVE_CED_STRATEGY_V01.md) — ranked evidence, source-native routing, bounded model alternatives, and independent verification
 - [Element 3.2: Dependency-aware reasoning and resumable model reviews](studio/ELEMENT3_DEPENDENCY_AWARE_REASONING_V01.md) — DAG waves, Timeline conflict blockers, validated advisory schedules, durable AI review checkpoints
 - [Element 3.1: Source-complete per-element AI conversion planning](studio/ELEMENT3_PER_ELEMENT_AGENT_PLANNING_V01.md) — source occurrence contracts, opt-in model review, evidence and native permission boundaries
 - [Element 2: Hybrid CED completion, signed releases and learning acceptance](studio/CED_HYBRID_COMPLETION_V02.md) — four phases, operator CLI, readback gates, security and native acceptance gaps
