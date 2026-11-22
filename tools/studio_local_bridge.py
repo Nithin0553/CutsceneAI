@@ -939,11 +939,26 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         'hierarchy': None, 'visual': None,
                         'fidelity_verified': False,
                     })
-                active = load_json(active_file)
-                job_file = folder / 'jobs' / (str(active['job_id']) + '.json')
-                return self.reply(
-                    200, studio_ui_features.verification(folder, active, load_json(job_file))
-                )
+                try:
+                    active = load_json(active_file)
+                    job_id = active.get('job_id')
+                    if (not isinstance(job_id, str) or len(job_id) != 32
+                            or any(c not in '0123456789abcdef' for c in job_id)):
+                        raise ValueError('Invalid active verification job identity.')
+                    job_file = folder / 'jobs' / (job_id + '.json')
+                    if job_file.is_symlink():
+                        raise ValueError('Symlinked verification job is unsafe.')
+                    job = load_json(job_file)
+                    if job.get('job_id') != job_id:
+                        raise ValueError('Native job identity does not match verification request.')
+                    return self.reply(
+                        200, studio_ui_features.verification(folder, active, job)
+                    )
+                except (ValueError, KeyError, TypeError, OSError) as exc:
+                    return self.reply(409, {
+                        'error': 'Job-bound native verification unavailable: '
+                                 + str(exc)[:300],
+                    })
             if path == '/api/status':
                 cfg = folder / 'connection.json'
                 return self.reply(200, {'service': 'CutSceneAI Studio Local Companion',
