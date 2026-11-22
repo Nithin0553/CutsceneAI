@@ -22,7 +22,10 @@ from closed_loop_evaluation import redact_component_catalog
 
 MAX_REPAIRS = 2
 MAX_USER_COMMENT = 1200
-ALLOWED_STRATEGIES = {"restore_source_albedo", "restore_constant_actor_offset", "report_only"}
+ALLOWED_STRATEGIES = {
+    "restore_source_albedo", "restore_constant_actor_offset",
+    "restore_static_camera_lens", "report_only",
+}
 
 
 class AgentError(RuntimeError):
@@ -51,6 +54,7 @@ class AgentState(TypedDict, total=False):
     intent_routing: dict[str, Any]
     transform_candidate: dict[str, Any]
     element8_review: dict[str, Any]
+    camera_lens_candidate: dict[str, Any]
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -281,7 +285,11 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
             "and measured Unreal fallback slots. "
             "restore_constant_actor_offset requires exact one-character "
             "source/target world-position evidence and independent native "
-            "remeasurement. If evidence is insufficient or the discrepancy "
+            "remeasurement. restore_static_camera_lens requires an explicit "
+            "user lens correction plus exact reopened native CineCamera "
+            "measurements, constant source FOV, and an independently guarded "
+            "one-camera focal-length component edit. No generic zoom/shot "
+            "rewrites are permitted. If evidence is insufficient or the discrepancy "
             "is outside an installed repair adapter, choose report_only. "
             "Never invent engine commands, source paths, executable code, "
             "new mapping rules, or claims of visual/skeletal parity."
@@ -413,6 +421,19 @@ def build_graph(workspace: Path, job: dict[str, Any],
         count = _valid_fallback(visual)
         element8 = _element8_review(workspace, candidate, job)
         transform_proof = None
+        camera_proof = None
+        if comment and agent_intent_router.recognize(user_message)["domains"] == ["camera"]:
+            import studio_camera_lens_evidence
+            if studio_camera_lens_evidence.message_requests_lens(user_message):
+                try:
+                    camera_proof = studio_camera_lens_evidence.build(workspace, job)
+                except (studio_camera_lens_evidence.CameraLensEvidenceError,
+                        ValueError, OSError, KeyError, TypeError) as exc:
+                    camera_proof = {
+                        "eligible": False,
+                        "reason": "No exact-source native static lens proof: "
+                                  + str(exc)[:200],
+                    }
         if (comment and agent_intent_router.recognize(user_message)["domains"] == ["transform"]):
             import agent_transform_evidence
             try:
@@ -441,6 +462,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 repair_budget=MAX_REPAIRS,
                 independent_issues=issues,
                 transform_repair_evidence=transform_proof,
+                camera_lens_repair_evidence=camera_proof,
                 adapter_catalog=feedback.get("component_adapter_catalog"),
                 fallback_observation_scope=(
                     "character" if "character_material_slots_engine_default" in visual
@@ -478,6 +500,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "eligible_repair": eligible,
             "intent_routing": routing,
             "transform_candidate": transform_proof or {},
+            "camera_lens_candidate": camera_proof or {},
             "element8_review": element8 or {},
         }
         if not issues:
@@ -515,6 +538,19 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "verified_ced_precedents": _approved_precedents(workspace, job),
             "approved_ced_rulebook_precedents": _approved_ced_rulebook_precedents(workspace, job),
             "verified_transform_candidate": state.get("transform_candidate", {}),
+            "verified_camera_lens_candidate": {
+                "eligible": bool(
+                    state.get("camera_lens_candidate", {}).get("eligible")
+                ),
+                "source_occurrence_id": state.get(
+                    "camera_lens_candidate", {},
+                ).get("source_camera_occurrence_id"),
+                "native_vertical_fov_error_degrees": state.get(
+                    "camera_lens_candidate", {},
+                ).get("measured_native_fov_error_degrees"),
+                "native_edit_authorized": False,
+                "full_cutscene_fidelity_verified": False,
+            },
             "element8_native_readback": state.get("element8_review", {}),
         }
         try:
@@ -550,6 +586,15 @@ def build_graph(workspace: Path, job: dict[str, Any],
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
                     "failure": "Transform proposal was not independently authorized.",
                     "chosen_strategy": "report_only"}
+        if strategy == "restore_static_camera_lens" and not (
+            comment and state.get("feedback_id")
+            and state.get("camera_lens_candidate", {}).get("eligible") is True
+            and "restore_static_camera_lens"
+            in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Static camera repair lacks exact native lens evidence.",
+                    "chosen_strategy": "report_only"}
         if strategy == "restore_source_albedo" and not (
             state.get("eligible_repair") and relevant_material_request and
             state["last_fallback"] > 0 and _source_materials(candidate)
@@ -569,7 +614,10 @@ def build_graph(workspace: Path, job: dict[str, Any],
 
     def dispatch(state: AgentState) -> dict[str, Any]:
         strategy = state.get("chosen_strategy")
-        if strategy not in {"restore_source_albedo", "restore_constant_actor_offset"}:
+        if strategy not in {
+            "restore_source_albedo", "restore_constant_actor_offset",
+            "restore_static_camera_lens",
+        }:
             return {"status": "UNRESOLVED_NO_SAFE_STRATEGY"}
         request_id = uuid.uuid4().hex
         request = {
@@ -584,6 +632,17 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "iteration": state.get("iterations", 0) + 1,
             "baseline_fallback": state.get("last_fallback", 0),
         }
+        if strategy == "restore_static_camera_lens":
+            camera = state.get("camera_lens_candidate") or {}
+            if (camera.get("eligible") is not True
+                    or not state.get("feedback_id")):
+                raise AgentError("Missing verified user-authorized camera lens evidence.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "camera_repair_sha256": camera["camera_repair_sha256"],
+                "source_camera_occurrence_id":
+                    camera["source_camera_occurrence_id"],
+            })
         if strategy == "restore_constant_actor_offset":
             proof = state.get("transform_candidate") or {}
             if not proof.get("eligible") or not state.get("feedback_id"):
@@ -651,6 +710,48 @@ def build_graph(workspace: Path, job: dict[str, Any],
                     + f" Native actor/root errors after translation: "
                     + f"{actor_after:.3f} cm / {root_after:.3f} cm. "
                     + "Reopened-project persistence and full parity remain unverified."
+                ),
+            }
+        if state.get("chosen_strategy") == "restore_static_camera_lens":
+            camera = state.get("camera_lens_candidate") or {}
+            value = result.get("native_property_fov_error_after_degrees")
+            passed = bool(
+                result.get("status")
+                == "CAMERA_STATIC_LENS_PROPERTY_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("camera_repair_sha256")
+                == camera.get("camera_repair_sha256")
+                and result.get("source_camera_occurrence_id")
+                == camera.get("source_camera_occurrence_id")
+                and result.get("native_property_readback_verified") is True
+                and type(value) in (float, int)
+                and math.isfinite(value) and 0 <= value <= 0.25
+                and result.get("full_cutscene_fidelity_verified") is False
+                and result.get(
+                    "cinetwin_reopened_time_grid_verified_after_repair"
+                ) is False
+            )
+            common = {
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+                "history": (state.get("history") or []) + [{
+                    "request_id": request_id,
+                    "strategy": "restore_static_camera_lens",
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "native_fov_error_after_degrees": value,
+                    "full_cutscene_fidelity_verified": False,
+                }],
+            }
+            if not passed:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                                       "Native camera lens did not pass")[:500]}
+            return {
+                **common,
+                "status": "CAMERA_PROPERTY_CORRECTED_REOPENED_CINETWIN_PENDING",
+                "reasoning": (
+                    "The source-derived static CineCamera focal property "
+                    "passed a native property readback, but matching-time "
+                    "post-reopen CineTwin and rendered fidelity remain unverified."
                 ),
             }
         old_count = state.get("last_fallback", 0)
