@@ -451,3 +451,33 @@ def test_release_gate_separates_synthetic_dispatch_from_reopened_fidelity(tmp_pa
     tampered = studio_release_gate.assess(work, job_id)
     assert tampered["checks"]["element3_native_builder_dispatch"]["status"] == "FAIL"
     assert tampered["status"] == "BLOCKED"
+
+
+
+def test_adaptive_strategy_dependency_or_route_block_is_a_hard_native_gate(tmp_path):
+    work, _worker, _target, summary, manifest = _manifest(tmp_path)
+    record = workflow._active(work)
+    strategy = copy.deepcopy(record["element_strategy"])
+    ident = manifest["actions"][0]["source_occurrence_ids"][0]
+    comparison = next(item for item in strategy["comparisons"]
+                      if item["occurrence_id"] == ident)
+    eligible = next(item for item in comparison["alternatives"]
+                    if item["action"] == "camera_setup")
+    assert eligible["eligible_for_model_proposal"] is True
+    eligible["eligible_for_model_proposal"] = False
+    strategy.pop("comparison_sha256")
+    strategy["comparison_sha256"] = native.digest(strategy)
+    current = work / "candidates" / summary["candidate_id"] / "transfer-plan.json"
+    plan = json.loads(current.read_text(encoding="utf-8"))
+    downgraded = native.inventory(plan, record["element_plan"], strategy)
+    assert downgraded["blocked_action_count"] == 1
+    assert downgraded["actions"][0]["native_action_blocker"] == (
+        "SOURCE_STRATEGY_OR_DEPENDENCY_NOT_ELIGIBLE"
+    )
+    with pytest.raises(native.ElementNativeExecutionError, match="source-blocked"):
+        native.authorize(
+            downgraded, candidate_id=summary["candidate_id"],
+            workflow_sha256=summary["workflow_sha256"],
+            transfer_plan_sha256="c" * 64,
+            approved_action_ids=["A00000"], accept_legacy_unattributed=False,
+        )
