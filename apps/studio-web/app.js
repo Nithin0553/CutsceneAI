@@ -175,6 +175,21 @@
           item('Rejected combinations',size(r.element4_strategy_validation.rejected_count)):
           '<p class="hint">A source inventory is not an AI-validated strategy. A model decision must be source-bound and independently revalidated to show a pass here.</p>')+
         '<p class="hint">No → bounded registered alternatives → full graph revalidation. Yes means planning eligible, not native execution or fidelity.</p>'+
+        '<div class="rule"></div><h3>Element 5 · Source-bound conversion plan</h3>'+
+        item('Prepared source occurrences',size(r.element5_source_bound_plan?.source_occurrence_count))+
+        item('Deterministic native builder actions',size(r.element5_source_bound_plan?.action_count))+
+        item('Actions with explicit source attribution',size(r.element5_source_bound_plan?.explicit_source_action_count))+
+        item('Legacy actions without exact-source links',size(r.element5_source_bound_plan?.legacy_unattributed_action_count))+
+        item('Source target references missing',size(r.element5_source_bound_plan?.missing_target_reference_count))+
+        item('Context-blocked native actions',size(r.element5_source_bound_plan?.blocked_action_count))+
+        '<details class="element-list"><summary>Source-to-action mapping for this page</summary>'+
+        (r.element5_source_bound_plan?.source_page||[]).map(s=>
+          '<div class="element-review-row"><strong>'+esc(s.occurrence_id+' · '+s.source_kind)+'</strong>'+
+          '<p class="hint">Status: '+esc(s.conversion_plan_state)+'</p>'+
+          '<p class="hint">Target reference: '+esc(s.mapping_status)+'</p>'+
+          '<p class="hint">Native source links: '+esc(s.explicitly_attributed_action_ids.join(', ')||'NONE VERIFIED')+'</p>'+
+          '</div>').join('')+'</details>'+
+        '<p class="hint">Element 5 preserves exact compiler action order and reports missing provenance; it does not invent conversion details or approve native execution. A planned target reference is not native readback.</p>'+
         item('Native capabilities',r.target_capabilities_observed?'Observed in connected Unreal':'Not observed')+
         item('Capability evidence',r.target_capability_evidence_current?'Current':'Changed · refresh review')+
         '<details class="element-list" open><summary>Review occurrences ('+size(r.elements?.length||0)+' on this page)</summary>'+
