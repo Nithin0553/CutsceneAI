@@ -354,7 +354,7 @@ def build(workspace: Path, job_id: str,
             triage["status"] if triage and triage["status"] in STOP_STATES
             else None
         ),
-        "native_builder_execution_proven": bool(
+        "native_builder_receipt_consistent_with_saved_evidence": bool(
             latest and latest["native_attempt"]["native_builder_completed"]
         ),
         "independent_engine_attestation_verified": False,
