@@ -18,7 +18,10 @@ import agent_intent_router as router
 import studio_camera_key_evidence as proof
 import studio_camera_key_repair as native
 from test_animated_camera_key_repair import (
-    API, FakeSection, _yaw_native_job, _yaw_scenario,
+    API,
+    FakeSection,
+    _yaw_native_job,
+    _yaw_scenario,
 )
 
 
