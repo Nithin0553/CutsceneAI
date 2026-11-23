@@ -136,6 +136,17 @@ See [Phase 10.2 exactly two animated camera keys](PHASE10_2_TWO_ANIMATED_CAMERA_
 This does **not** imply generic camera curve or rotation repair, nor does it
 establish real-editor save/reopen, post-repair CineTwin or rendered fidelity.
 The earlier family counts are historical descriptions of previous increments.
+An **eleventh** guarded software adapter now supports exactly one
+**source-measured, interior animated CineCamera yaw keyframe** (3–30°) with
+physical source/native quaternion-versus-Euler proof, no unwrap/gimbal
+ambiguity, strict full-grid position/pitch/roll/scale checks, original
+native Sequencer nine-channel ownership, exact current user feedback,
+one existing key edit, full channel readback and rollback attempts.
+It does **not** permit arbitrary rotation curves, multi-yaw/pitch/roll
+edits, moving camera rigs, shot blending, or claim post-repair distinct
+Unreal Editor reopen, CineTwin or rendered parity.
+See [single animated camera yaw key contract](PHASE10_2_ONE_ANIMATED_CAMERA_YAW_KEY_V01.md).
+Earlier counts on this page describe historical earlier increments.
 No arbitrary Unity script, proprietary shader, animation rig or camera
 control may be reconstructed simply because an LLM identifies a mismatch.
 

@@ -53,7 +53,8 @@ def _frame(api: Any, key: Any) -> int:
 
 
 def _read_many_channels(api: Any, section: Any, prepared: dict,
-                        *, repairs: list[dict]) -> list[tuple[Any, float]]:
+                        *, repairs: list[dict],
+                        yaw_only: bool = False) -> list[tuple[Any, float]]:
     """Validate the whole native grid before allowing one or TWO known XYZ keys.
 
     The exception set is recomputed from immutable measured source evidence,
@@ -69,7 +70,8 @@ def _read_many_channels(api: Any, section: Any, prepared: dict,
             or len(keys) > evidence._MAX_FRAMES or len(keys) < 4
             or any(k.get("frame") != i for i, k in enumerate(keys))):
         raise AnimatedCameraNativeError("Original CineTwin evaluated camera frame grid invalid.")
-    if (not isinstance(repairs, list) or len(repairs) not in (1, 2)
+    if (not isinstance(repairs, list)
+            or len(repairs) not in ((1,) if yaw_only else (1, 2))
             or any(not isinstance(row, dict) for row in repairs)):
         raise AnimatedCameraNativeError("Only one or exactly two measured camera keys are supported.")
     exceptions = {}
@@ -77,7 +79,8 @@ def _read_many_channels(api: Any, section: Any, prepared: dict,
         frame = row.get("source_key_frame")
         axis = row.get("native_channel_index")
         if (type(frame) is not int or type(axis) is not int
-                or not 0 < frame < len(keys) - 1 or axis not in (0, 1, 2)
+                or not 0 < frame < len(keys) - 1
+                or axis not in ((5,) if yaw_only else (0, 1, 2))
                 or (frame, axis) in exceptions):
             raise AnimatedCameraNativeError("Native camera exception is not one unique interior XYZ key.")
         exceptions[(frame, axis)] = row
@@ -94,6 +97,20 @@ def _read_many_channels(api: Any, section: Any, prepared: dict,
         raise AnimatedCameraNativeError(
             "Native source camera linear key interpolation is not introspectable."
         )
+    if yaw_only:
+        # An alias-equivalent native Euler change is not interchangeable with
+        # the immutable baked source channel. Guard the entire native yaw grid.
+        rotations = [tuple(row["rotation_rpy_degrees"]) for row in keys]
+        if any(abs(angle) >= evidence.MAX_EULER_ABS_DEGREES
+               for rpy in rotations for angle in rpy):
+            raise AnimatedCameraNativeError(
+                "Source camera Euler yaw/roll/pitch is outside no-wrap bounds."
+            )
+        if any(abs(b[2]-a[2]) > 60. for a,b
+               in zip(rotations,rotations[1:])):
+            raise AnimatedCameraNativeError(
+                "Native yaw source grid crosses an unsupported angular step."
+            )
     changed = {}
     for channel_index, channel in enumerate(channels):
         key_list = list(channel.get_keys())
@@ -131,13 +148,28 @@ def _read_many_channels(api: Any, section: Any, prepared: dict,
                 raise AnimatedCameraNativeError("Native camera key value nonfinite.")
             measured = exceptions.get((index, channel_index))
             if measured is not None:
-                if (type(measured.get("native_key_value_before_cm")) not in (int,float)
-                        or type(measured.get("source_key_value_cm")) not in (int,float)
-                        or not math.isfinite(measured["native_key_value_before_cm"])
-                        or not math.isfinite(measured["source_key_value_cm"])
-                        or abs(actual - measured["native_key_value_before_cm"]) > 0.15
-                        or abs(float(expected) - measured["source_key_value_cm"]) > 0.1
-                        or not evidence.MIN_CM <= abs(actual-float(expected)) <= evidence.MAX_CM
+                before_name = (
+                    "native_key_value_before_degrees" if yaw_only else
+                    "native_key_value_before_cm"
+                )
+                source_name = (
+                    "source_key_value_degrees" if yaw_only else
+                    "source_key_value_cm"
+                )
+                before = measured.get(before_name)
+                source = measured.get(source_name)
+                correction_min = (
+                    evidence.MIN_YAW_DEGREES if yaw_only else evidence.MIN_CM
+                )
+                correction_max = (
+                    evidence.MAX_YAW_DEGREES if yaw_only else evidence.MAX_CM
+                )
+                if (type(before) not in (int,float)
+                        or type(source) not in (int,float)
+                        or not math.isfinite(before) or not math.isfinite(source)
+                        or abs(actual - before) > 0.15
+                        or abs(float(expected) - source) > 0.1
+                        or not correction_min <= abs(actual-float(expected)) <= correction_max
                         or not callable(getattr(key, "set_value", None))):
                     raise AnimatedCameraNativeError(
                         "Live native key no longer matches independently sampled discrepancy."
@@ -611,4 +643,113 @@ def attempt_two(api: Any, workspace: Path, job: dict, request: dict) -> dict:
                     AttributeError, TypeError, ValueError, RuntimeError) as exc:
                 raise AnimatedCameraNativeError(
                     "Two-key rollback unverified; inspect editor/asset manually."
+                ) from exc
+
+
+def attempt_yaw(api: Any, workspace: Path, job: dict, request: dict) -> dict:
+    """Restore one original physical YAW key, never arbitrary Euler/curve rewrites."""
+    if request.get("strategy") != evidence.STRATEGY_YAW:
+        raise AnimatedCameraNativeError("Wrong animated camera yaw-key strategy.")
+    candidate = Path(job["candidate_dir"]).resolve()
+    fid = str(request.get("feedback_id") or "")
+    if not re.fullmatch("[a-f0-9]{32}", fid):
+        raise AnimatedCameraNativeError("Current explicit camera yaw-key consent required.")
+    active = _load(candidate / ("user-feedback-active-" + job["job_id"] + ".json"))
+    feedback = _load(candidate / ("user-feedback-" + fid + ".json"))
+    if (active.get("feedback_id") != fid
+            or active.get("job_id") != job["job_id"]
+            or active.get("candidate_id") != job["candidate_id"]
+            or feedback.get("kind") != "cutsceneai.studio.user_feedback"
+            or feedback.get("feedback_id") != fid
+            or feedback.get("job_id") != job["job_id"]
+            or feedback.get("candidate_id") != job["candidate_id"]
+            or not evidence.message_requests_yaw_key(feedback.get("message"))):
+        raise AnimatedCameraNativeError("Stale/ambiguous animated camera yaw-key consent.")
+    proof = evidence.build_yaw_key(workspace, job)
+    if (request.get("animated_camera_yaw_key_repair_sha256")
+            != proof["animated_camera_yaw_key_repair_sha256"]
+            or request.get("source_camera_occurrence_id")
+            != proof["source_camera_occurrence_id"]
+            or proof.get("kind") != evidence.KIND_YAW
+            or proof.get("native_channel_index") != 5):
+        raise AnimatedCameraNativeError("Original camera yaw-key proof is stale.")
+    setup_path = Path(str(job.get("setup_receipt_file") or ""))
+    if (setup_path.is_symlink() or not setup_path.is_file()
+            or setup_path.resolve().parent != candidate):
+        raise AnimatedCameraNativeError("Source-created camera staging receipt unavailable.")
+    staged = _load(setup_path).get("actors_created")
+    if not isinstance(staged,list):
+        raise AnimatedCameraNativeError("Original camera staging inventory absent.")
+    compiled, _ = evidence.readback._safe_json(candidate / "transfer-plan.json")
+    actions = [a for a in compiled.get("actions", [])
+               if isinstance(a,dict) and a.get("entity_name")
+               == proof["source_camera_name"] and a.get("kind") == "transform"]
+    if (len(actions) != 1 or actions[0].get("actor_label")
+            != proof["target_actor_label"]
+            or position._hash(actions[0]) != proof["source_camera_action_sha256"]):
+        raise AnimatedCameraNativeError("Original compiled camera animation changed.")
+    action = actions[0]
+    grid.validate_action(action, duration_frames=compiled["duration_frames"])
+    sequence = api.load_asset(job["sequence_path"])
+    if sequence is None:
+        raise AnimatedCameraNativeError("Exact source-generated Level Sequence missing.")
+    section = _live_owner(api,sequence,staged,proof,action)
+    from unreal_compat import UnrealCompatibilityError
+    try:
+        (key, old), = _read_many_channels(
+            api,section,action,repairs=[proof],yaw_only=True,
+        )
+    except (UnrealCompatibilityError,AttributeError,TypeError,RuntimeError) as exc:
+        raise AnimatedCameraNativeError(
+            "Exact source-owned nine-channel yaw key inventory unavailable."
+        ) from exc
+    expected = float(action["keys"][proof["source_key_frame"]][
+        "rotation_rpy_degrees"][2])
+    changed = False
+    saved = False
+    try:
+        changed = True
+        key.set_value(expected)
+        # Full nine-channel readback checks the unchanged position, other
+        # rotations, all frame times/interpolation and scale defaults.
+        _all_camera_keys_match_source(api,section,action)
+        residual = abs(float(key.get_value())-expected)
+        if not math.isfinite(residual) or residual > 0.02:
+            raise AnimatedCameraNativeError("Native yaw key direct readback differs.")
+        asset_lib = getattr(api, "EditorAssetLibrary", None)
+        save = getattr(asset_lib, "save_loaded_asset", None)
+        if not callable(save) or save(sequence) is not True:
+            raise AnimatedCameraNativeError(
+                "Native generated camera yaw-key Level Sequence save unconfirmed."
+            )
+        saved = True
+        return {
+            "status": "ONE_ANIMATED_CAMERA_YAW_KEY_SAVED_REOPENED_CINETWIN_PENDING",
+            "animated_camera_yaw_key_repair_sha256":
+                proof["animated_camera_yaw_key_repair_sha256"],
+            "source_camera_occurrence_id":proof["source_camera_occurrence_id"],
+            "source_key_frame":proof["source_key_frame"],
+            "native_channel_index":5,
+            "changes":1,
+            "native_yaw_key_difference_after_degrees":residual,
+            "native_complete_transform_key_grid_readback_verified":True,
+            "sequence_save_confirmed":True,
+            "persistence_after_editor_restart_verified":False,
+            "cinetwin_reopened_after_repair_verified":False,
+            "rendered_camera_motion_verified":False,
+            "full_cutscene_fidelity_verified":False,
+        }
+    finally:
+        if changed and not saved:
+            try:
+                key.set_value(old)
+                if abs(float(key.get_value())-old)>0.02:
+                    raise AnimatedCameraNativeError("Camera yaw key rollback value mismatch.")
+                _read_many_channels(
+                    api,section,action,repairs=[proof],yaw_only=True,
+                )
+            except (AnimatedCameraNativeError,UnrealCompatibilityError,
+                    AttributeError,TypeError,ValueError,RuntimeError) as exc:
+                raise AnimatedCameraNativeError(
+                    "Camera yaw-key rollback unverified; inspect editor manually."
                 ) from exc

@@ -37,6 +37,13 @@ KIND = "cutsceneai.studio.single_animated_camera_position_key_review"
 STRATEGY = "restore_single_animated_camera_position_key"
 KIND_TWO = "cutsceneai.studio.two_animated_camera_position_keys_review"
 STRATEGY_TWO = "restore_two_animated_camera_position_keys"
+KIND_YAW = "cutsceneai.studio.single_animated_camera_yaw_key_review"
+STRATEGY_YAW = "restore_single_animated_camera_yaw_key"
+MIN_YAW_DEGREES = 3.
+MAX_YAW_DEGREES = 30.
+MAX_NATIVE_PITCH_DEGREES = 65.
+MAX_EULER_ABS_DEGREES = 120.
+YAW_NON_TARGET_TOLERANCE_DEGREES = 0.2
 MIN_CM = 3.0
 MAX_CM = 30.0
 OTHER_POSITION_CM = 0.15
@@ -86,6 +93,27 @@ def message_requests_two_keys(message: Any) -> bool:
     )
 
 
+_YAW_KEY_FORBID = re.compile(
+    r"\b(?:all|every|multiple|many|several|two|both|pair|whole|entire|"
+    r"curve|curves|position|translation|location|pitch|roll|fov|scale|"
+    r"zoom|lens|cut|cuts|switch|shot|shots|blend|blending|rig|parent|"
+    r"skeletal|character|dolly|physics|event|delete|insert|timewarp|"
+    r"do not|don't|dont|never|avoid|without|not)\b", re.I,
+)
+
+
+def message_requests_yaw_key(message: Any) -> bool:
+    """One explicit animated camera YAW keyframe; never general curves."""
+    return bool(
+        isinstance(message, str) and 8 <= len(message) <= 1200
+        and all(ord(c) >= 32 or c in "\n\t" for c in message)
+        and all(pattern.search(message)
+                for pattern in (_FIX, _CAM, _KEY, _MOTION))
+        and re.search(r"\byaw\b", message, re.I)
+        and not _YAW_KEY_FORBID.search(message)
+    )
+
+
 def _unique_sample(capture: dict, entity_id: str, label: str | None,
                    moment: float) -> dict:
     matches = [
@@ -129,7 +157,7 @@ def _vec(transform: dict, field: str, count: int) -> tuple[float, ...]:
 
 def _analyze_grid(source: dict, target: dict, entity: dict,
                   label: str, action: dict, plan: dict,
-                  csir: dict, *, two: bool = False) -> dict:
+                  csir: dict, *, two: bool = False, yaw_key: bool = False) -> dict:
     """Pure comparison of ORIGINAL source, target and compiled source keys."""
     if (action.get("source_behavior_strategy") != contract.CAPTURE_STRATEGY
             or action.get("baked_source_curves") is not True):
@@ -155,6 +183,9 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
 
     differing = []
     all_source_positions = []
+    all_source_rotations = []
+    yaw_differences = []
+    previous_yaw = None
     for key in action["keys"]:
         frame = key["frame"]
         t = frame * fps_d / fps_n
@@ -168,7 +199,9 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
         native_scale = _vec(native,"scale_xyz",3)
         if any(abs(x-1.) > 0.01 for x in (*original_scale,*native_scale)):
             raise AnimatedCameraKeyError("Camera scale has a competing discrepancy.")
-        if _qangle(original_rotation,native_rotation) > OTHER_ROTATION_DEGREES:
+        if (not yaw_key and
+                _qangle(original_rotation,native_rotation)
+                > OTHER_ROTATION_DEGREES):
             raise AnimatedCameraKeyError("Camera orientation is also discrepant.")
         source_cm = csir_plan.canonical_position_to_unreal_cm(original_position)
         observed_cm = csir_plan.canonical_position_to_unreal_cm(native_position)
@@ -183,6 +216,47 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
         # Unreal channel values are checked independently just before edit.
         if any(not math.isfinite(v) for v in planned_rotation):
             raise AnimatedCameraKeyError("Original camera rotation is invalid.")
+        if yaw_key:
+            planned = tuple(float(v) for v in key["rotation_rpy_degrees"])
+            observed = csir_plan.canonical_quat_to_unreal_rotator(native_rotation)
+            # The source-captured physical basis, exact native Euler channel,
+            # and no-wrap, no-gimbal representation must agree.
+            if (contract._orientation_delta(planned_rotation, planned) > 0.2
+                    or any(abs(a-b) > 0.15 for a,b in
+                           zip(planned_rotation, planned))
+                    or abs(planned[1]) >= MAX_NATIVE_PITCH_DEGREES
+                    or abs(observed[1]) >= MAX_NATIVE_PITCH_DEGREES
+                    or any(abs(a) >= MAX_EULER_ABS_DEGREES
+                           for a in (*planned,*observed))):
+                raise AnimatedCameraKeyError(
+                    "Camera yaw source/native Euler representation is ambiguous."
+                )
+            if previous_yaw is not None and abs(
+                    yaw._wrap(planned[2] - previous_yaw)) > 60.:
+                raise AnimatedCameraKeyError(
+                    "Camera source yaw jumps too far for keyed interpolation."
+                )
+            previous_yaw = planned[2]
+            all_source_rotations.append(planned)
+            if any(abs(yaw._wrap(observed[axis] - planned[axis])) > 0.2
+                   for axis in (0,1)):
+                raise AnimatedCameraKeyError(
+                    "Animated camera pitch/roll has a competing discrepancy."
+                )
+            if math.dist(source_cm,observed_cm) > OTHER_POSITION_CM:
+                raise AnimatedCameraKeyError(
+                    "Animated camera position has a competing discrepancy."
+                )
+            delta = yaw._wrap(observed[2] - planned[2])
+            physical = _qangle(original_rotation,native_rotation)
+            if abs(abs(delta) - physical) > 0.4:
+                raise AnimatedCameraKeyError(
+                    "Camera native rotation is not a pure physical yaw difference."
+                )
+            if abs(delta) > YAW_NON_TARGET_TOLERANCE_DEGREES:
+                yaw_differences.append(
+                    (frame,delta,observed[2],planned[2])
+                )
         if any(abs(x-1.) > 0.01 for x in original_scale):
             raise AnimatedCameraKeyError("Original camera source scale changed.")
         all_source_positions.append(source_cm)
@@ -190,6 +264,30 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
             drift = observed_cm[axis] - source_cm[axis]
             if abs(drift) > OTHER_POSITION_CM:
                 differing.append((frame,axis,drift,observed_cm[axis],source_cm[axis]))
+    if yaw_key:
+        if (not all_source_rotations
+                or max(abs(yaw._wrap(r[2]-all_source_rotations[0][2]))
+                       for r in all_source_rotations) < 2.):
+            raise AnimatedCameraKeyError(
+                "Source camera yaw is not animated; static adapter owns it."
+            )
+        if len(yaw_differences) != 1:
+            raise AnimatedCameraKeyError(
+                "Exactly one independently measured camera yaw key discrepancy required."
+            )
+        frame,delta,observed,expected = yaw_differences[0]
+        if (frame in (0,plan["duration_frames"])
+                or not MIN_YAW_DEGREES <= abs(delta) <= MAX_YAW_DEGREES):
+            raise AnimatedCameraKeyError(
+                "Camera yaw key must be an interior bounded 3-30 degree correction."
+            )
+        return {
+            "source_key_frame":frame,"native_channel_index":5,
+            "native_key_value_before_degrees":round(observed,6),
+            "source_key_value_degrees":round(expected,6),
+            "native_source_yaw_error_degrees":round(abs(delta),6),
+            "sample_count":len(action["keys"]),
+        }
     if max(math.dist(v,all_source_positions[0])
            for v in all_source_positions) < 10.:
         raise AnimatedCameraKeyError(
@@ -243,7 +341,8 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
     }
 
 
-def build(workspace: Path, job: dict[str,Any], *, two: bool = False) -> dict[str,Any]:
+def build(workspace: Path, job: dict[str,Any], *, two: bool = False,
+          yaw_key: bool = False) -> dict[str,Any]:
     if not isinstance(job,dict):
         raise AnimatedCameraKeyError("Native camera job missing.")
     try:
@@ -317,7 +416,8 @@ def build(workspace: Path, job: dict[str,Any], *, two: bool = False) -> dict[str
         raise AnimatedCameraKeyError(
             "Original compiled camera action is not evaluated CineTwin motion."
         )
-    grid=_analyze_grid(source,target,camera,label,actions[0],compiled,csir,two=two)
+    grid=_analyze_grid(source,target,camera,label,actions[0],compiled,csir,
+                       two=two,yaw_key=yaw_key)
     workflow=repair._snapshot(candidate)
     if workflow is None:
         raise AnimatedCameraKeyError("Source occurrence plan missing.")
@@ -331,12 +431,13 @@ def build(workspace: Path, job: dict[str,Any], *, two: bool = False) -> dict[str
     if (len(matches)!=1 or len(rows)!=1
             or rows[0].get("latest_status")!="DIRECT_MEASURED_DIFFERENCE"
             or rows[0].get("latest_discrepancy_flags")
-            !=["WORLD_POSITION_OUTSIDE_TOLERANCE"]):
+            !=(["WORLD_ROTATION_OUTSIDE_TOLERANCE"] if yaw_key else
+                 ["WORLD_POSITION_OUTSIDE_TOLERANCE"])):
         raise AnimatedCameraKeyError(
             "One exact camera source occurrence was not separately measured discrepant."
         )
     result={
-        "kind":KIND_TWO if two else KIND,"eligible":True,
+        "kind":KIND_YAW if yaw_key else KIND_TWO if two else KIND,"eligible":True,
         "source_camera_name":name,"source_entity_id":ident,
         "source_camera_occurrence_id":matches[0],
         "target_actor_label":label,
@@ -350,7 +451,8 @@ def build(workspace: Path, job: dict[str,Any], *, two: bool = False) -> dict[str
         "full_cutscene_fidelity_verified":False,
     }
     digest_name = (
-        "animated_camera_two_key_repair_sha256" if two
+        "animated_camera_yaw_key_repair_sha256" if yaw_key
+        else "animated_camera_two_key_repair_sha256" if two
         else "animated_camera_key_repair_sha256"
     )
     result[digest_name] = position._hash(result)
@@ -360,3 +462,8 @@ def build(workspace: Path, job: dict[str,Any], *, two: bool = False) -> dict[str
 def build_two(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
     """Independently verify the same immutable original chain for exactly two keys."""
     return build(workspace, job, two=True)
+
+
+def build_yaw_key(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
+    """Independently prove one isolated, captured animated CineCamera YAW key."""
+    return build(workspace, job, yaw_key=True)

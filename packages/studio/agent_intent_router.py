@@ -144,6 +144,7 @@ def route(
     camera_yaw_repair_evidence: dict[str, Any] | None = None,
     animated_camera_key_evidence: dict[str, Any] | None = None,
     animated_camera_two_key_evidence: dict[str, Any] | None = None,
+    animated_camera_yaw_key_evidence: dict[str, Any] | None = None,
     character_facing_review: dict[str, Any] | None = None,
     static_character_yaw_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -354,7 +355,43 @@ def route(
             and re.fullmatch("[a-f0-9]{64}", animated_camera_two_key_evidence[
                 "animated_camera_two_key_repair_sha256"]) is not None
         )
-    if animated_camera_two_key_eligible:
+    animated_camera_yaw_key_eligible = False
+    if isinstance(animated_camera_yaw_key_evidence,dict):
+        from studio_camera_key_evidence import message_requests_yaw_key
+        animated_camera_yaw_key_eligible = bool(
+            message_requests_yaw_key(message)
+            and intent["mode"] == "user_feedback"
+            and scope == "unspecified"
+            and set(domains) in (
+                {"camera", "animation"},
+                {"camera", "animation", "transform"},
+            )
+            and generation_complete and completed_repairs < repair_budget
+            and animated_camera_yaw_key_evidence.get("kind")
+                == "cutsceneai.studio.single_animated_camera_yaw_key_review"
+            and animated_camera_yaw_key_evidence.get("eligible") is True
+            and animated_camera_yaw_key_evidence.get("native_edit_authorized") is False
+            and type(animated_camera_yaw_key_evidence.get("source_key_frame")) is int
+            and animated_camera_yaw_key_evidence.get("native_channel_index") == 5
+            and type(animated_camera_yaw_key_evidence.get(
+                "native_source_yaw_error_degrees")) in (int,float)
+            and isinstance(animated_camera_yaw_key_evidence.get(
+                "animated_camera_yaw_key_repair_sha256"),str)
+            and re.fullmatch("[a-f0-9]{64}", animated_camera_yaw_key_evidence[
+                "animated_camera_yaw_key_repair_sha256"]) is not None
+        )
+    if animated_camera_yaw_key_eligible:
+        disposition = "GUARDED_ONE_ANIMATED_CAMERA_YAW_KEY_AVAILABLE"
+        reason = (
+            "One source-measured interior animated CineCamera yaw key differs "
+            "by 3–30 degrees; every other position/orientation/scale and "
+            "CineTwin domain matches. Native must recheck original actor, "
+            "full nine-channel linear grid, exact Euler ownership and "
+            "explicit yaw-key consent, then rollback on failure. A saved "
+            "key does not prove reopened CineTwin or rendered parity."
+        )
+        allowed = ["report_only", "restore_single_animated_camera_yaw_key"]
+    elif animated_camera_two_key_eligible:
         disposition = "GUARDED_TWO_ANIMATED_CAMERA_POSITION_KEYS_AVAILABLE"
         reason = (
             "Only two independently measured, nonadjacent interior XYZ camera "
