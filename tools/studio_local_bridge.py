@@ -862,6 +862,49 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
             if path == '/api/autopilot':
                 import studio_autopilot
                 return self.reply(200, studio_autopilot.status(folder))
+            if path == '/api/flow-diagnostics':
+                # One source of truth for default/advanced Stage 1–9 progress.
+                # Read-only and never an authorization to requeue native work.
+                import studio_autopilot
+                import studio_phase10_3_flow
+                try:
+                    run = studio_autopilot.status(folder)
+                    active = folder / 'active-job.json'
+                    if active.is_symlink():
+                        raise ValueError('Unsafe active native job pointer.')
+                    active_id = ''
+                    native = None
+                    if active.is_file():
+                        active_id = str(load_json(active).get('job_id') or '')
+                        if re.fullmatch(r'[a-f0-9]{32}', active_id) is None:
+                            raise ValueError('Invalid active native job identity.')
+                        if not run.get('active') or run.get('job_id') == active_id:
+                            job_file = folder / 'jobs' / (active_id + '.json')
+                            if job_file.is_symlink() or not job_file.is_file():
+                                raise ValueError('Native job evidence unavailable.')
+                            native = load_json(job_file)
+                            if native.get('job_id') != active_id:
+                                raise ValueError('Native job evidence belongs to another transfer.')
+                    cfg = folder / 'connection.json'
+                    candidate = folder / 'active-candidate.json'
+                    if cfg.is_symlink() or candidate.is_symlink():
+                        raise ValueError('Unsafe source or candidate pointer.')
+                    snapshot = {
+                        'active_job': active_id,
+                        'connection': load_json(cfg) if cfg.is_file() else None,
+                        'candidate': load_json(candidate) if candidate.is_file() else None,
+                        'unreal_worker': worker_connected(folder),
+                        'unity_editor': _unity_live_status(folder),
+                        'destination_readiness': destination_readiness(folder),
+                    }
+                    return self.reply(200, studio_phase10_3_flow.summarize(
+                        snapshot, run, native,
+                    ))
+                except (ValueError, KeyError, TypeError, OSError) as exc:
+                    return self.reply(409, {
+                        'error': 'Stage diagnostics unavailable: ' + str(exc)[:260],
+                        'native_replay_authorized': False,
+                    })
             if path == '/api/agent-conversation':
                 import studio_agent_feedback
                 active = folder / 'active-job.json'
