@@ -20,8 +20,14 @@ class MotionError(ValueError):
 
 
 def conjugate(q):
+    """Unit inverse; reject invalid source poses before applying any root correction."""
+    if (not isinstance(q, (list,tuple)) or len(q) != 4
+            or any(type(v) not in (int,float) or not math.isfinite(v)
+                   for v in q)):
+        raise MotionError("Invalid observed actor/root quaternion.")
     length = math.hypot(*q)
-    if len(q) != 4 or not math.isfinite(length) or not math.isclose(length, 1, abs_tol=0.01):
+    if (not math.isfinite(length) or length == 0
+            or not math.isclose(length, 1, abs_tol=0.01)):
         raise MotionError("Invalid observed actor/root quaternion.")
     return [-q[0] / length, -q[1] / length, -q[2] / length, q[3] / length]
 
@@ -34,11 +40,30 @@ def multiply(a, b):
 
 
 def relative_root(actor, root):
-    inverse = conjugate(actor["rotation_xyzw"])
-    conjugate(root["rotation_xyzw"])
-    delta = [r - a for r, a in zip(root["position_m"], actor["position_m"])]
-    position = multiply(multiply(inverse, [*delta, 0]), conjugate(inverse))[:3]
-    return position, multiply(inverse, root["rotation_xyzw"])
+    """Measured actor-local skeletal root, including 3-D facing and translation.
+
+    Reject missing axes and non-unit quaternions. Component-space data is not
+    interchangeable with actor-world root motion, especially during turns.
+    """
+    if not isinstance(actor, dict) or not isinstance(root, dict):
+        raise MotionError("Missing observed actor/root world transform.")
+    for row in (actor,root):
+        pos = row.get("position_m")
+        if (not isinstance(pos,(list,tuple)) or len(pos) != 3
+                or any(type(v) not in (int,float) or not math.isfinite(v)
+                       for v in pos)):
+            raise MotionError("Actor/root world position must be three finite axes.")
+    inverse = conjugate(actor.get("rotation_xyzw"))
+    root_inverse = conjugate(root.get("rotation_xyzw"))
+    # Preserve a normalized root input, regardless of the quaternion sign.
+    normalized_root = [-root_inverse[0],-root_inverse[1],
+                       -root_inverse[2],root_inverse[3]]
+    delta = [r - a for r, a in zip(root["position_m"],actor["position_m"])]
+    position = multiply(multiply(inverse,[*delta,0.]),conjugate(inverse))[:3]
+    relative_orientation = multiply(inverse,normalized_root)
+    if not all(math.isfinite(x) for x in (*position,*relative_orientation)):
+        raise MotionError("Relative root pose contains nonfinite components.")
+    return position,relative_orientation
 
 
 def _seconds(value):
