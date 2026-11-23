@@ -40,10 +40,15 @@ def _repo(tmp_path):
 def test_phase10_4_executes_bounded_python_and_node_rehearsals(tmp_path):
     repo=_repo(tmp_path)
     calls=[]
+    exact_nodes={
+        entry for _,_,cases in rehearsal.scenario_matrix.SCENARIOS
+        for entry in cases
+    }
     def runner(cmd,**kwargs):
         calls.append((cmd,kwargs))
         return SimpleNamespace(returncode=0,stdout=(
-            "37 passed, 2 skipped" if len(calls)==1 else
+            "\n".join(node+" PASSED [100%]" for node in sorted(exact_nodes))+
+            "\n37 passed, 2 skipped" if len(calls)==1 else
             "Cinematic + advanced UI backend contract: 25 scenarios passed"
         ),stderr="")
     path=tmp_path/"rehearsal.json"
@@ -54,7 +59,9 @@ def test_phase10_4_executes_bounded_python_and_node_rehearsals(tmp_path):
     assert report["exact_matrix_all_gates_exercised"] is True
     assert report["plan"]["exact_scenario_matrix"]["required_python_test_count"]>=20
     assert len(calls)==2
-    assert calls[0][0][1:4]==["-m","pytest","-q"]
+    assert calls[0][0][1:4]==["-m","pytest","-vv"]
+    assert report["required_python_tests_individually_passed"]==len(exact_nodes)
+    assert report["required_python_tests_total"]==len(exact_nodes)
     assert calls[1][0]==["node",rehearsal.NODE_TEST]
     assert calls[0][1]["cwd"]==repo
     assert report["native_replay_authorized"] is False
