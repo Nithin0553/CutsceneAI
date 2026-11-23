@@ -37,7 +37,7 @@ def prepare(api, manifest):
     if not any(callable(getattr(batch, operation, None)) for operation in (
             'run_batch_retarget', 'duplicate_and_retarget')):
         raise RetargetError(
-            'Unreal IKRig Editor exposes neither native batch-retarget operation.'
+            'Unreal IKRig Editor batch-retarget API unavailable.'
         )
     roles = getattr(api, 'RetargetSourceOrTarget', None)
     if roles is None or not hasattr(roles, 'SOURCE') or not hasattr(roles, 'TARGET'):
