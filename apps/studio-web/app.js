@@ -10,7 +10,7 @@
     capabilities:null, sourceSurfaces:null, censusIdentity:'', selectedCensus:'', strictSourceCensus:true,
     visibilityFallback:false, importFbxMaterials:false, verification:null,
     elementReview:null, elementReviewCandidateId:'', elementReviewError:'', releaseReadiness:null,
-    finalOutcome:null, finalOutcomeJobId:'', finalOutcomeError:'' };
+    finalOutcome:null, finalOutcomeJobId:'', finalOutcomeError:'', flowDiagnostics:null };
   const steps = [['connect','Connect'],['select','Select'],['review','Review'],['transfer','Transfer'],['results','Results']];
   const mark = `<svg viewBox="0 0 36 36" fill="currentColor" aria-hidden="true"><path d="M18 2 3 30h11l4-7h-5l7-14zM23 18l10 12H19l-4-4h8l-4-5z"/></svg>`;
   const icons = {
@@ -372,6 +372,21 @@
           'Check final source outcome to see every source element, including unmeasured ones.')+'</p>')+
       '<p class="hint">A measured-domain pass is never proof of full cinematic equivalence.</p></section>';
   }
+  function nineStageFlow(){
+    const result=state.flowDiagnostics;
+    if(!result||!Array.isArray(result.stages)||result.stages.length!==9)return '';
+    return '<section class="panel pad" aria-label="Nine-stage source-bound workflow">'+
+      '<div class="section-head"><h2>AI conversion stages</h2>'+statusLabel(
+        result.native_replay_authorized===false?'READ ONLY':'INCOMPLETE','warning')+'</div>'+
+      '<p class="hint">Stages require actual source/native evidence; no automatic native replay.</p>'+
+      '<details><summary>Inspect all 9 stages</summary><ol class="stage-diagnostics-list">'+
+      result.stages.map(row=>'<li><strong>'+esc(row.label)+'</strong>'+
+        '<span>'+esc((row.status||'NOT_VERIFIED').replaceAll('_',' '))+'</span>'+
+        '<small>'+esc(row.next_action||'Collect source evidence')+'</small></li>').join('')+
+      '</ol></details>'+
+      (result.issues?.length?'<p class="hint">'+esc(result.next_action||result.issues[0])+'</p>':'')+
+      '</section>';
+  }
   function results(){const r=state.report,j=state.job,c=state.status?.connection;
     const ev=state.elementReview?.verification;
     const perElement=ev?'<section class="panel pad"><div class="section-head"><h2>Element 3 · CineTwin readback</h2>'+
@@ -383,7 +398,7 @@
         '<p class="hint">'+esc(x.occurrence_id)+' · '+esc(x.result||x.measurement_status)+' · '+esc((x.latest_discrepancy_flags||x.discrepancy_flags||[]).join(', '))+'</p>').join('')+
       '<p class="hint">Only measured domains were compared. No repair or native retry was authorized.</p></section>':'';
 
-    return `<div class="page-heading"><div class="eyebrow">05 / RESULTS</div><h1>Transfer results</h1><p>Inspectable evidence from Unreal, not a simulated success score.</p></div>${stageRail()}${verificationPanel()}${nativeAcceptancePanel()}<div class="results-layout"><section class="panel pad"><div class="section-head"><h2>Unreal generation</h2>${statusLabel(j?.generation_status==='GENERATED_UNVERIFIED'?'GENERATED · UNVERIFIED':j?.status||'NOT RUN',j?.generation_status==='GENERATED_UNVERIFIED'?'good':'warning')}</div>${item('Sequence',j?.generated_sequence||state.candidate?.sequence_path||'Not generated in this session')}${item('Job status',j?.status||'Not started')}${j?.element6_execution?.available?
+    return `<div class="page-heading"><div class="eyebrow">05 / RESULTS</div><h1>Transfer results</h1><p>Inspectable evidence from Unreal, not a simulated success score.</p></div>${stageRail()}${nineStageFlow()}${verificationPanel()}${nativeAcceptancePanel()}<div class="results-layout"><section class="panel pad"><div class="section-head"><h2>Unreal generation</h2>${statusLabel(j?.generation_status==='GENERATED_UNVERIFIED'?'GENERATED · UNVERIFIED':j?.status||'NOT RUN',j?.generation_status==='GENERATED_UNVERIFIED'?'good':'warning')}</div>${item('Sequence',j?.generated_sequence||state.candidate?.sequence_path||'Not generated in this session')}${item('Job status',j?.status||'Not started')}${j?.element6_execution?.available?
           item('Element 6 · Execution attempt',j.element6_execution.status)+
           item('Durable last stage',j.element6_execution.last_stage)+
           item('Automatic native replay','NOT AUTHORIZED')+
@@ -406,6 +421,7 @@
         state.job=null;state.jobDiagnostic=null;state.verification=null;
         state.releaseReadiness=null;state.report=null;state.evidencePath='';
         state.finalOutcome=null;state.finalOutcomeJobId='';state.finalOutcomeError='';
+        state.flowDiagnostics=null;
       }
       state.candidate=status.candidate||null;
       const elementCandidate=state.candidate?.candidate_id||'';
@@ -455,6 +471,13 @@
       } else state.verification=null;
       if(activeJobId)state.job=await api('jobs/'+activeJobId);
       else state.job=null;
+      if(['transfer','results'].includes(state.page)){
+        try{
+          const flow=await api('flow-diagnostics');
+          state.flowDiagnostics=(flow?.kind==='cutsceneai.studio.phase10_3.flow_diagnostics' &&
+            flow.native_replay_authorized===false)?flow:null;
+        }catch{state.flowDiagnostics=null;}
+      }
       if(state.job?.diagnostic_file&&!state.jobDiagnostic){try{state.jobDiagnostic=await api('diagnostic/'+state.job.job_id)}catch{}}
       state.loading=false;if(!quiet)state.info='Workspace refreshed.';render();
     }catch(err){state.loading=false;if(!quiet){state.error=err.message;render()}}}
