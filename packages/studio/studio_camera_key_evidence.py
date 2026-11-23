@@ -15,8 +15,15 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 UNREAL = str(ROOT / "integrations/unreal")
+STUDIO = str(ROOT / "packages/studio")
 if UNREAL not in sys.path:
     sys.path.insert(0, UNREAL)
+# The repository also ships tools/studio_element8_repair.py as a CLI wrapper.
+# Imports here must resolve to the actual Studio library, not that wrapper.
+# Place Studio above tools even when tests/agents changed import search order.
+if STUDIO in sys.path:
+    sys.path.remove(STUDIO)
+sys.path.insert(0, STUDIO)
 
 import csir_plan
 import studio_camera_motion_contract as contract
@@ -85,6 +92,15 @@ def _unique_sample(capture: dict, entity_id: str, label: str | None,
     return rows[0]["world_transform"]
 
 
+def _qangle(a: tuple[float,...],b: tuple[float,...]) -> float:
+    try:
+        return yaw._qangle(a,b)
+    except (yaw.StaticCameraYawError,ValueError,TypeError) as exc:
+        raise AnimatedCameraKeyError(
+            "Original/native camera orientation is not unit or independently readable."
+        ) from exc
+
+
 def _vec(transform: dict, field: str, count: int) -> tuple[float, ...]:
     value = transform.get(field)
     if (not isinstance(value, list) or len(value) != count
@@ -135,7 +151,7 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
         native_scale = _vec(native,"scale_xyz",3)
         if any(abs(x-1.) > 0.01 for x in (*original_scale,*native_scale)):
             raise AnimatedCameraKeyError("Camera scale has a competing discrepancy.")
-        if yaw._qangle(original_rotation,native_rotation) > OTHER_ROTATION_DEGREES:
+        if _qangle(original_rotation,native_rotation) > OTHER_ROTATION_DEGREES:
             raise AnimatedCameraKeyError("Camera orientation is also discrepant.")
         source_cm = csir_plan.canonical_position_to_unreal_cm(original_position)
         observed_cm = csir_plan.canonical_position_to_unreal_cm(native_position)
