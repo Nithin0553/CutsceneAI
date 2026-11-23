@@ -1124,7 +1124,13 @@ def _build_prepared_plan(
                     "created for " + correction["entity_name"]
                     + "; independently validate actual target bone trajectory."
                 )
-        unreal.EditorAssetLibrary.save_loaded_asset(sequence)
+        saved = unreal.EditorAssetLibrary.save_loaded_asset(sequence)
+        if saved is not True:
+            raise UnrealBuildError(
+                "Native generated Level Sequence save was not confirmed. "
+                "The generated sequence remains an incomplete attempt; "
+                "inspect it in Unreal before any new transfer."
+            )
         unreal.LevelSequenceEditorBlueprintLibrary.open_level_sequence(sequence)
         unreal.LevelSequenceEditorBlueprintLibrary.refresh_current_level_sequence()
         unreal.log(f"[CutSceneAI] Generated Level Sequence: {plan['sequence_asset_path']}")
