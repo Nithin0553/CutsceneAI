@@ -176,6 +176,8 @@ class FakeChannel:
         return self.keys
     def get_default(self):
         return self.default
+    def has_default(self):
+        return True
 
 
 class FakeSection:
@@ -193,10 +195,10 @@ class FakeSection:
         self.channels.extend(FakeChannel() for _ in range(3))
     def get_all_channels(self):
         return list(self.channels)
-    def get_is_active(self):
+    def is_active(self):
         return True
     def get_blend_type(self):
-        return "ABSOLUTE"
+        return NS(is_valid=True,blend_type="ABSOLUTE")
 
 
 API=NS(MovieSceneTimeUnit=NS(DISPLAY_RATE="DISPLAY_RATE"),
