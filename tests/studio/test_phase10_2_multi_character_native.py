@@ -130,3 +130,20 @@ def test_untrusted_plan_cannot_claim_new_actor_with_missing_native_binding():
     bindings.pop()
     with pytest.raises(native.NativeCoordinationError,match="lack native"):
         native.inspect(api,object(),csir,mapping,plan)
+
+
+def test_native_ue58_sequencer_extension_section_frames_are_verified():
+    api,bindings,csir,mapping,plan=_setup()
+    api.MovieSceneSectionExtensions=NS(
+        get_start_frame=lambda section:NS(value=0),
+        get_end_frame=lambda section:NS(value=24),
+    )
+    for binding in bindings:
+        binding.track.section.get_start_frame=lambda:(
+            (_ for _ in ()).throw(RuntimeError("wrong legacy API"))
+        )
+    report=native.inspect(api,object(),csir,mapping,plan)
+    assert report["character_count"]==2
+    api.MovieSceneSectionExtensions.get_end_frame=lambda section:NS(value=25)
+    with pytest.raises(native.NativeCoordinationError,match="sections"):
+        native.inspect(api,object(),csir,mapping,plan)
