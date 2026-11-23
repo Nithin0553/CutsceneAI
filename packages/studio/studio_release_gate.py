@@ -754,6 +754,71 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
                 + type(exc).__name__,
             )
 
+    # Phase 10.2 contract is a separate recomputable source/action ledger for
+    # all seven original workstreams. A saved report may prove software-source
+    # accounting, never a native editor execution or complete fidelity.
+    phase10_2_path = candidate / "phase10_2-consolidated-audit.json"
+    if not job.get("mapping"):
+        record(
+            "phase10_2_consolidated_software_audit", "INCOMPLETE",
+            "No immutable source-target mapping exists for the seven-area audit.",
+        )
+    else:
+        try:
+            import studio_element9_outcome as phase10_outcome
+            import phase10_2_consolidated_audit as phase10_contract
+
+            _, _, _, original_csir, original_mapping, original_plan = (
+                phase10_outcome._context(root,job_id)
+            )
+            computed = phase10_contract.audit(
+                original_csir,original_mapping,original_plan,
+            )
+            if phase10_2_path.is_symlink():
+                raise ReleaseEvidenceError("Saved seven-area audit is a symlink.")
+            if not phase10_2_path.is_file():
+                record(
+                    "phase10_2_consolidated_software_audit", "INCOMPLETE",
+                    "Exact seven-workstream source/action audit is recomputable but "
+                    "has not been persisted. Native, rendered, retarget and custom "
+                    "effects acceptance remain separate.",
+                    workstream_count=computed["workstream_count"],
+                    accounted_source_occurrences=computed[
+                        "source_occurrences_accounted"],
+                    canonical_report_sha256=computed[
+                        "canonical_report_sha256"],
+                    full_phase10_2_accepted=False,
+                )
+            else:
+                saved = _read(phase10_2_path)
+                if not phase10_contract.verify(
+                        saved,original_csir,original_mapping,original_plan):
+                    raise ReleaseEvidenceError(
+                        "Persisted seven-area audit differs from original source/action evidence."
+                    )
+                record(
+                    "phase10_2_consolidated_software_audit", "PASS",
+                    "All seven Phase 10.2 software inventory rows recompute "
+                    "exactly from the original source and plan. This does NOT "
+                    "certify an editor adapter, post-reopen CineTwin, rendered "
+                    "or universal cutscene behavior.",
+                    workstream_count=computed["workstream_count"],
+                    fully_accepted_workstream_count=0,
+                    accounted_source_occurrences=computed[
+                        "source_occurrences_accounted"],
+                    canonical_report_sha256=computed[
+                        "canonical_report_sha256"],
+                    full_phase10_2_accepted=False,
+                )
+        except (ValueError,KeyError,TypeError,OSError) as exc:
+            record(
+                "phase10_2_consolidated_software_audit",
+                "FAIL" if phase10_2_path.exists() or phase10_2_path.is_symlink()
+                else "INCOMPLETE",
+                "Phase 10.2 original source, exact mapping, compiled plan or "
+                "saved audit is incomplete/altered: " + type(exc).__name__,
+            )
+
     for domain, explanation in {
         "rendered_frame_parity": "Matched-time source and target images/camera projections are not independently compared.",
         "full_skeletal_pose": "All animated joint transforms, reference poses and retargeting remain unverified.",
