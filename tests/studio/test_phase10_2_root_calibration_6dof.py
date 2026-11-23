@@ -13,7 +13,6 @@ for directory in (ROOT/"packages"/"studio",ROOT/"integrations"/"unreal"):
     sys.path.insert(0,str(directory))
 import root_motion_calibration_6dof as root
 
-
 RATE={"numerator":30,"denominator":1}
 
 
