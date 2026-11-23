@@ -160,6 +160,24 @@ def verify(archive_path:Path)->dict[str,Any]:
     }
 
 
+def verify_exact_checkout(repo:Path,archive_path:Path)->dict[str,Any]:
+    """Bind every bundled source byte to the exact reviewed checkout.
+
+    Self-consistent ZIP manifest hashes alone are not sufficient for a freeze:
+    a different checkout could supply a valid ZIP for an unrelated commit.
+    """
+    report=verify(archive_path)
+    checkout={name:{"sha256":digest(data),"size_bytes":len(data)}
+              for name,data in _files(Path(repo).resolve())}
+    with zipfile.ZipFile(archive_path) as archive:
+        stored=json.loads(archive.read(MANIFEST))
+    if checkout!=stored["files"]:
+        raise BundleError(
+            "Distribution archive differs from the exact checked-out Studio source."
+        )
+    return {**report,"exact_checked_out_source_verified":True}
+
+
 def main(argv:list[str]|None=None)->int:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo",type=Path,default=Path(__file__).resolve().parents[1])

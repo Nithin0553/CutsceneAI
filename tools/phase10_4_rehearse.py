@@ -16,14 +16,27 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"packages"/"studio"))
+import studio_phase10_4_matrix as scenario_matrix
+
 TEST_MODULES = (
     "tests/studio/test_studio_autopilot.py",
     "tests/studio/test_studio_unity_bridge.py",
     "tests/studio/test_studio_destination_preflight.py",
     "tests/studio/test_studio_generation_recovery.py",
+    "tests/studio/test_element6_guarded_execution.py",
     "tests/studio/test_element9_final_outcome.py",
     "tests/studio/test_phase10_3_companion_and_flow.py",
     "tests/studio/test_phase10_3_distribution.py",
+    "tests/studio/test_studio_software_e2e_synthetic.py",
+    "tests/studio/test_studio_local_bridge.py",
+    "tests/studio/test_element_studio_workflow.py",
+    "tests/studio/test_release_gate.py",
+    "tests/studio/test_studio_agent_feedback.py",
+    "tests/studio/test_studio_native_acceptance.py",
+    "tests/studio/test_phase10_2_consolidated_audit.py",
+    "tests/studio/test_phase10_2_engine_acceptance_suite.py",
+    "tests/studio/test_phase10_2_effect_coverage.py",
 )
 NODE_TEST = "tests/studio/test_cinematic_ui.cjs"
 CATEGORY_GATES = (
@@ -59,12 +72,19 @@ def plan(repo:Path)->dict:
         if not data or len(data)>2*1024*1024:
             raise RehearsalError("Invalid synthetic regression fixture size.")
         checks.append({"path":relative,"sha256":_sha(data)})
+    matrix=scenario_matrix.verify(root)
+    selected={name for name in TEST_MODULES}
+    if not set(matrix["source_sha256"])-{NODE_TEST} <= selected:
+        raise RehearsalError(
+            "Phase 10.4 matrix includes a Python suite outside the rehearsal runner."
+        )
     return {
         "kind":"cutsceneai.studio.phase10_4.synthetic_rehearsal_plan",
         "schema_version":"1",
         "phase10_3_setup_and_workflow_requirements_included":True,
         "stage_and_interruption_gates":list(CATEGORY_GATES),
         "test_modules":checks,
+        "exact_scenario_matrix":matrix,
         "unreal_editor_required":False,
         "unity_editor_required":False,
         "native_replay_authorized":False,
@@ -78,9 +98,12 @@ def run(repo:Path, *, output:Path | None=None,
     selected=plan(root)
     if output is not None and (output.exists() or output.is_symlink()):
         raise RehearsalError("Refusing to replace a prior immutable rehearsal receipt.")
-    python_call=[sys.executable,"-m","pytest","-q",*TEST_MODULES]
+    # Verbose output proves each exact named matrix test actually PASSED;
+    # collection alone or a large unrelated passing test count is insufficient.
+    python_call=[sys.executable,"-m","pytest","-vv","--no-header",*TEST_MODULES]
     node_call=["node",NODE_TEST]
     result=[]
+    python_stdout=""
     for command in (python_call,node_call):
         try:
             proc=runner(command,cwd=root,capture_output=True,text=True,
@@ -91,6 +114,8 @@ def run(repo:Path, *, output:Path | None=None,
             ) from exc
         stdout=str(proc.stdout or "")
         stderr=str(proc.stderr or "")
+        if command==python_call:
+            python_stdout=stdout
         outcome={
             "command_category":"python_synthetic_regressions" if command==python_call
                 else "node_ui_interruption_regressions",
@@ -108,14 +133,42 @@ def run(repo:Path, *, output:Path | None=None,
             ) else "NO_TEST_SUMMARY",
         }
         result.append(outcome)
+    python_count=re.search(r"\b(\d+) passed\b",str(result[0]["test_summary"]))
+    ui_count=re.search(r"\b(\d+) scenarios\b",str(result[1]["test_summary"]))
+    expected_nodes={
+        name for gate in selected["exact_scenario_matrix"]["gates"]
+        for name in gate.get("required_test_nodes",[])
+    }
+    passed_nodes={
+        name for name in expected_nodes
+        if re.search(r"(?m)^"+re.escape(name)+r"(?:\[[^\n\]]+\])?\s+PASSED\b",
+                     python_stdout)
+    }
+    qualified=bool(
+        python_count and ui_count and
+        int(python_count.group(1)) >= selected["exact_scenario_matrix"]["required_python_test_count"]
+        and int(ui_count.group(1)) >= selected["exact_scenario_matrix"]["required_js_scenarios"]
+        and passed_nodes==expected_nodes
+    )
+    # Never allow test scripts to be edited while the rehearsal runs. This
+    # refuses a passing subprocess executed against different source bytes.
+    after=plan(root)
+    if after["exact_scenario_matrix"]["source_sha256"]!=(
+            selected["exact_scenario_matrix"]["source_sha256"]):
+        raise RehearsalError("Synthetic acceptance tests changed during execution.")
     report={
         "kind":"cutsceneai.studio.phase10_4.synthetic_rehearsal",
         "schema_version":"1",
         "plan":selected,
         "runs":result,
         "status":("SYNTHETIC_REHEARSAL_PASSED_ENGINE_ACCEPTANCE_PENDING"
-                  if all(r["exit_code"]==0 for r in result)
+                  if qualified and all(r["exit_code"]==0 for r in result)
                   else "SYNTHETIC_REHEARSAL_FAILED"),
+        "exact_matrix_all_gates_exercised":bool(
+            qualified and all(r["exit_code"]==0 for r in result)),
+        "scenario_gate_count":selected["exact_scenario_matrix"]["total_gates"],
+        "required_python_tests_individually_passed":len(passed_nodes),
+        "required_python_tests_total":len(expected_nodes),
         "unreal_editor_executed":False,
         "unity_editor_executed":False,
         "post_reopen_fidelity_verified":False,

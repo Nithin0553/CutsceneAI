@@ -24,6 +24,8 @@ REQUIRED_FILES = (
     "tools/studio_companion_install.py",
     "tools/build_studio_bundle.py",
     "tools/phase10_4_rehearse.py",
+    "tools/phase10_5_freeze_preflight.py",
+    "packages/studio/studio_phase10_4_matrix.py",
     "packages/studio/studio_phase10_3_flow.py",
     "apps/studio-web/index.html",
     "apps/studio-web/cinematic.js",

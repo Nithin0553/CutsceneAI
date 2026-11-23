@@ -45,6 +45,16 @@ jobs:
           path: ${{ runner.temp }}/phase10_4-rehearsal.json
           if-no-files-found: error
           retention-days: 30
+      - name: Phase 10.5 exact-commit pre-engine freeze and handoff audit
+        run: |
+          python tools/phase10_5_freeze_preflight.py --repo . --bundle "$RUNNER_TEMP/CutSceneAI-Studio-source.zip" --rehearsal "$RUNNER_TEMP/phase10_4-rehearsal.json" --commit "$GITHUB_SHA" --output "$RUNNER_TEMP/phase10_5-freeze-preflight.json"
+      - name: Publish Phase 10.5 software handoff blockers
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase10-5-pre-engine-handoff-${{ github.sha }}
+          path: ${{ runner.temp }}/phase10_5-freeze-preflight.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Ruff test checks
         run: python -m ruff check tests
       - name: Repository hygiene and docs navigation
