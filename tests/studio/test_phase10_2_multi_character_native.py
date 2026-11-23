@@ -1,7 +1,6 @@
 """Multi-character Unreal Sequencer binding and attachment regression."""
 from __future__ import annotations
 
-import copy
 import sys
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -95,7 +94,7 @@ def _setup():
 
 
 def test_two_native_characters_have_exact_source_clip_ranges_and_parent_owner():
-    api,bindings,csir,mapping,plan=_setup()
+    api,_bindings,csir,mapping,plan=_setup()
     report=native.inspect(api,object(),csir,mapping,plan)
     assert report["status"]=="NATIVE_BINDINGS_AND_SECTION_TIMING_MATCH_ORIGINAL_PLAN"
     assert report["character_count"]==2
