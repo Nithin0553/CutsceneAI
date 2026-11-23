@@ -95,8 +95,15 @@ def assess(*,commit:str,preflight:Path,startup:Path,bundle:Path,
     _require(bool(HEX64.fullmatch(archive_sha))
              and checks.get("source_bundle_sha256")==archive_sha,
              "Source ZIP bytes differ from the exact-commit freeze audit.")
-    _require(smoke.get("source_distribution_sha256")==archive_sha,
-             "Windows live Studio started from different source ZIP bytes.")
+    # ZIP compression may vary between Windows and Ubuntu. Both archives
+    # must independently verify and contain the same exact canonical source
+    # file manifest; the Ubuntu archive remains bound to the checked-out SHA.
+    windows_zip_sha=smoke.get("source_distribution_sha256")
+    manifest_sha=checks.get("source_manifest_sha256")
+    _require(bool(HEX64.fullmatch(str(windows_zip_sha or "")))
+             and bool(HEX64.fullmatch(str(manifest_sha or "")))
+             and smoke.get("source_manifest_sha256")==manifest_sha,
+             "Windows packaged Studio source manifest differs from the reviewed checkout.")
     return {
         "kind":"cutsceneai.studio.phase10_5.cross_platform_software_package_acceptance",
         "schema_version":"1",
@@ -104,6 +111,8 @@ def assess(*,commit:str,preflight:Path,startup:Path,bundle:Path,
         "status":"SOFTWARE_PACKAGE_READY_FOR_ENGINE_TEST",
         "verified": {
             "source_distribution_sha256":archive_sha,
+            "source_manifest_sha256":manifest_sha,
+            "windows_archive_sha256":windows_zip_sha,
             "phase10_4_source_only_gates":19,
             "windows_clean_source_zip_installed":True,
             "actual_packaged_studio_localhost_started":True,
