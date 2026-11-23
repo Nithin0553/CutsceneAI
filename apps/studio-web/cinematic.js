@@ -52,7 +52,10 @@
     const unityPath=c?.unity_project||state.discovery?.unity?.folder||state.folders.unity;
     const targetPath=c?.target_project||state.unrealProject||state.discovery?.unreal?.project;
     const unityReady=Boolean(source.connected&&unityPath&&norm(source.project_root)===norm(unityPath));
-    const unrealReady=Boolean(dest.connected&&targetPath&&norm(dest.project)===norm(targetPath));
+    const projectMatches=Boolean(dest.connected&&targetPath&&norm(dest.project)===norm(targetPath));
+    const levelMatches=Boolean(!c?.level_path||dest.level===c.level_path||
+      (c.auto_create_level&&readiness().status==='NEW_LEVEL_REQUIRED'));
+    const unrealReady=projectMatches&&levelMatches;
     const host=state.status?.host_reload||{};
     const updating=host.status&&!['CURRENT','NOT_ENABLED'].includes(host.status);
     const hostState=host.status==='BLOCKED_INVALID_CODE'?'Studio code needs review':
@@ -61,12 +64,18 @@
     const unityReason=!unityReady&&unityPath
       ?'<p class="subnote" role="note">Unity: '+esc(source.status||'WAITING_FOR_UNITY_EDITOR')+
         (source.next_action?' — '+esc(source.next_action):'')+'</p>':'';
+    const destinationReason=!unrealReady&&targetPath
+      ?'<p class="subnote" role="note">Unreal: '+esc(!projectMatches?
+          'WAITING_FOR_MATCHED_UNREAL_PROJECT':'WRONG_TARGET_LEVEL')+
+        ' — '+esc(readiness().next_action||
+          (!projectMatches?'Open the selected .uproject and enable the Unreal companion.':
+          'Open the selected Unreal level before transferring.'))+'</p>':'';
     return '<p class="subnote" role="status" aria-label="Live editor connections">'+
       'Unity bridge: '+esc(unityReady?'Connected · '+source.editor_mode:'Waiting for running editor')+
       ' &nbsp;·&nbsp; Unreal bridge: '+esc(unrealReady?'Connected':'Waiting for running editor')+
       (updating?' &nbsp;·&nbsp; '+esc(hostState):'')+
       '. Once enabled, supported code changes reconnect without restarting the editors.</p>'+
-      unityReason;
+      unityReason+destinationReason;
   }
   function progress(){
     const selected=state.screen==='results'?3:state.screen==='transfer'?2:state.candidate?1:0;
