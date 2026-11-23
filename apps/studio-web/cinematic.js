@@ -696,6 +696,7 @@
     state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.releaseReadiness=null;state.agentStatus=null;state.aiTransferAudit=null;state.running=false;
     state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
     state.finalOutcomeAttemptedJobId='';state.finalOutcomeLoading=false;
+    state.flowDiagnostics=null;
     state.censusOptions=[];state.censusPath='';state.censusSelection=null;
     state.phase='CONNECTED';state.info='Projects connected. Choose a Source Census to start a transfer.';
     state.error='';state.censusIssue=false;
@@ -706,6 +707,13 @@
     if(simpleMode){
       try{state.autopilot=await api('autopilot');}
       catch(e){state.autopilot={status:'UNAVAILABLE',message:e.message};}
+      if(['transfer','results'].includes(state.screen)){
+        try{
+          const flow=await api('flow-diagnostics');
+          state.flowDiagnostics=(flow?.kind==='cutsceneai.studio.phase10_3.flow_diagnostics' &&
+            flow.native_replay_authorized===false)?flow:null;
+        }catch{state.flowDiagnostics=null;}
+      }
       if(state.autopilot?.status==='GENERATED_UNVERIFIED'){
         try{state.agentConversation=await api('agent-conversation');}catch{}
       }
@@ -729,6 +737,7 @@
       state.aiTransferAudit=null;state.agentConversation=null;state.agentStatus=null;
       state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
       state.finalOutcomeAttemptedJobId='';state.finalOutcomeLoading=false;
+      state.flowDiagnostics=null;
     }
     if(nextJobId){
       state.job=await api('jobs/'+nextJobId);
@@ -944,6 +953,7 @@
         state.aiTransferAudit=null;state.agentConversation=null;state.feedbackDraft='';
         state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
         state.finalOutcomeAttemptedJobId='';state.finalOutcomeLoading=false;
+        state.flowDiagnostics=null;
         state.running=false;state.phase='WAITING_FOR_UNITY';
         state.screen='transfer';state.error='';state.info='';
       }catch(e){state.error=e.message;}
