@@ -1023,21 +1023,34 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                 import studio_element9_outcome
                 from urllib.parse import parse_qs
                 active = folder / 'active-job.json'
-                if not active.is_file():
-                    return self.reply(200, {
-                        'available': False, 'status': 'NO_ACTIVE_TRANSFER',
-                        'release_ready': False,
-                        'full_cutscene_fidelity_verified': False,
-                    })
                 try:
+                    if active.is_symlink():
+                        raise ValueError('Active job pointer is a symlink.')
                     query = parse_qs(urlparse(self.path).query)
-                    if set(query) - {'offset'}:
+                    if set(query) - {'offset', 'job_id'}:
                         raise ValueError('Unknown final-outcome query parameter.')
                     pages = query.get('offset', ['0'])
                     if (len(pages) != 1 or not pages[0].isdigit()
                             or len(pages[0]) > 5):
                         raise ValueError('Invalid final-outcome page offset.')
+                    requested = query.get('job_id')
+                    if requested is not None and (
+                            len(requested) != 1
+                            or re.fullmatch(r'[a-f0-9]{32}', requested[0]) is None):
+                        raise ValueError('Invalid requested final-outcome job identity.')
+                    if not active.is_file():
+                        if requested is not None:
+                            raise ValueError('The requested transfer is no longer active.')
+                        return self.reply(200, {
+                            'available': False, 'status': 'NO_ACTIVE_TRANSFER',
+                            'release_ready': False,
+                            'full_cutscene_fidelity_verified': False,
+                        })
                     job_id = str(load_json(active)['job_id'])
+                    if re.fullmatch(r'[a-f0-9]{32}', job_id) is None:
+                        raise ValueError('Active transfer job identity is invalid.')
+                    if requested is not None and requested[0] != job_id:
+                        raise ValueError('Requested result belongs to a different active transfer.')
                     result = studio_element9_outcome.build(folder, job_id)
                     return self.reply(200, studio_element9_outcome.page(
                         result, int(pages[0]),
