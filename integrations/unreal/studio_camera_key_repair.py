@@ -88,7 +88,10 @@ def _read_channels(api: Any, section: Any, prepared: dict,
                     "Animated camera has explicit authored scale keys."
                 )
             default_getter=getattr(channel,"get_default",None)
-            if not callable(default_getter):
+            has_default=getattr(channel,"has_default",None)
+            if (not callable(default_getter)
+                    or not callable(has_default)
+                    or has_default() is not True):
                 raise AnimatedCameraNativeError(
                     "Native source camera scale default cannot be inspected."
                 )
@@ -258,7 +261,18 @@ def _live_owner(api: Any, sequence: Any, setup: list, proof: dict,
                 raise AnimatedCameraNativeError(
                     "Camera component has an unknown scalar property owner."
                 )
-    if str(actor_track.get_display_name())!=action.get("track_name"):
+    direct_name=getattr(actor_track,"get_display_name",None)
+    ext_name=getattr(getattr(api,"MovieSceneTrackExtensions",None),
+                     "get_display_name",None)
+    if callable(direct_name):
+        track_name=str(direct_name())
+    elif callable(ext_name):
+        track_name=str(ext_name(actor_track))
+    else:
+        raise AnimatedCameraNativeError(
+            "Exact source-generated native camera track name unavailable."
+        )
+    if track_name!=action.get("track_name"):
         raise AnimatedCameraNativeError(
             "Native animated camera track name is not source-generated."
         )
@@ -271,7 +285,7 @@ def _live_owner(api: Any, sequence: Any, setup: list, proof: dict,
     ext_section=getattr(api,"MovieSceneSectionExtensions",None)
     get_start=getattr(ext_section,"get_start_frame",None)
     get_end=getattr(ext_section,"get_end_frame",None)
-    is_active=getattr(section,"get_is_active",None)
+    is_active=getattr(section,"is_active",None)
     get_blend=getattr(section,"get_blend_type",None)
     absolute=getattr(getattr(api,"MovieSceneBlendType",None),"ABSOLUTE",None)
     if (not all(callable(x) for x in (get_start,get_end,is_active,get_blend))
@@ -283,9 +297,16 @@ def _live_owner(api: Any, sequence: Any, setup: list, proof: dict,
     last=get_end(section)
     first=getattr(first,"value",first)
     last=getattr(last,"value",last)
+    native_blend=get_blend()
+    if (native_blend is None
+            or getattr(native_blend,"is_valid",None) is not True
+            or getattr(native_blend,"blend_type",None)!=absolute):
+        raise AnimatedCameraNativeError(
+            "Native camera section has no verified absolute blend owner."
+        )
     if (type(first) is not int or type(last) is not int
             or (first,last)!=(0,len(action["keys"]))
-            or is_active() is not True or get_blend()!=absolute):
+            or is_active() is not True):
         raise AnimatedCameraNativeError(
             "Original animated camera section is retimed, inactive or not absolute."
         )
