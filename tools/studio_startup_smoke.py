@@ -19,6 +19,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import build_studio_bundle as distribution
+
 
 class SmokeError(ValueError):
     pass
@@ -40,13 +42,21 @@ def _free_local_port() -> int:
 
 
 def run(repo: Path, *, python: str = sys.executable,
-        timeout_seconds: float = 40.0) -> dict:
+        timeout_seconds: float = 40.0,
+        source_bundle: Path | None = None) -> dict:
     root = Path(repo)
     if (root.is_symlink() or not root.is_dir()
             or not (root / "tools/studio_local_bridge.py").is_file()
             or not (root / "apps/studio-web/index.html").is_file()):
         raise SmokeError("Select a complete, non-symlink Studio source distribution.")
     root = root.resolve()
+    source_sha = None
+    if source_bundle is not None:
+        try:
+            verified = distribution.verify_exact_checkout(root, Path(source_bundle))
+        except (OSError, ValueError) as exc:
+            raise SmokeError("Packaged Studio ZIP does not match extracted source.") from exc
+        source_sha = verified["sha256"]
     if not 2 <= timeout_seconds <= 120:
         raise SmokeError("Smoke timeout must be between 2 and 120 seconds.")
     with tempfile.TemporaryDirectory(prefix="cutsceneai-startup-") as temp:
@@ -136,6 +146,7 @@ def run(repo: Path, *, python: str = sys.executable,
                         "foreign_host_rejected": "PASS",
                         "no_native_job_created": "PASS",
                     },
+                    "source_distribution_sha256": source_sha,
                     "native_editor_started": False,
                     "unity_editor_started": False,
                     "model_invoked": False,
@@ -159,11 +170,14 @@ def main(argv=None) -> int:
     parser.add_argument("--python", default=sys.executable,
                         help="Python with the Studio agent dependencies installed")
     parser.add_argument("--timeout", type=float, default=40.0)
+    parser.add_argument("--source-bundle", type=Path,
+                        help="Verify exact source ZIP contents against extracted Studio before startup")
     parser.add_argument("--output", type=Path,
                         help="Save an exclusive read-only smoke report outside repo")
     args = parser.parse_args(argv)
     try:
-        result = run(args.repo, python=args.python, timeout_seconds=args.timeout)
+        result = run(args.repo, python=args.python, timeout_seconds=args.timeout,
+                     source_bundle=args.source_bundle)
         if args.output:
             dest = args.output
             if dest.is_symlink() or dest.exists():
