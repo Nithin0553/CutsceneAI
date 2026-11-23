@@ -41,13 +41,13 @@ def _secure_file(path: Path, *, limit: int) -> bytes:
 
 
 def _no_link_parent(path: Path, root: Path) -> None:
-    if not path.resolve().is_relative_to(root.resolve()):
-        raise CompanionInstallError("Companion target escaped selected project.")
     for parent in (path, *path.parents):
         if parent == root.parent:
             break
         if parent.is_symlink():
             raise CompanionInstallError("Symlinked companion directory or target forbidden.")
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise CompanionInstallError("Companion target escaped selected project.")
 
 
 def inspect(repo: Path, unity_project: Path, unreal_uproject: Path) -> dict:
