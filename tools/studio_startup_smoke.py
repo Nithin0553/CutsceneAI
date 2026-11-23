@@ -51,6 +51,7 @@ def run(repo: Path, *, python: str = sys.executable,
         raise SmokeError("Select a complete, non-symlink Studio source distribution.")
     root = root.resolve()
     source_sha = None
+    source_manifest_sha = None
     if source_bundle is not None:
         try:
             verified = distribution.verify_exact_checkout(root, Path(source_bundle))
