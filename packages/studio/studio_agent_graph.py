@@ -27,7 +27,8 @@ ALLOWED_STRATEGIES = {
     "restore_static_camera_lens", "restore_single_camera_cut_timing",
     "restore_static_camera_position", "restore_static_character_actor_yaw",
     "restore_two_shot_camera_switch", "restore_static_camera_actor_yaw",
-    "restore_single_animated_camera_position_key", "report_only",
+    "restore_single_animated_camera_position_key",
+    "restore_two_animated_camera_position_keys", "report_only",
 }
 
 
@@ -63,6 +64,7 @@ class AgentState(TypedDict, total=False):
     camera_position_candidate: dict[str, Any]
     camera_yaw_candidate: dict[str, Any]
     animated_camera_key_candidate: dict[str, Any]
+    animated_camera_two_key_candidate: dict[str, Any]
     character_facing_candidate: dict[str, Any]
     static_character_yaw_candidate: dict[str, Any]
 
@@ -326,7 +328,12 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
                 "for one source-verified evaluated camera-world frame, one "
                 "native XYZ key and no other source/native differences; "
                 "it has no permission to rewrite entire curves or shots. "
-            "Only a guarded actor-base edit is allowed; rendered framing "
+            "restore_two_animated_camera_position_keys permits only TWO "
+            "independently measured nonadjacent interior position keys "
+            "on the same source camera XYZ axis, after explicit two-key consent "
+            "and live nine-channel native ownership checks with rollback. "
+            "No rotation keys, arbitrary curves, blends or shot rewrites. "
+            "Only explicitly enumerated native edits are allowed; rendered framing "
             "and reopened CineTwin still require independent review. "
             "restore_static_character_actor_yaw is exclusively for one "
             "unmoving, upright, newly staged skeletal character with an "
@@ -475,10 +482,23 @@ def build_graph(workspace: Path, job: dict[str, Any],
         camera_position_proof = None
         camera_yaw_proof = None
         animated_camera_key_proof = None
+        animated_camera_two_key_proof = None
         facing_review = None
         static_yaw_proof = None
         if comment:
             import studio_camera_key_evidence
+            if studio_camera_key_evidence.message_requests_two_keys(user_message):
+                try:
+                    animated_camera_two_key_proof = (
+                        studio_camera_key_evidence.build_two(workspace, job)
+                    )
+                except (studio_camera_key_evidence.AnimatedCameraKeyError,
+                        ValueError, KeyError, TypeError, OSError) as exc:
+                    animated_camera_two_key_proof = {
+                        "eligible": False,
+                        "reason": "Two CineCamera keys are not source proven: "
+                                  + str(exc)[:220],
+                    }
             if studio_camera_key_evidence.message_requests_key(user_message):
                 try:
                     animated_camera_key_proof=studio_camera_key_evidence.build(
@@ -618,6 +638,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 camera_position_repair_evidence=camera_position_proof,
                 camera_yaw_repair_evidence=camera_yaw_proof,
                 animated_camera_key_evidence=animated_camera_key_proof,
+                animated_camera_two_key_evidence=animated_camera_two_key_proof,
                 character_facing_review=facing_review,
                 static_character_yaw_evidence=static_yaw_proof,
                 adapter_catalog=feedback.get("component_adapter_catalog"),
@@ -663,6 +684,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "camera_position_candidate": camera_position_proof or {},
             "camera_yaw_candidate": camera_yaw_proof or {},
             "animated_camera_key_candidate":animated_camera_key_proof or {},
+            "animated_camera_two_key_candidate":animated_camera_two_key_proof or {},
             "character_facing_candidate": facing_review or {},
             "static_character_yaw_candidate": static_yaw_proof or {},
             "element8_review": element8 or {},
@@ -748,6 +770,16 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 "native_edit_authorized":False,
                 "reopened_after_repair_verified":False,
             },
+            "verified_two_animated_camera_key_candidate": {
+                "eligible": state.get("animated_camera_two_key_candidate", {}).get(
+                    "eligible"
+                ) is True,
+                "measured_key_count": state.get(
+                    "animated_camera_two_key_candidate", {}
+                ).get("source_key_count", 0),
+                "native_edit_authorized": False,
+                "reopened_after_repair_verified": False,
+            },
             "verified_camera_yaw_candidate": {
                 "eligible": state.get("camera_yaw_candidate", {}).get(
                     "eligible"
@@ -828,6 +860,14 @@ def build_graph(workspace: Path, job: dict[str, Any],
         ):
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
                     "failure": "Transform proposal was not independently authorized.",
+                    "chosen_strategy": "report_only"}
+        if strategy == "restore_two_animated_camera_position_keys" and not (
+            comment and state.get("feedback_id")
+            and state.get("animated_camera_two_key_candidate", {}).get("eligible") is True
+            and strategy in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Exactly two independently measured XYZ keys are not proven.",
                     "chosen_strategy": "report_only"}
         if strategy == "restore_single_animated_camera_position_key" and not (
             comment and state.get("feedback_id")
@@ -919,6 +959,7 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "restore_static_camera_actor_yaw",
             "restore_static_character_actor_yaw",
             "restore_single_animated_camera_position_key",
+            "restore_two_animated_camera_position_keys",
         }:
             return {"status": "UNRESOLVED_NO_SAFE_STRATEGY"}
         request_id = uuid.uuid4().hex
@@ -934,6 +975,17 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "iteration": state.get("iterations", 0) + 1,
             "baseline_fallback": state.get("last_fallback", 0),
         }
+        if strategy == "restore_two_animated_camera_position_keys":
+            pair = state.get("animated_camera_two_key_candidate") or {}
+            if pair.get("eligible") is not True or not state.get("feedback_id"):
+                raise AgentError("Original two-camera-key approval missing.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "animated_camera_two_key_repair_sha256":
+                    pair["animated_camera_two_key_repair_sha256"],
+                "source_camera_occurrence_id":
+                    pair["source_camera_occurrence_id"],
+            })
         if strategy == "restore_single_animated_camera_position_key":
             key=state.get("animated_camera_key_candidate") or {}
             if key.get("eligible") is not True or not state.get("feedback_id"):
@@ -1071,6 +1123,52 @@ def build_graph(workspace: Path, job: dict[str, Any],
                     + f"{actor_after:.3f} cm / {root_after:.3f} cm. "
                     + "Reopened-project persistence and full parity remain unverified."
                 ),
+            }
+        if state.get("chosen_strategy") == "restore_two_animated_camera_position_keys":
+            pair = state.get("animated_camera_two_key_candidate") or {}
+            rows = pair.get("source_position_key_repairs") or []
+            error = result.get("native_key_max_difference_after_cm")
+            valid = bool(
+                result.get("status")
+                    == "TWO_ANIMATED_CAMERA_POSITION_KEYS_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("animated_camera_two_key_repair_sha256")
+                    == pair.get("animated_camera_two_key_repair_sha256")
+                and result.get("source_camera_occurrence_id")
+                    == pair.get("source_camera_occurrence_id")
+                and len(rows) == 2
+                and result.get("source_key_frames")
+                    == [row.get("source_key_frame") for row in rows]
+                and result.get("native_channel_index")
+                    == rows[0].get("native_channel_index")
+                and result.get("changes") == 2
+                and result.get("native_complete_transform_key_grid_readback_verified") is True
+                and result.get("sequence_save_confirmed") is True
+                and type(error) in (int, float) and math.isfinite(error)
+                and 0 <= error <= 0.05
+                and result.get("cinetwin_reopened_after_repair_verified") is False
+                and result.get("rendered_camera_motion_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common = {
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+                "history": (state.get("history") or []) + [{
+                    "request_id": request_id,
+                    "strategy": "restore_two_animated_camera_position_keys",
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified": False,
+                }],
+            }
+            if not valid:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                            "Native two-key camera readback failed")[:500]}
+            return {
+                **common,
+                "status": "TWO_ANIMATED_CAMERA_KEYS_SAVED_REOPENED_CINETWIN_PENDING",
+                "reasoning": "Exactly two source-bound camera position keys "
+                "were restored with nine-channel native readback. Independent "
+                "reopened CineTwin and rendered fidelity remain unverified.",
             }
         if state.get("chosen_strategy") == "restore_single_animated_camera_position_key":
             key=state.get("animated_camera_key_candidate") or {}
