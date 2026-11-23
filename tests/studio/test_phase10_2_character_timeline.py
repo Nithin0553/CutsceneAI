@@ -15,9 +15,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "packages" / "studio"))
 sys.path.insert(0, str(ROOT / "integrations" / "unreal"))
+import character_motion
 import multi_character_sync as sync
 import timeline_blend_policy as timeline
-import character_motion
 
 
 RATE = {"numerator": 2,"denominator":1}
@@ -150,7 +150,7 @@ def test_character_root_relative_pose_rejects_truncated_vectors_and_nonunit_rota
 
 
 def _complex_scene():
-    csir,source,mapping=_scene()
+    csir,_source,mapping=_scene()
     csir["tracks"]=[
         {"ced_type":"camera.cut","track_id":"cuts","sections":[
             {"start":_time(0),"end":_time(1)},
