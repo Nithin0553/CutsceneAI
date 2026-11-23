@@ -724,3 +724,235 @@ def test_two_camera_keys_partial_second_setter_failure_restores_both(monkeypatch
         native.attempt_two(api, tmp_path, job, request)
     assert section.channels[1].keys[1].get_value() == 205.
     assert section.channels[1].keys[3].get_value() == 607.
+
+
+# Phase 10.2 — single animated CineCamera YAW rotation key.
+# These tests intentionally use synthetic reopens, not genuine Unreal Editor.
+
+
+def _yaw_scenario():
+    import math
+    source,target,cam,label,action,plan,csir = _scenario()
+    def q(degrees):
+        half = math.radians(degrees) / 2.
+        return [0.,math.sin(half),0.,math.cos(half)]
+    for frame in range(5):
+        original = source["samples"][frame]["entities"][0]["world_transform"]
+        native = target["samples"][frame]["entities"][0]["world_transform"]
+        original["rotation_xyzw"] = q(frame*10.)
+        native["rotation_xyzw"] = q(frame*10. + (12. if frame==2 else 0.))
+        native["position_m"] = list(original["position_m"])
+        action["keys"][frame]["rotation_rpy_degrees"] = list(
+            csir_plan.canonical_quat_to_unreal_rotator(
+                tuple(original["rotation_xyzw"])
+            )
+        )
+    return source,target,cam,label,action,plan,csir
+
+
+def _yaw_review(mutate=None):
+    source,target,cam,label,action,plan,csir = _yaw_scenario()
+    if mutate:
+        mutate(source,target,cam,label,action,plan,csir)
+    return proof._analyze_grid(
+        source,target,cam,label,action,plan,csir,yaw_key=True,
+    )
+
+
+def _yaw_native():
+    source,target,cam,label,action,plan,csir = _yaw_scenario()
+    review = proof._analyze_grid(
+        source,target,cam,label,action,plan,csir,yaw_key=True,
+    )
+    section = FakeSection(action, diff=0.)
+    section.channels[5].keys[2].set_value(
+        review["native_key_value_before_degrees"]
+    )
+    return action,section,review
+
+
+def test_animated_camera_yaw_key_physical_source_and_explicit_consent():
+    review = _yaw_review()
+    assert review["source_key_frame"] == 2
+    assert review["native_channel_index"] == 5
+    assert review["native_source_yaw_error_degrees"] == pytest.approx(12.)
+    assert review["sample_count"] == 5
+    assert proof.message_requests_yaw_key("Fix animated camera yaw keyframe")
+    assert proof.message_requests_yaw_key("Repair camera animated yaw keyframe")
+    for phrase in (
+        "Fix animated camera position keyframe",
+        "Fix animated camera rotation",
+        "Fix all animated camera yaw keyframes",
+        "Fix two animated camera yaw keyframes",
+        "Fix animated camera pitch keyframe",
+        "Fix animated camera yaw keyframe and lens",
+        "Never fix animated camera yaw keyframe",
+        "Fix animated camera yaw keyframe on rig",
+        "Fix animated camera yaw keyframe and shot cuts",
+    ):
+        assert not proof.message_requests_yaw_key(phrase),phrase
+    evidence = {
+        **review,"kind":proof.KIND_YAW,"eligible":True,
+        "native_edit_authorized":False,
+        "animated_camera_yaw_key_repair_sha256":"f"*64,
+    }
+    def route(text,*,measured=evidence):
+        return router.route(
+            text,generation_complete=True,
+            native_material_fallback_slots=0,
+            source_albedo_provenance=False,
+            completed_repairs=0,repair_budget=2,
+            independent_issues=[],
+            animated_camera_yaw_key_evidence=measured,
+        )
+    assert route("Fix animated camera yaw keyframe")["safe_strategies"] == [
+        "report_only",proof.STRATEGY_YAW,
+    ]
+    assert route("Fix animated camera rotation")["safe_strategies"] == ["report_only"]
+    assert route("Fix animated camera yaw keyframe",measured={
+        **evidence,"animated_camera_yaw_key_repair_sha256":"invalid"
+    })["safe_strategies"] == ["report_only"]
+
+
+def test_animated_camera_yaw_key_refuses_second_error_and_competing_domains():
+    def second_yaw(src,dst,*_):
+        import math
+        q=lambda degrees:[0.,math.sin(math.radians(degrees)/2.),0.,
+                          math.cos(math.radians(degrees)/2.)]
+        dst["samples"][3]["entities"][0]["world_transform"]["rotation_xyzw"] = q(45.)
+    def near_gimbal(src,dst,*_):
+        import math
+        # Rotation around Unity X creates excessive Unreal pitch.
+        q=[math.sin(math.radians(80.)/2.),0.,0.,
+           math.cos(math.radians(80.)/2.)]
+        dst["samples"][2]["entities"][0]["world_transform"]["rotation_xyzw"] = q
+    def wrong_pitch_roll(src,dst,*_):
+        import math
+        q=[math.sin(math.radians(10.)/2.),0.,0.,
+           math.cos(math.radians(10.)/2.)]
+        dst["samples"][2]["entities"][0]["world_transform"]["rotation_xyzw"] = q
+    cases = [
+        (second_yaw,"Exactly one"),
+        (near_gimbal,"ambiguous"),
+        (wrong_pitch_roll,"pitch/roll|ambiguous"),
+        (lambda src,dst,*_:dst["samples"][2]["entities"][0]["world_transform"][
+            "position_m"].__setitem__(0,4.05),"position"),
+        (lambda src,dst,*_:dst["samples"][2]["entities"][0]["world_transform"][
+            "scale_xyz"].__setitem__(1,2.),"scale"),
+        (lambda src,dst,cam,label,action,*_:action["keys"][2][
+            "rotation_rpy_degrees"].__setitem__(2,90.),"ambiguous"),
+    ]
+    for change,message in cases:
+        with pytest.raises(proof.AnimatedCameraKeyError,match=message):
+            _yaw_review(change)
+
+
+def test_animated_camera_yaw_native_unchanged_channel_grid():
+    action,section,review = _yaw_native()
+    (key,old), = native._read_many_channels(
+        API,section,action,repairs=[review],yaw_only=True,
+    )
+    assert old == pytest.approx(
+        review["native_key_value_before_degrees"],abs=0.001,
+    )
+    key.set_value(review["source_key_value_degrees"])
+    native._all_camera_keys_match_source(API,section,action)
+    # Same evidence may not be borrowed for the original XYZ adapter.
+    with pytest.raises(native.AnimatedCameraNativeError):
+        native._read_many_channels(API,_yaw_native()[1],action,repairs=[review])
+    for corrupt in (
+        lambda s:s.channels[1].keys[1].set_value(999.),
+        lambda s:s.channels[3].keys[1].set_value(9.),
+        lambda s:s.channels[5].keys[3].set_value(90.),
+        lambda s:s.channels[5].keys.append(FakeKey(5,10.)),
+        lambda s:s.channels[7].__setattr__("default",2.),
+        lambda s:s.channels.pop(),
+    ):
+        _,bad,measured=_yaw_native()
+        corrupt(bad)
+        with pytest.raises(native.AnimatedCameraNativeError):
+            native._read_many_channels(
+                API,bad,action,repairs=[measured],yaw_only=True,
+            )
+
+
+def _yaw_native_job(monkeypatch,tmp_path,section,review):
+    _,_,_,_,action,_,_ = _yaw_scenario()
+    setup = tmp_path / "setup.json"
+    setup.write_text('{"actors_created": []}',encoding="utf-8")
+    (tmp_path/"transfer-plan.json").write_text(__import__("json").dumps({
+        "duration_frames":4,"actions":[action],
+    }),encoding="utf-8")
+    jid,fid="a"*32,"b"*32
+    job = {
+        "candidate_dir":str(tmp_path),"job_id":jid,
+        "candidate_id":"20261123T000000Z_aaaaaaaa",
+        "setup_receipt_file":str(setup),"sequence_path":"/Game/Scene",
+    }
+    proved = {
+        **review,"kind":proof.KIND_YAW,"eligible":True,
+        "source_camera_name":"CAM","target_actor_label":"CameraUE",
+        "source_camera_occurrence_id":"occurrence:1",
+        "source_camera_action_sha256":proof.position._hash(action),
+        "animated_camera_yaw_key_repair_sha256":"f"*64,
+    }
+    request = {
+        "strategy":proof.STRATEGY_YAW,"feedback_id":fid,
+        "animated_camera_yaw_key_repair_sha256":"f"*64,
+        "source_camera_occurrence_id":"occurrence:1",
+    }
+    monkeypatch.setattr(native.evidence,"build_yaw_key",lambda *a:proved)
+    monkeypatch.setattr(native,"_live_owner",lambda *args:section)
+    monkeypatch.setattr(native,"_load",lambda path: (
+        {"feedback_id":fid,"job_id":jid,"candidate_id":job["candidate_id"]}
+        if "active" in str(path) else
+        {"kind":"cutsceneai.studio.user_feedback","feedback_id":fid,
+         "job_id":jid,"candidate_id":job["candidate_id"],
+         "message":"Fix animated camera yaw keyframe"}
+        if fid in str(path) else {"actors_created":[]}
+    ))
+    api = NS(load_asset=lambda path:NS(),
+             MovieSceneTimeUnit=API.MovieSceneTimeUnit,
+             RichCurveInterpMode=API.RichCurveInterpMode,
+             EditorAssetLibrary=NS(save_loaded_asset=lambda seq:True))
+    return api,job,request
+
+
+def test_animated_camera_yaw_native_save_readback_and_rollback(monkeypatch,tmp_path):
+    action,section,review = _yaw_native()
+    api,job,request = _yaw_native_job(monkeypatch,tmp_path,section,review)
+    result=native.attempt_yaw(api,tmp_path,job,request)
+    assert result["status"] == (
+        "ONE_ANIMATED_CAMERA_YAW_KEY_SAVED_REOPENED_CINETWIN_PENDING"
+    )
+    assert result["changes"] == 1
+    assert result["native_channel_index"] == 5
+    assert result["native_yaw_key_difference_after_degrees"] == 0
+    assert result["cinetwin_reopened_after_repair_verified"] is False
+    native._all_camera_keys_match_source(API,section,action)
+
+    _,bad,review = _yaw_native()
+    api,job,request = _yaw_native_job(monkeypatch,tmp_path,bad,review)
+    api.EditorAssetLibrary.save_loaded_asset = lambda seq:False
+    with pytest.raises(native.AnimatedCameraNativeError,match="save"):
+        native.attempt_yaw(api,tmp_path,job,request)
+    assert bad.channels[5].keys[2].get_value() == pytest.approx(
+        review["native_key_value_before_degrees"]
+    )
+
+
+def test_animated_camera_yaw_native_mutate_then_throw_rollback(monkeypatch,tmp_path):
+    _,section,review = _yaw_native()
+    key = section.channels[5].keys[2]
+    original_setter = key.set_value
+    def mutating_setter(value):
+        original_setter(value)
+        if abs(value-review["source_key_value_degrees"])<0.01:
+            raise RuntimeError("Native yaw key setter mutated then threw")
+    key.set_value = mutating_setter
+    api,job,request = _yaw_native_job(monkeypatch,tmp_path,section,review)
+    with pytest.raises(RuntimeError,match="mutated then threw"):
+        native.attempt_yaw(api,tmp_path,job,request)
+    assert key.get_value() == pytest.approx(
+        review["native_key_value_before_degrees"]
+    )
