@@ -218,11 +218,19 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
         # after real editor reopening. This is a structural check; it cannot
         # substitute for independent bone, attachment-motion or render parity.
         multi_character_path = None
-        source_csir = persistence._json(Path(job['csir']))
-        mapped_characters = [
-            row for row in source_csir.get('entities', [])
-            if isinstance(row, dict) and row.get('ced_type') == 'entity.character'
-        ]
+        source_csir_path = Path(job['csir'])
+        # A legacy acceptance callback can have no original entity census.
+        # Such a run must never be labeled independently verified multi-
+        # character coordination; only inspect when immutable source exists.
+        if source_csir_path.is_file() and not source_csir_path.is_symlink():
+            source_csir = persistence._json(source_csir_path)
+            mapped_characters = [
+                row for row in source_csir.get('entities', [])
+                if isinstance(row, dict) and row.get('ced_type') == 'entity.character'
+            ]
+        else:
+            source_csir = None
+            mapped_characters = []
         if len(mapped_characters) >= 2:
             import studio_multi_character_native
             multi_character_path = folder / 'native-multi-character-coordination.json'
@@ -343,6 +351,11 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
             'native_multi_character_coordination_sha256': (
                 persistence._sha(multi_character_path)
                 if multi_character_path is not None else None
+            ),
+            'native_multi_character_coordination_status': (
+                'NOT_SOURCE_VERIFIED' if source_csir is None
+                else 'NOT_APPLICABLE' if len(mapped_characters) < 2
+                else persistence._json(multi_character_path)['status']
             ),
             'element3_workflow_sha256': (
                 element_permission['workflow_sha256']
