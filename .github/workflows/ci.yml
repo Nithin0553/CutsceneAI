@@ -110,6 +110,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Extracted Studio strict setup failed." }
           & $Python (Join-Path $Studio "tools\studio_startup_smoke.py") --repo $Studio --source-bundle $Zip --timeout 70 --output (Join-Path $env:RUNNER_TEMP "phase10_5-windows-startup-smoke.json")
           if ($LASTEXITCODE -ne 0) { throw "Actual packaged Studio localhost UI startup smoke failed." }
+          # Repeat the real Windows process launch/teardown to catch inherited
+          # stdout handle locks (WinError 32) and temp-directory cleanup races.
+          for ($i = 1; $i -le 3; $i++) {
+            & $Python (Join-Path $Studio "tools\studio_startup_smoke.py") --repo $Studio --source-bundle $Zip --timeout 70
+            if ($LASTEXITCODE -ne 0) { throw "Packaged Windows Studio repeat startup smoke $i failed." }
+          }
       - name: Archive Windows packaged-Studio startup smoke
         uses: actions/upload-artifact@v4
         with:
