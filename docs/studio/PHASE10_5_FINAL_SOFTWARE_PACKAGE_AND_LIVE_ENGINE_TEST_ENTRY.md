@@ -13,7 +13,7 @@ The final production freeze remains **blocked** until genuine Unity, Unreal, ren
 | Actual packaged Studio startup | `tools/studio_startup_smoke.py` executes real `studio_local_bridge.py` from extracted ZIP, checks browser entrypoint, JavaScript, session token, default read-only stage diagnostics, foreign host blocking, absence of native jobs and fresh release status, then terminates that temporary host |
 | Windows clean distribution acceptance | CI makes the ZIP, extracts it to a separate folder, installs Python dependencies there, verifies the exact ZIP matches extracted contents, starts Studio, and archives the report |
 | Source-bound software freeze | `tools/phase10_5_freeze_preflight.py` verifies exact clean Git SHA, byte-identical ZIP, the 19-gate source/JS tests and immutable Phase 10.4 software evidence |
-| Cross-platform handoff | `tools/phase10_5_package_acceptance.py` requires independent Ubuntu and Windows CI success **against the exact same ZIP hash** and Git SHA; returns `SOFTWARE_PACKAGE_READY_FOR_ENGINE_TEST` without production or native approval |
+| Cross-platform handoff | `tools/phase10_5_package_acceptance.py` requires independent Ubuntu and Windows CI success **against identical source-file SHA256 manifests** and the same Git SHA (compressed ZIP bytes may differ by platform); returns `SOFTWARE_PACKAGE_READY_FOR_ENGINE_TEST` without production or native approval |
 
 ### CI deliverables
 
@@ -25,7 +25,7 @@ At the exact integration commit, the GitHub Actions run must be entirely green. 
 - `phase10-5-windows-packaged-studio-startup-<sha>` — actual localhost launch from fresh Windows ZIP
 - `phase10-5-software-ready-for-engine-test-<sha>` — all four reconciled for one commit
 
-If **any** artifact is absent, from a different Git SHA, or the Windows ZIP hash disagrees with the Linux ZIP, the final software handoff gate fails.
+If **any** artifact is absent, from a different Git SHA, or the independently verified Windows source-file manifest disagrees with the reviewed Linux manifest, the final software handoff gate fails.
 
 ## Launch Studio on your Windows testing workstation
 
