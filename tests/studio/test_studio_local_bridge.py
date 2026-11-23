@@ -946,3 +946,33 @@ def test_closed_loop_endpoint_refuses_foreign_or_stale_native_job(service):
                        {'job_id': 'd' * 32})
     status, mismatch = call(base + '/api/closed-loop')
     assert status == 409 and 'does not match' in mismatch['error'].lower()
+
+
+def test_phase10_3_stage_diagnostics_read_only_and_invalid_active_pointer(service):
+    base, temp = service
+    work=temp/"work"
+    status, result=call(base+"/api/flow-diagnostics")
+    assert status==200
+    assert result["kind"]=="cutsceneai.studio.phase10_3.flow_diagnostics"
+    assert len(result["stages"])==9
+    assert result["native_replay_authorized"] is False
+    assert result["source_and_native_full_fidelity_verified"] is False
+    assert not (work/"active-job.json").exists()
+    work.mkdir(exist_ok=True)
+    active=work/"active-job.json"
+    active.write_text(json.dumps({"job_id":"a"*32}),encoding="utf-8")
+    status, rejected=call(base+"/api/flow-diagnostics")
+    assert status==409
+    assert "Native job evidence" in rejected["error"]
+    assert rejected["native_replay_authorized"] is False
+    external=temp/"external.json"
+    external.write_text(json.dumps({"job_id":"b"*32}))
+    active.unlink()
+    try:
+        active.symlink_to(external)
+    except (OSError,NotImplementedError):
+        pytest.skip("Filesystem denies symlinks.")
+    status, blocked=call(base+"/api/flow-diagnostics")
+    assert status==409
+    assert "Unsafe active native job" in blocked["error"]
+    assert not (work/"jobs").exists()
