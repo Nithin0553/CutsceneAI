@@ -93,7 +93,7 @@ def test_phase10_2_all_seven_original_workstreams_are_exact_and_reported():
         x[0] for x in audit.WORK_AREAS
     ]
     assert result["fully_accepted_workstream_count"]==0
-    assert len(result["known_guarded_repair_families"])==11
+    assert len(result["known_guarded_repair_families"])==12
     assert result["source_occurrences_accounted"]==result[
         "source_occurrences_total"]
     assert all(not r["work_area_fully_complete"] and
