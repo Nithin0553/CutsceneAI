@@ -110,8 +110,25 @@ def inspect(api: Any, sequence: Any, csir: dict, mapping: dict,
             for section in track.get_sections():
                 params=section.get_editor_property("params")
                 clip=params.get_editor_property("animation")
-                start=int(section.get_start_frame())
-                end=int(section.get_end_frame())
+                extension=getattr(api,"MovieSceneSectionExtensions",None)
+                get_start=getattr(extension,"get_start_frame",None)
+                get_end=getattr(extension,"get_end_frame",None)
+                if callable(get_start) and callable(get_end):
+                    a,b=get_start(section),get_end(section)
+                else:
+                    fallback_start=getattr(section,"get_start_frame",None)
+                    fallback_end=getattr(section,"get_end_frame",None)
+                    if not callable(fallback_start) or not callable(fallback_end):
+                        raise NativeCoordinationError(
+                            "Native skeletal section frame readback unavailable."
+                        )
+                    a,b=fallback_start(),fallback_end()
+                start=getattr(a,"value",a)
+                end=getattr(b,"value",b)
+                if type(start) is not int or type(end) is not int:
+                    raise NativeCoordinationError(
+                        "Native source animation frames must be exact integers."
+                    )
                 native_sections.append((start,end,_path(clip)))
         if Counter(native_sections)!=expected_sections:
             raise NativeCoordinationError(
