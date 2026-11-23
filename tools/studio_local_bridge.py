@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import secrets
 import sys
 import threading
