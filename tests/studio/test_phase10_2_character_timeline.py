@@ -19,7 +19,6 @@ import character_motion
 import multi_character_sync as sync
 import timeline_blend_policy as timeline
 
-
 RATE = {"numerator": 2,"denominator":1}
 
 
