@@ -105,7 +105,7 @@ def test_failed_or_forged_windows_startup_is_not_ready(tmp_path,field,value):
     bundle,docs,_,smoke,_=_fixture(tmp_path)
     smoke[field]=value
     docs[1].write_text(json.dumps(smoke),encoding="utf-8")
-    with pytest.raises(contract.PackageAcceptanceError,match="startup|Windows smoke|falsely"):
+    with pytest.raises(contract.PackageAcceptanceError,match="startup|start Studio|Windows smoke|falsely"):
         _check(bundle,docs)
 
 
