@@ -329,6 +329,24 @@ async function testSimpleSourceOutcomeMissingEvidenceAndExplicitRetry() {
   assert.match(x.app.innerHTML,/Source elements accounted for/);
 }
 
+async function testPendingOutcomeResponseCannotPopulateDifferentRun() {
+  const x=boot({simple:true});
+  await x.pause();
+  x.completeAutopilot();
+  await x.poll();
+  x.delayOutcome();
+  const pending=x.click('quick-results');
+  await x.pause();
+  x.setAutopilot('BLOCKED');
+  await x.poll();
+  x.resolveOutcome();
+  await pending;
+  assert.doesNotMatch(x.app.innerHTML,/E00000/,
+    'a late source report from a previous native job must be discarded');
+  assert.doesNotMatch(x.app.innerHTML,/Source elements accounted for/);
+  assert.ok(x.calls.includes('/api/flow-diagnostics'));
+}
+
 async function testSimpleOutcomeCannotLeakWhenRunChanges() {
   const x=boot({simple:true});
   await x.pause();
@@ -866,6 +884,7 @@ async function testAdvancedJobChangeInvalidatesDiagnostics() {
   await testSimpleOfflineUnrealProvidesActionableConnectionReason();
   await testSimpleSourceOutcomeAutoloadAndPagination();
   await testSimpleSourceOutcomeMissingEvidenceAndExplicitRetry();
+  await testPendingOutcomeResponseCannotPopulateDifferentRun();
   await testSimpleOutcomeCannotLeakWhenRunChanges();
   await testSimpleBlockedAutopilotCannotReuseOldNativeResult();
   await testAdvancedJobChangeInvalidatesDiagnostics();
@@ -887,5 +906,5 @@ async function testAdvancedJobChangeInvalidatesDiagnostics() {
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
   await testMissingSelectedCensusFailsClosed();
-  console.log('Cinematic + advanced UI backend contract: 25 scenarios including job-switch cache invalidation, old-job isolation after blocked autopilot, fresh transfers and native errors passed.');
+  console.log('Cinematic + advanced UI backend contract: 26 scenarios including job-switch cache invalidation, old-job isolation after blocked autopilot, fresh transfers and native errors passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
