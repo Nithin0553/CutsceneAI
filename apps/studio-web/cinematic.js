@@ -15,7 +15,9 @@
     diagnosis:null, feedback:null, releaseReadiness:null, running:false, detailsOpen:false, menuOpen:false,
     censusOptions:[], censusPath:'', censusSelection:null, censusIssue:false,
     unitySnapshotRequestId:'', unitySnapshotStatus:null, learningStatus:null,
-    autopilot:null, agentConversation:null, feedbackDraft:'', aiTransferAudit:null};
+    autopilot:null, agentConversation:null, feedbackDraft:'', aiTransferAudit:null,
+    finalOutcome:null, finalOutcomeError:'', finalOutcomeJobId:'',
+    finalOutcomeAttemptedJobId:'', finalOutcomeLoading:false};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
   const connection = () => state.status?.connection;
   const worker = () => state.status?.unreal_worker || {};
@@ -50,7 +52,10 @@
     const unityPath=c?.unity_project||state.discovery?.unity?.folder||state.folders.unity;
     const targetPath=c?.target_project||state.unrealProject||state.discovery?.unreal?.project;
     const unityReady=Boolean(source.connected&&unityPath&&norm(source.project_root)===norm(unityPath));
-    const unrealReady=Boolean(dest.connected&&targetPath&&norm(dest.project)===norm(targetPath));
+    const projectMatches=Boolean(dest.connected&&targetPath&&norm(dest.project)===norm(targetPath));
+    const levelMatches=Boolean(!c?.level_path||dest.level===c.level_path||
+      (c.auto_create_level&&readiness().status==='NEW_LEVEL_REQUIRED'));
+    const unrealReady=projectMatches&&levelMatches;
     const host=state.status?.host_reload||{};
     const updating=host.status&&!['CURRENT','NOT_ENABLED'].includes(host.status);
     const hostState=host.status==='BLOCKED_INVALID_CODE'?'Studio code needs review':
@@ -59,12 +64,18 @@
     const unityReason=!unityReady&&unityPath
       ?'<p class="subnote" role="note">Unity: '+esc(source.status||'WAITING_FOR_UNITY_EDITOR')+
         (source.next_action?' — '+esc(source.next_action):'')+'</p>':'';
+    const destinationReason=!unrealReady&&targetPath
+      ?'<p class="subnote" role="note">Unreal: '+esc(!projectMatches?
+          'WAITING_FOR_MATCHED_UNREAL_PROJECT':'WRONG_TARGET_LEVEL')+
+        ' — '+esc(readiness().next_action||
+          (!projectMatches?'Open the selected .uproject and enable the Unreal companion.':
+          'Open the selected Unreal level before transferring.'))+'</p>':'';
     return '<p class="subnote" role="status" aria-label="Live editor connections">'+
       'Unity bridge: '+esc(unityReady?'Connected · '+source.editor_mode:'Waiting for running editor')+
       ' &nbsp;·&nbsp; Unreal bridge: '+esc(unrealReady?'Connected':'Waiting for running editor')+
       (updating?' &nbsp;·&nbsp; '+esc(hostState):'')+
       '. Once enabled, supported code changes reconnect without restarting the editors.</p>'+
-      unityReason;
+      unityReason+destinationReason;
   }
   function progress(){
     const selected=state.screen==='results'?3:state.screen==='transfer'?2:state.candidate?1:0;
@@ -219,6 +230,83 @@
       '<p class="subnote">AI planning, native execution and behavioral fidelity are separate checks. Neither a generated sequence nor an AI response proves matching behavior.</p>'+
       '</section>';
   }
+  function finalOutcomeSummary(){
+    const j=state.job||{}, report=state.finalOutcome, run=state.autopilot||{};
+    if(!j.job_id||!terminal(j))return '';
+    if(run.active&&run.job_id!==j.job_id)return '';
+    const active=report?.available===true && state.finalOutcomeJobId===j.job_id;
+    const loading=state.finalOutcomeLoading;
+    let contents='';
+    if(active){
+      const offset=report.page_offset||0,total=report.source_occurrence_count||0;
+      const rows=Array.isArray(report.source_page)?report.source_page:[];
+      const counts=Object.entries(report.source_outcome_counts||{}).sort((a,b)=>a[0].localeCompare(b[0]));
+      contents='<p class="outcome-state"><strong>Evidence status:</strong> '+esc(report.status||'INCOMPLETE')+'</p>'+
+        '<div class="outcome-facts">'+
+        '<div><strong>'+esc(total)+'</strong><span>Source elements accounted for</span></div>'+
+        '<div><strong>'+esc(report.native_observation_count??0)+'</strong><span>Native observations</span></div>'+
+        '<div><strong>'+esc(report.remaining_manual_remeasurement_budget??'Unknown')+'</strong><span>Manual measurements left</span></div>'+
+        '</div>'+
+        '<p class="subnote"><strong>Next evidence step:</strong> '+esc(report.next_step||'Manual investigation required')+'</p>'+
+        (counts.length?'<div class="outcome-counts" aria-label="Source outcome totals">'+counts.map(([status,n])=>
+          '<span>'+esc(status.replaceAll('_',' '))+' <strong>'+esc(n)+'</strong></span>').join('')+'</div>':'')+
+        '<details class="outcome-details"><summary>Source-by-source findings ('+esc(total)+')</summary>'+
+        (rows.length?'<div class="outcome-occurrences">'+rows.map(row=>
+          '<div class="outcome-occurrence"><strong>'+esc(row.occurrence_id||'Unknown source')+
+            ' · '+esc((row.source_kind||'unknown').replaceAll('_',' '))+'</strong>'+
+          '<p>'+esc((row.outcome||'UNVERIFIED').replaceAll('_',' '))+'</p>'+
+          '<small>'+esc((row.next_step||'Requires further evidence').replaceAll('_',' '))+
+          ' · Source-bound native actions: '+esc(row.explicit_native_source_action_count??0)+'</small></div>').join('')+
+          '</div>':'<p class="subnote">No source elements on this page.</p>')+
+        '<div class="outcome-page"><span>Showing '+esc(total?offset+1:0)+'–'+esc(Math.min(total,offset+rows.length))+
+          ' of '+esc(total)+'</span>'+
+          button('Previous','outcome-prev',loading||offset===0,'secondary')+
+          button('Next','outcome-next',loading||offset+rows.length>=total,'secondary')+
+        '</div></details>';
+    }else{
+      contents='<p class="subnote">'+esc(state.finalOutcomeError||
+        (loading?'Checking source evidence…':
+        'Final source accounting has not been loaded. Native and rendered fidelity remain unverified.'))+'</p>';
+    }
+    return '<section class="outcome-panel" aria-label="Final source outcome">'+
+      '<div class="outcome-heading"><h2>Source transfer report</h2>'+
+      button(loading?'Checking…':'Refresh report','outcome-refresh',loading,'secondary')+'</div>'+
+      '<p class="subnote">Every Unity source occurrence is accounted for. This read-only report never authorizes an engine retry or claims cinematic fidelity.</p>'+
+      contents+'</section>';
+  }
+  async function loadFinalOutcome(offset=0,force=false){
+    const jobId=state.job?.job_id||'',run=state.autopilot||{};
+    if(!/^[a-f0-9]{32}$/.test(jobId)||!terminal(state.job)||
+       (run.active&&run.job_id!==jobId)||state.status?.active_job!==jobId||
+       state.finalOutcomeLoading)return;
+    if(!force&&state.finalOutcomeAttemptedJobId===jobId)return;
+    state.finalOutcomeLoading=true;
+    state.finalOutcomeAttemptedJobId=jobId;
+    render();
+    try{
+      // The server independently checks this identity against active-job.json
+      // before returning a page. Even a late response cannot enter another job.
+      const result=await api('final-outcome?job_id='+jobId+'&offset='+offset);
+      if(state.job?.job_id!==jobId||state.status?.active_job!==jobId||
+         (state.autopilot?.active&&state.autopilot.job_id!==jobId))return;
+      if(!result?.available||!Array.isArray(result.source_page)||
+         !Number.isInteger(result.source_occurrence_count)||
+         !Number.isInteger(result.page_offset)||result.page_offset!==offset||
+         result.full_cutscene_fidelity_verified!==false||
+         result.release_ready!==false){
+        throw Error('Source outcome is incomplete or not bound to the requested page.');
+      }
+      state.finalOutcome=result;
+      state.finalOutcomeError='';
+      state.finalOutcomeJobId=jobId;
+    }catch(e){
+      if(state.job?.job_id===jobId&&state.status?.active_job===jobId){
+        if(offset===0){state.finalOutcome=null;state.finalOutcomeJobId='';}
+        state.finalOutcomeError='Source report unavailable: '+e.message+
+          '. Check native evidence or try Refresh report.';
+      }
+    }finally{state.finalOutcomeLoading=false;render();}
+  }
   function quickResults(){
     const run=state.autopilot||{},j=state.job||{},dialog=state.agentConversation||{};
     const messages=(dialog.messages||[]).slice(-12).map(item=>
@@ -234,6 +322,7 @@
         esc(run.ai_conversion_strategy)+'</strong>. This selected only installed, source-verified conversion options; it does not certify cutscene fidelity.</p>':'')+
       '<p class="subnote">Conversion and AI corrections are limited to supported and independently checked native operations. Unverified or unsupported behavior is never silently called correct.</p>'+
       aiConversionSummary()+
+      finalOutcomeSummary()+
       (run.status==='GENERATED_UNVERIFIED'?'<section class="simple-chat" aria-label="Talk to the AI agent">'+
         '<h2>Optional AI follow-up</h2>'+
         '<p class="subnote">AI is already part of pre-transfer analysis. Use this chat to report a remaining issue; only source-verified corrections are executable. For example: “The character is facing the wrong direction.”</p>'+
@@ -574,6 +663,8 @@
       unreal_folder:state.folders.unreal,unreal_project:state.unrealProject,
       csir:state.csir,level:state.level,source_rights_confirmed:state.sourceRights});
     state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.releaseReadiness=null;state.agentStatus=null;state.aiTransferAudit=null;state.running=false;
+    state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
+    state.finalOutcomeAttemptedJobId='';state.finalOutcomeLoading=false;
     state.censusOptions=[];state.censusPath='';state.censusSelection=null;
     state.phase='CONNECTED';state.info='Projects connected. Choose a Source Census to start a transfer.';
     state.error='';state.censusIssue=false;
@@ -605,6 +696,8 @@
       state.job=null;state.verification=null;state.diagnosis=null;
       state.feedback=null;state.releaseReadiness=null;
       state.aiTransferAudit=null;state.agentConversation=null;state.agentStatus=null;
+      state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
+      state.finalOutcomeAttemptedJobId='';state.finalOutcomeLoading=false;
     }
     if(nextJobId){
       state.job=await api('jobs/'+nextJobId);
@@ -770,13 +863,28 @@
         state.screen='results';
       if(simpleMode&&state.screen==='transfer'&&state.autopilot?.status==='GENERATED_UNVERIFIED')
         state.screen='results';
+      if(simpleMode&&state.screen==='results')await loadFinalOutcome();
       render();
     }catch(e){state.error=e.message;state.phase='BLOCKED';state.running=false;render();}
     finally{polling=false;}
   }
   async function action(name){
     if(name==='quick-transfer'){state.screen='transfer';render();return;}
-    if(name==='quick-results'){state.screen='results';render();return;}
+    if(name==='quick-results'){
+      state.screen='results';render();await loadFinalOutcome();return;
+    }
+    if(['outcome-refresh','outcome-prev','outcome-next'].includes(name)){
+      if(!simpleMode||state.screen!=='results'||state.busy)return;
+      const report=state.finalOutcome;
+      if(name!=='outcome-refresh'&&
+         (!report?.available||state.finalOutcomeJobId!==state.job?.job_id))return;
+      const offset=name==='outcome-refresh'?0:name==='outcome-prev'?
+        Math.max(0,report.page_offset-report.page_size):
+        report.page_offset+report.page_size;
+      if(report&&name==='outcome-next'&&offset>=report.source_occurrence_count)return;
+      await loadFinalOutcome(offset,true);
+      return;
+    }
     if(name==='autopilot-cancel'){
       if(state.busy||state.autopilot?.status==='UNREAL_RUNNING')return;
       state.busy=true;render();
@@ -803,6 +911,8 @@
         state.job=null;state.candidate=null;state.verification=null;
         state.diagnosis=null;state.feedback=null;state.releaseReadiness=null;
         state.aiTransferAudit=null;state.agentConversation=null;state.feedbackDraft='';
+        state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
+        state.finalOutcomeAttemptedJobId='';state.finalOutcomeLoading=false;
         state.running=false;state.phase='WAITING_FOR_UNITY';
         state.screen='transfer';state.error='';state.info='';
       }catch(e){state.error=e.message;}
@@ -829,7 +939,9 @@
     if(['home','projects','results','about'].includes(name)){
       state.screen=name;state.menuOpen=false;
       if(name==='projects'&&!state.discovery&&state.folders.unity)try{await scan();}catch{}
-      render();return;
+      render();
+      if(name==='results'&&simpleMode)await loadFinalOutcome();
+      return;
     }
     if(name==='analyze-unity'){
       if(state.busy||state.unitySnapshotRequestId)return;
