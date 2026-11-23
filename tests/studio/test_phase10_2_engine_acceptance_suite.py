@@ -1,7 +1,6 @@
 """The seven-area engine contract cannot turn file hashes into real-engine proof."""
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import sys
