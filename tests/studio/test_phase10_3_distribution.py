@@ -22,6 +22,8 @@ def _repo(tmp_path):
         (root/name).write_text("source root "+name,encoding="utf-8")
     for name in (
         "tools/install_studio.ps1","tools/start_studio.ps1",
+        "tools/launch_studio.ps1","tools/studio_startup_smoke.py",
+        "tools/phase10_5_freeze_preflight.py",
         "tools/studio_local_bridge.py","tools/studio_companion_install.py",
         "packages/studio/studio_phase10_3_flow.py",
         "apps/studio-web/cinematic.js",
