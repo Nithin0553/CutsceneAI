@@ -17,7 +17,8 @@
     unitySnapshotRequestId:'', unitySnapshotStatus:null, learningStatus:null,
     autopilot:null, agentConversation:null, feedbackDraft:'', aiTransferAudit:null,
     finalOutcome:null, finalOutcomeError:'', finalOutcomeJobId:'',
-    finalOutcomeAttemptedJobId:'', finalOutcomeLoading:false};
+    finalOutcomeAttemptedJobId:'', finalOutcomeLoading:false,
+    flowDiagnostics:null};
   const pathRoot = () => String(state.status?.repo_root||'').replaceAll('\\','/');
   const connection = () => state.status?.connection;
   const worker = () => state.status?.unreal_worker || {};
@@ -76,6 +77,35 @@
       (updating?' &nbsp;·&nbsp; '+esc(hostState):'')+
       '. Once enabled, supported code changes reconnect without restarting the editors.</p>'+
       unityReason+destinationReason;
+  }
+  function sharedStageDiagnostics(){
+    const report=state.flowDiagnostics;
+    if(!report||!Array.isArray(report.stages)||report.stages.length!==9)return '';
+    return '<details class="stage-diagnostics" aria-label="Nine-stage transfer diagnostics">'+
+      '<summary>Detailed AI workflow · 9 stages</summary>'+
+      '<p class="subnote">Native execution is never repeated automatically. Full-fidelity checks require independent editor acceptance.</p>'+
+      '<ol>'+report.stages.map(stage=>
+        '<li><strong>'+esc(stage.label)+'</strong>'+
+        '<span>'+esc((stage.status||'NOT_VERIFIED').replaceAll('_',' '))+'</span>'+
+        '<small>'+esc(stage.next_action||'Inspect source evidence')+'</small></li>'
+      ).join('')+'</ol>'+
+      (report.issues?.length?'<p class="subnote">Next: '+esc(report.next_action||report.issues[0])+'</p>':'')+
+      '</details>';
+  }
+  function firstRunCompanionSetup(){
+    const unity=state.folders.unity||'',project=state.unrealProject||
+      state.discovery?.unreal?.project||'';
+    if(!unity||!project)return '';
+    // PowerShell single-quoted literals do not evaluate $() or backticks.
+    // Escape embedded single quotes rather than emitting a runnable fragment.
+    const quote=v=>"'" + String(v).replaceAll("'","''") + "'";
+    const command='python tools/studio_companion_install.py --unity '+quote(unity)+
+      ' --unreal-uproject '+quote(project);
+    return '<details class="companion-setup"><summary>First-time Unity and Unreal companion setup</summary>'+
+      '<p>Run this read-only preflight in PowerShell from the Studio folder:</p>'+
+      '<code>'+esc(command)+'</code>'+
+      '<p>After reviewing the plan, append <code>--apply</code> for explicit project-local wiring. The installer does not start or restart either Editor.</p>'+
+      '<p>Enable Unity Source Bridge and Unreal PythonScriptPlugin first. Existing non-Studio startup files are not overwritten.</p></details>';
   }
   function progress(){
     const selected=state.screen==='results'?3:state.screen==='transfer'?2:state.candidate?1:0;
@@ -152,6 +182,7 @@
       line(Boolean(state.folders.unity&&state.folders.unreal))+
       card('unreal',state.folders.unreal,Boolean(state.folders.unreal))+'</div>'+
       liveEngineStatus()+
+      firstRunCompanionSetup()+
       '<div class="simple-connections">'+
       '<div>'+button(state.folders.unity?'Change Unity Project':'Connect Unity','browse-unity',state.busy,'secondary')+'</div>'+
       '<div>'+button(state.folders.unreal?'Change Unreal Project':'Connect Unreal','browse-unreal',state.busy,'secondary')+'</div></div>'+
@@ -184,6 +215,7 @@
       (run.error?'<p class="warning" role="alert">'+esc(run.error)+'</p>':'')+
       (run.status==='BLOCKED'?'<p class="subnote">The agent stopped safely. The original projects were not overwritten. Resolve the reported editor or source dependency before starting a fresh transfer.</p>':'')+
       (run.status==='CANCELLED'?'<p class="subnote">Cancelled before Unreal execution; no native job was interrupted.</p>':'')+
+      sharedStageDiagnostics()+
       '<div class="center-actions">'+
       (run.status==='GENERATED_UNVERIFIED'?button('Review Cutscene','quick-results'):
         ['BLOCKED','CANCELLED'].includes(run.status)?button('Back to Projects','projects',false,'secondary'):
@@ -323,6 +355,7 @@
       '<p class="subnote">Conversion and AI corrections are limited to supported and independently checked native operations. Unverified or unsupported behavior is never silently called correct.</p>'+
       aiConversionSummary()+
       finalOutcomeSummary()+
+      sharedStageDiagnostics()+
       (run.status==='GENERATED_UNVERIFIED'?'<section class="simple-chat" aria-label="Talk to the AI agent">'+
         '<h2>Optional AI follow-up</h2>'+
         '<p class="subnote">AI is already part of pre-transfer analysis. Use this chat to report a remaining issue; only source-verified corrections are executable. For example: “The character is facing the wrong direction.”</p>'+
@@ -586,12 +619,18 @@
         continue;
       }
       if(old.nodeType!==1)continue;
+      // Expanded diagnostic/details panels should stay expanded when the
+      // two-second status poll reconciles updated text in the same job.
+      const keepOpen=old.tagName==='DETAILS' && old.hasAttribute('open') &&
+        ['stage-diagnostics','companion-setup','outcome-details'].some(
+          name=>old.classList.contains(name));
       for(const attr of Array.from(old.attributes)){
         if(!next.hasAttribute(attr.name))old.removeAttribute(attr.name);
       }
       for(const attr of Array.from(next.attributes)){
         if(old.getAttribute(attr.name)!==attr.value)old.setAttribute(attr.name,attr.value);
       }
+      if(keepOpen)old.setAttribute('open','');
       if(old.tagName==='DETAILS' && old.hasAttribute('class') &&
         old.classList.contains('research')){
         // The browser's native details open state is authoritative.
@@ -665,6 +704,7 @@
     state.status.connection=info;state.candidate=null;state.job=null;state.verification=null;state.diagnosis=null;state.feedback=null;state.releaseReadiness=null;state.agentStatus=null;state.aiTransferAudit=null;state.running=false;
     state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
     state.finalOutcomeAttemptedJobId='';state.finalOutcomeLoading=false;
+    state.flowDiagnostics=null;
     state.censusOptions=[];state.censusPath='';state.censusSelection=null;
     state.phase='CONNECTED';state.info='Projects connected. Choose a Source Census to start a transfer.';
     state.error='';state.censusIssue=false;
@@ -675,6 +715,13 @@
     if(simpleMode){
       try{state.autopilot=await api('autopilot');}
       catch(e){state.autopilot={status:'UNAVAILABLE',message:e.message};}
+      if(['transfer','results'].includes(state.screen)){
+        try{
+          const flow=await api('flow-diagnostics');
+          state.flowDiagnostics=(flow?.kind==='cutsceneai.studio.phase10_3.flow_diagnostics' &&
+            flow.native_replay_authorized===false)?flow:null;
+        }catch{state.flowDiagnostics=null;}
+      }
       if(state.autopilot?.status==='GENERATED_UNVERIFIED'){
         try{state.agentConversation=await api('agent-conversation');}catch{}
       }
@@ -698,6 +745,7 @@
       state.aiTransferAudit=null;state.agentConversation=null;state.agentStatus=null;
       state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
       state.finalOutcomeAttemptedJobId='';state.finalOutcomeLoading=false;
+      state.flowDiagnostics=null;
     }
     if(nextJobId){
       state.job=await api('jobs/'+nextJobId);
@@ -913,6 +961,7 @@
         state.aiTransferAudit=null;state.agentConversation=null;state.feedbackDraft='';
         state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
         state.finalOutcomeAttemptedJobId='';state.finalOutcomeLoading=false;
+        state.flowDiagnostics=null;
         state.running=false;state.phase='WAITING_FOR_UNITY';
         state.screen='transfer';state.error='';state.info='';
       }catch(e){state.error=e.message;}

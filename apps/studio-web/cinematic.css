@@ -221,3 +221,14 @@
 .outcome-page span{font-size:12px;color:#afb9b0;margin-right:auto}
 .outcome-page .button{font-size:12px;padding:8px 12px;min-height:36px}
 @media(max-width:560px){.outcome-panel{padding:16px 12px}.outcome-heading{align-items:start}.outcome-heading .button{padding:7px 9px}.outcome-facts{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.outcome-facts div{padding:9px 7px}.outcome-facts strong{font-size:20px}.outcome-facts span{font-size:10px}}
+
+/* Phase 10.3 shared source-bound diagnostics; hidden unless requested. */
+.stage-diagnostics,.companion-setup{max-width:780px;margin:16px auto;padding:15px 18px;border:1px solid #34413a;border-radius:12px;background:#0d130f;text-align:left;color:#d5dfd8}
+.stage-diagnostics summary,.companion-setup summary{cursor:pointer;font-weight:650;font-size:13px;color:#d9e8db}
+.stage-diagnostics ol,.stage-diagnostics-list{padding-left:24px;margin:13px 0}
+.stage-diagnostics li,.stage-diagnostics-list li{padding:9px 0;border-bottom:1px solid #26332b;font-size:12px}
+.stage-diagnostics li strong,.stage-diagnostics-list li strong{color:#dceadd;margin-right:12px}
+.stage-diagnostics li span,.stage-diagnostics-list li span{display:inline-block;color:#ace3a1}
+.stage-diagnostics li small,.stage-diagnostics-list li small{display:block;color:#aab3ab;line-height:1.5;margin-top:4px}
+.companion-setup code{display:block;overflow-wrap:anywhere;white-space:pre-wrap;background:#131c15;border:1px solid #2d3b30;border-radius:7px;padding:10px;font-size:11px;color:#c1f4b9}
+.companion-setup p{font-size:12px;line-height:1.55;color:#aebcad}
