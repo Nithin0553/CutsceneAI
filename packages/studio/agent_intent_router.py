@@ -143,6 +143,7 @@ def route(
     camera_position_repair_evidence: dict[str, Any] | None = None,
     camera_yaw_repair_evidence: dict[str, Any] | None = None,
     animated_camera_key_evidence: dict[str, Any] | None = None,
+    animated_camera_two_key_evidence: dict[str, Any] | None = None,
     character_facing_review: dict[str, Any] | None = None,
     static_character_yaw_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -326,7 +327,44 @@ def route(
             and isinstance(animated_camera_key_evidence.get(
                 "animated_camera_key_repair_sha256"),str)
         )
-    if animated_camera_key_eligible:
+    animated_camera_two_key_eligible = False
+    if isinstance(animated_camera_two_key_evidence, dict):
+        from studio_camera_key_evidence import message_requests_two_keys
+        rows = animated_camera_two_key_evidence.get("source_position_key_repairs")
+        animated_camera_two_key_eligible = bool(
+            message_requests_two_keys(message)
+            and intent["mode"] == "user_feedback"
+            and scope == "unspecified"
+            and set(domains) == {"camera", "animation", "transform"}
+            and generation_complete and completed_repairs < repair_budget
+            and animated_camera_two_key_evidence.get("kind")
+                == "cutsceneai.studio.two_animated_camera_position_keys_review"
+            and animated_camera_two_key_evidence.get("eligible") is True
+            and animated_camera_two_key_evidence.get("native_edit_authorized") is False
+            and animated_camera_two_key_evidence.get("source_key_count") == 2
+            and isinstance(rows, list) and len(rows) == 2
+            and all(isinstance(row, dict)
+                    and type(row.get("source_key_frame")) is int
+                    and row.get("native_channel_index") in (0, 1, 2)
+                    for row in rows)
+            and rows[0]["native_channel_index"] == rows[1]["native_channel_index"]
+            and abs(rows[0]["source_key_frame"]-rows[1]["source_key_frame"]) >= 2
+            and isinstance(animated_camera_two_key_evidence.get(
+                "animated_camera_two_key_repair_sha256"), str)
+            and re.fullmatch("[a-f0-9]{64}", animated_camera_two_key_evidence[
+                "animated_camera_two_key_repair_sha256"]) is not None
+        )
+    if animated_camera_two_key_eligible:
+        disposition = "GUARDED_TWO_ANIMATED_CAMERA_POSITION_KEYS_AVAILABLE"
+        reason = (
+            "Only two independently measured, nonadjacent interior XYZ camera "
+            "position keys on the same axis are eligible. Native Sequencer "
+            "must recheck all nine channels, source-bound owner and current "
+            "two-key consent. Rollback and asset save must be confirmed; "
+            "reopened CineTwin and rendered motion remain unverified."
+        )
+        allowed = ["report_only", "restore_two_animated_camera_position_keys"]
+    elif animated_camera_key_eligible:
         disposition="GUARDED_ONE_ANIMATED_CAMERA_POSITION_KEY_AVAILABLE"
         reason=(
             "An original authenticated evaluated Unity camera-world grid and "
