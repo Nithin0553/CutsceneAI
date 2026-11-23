@@ -97,9 +97,12 @@ def run(repo:Path, *, output:Path | None=None,
     selected=plan(root)
     if output is not None and (output.exists() or output.is_symlink()):
         raise RehearsalError("Refusing to replace a prior immutable rehearsal receipt.")
-    python_call=[sys.executable,"-m","pytest","-q",*TEST_MODULES]
+    # Verbose output proves each exact named matrix test actually PASSED;
+    # collection alone or a large unrelated passing test count is insufficient.
+    python_call=[sys.executable,"-m","pytest","-vv","--no-header",*TEST_MODULES]
     node_call=["node",NODE_TEST]
     result=[]
+    python_stdout=""
     for command in (python_call,node_call):
         try:
             proc=runner(command,cwd=root,capture_output=True,text=True,
@@ -110,6 +113,8 @@ def run(repo:Path, *, output:Path | None=None,
             ) from exc
         stdout=str(proc.stdout or "")
         stderr=str(proc.stderr or "")
+        if command==python_call:
+            python_stdout=stdout
         outcome={
             "command_category":"python_synthetic_regressions" if command==python_call
                 else "node_ui_interruption_regressions",
@@ -129,10 +134,20 @@ def run(repo:Path, *, output:Path | None=None,
         result.append(outcome)
     python_count=re.search(r"\b(\d+) passed\b",str(result[0]["test_summary"]))
     ui_count=re.search(r"\b(\d+) scenarios\b",str(result[1]["test_summary"]))
+    expected_nodes={
+        name for gate in selected["exact_scenario_matrix"]["gates"]
+        for name in gate.get("required_test_nodes",[])
+    }
+    passed_nodes={
+        name for name in expected_nodes
+        if re.search(r"(?m)^"+re.escape(name)+r"(?:\[[^\n\]]+\])?\s+PASSED\b",
+                     python_stdout)
+    }
     qualified=bool(
         python_count and ui_count and
         int(python_count.group(1)) >= selected["exact_scenario_matrix"]["required_python_test_count"]
         and int(ui_count.group(1)) >= selected["exact_scenario_matrix"]["required_js_scenarios"]
+        and passed_nodes==expected_nodes
     )
     # Never allow test scripts to be edited while the rehearsal runs. This
     # refuses a passing subprocess executed against different source bytes.
@@ -151,6 +166,8 @@ def run(repo:Path, *, output:Path | None=None,
         "exact_matrix_all_gates_exercised":bool(
             qualified and all(r["exit_code"]==0 for r in result)),
         "scenario_gate_count":selected["exact_scenario_matrix"]["total_gates"],
+        "required_python_tests_individually_passed":len(passed_nodes),
+        "required_python_tests_total":len(expected_nodes),
         "unreal_editor_executed":False,
         "unity_editor_executed":False,
         "post_reopen_fidelity_verified":False,
