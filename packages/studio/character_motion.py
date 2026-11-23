@@ -93,8 +93,15 @@ def trajectory(csir, capture, identifier):
     if hz <= 0 or hz > 240 or start != 0 or count.denominator != 1 or not 1 <= count < MAX_FRAMES:
         raise MotionError("MOVING_ACTOR_REQUIRES_BOUNDED_INTEGRAL_DISPLAY_FRAME_RANGE")
     by_time = {}
+    if not isinstance(capture,dict) or not isinstance(capture.get("samples"),list):
+        raise MotionError("MISSING_SOURCE_ACTOR_CAPTURE")
     for sample in capture["samples"]:
-        time = round(float(sample["time_seconds"]), 8)
+        if not isinstance(sample,dict) or type(sample.get("time_seconds")) not in (int,float):
+            raise MotionError("INVALID_SOURCE_ACTOR_TIMESTAMP")
+        raw_time = sample["time_seconds"]
+        if not math.isfinite(raw_time) or not 0 <= raw_time <= float(end):
+            raise MotionError("OUT_OF_RANGE_SOURCE_ACTOR_TIMESTAMP")
+        time = round(raw_time,8)
         if time in by_time:
             raise MotionError("DUPLICATE_SOURCE_TIMESTAMP")
         by_time[time] = sample
@@ -103,12 +110,23 @@ def trajectory(csir, capture, identifier):
         sample = by_time.get(round(float(start + frame / hz), 8))
         if sample is None:
             raise MotionError("MISSING_EXACT_SOURCE_DISPLAY_FRAME")
-        poses = [e for e in sample["entities"] if e["entity_id"] == identifier]
+        entities = sample.get("entities")
+        if not isinstance(entities,list):
+            raise MotionError("MISSING_SOURCE_ACTOR_FRAME_ENTITIES")
+        poses = [e for e in entities
+                 if isinstance(e,dict) and e.get("entity_id") == identifier]
         if len(poses) != 1:
             raise MotionError("AMBIGUOUS_SOURCE_ACTOR_FRAME")
-        pose = poses[0]["world_transform"]
-        conjugate(pose["rotation_xyzw"])
-        position = csir_plan.canonical_position_to_unreal_cm(pose["position_m"])
+        pose = poses[0].get("world_transform")
+        if not isinstance(pose,dict):
+            raise MotionError("MISSING_SOURCE_ACTOR_WORLD_TRANSFORM")
+        conjugate(pose.get("rotation_xyzw"))
+        raw_pos = pose.get("position_m")
+        if (not isinstance(raw_pos,(tuple,list)) or len(raw_pos)!=3
+                or any(type(v) not in (int,float) or not math.isfinite(v)
+                       for v in raw_pos)):
+            raise MotionError("INVALID_SOURCE_ACTOR_WORLD_POSITION")
+        position = csir_plan.canonical_position_to_unreal_cm(raw_pos)
         rotation = csir_plan.continuous_unreal_rotator(
             previous, csir_plan.canonical_quat_to_unreal_rotator(pose["rotation_xyzw"])
         )
