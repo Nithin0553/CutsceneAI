@@ -21,7 +21,7 @@ def _ready(tmp_path,monkeypatch):
     zip_path.write_bytes(b"source-only ZIP verification is mocked here")
     receipt=tmp_path/"rehearsal.json"
     matrix={"kind":"cutsceneai.studio.phase10_4.matrix",
-            "total_gates":18,"source_sha256":{"cases":"b"*64}}
+            "total_gates":19,"source_sha256":{"cases":"b"*64}}
     plan={"kind":"cutsceneai.studio.phase10_4.synthetic_rehearsal_plan",
           "exact_scenario_matrix":matrix}
     proof={
@@ -59,7 +59,7 @@ def test_10_5_exact_head_and_verified_rehearsal_authorize_only_pre_engine_handof
         expected_sha=SHA,head_reader=lambda _:SHA,
     )
     assert report["status"]=="PRE_ENGINE_SOFTWARE_HANDOFF_READY"
-    assert report["software_checks"]["phase10_4_scenario_count"]==18
+    assert report["software_checks"]["phase10_4_scenario_count"]==19
     assert report["software_checks"]["exact_commit_and_clean_tracked_tree"]=="PASS"
     assert report["production_release_ready"] is False
     assert report["final_freeze_authorized"] is False
@@ -105,13 +105,13 @@ def test_10_5_refuses_stale_suite_hashes(tmp_path,monkeypatch):
     # Independent source matrix now disagrees with the serialized receipt.
     monkeypatch.setattr(freeze.matrix,"verify",lambda _: {
         "kind":"cutsceneai.studio.phase10_4.matrix",
-        "total_gates":18,"source_sha256":{"cases":"b"*64},
+        "total_gates":19,"source_sha256":{"cases":"b"*64},
     })
     monkeypatch.setattr(freeze.rehearsal,"plan",lambda _: {
         "kind":"cutsceneai.studio.phase10_4.synthetic_rehearsal_plan",
         "exact_scenario_matrix":{
             "kind":"cutsceneai.studio.phase10_4.matrix",
-            "total_gates":18,"source_sha256":{"cases":"b"*64},
+            "total_gates":19,"source_sha256":{"cases":"b"*64},
         },
     })
     with pytest.raises(freeze.FreezeError,match="source bytes differ"):
