@@ -103,6 +103,31 @@ def compile_baked_pose(
     if (not identifiers or len(identifiers) > max_bones
             or len(set(identifiers)) != len(identifiers)):
         raise PoseBakeError("Source rig exceeds supported bone budget or contains duplicate identities.")
+    # A source skeletal hierarchy must be a unique, connected acyclic forest.
+    # Otherwise the same bone-local stream can be interpreted against an
+    # unintended target ancestor and falsely appear reference-calibrated.
+    parents = {}
+    for row in bones:
+        ident = row.get("bone_id")
+        parent = row.get("parent_bone_id") or ""
+        if (not isinstance(ident,str) or not ident
+                or not isinstance(parent,str) or parent == ident
+                or (parent and parent not in identifiers)):
+            raise PoseBakeError("Source skeleton contains an unresolved or self parent.")
+        parents[ident] = parent
+    seen,active = set(),set()
+    def visit(bone_id):
+        if bone_id in active:
+            raise PoseBakeError("Source skeleton has a cyclic bone hierarchy.")
+        if bone_id in seen:
+            return
+        active.add(bone_id)
+        if parents[bone_id]:
+            visit(parents[bone_id])
+        active.remove(bone_id)
+        seen.add(bone_id)
+    for bone_id in identifiers:
+        visit(bone_id)
     bone_map = approved.get("bone_map")
     reference = approved.get("reference")
     if (not isinstance(bone_map, dict) or set(bone_map) != set(identifiers)
@@ -191,6 +216,7 @@ def compile_baked_pose(
             "position_keys_cm": [], "rotation_keys_xyzw": [],
             "scale_keys_xyz": [],
         }
+        previous_rotation = None
         for frame in samples:
             pose = frame[source_bone_id]
             actual_p = _vector(pose.get("position_m"), 3, "Source bone local position")
@@ -206,7 +232,15 @@ def compile_baked_pose(
             native["position_keys_cm"].append([
                 target_p[i] + factor*native_delta[i] for i in range(3)
             ])
-            native["rotation_keys_xyzw"].append(list(_to_unreal_quat(target_local_q)))
+            # Quaternion +/- encode the same pose but can interpolate along
+            # opposite arcs if the key signs jump. Preserve the original
+            # physical pose while keeping a continuous native key hemisphere.
+            native_rotation = _to_unreal_quat(target_local_q)
+            if (previous_rotation is not None and
+                    sum(a*b for a,b in zip(previous_rotation,native_rotation)) < 0):
+                native_rotation = tuple(-v for v in native_rotation)
+            previous_rotation = native_rotation
+            native["rotation_keys_xyzw"].append(list(native_rotation))
             native["scale_keys_xyz"].append(list(target_s))
         outputs.append(native)
     artifact = {
