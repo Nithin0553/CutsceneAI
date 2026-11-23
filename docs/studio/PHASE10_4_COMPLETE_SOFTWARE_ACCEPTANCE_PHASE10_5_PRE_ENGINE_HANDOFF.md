@@ -4,7 +4,7 @@
 
 ## Phase 10.4 full synthetic matrix
 
-`packages/studio/studio_phase10_4_matrix.py` holds the exact **18-gate software acceptance matrix**, each requiring real identified test functions from existing source-only Studio integration suites:
+`packages/studio/studio_phase10_4_matrix.py` holds the exact **19-gate software acceptance matrix**, each requiring real identified test functions from existing source-only Studio integration suites:
 
 1. Changed Unity CSIR/source hashes and immutable source receipts
 2. Genuine Unity Play Mode CineTwin request/capture timeout behavior in a mocked editor
@@ -13,8 +13,9 @@
 5. Rehashed source, exact mapping, per-element review and native consent
 6. Wrong Unreal project/level and live native preflight
 7. Native setup failure, partial writes and no unsafe cancel
-8. Restart after submission and once-only native job claim
-9. Interrupted candidate preparation without silent resubmission
+8. Fault-inject a fresh-worker crash after **each of the nine guarded native checkpoints** and reject a second native editor claim or repeated checkpoint
+9. Restart after submission and once-only native job claim
+10. Interrupted candidate preparation without silent resubmission
 10. Distinct-process reopening requirements and false persistence proof refusal
 11. Natural-language agent feedback, approval boundaries and repair budget
 12. Unsupported shader/VFX/audio/events/physics not becoming false success
@@ -31,7 +32,7 @@ The matrix checks the exact names of required Python tests using their parsed AS
 python tools/phase10_4_rehearse.py --output "D:\\Releases\\phase10_4-synthetic-evidence.json"
 ```
 
-The CI workflow runs this command and publishes the immutable receipt named `phase10-4-synthetic-rehearsal-<git-sha>`. The receipt carries the exact suite/module hashes, 18 coverage rows, test outcome hashes, passing/required test counts, and **no native execution/fidelity claim**.
+The CI workflow runs this command and publishes the immutable receipt named `phase10-4-synthetic-rehearsal-<git-sha>`. The receipt carries the exact suite/module hashes, 19 coverage rows, test outcome hashes, passing/required test counts, and **no native execution/fidelity claim**.
 
 **Acceptance condition:** full pytest, all 26 standard/advanced Studio UI scenarios, Ruff/compileall, CED/repo integrity, Windows isolated setup bootstrap, actual ZIP assembly/integrity, exact Phase10.4 matrix and its named negative tests all pass at **one matching SHA**. This is a **source/software rehearsal**. No Unity or Unreal Editor was launched in CI.
 
