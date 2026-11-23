@@ -144,7 +144,8 @@ def verify(archive_path:Path)->dict[str,Any]:
         if any(not x.startswith(TOPDIR) or ".." in Path(x).parts
                for x in names):
             raise BundleError("Unsafe source bundle archive entry.")
-        manifest=json.loads(archive.read(MANIFEST))
+        manifest_bytes=archive.read(MANIFEST)
+        manifest=json.loads(manifest_bytes)
         if (manifest.get("kind")!="cutsceneai.studio.source_distribution_manifest"
                 or manifest.get("engine_binaries_bundled") is not False
                 or not isinstance(manifest.get("files"),dict)):
@@ -158,6 +159,7 @@ def verify(archive_path:Path)->dict[str,Any]:
     return {
         "status":"SOURCE_BUNDLE_HASHES_VERIFIED_ENGINE_PENDING",
         "file_count":len(manifest["files"]),
+        "source_manifest_sha256":digest(manifest_bytes),
         "sha256":digest(archive_path.read_bytes()),
         "full_cutscene_fidelity_verified":False,
     }
