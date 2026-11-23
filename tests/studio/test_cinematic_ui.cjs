@@ -31,6 +31,8 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
   const censusB = unity + '/CutSceneAI/Exports/feature-surface-unity-B.json';
   const invalidCensus = unity + '/CutSceneAI/Exports/feature-surface-unity-foreign.json';
   let availableCensuses = true;
+  let outcomeUnavailable = false;
+  let outcomeDelay = null;
   const level = '/Game/CutSceneAI/L_Trial01';
   const file = unreal + '/CutSceneAI.uproject';
   if(restoredJob || restoredPending) {
@@ -70,7 +72,35 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
       const body = opts.body ? JSON.parse(opts.body) : {};
       requests.push({url,body});
       let result = {};
-      if (url === '/api/status') {
+      if (url.startsWith('/api/final-outcome?')) {
+        const requested = new URL(url,'http://localhost').searchParams;
+        const expected = currentJob?.job_id || '';
+        assert.equal(requested.get('job_id'),expected,
+          'source report must always be explicitly bound to the active job');
+        const offset = Number(requested.get('offset')||0);
+        if (outcomeUnavailable) return {
+          ok:false,status:409,
+          json:async()=>({error:'Native source outcome is not ready yet'}),
+        };
+        if (outcomeDelay) await new Promise(resolve=>{outcomeDelay.resolve=resolve;});
+        const total = 53;
+        const shown = Math.max(0,Math.min(50,total-offset));
+        result={
+          available:true,kind:'cutsceneai.studio.element9_final_outcome',
+          status:'NATIVE_ACCEPTANCE_PENDING_ALL_SOURCE_OCCURRENCES_UNVERIFIED',
+          source_occurrence_count:total,page_offset:offset,page_size:50,
+          source_outcome_counts:{NATIVE_ACCEPTANCE_PENDING:50,MEASURED_DIFFERENCE_REMAINS:3},
+          native_observation_count:0,remaining_manual_remeasurement_budget:2,
+          next_step:'CAPTURE_ACTUAL_SAVED_AND_REOPENED_UNREAL_SEQUENCE',
+          source_page:Array.from({length:shown},(_,i)=>({
+            occurrence_id:'E'+String(offset+i).padStart(5,'0'),
+            source_kind:'track.camera',outcome:'NATIVE_ACCEPTANCE_PENDING',
+            next_step:'REMEASURE_NATIVE_CINE_TWIN',
+            explicit_native_source_action_count:1,
+          })),
+          release_ready:false,full_cutscene_fidelity_verified:false,
+        };
+      } else if (url === '/api/status') {
         result = {token: 'stubtoken', repo_root: 'B:/Research/CutSceneAI/CutsceneAI',
           connection: connected, candidate, active_job: currentJob?.job_id || null,
           one_click_approval: approval,
@@ -193,6 +223,10 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
     writes:()=>writes, copied:()=>copied, pause,finish:()=>{done=true;},
     csir,otherCsir,censusA,censusB,invalidCensus,
     removeCensuses:()=>{availableCensuses=false;},
+    setOutcomeUnavailable:(value)=>{outcomeUnavailable=value;},
+    delayOutcome:()=>{outcomeDelay={resolve:null};},
+    resolveOutcome:()=>{if(outcomeDelay?.resolve)outcomeDelay.resolve();
+      outcomeDelay=null;},
     setAutopilot:(status)=>{autopilot={active:true,status,
       message:'Engine-safe transfer stage: '+status,agent_enabled:true};},
     completeAutopilot:()=>{autopilot={active:true,status:'GENERATED_UNVERIFIED',
@@ -202,6 +236,62 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
         generation_status:'GENERATED_UNVERIFIED',
         status:'GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED',
         generated_sequence:'/Game/Example/LS_Transferred'};done=true;}};
+}
+
+async function testSimpleSourceOutcomeAutoloadAndPagination() {
+  const x=boot({simple:true,restoredJob:'finished'});
+  await x.pause();
+  await x.click('quick-results');
+  assert.match(x.app.innerHTML,/Source transfer report/);
+  assert.match(x.app.innerHTML,/53/);
+  assert.match(x.app.innerHTML,/NATIVE_ACCEPTANCE_PENDING_ALL_SOURCE_OCCURRENCES_UNVERIFIED/);
+  assert.match(x.app.innerHTML,/CAPTURE_ACTUAL_SAVED_AND_REOPENED_UNREAL_SEQUENCE/);
+  assert.match(x.app.innerHTML,/E00000/);
+  assert.match(x.app.innerHTML,/Showing 1–50 of 53/);
+  assert.match(x.app.innerHTML,/data-action="outcome-prev" disabled/);
+  await x.click('outcome-next');
+  assert.match(x.app.innerHTML,/E00050/);
+  assert.match(x.app.innerHTML,/Showing 51–53 of 53/);
+  assert.match(x.app.innerHTML,/data-action="outcome-next" disabled/);
+  assert.ok(x.requests.some(item=>item.url==='/api/final-outcome?job_id='+
+    'a'.repeat(32)+'&offset=50'));
+  await x.click('outcome-prev');
+  assert.match(x.app.innerHTML,/E00000/);
+  assert.doesNotMatch(x.app.innerHTML,/Verified Release Transfer/);
+}
+
+async function testSimpleSourceOutcomeMissingEvidenceAndExplicitRetry() {
+  const x=boot({simple:true,restoredJob:'finished'});
+  x.setOutcomeUnavailable(true);
+  await x.pause();
+  await x.click('quick-results');
+  assert.match(x.app.innerHTML,/Source report unavailable/);
+  assert.match(x.app.innerHTML,/Native source outcome is not ready yet/);
+  assert.doesNotMatch(x.app.innerHTML,/E00000/);
+  const old=x.calls.filter(url=>url.startsWith('/api/final-outcome?')).length;
+  await x.poll();
+  await x.poll();
+  assert.equal(x.calls.filter(url=>url.startsWith('/api/final-outcome?')).length,old,
+    'failed native evidence cannot cause an uncontrolled retry each status poll');
+  x.setOutcomeUnavailable(false);
+  await x.click('outcome-refresh');
+  assert.match(x.app.innerHTML,/E00000/);
+  assert.match(x.app.innerHTML,/Source elements accounted for/);
+}
+
+async function testSimpleOutcomeCannotLeakWhenRunChanges() {
+  const x=boot({simple:true});
+  await x.pause();
+  x.completeAutopilot();
+  await x.poll();
+  await x.click('quick-results');
+  assert.match(x.app.innerHTML,/E00000/);
+  x.setAutopilot('BLOCKED');
+  await x.poll();
+  await x.click('quick-results');
+  assert.doesNotMatch(x.app.innerHTML,/E00000/,
+    'source reports from the earlier successful run must not leak to a blocked run');
+  assert.doesNotMatch(x.app.innerHTML,/Source elements accounted for/);
 }
 
 async function testOneClick() {
@@ -722,6 +812,9 @@ async function testAdvancedJobChangeInvalidatesDiagnostics() {
 }
 
 (async()=>{
+  await testSimpleSourceOutcomeAutoloadAndPagination();
+  await testSimpleSourceOutcomeMissingEvidenceAndExplicitRetry();
+  await testSimpleOutcomeCannotLeakWhenRunChanges();
   await testSimpleBlockedAutopilotCannotReuseOldNativeResult();
   await testAdvancedJobChangeInvalidatesDiagnostics();
   await testSimpleNewTransferFromCompletedProjects();
