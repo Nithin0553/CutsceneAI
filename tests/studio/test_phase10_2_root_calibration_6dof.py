@@ -60,7 +60,7 @@ def test_rotating_world_root_solved_from_local_animated_root_at_all_frames():
     keys=result["action"]["keys"]
     assert keys[0]["location_cm"]==pytest.approx([0,-100,0])
     assert keys[3]["location_cm"]==pytest.approx([0,0,500])
-    assert len(set(tuple(k["rotation_rpy_degrees"]) for k in keys))==4
+    assert len({tuple(k["rotation_rpy_degrees"]) for k in keys})==4
     assert result["native_key_generation_executed"] is False
     assert result["target_reopened_source_root_comparison_verified"] is False
 
