@@ -5,6 +5,7 @@ These unit tests cover report/auth semantics without launching a model/editor.
 """
 from __future__ import annotations
 
+import io
 import json
 import sys
 from pathlib import Path
@@ -28,6 +29,7 @@ def _source(tmp_path):
 class FakeProcess:
     def __init__(self):
         self.stopped=False
+        self.stdout=io.BytesIO(b"Studio temporary output\n")
     def poll(self):
         return 0 if self.stopped else None
     def terminate(self):
@@ -47,6 +49,8 @@ def _mock(tmp_path,monkeypatch,*,connected=False,post_code=403):
         assert "--workspace" in args
         assert kwargs["env"]["CUTSCENEAI_MODEL_PROVIDER"]=="ollama"
         assert kwargs["stdin"]==smoke.subprocess.DEVNULL
+        assert kwargs["stdout"]==smoke.subprocess.PIPE
+        assert kwargs["stderr"]==smoke.subprocess.STDOUT
         return process
     monkeypatch.setattr(smoke.subprocess,"Popen",spawn)
     calls=[]
@@ -109,3 +113,35 @@ def test_startup_smoke_requires_full_distribution_and_bounded_timeout(
     root=_source(tmp_path)
     with pytest.raises(smoke.SmokeError,match="between 2 and 120"):
         smoke.run(root,timeout_seconds=0)
+
+
+def test_smoke_never_creates_windows_locked_startup_log(tmp_path,monkeypatch):
+    """Windows cannot delete temp startup.log when a descendant owns its handle."""
+    root,process,_=_mock(tmp_path,monkeypatch)
+    original=smoke.tempfile.TemporaryDirectory
+    checked=[]
+
+    class NoLogTemporaryDirectory:
+        def __init__(self,*args,**kwargs):
+            self.context=original(*args,**kwargs)
+        def __enter__(self):
+            self.path=Path(self.context.__enter__())
+            return str(self.path)
+        def __exit__(self,*args):
+            checked.append(not (self.path/"startup.log").exists())
+            return self.context.__exit__(*args)
+
+    monkeypatch.setattr(smoke.tempfile,"TemporaryDirectory",NoLogTemporaryDirectory)
+    assert smoke.run(root,timeout_seconds=3)[
+        "status"]=="LIVE_LOCALHOST_AND_UI_SMOKE_PASSED_ENGINE_UNVERIFIED"
+    assert checked==[True]
+    assert process.stopped
+    assert process.stdout.closed
+
+
+def test_smoke_pipe_is_cleaned_up_when_http_auth_rejects(tmp_path,monkeypatch):
+    root,process,_=_mock(tmp_path,monkeypatch,post_code=200)
+    with pytest.raises(smoke.SmokeError,match="session token"):
+        smoke.run(root,timeout_seconds=3)
+    assert process.stopped
+    assert process.stdout.closed

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
+from collections import deque
 import os
 import socket
 import subprocess
@@ -65,109 +67,141 @@ def run(repo: Path, *, python: str = sys.executable,
         raise SmokeError("Smoke timeout must be between 2 and 120 seconds.")
     with tempfile.TemporaryDirectory(prefix="cutsceneai-startup-") as temp:
         workspace = Path(temp) / "runs"
-        log_path = Path(temp) / "startup.log"
         port = _free_local_port()
         url = f"http://127.0.0.1:{port}"
         env = os.environ.copy()
         # This checks host bootstrap only and never sends a model request.
         env["CUTSCENEAI_MODEL_PROVIDER"] = "ollama"
+        # Never place a subprocess stdout log inside a TemporaryDirectory:
+        # Windows cannot unlink startup.log while another process still owns
+        # the inherited OS file handle (WinError 32). A bounded pipe reader
+        # retains a small diagnostic tail without leaving any on-disk log.
         process = None
+        output_tail = deque(maxlen=64)
+        drain_thread = None
+
+        def drain_stdout():
+            stream = process.stdout
+            if stream is None:
+                return
+            try:
+                for line in iter(stream.readline, b""):
+                    output_tail.append(line.decode("utf-8", errors="replace")[-2048:])
+            except (OSError, ValueError):
+                pass
+
+        def output_excerpt():
+            return "".join(output_tail)[-1400:]
+
         try:
-            with log_path.open("wb") as log:
-                process = subprocess.Popen(
-                    [python, str(root / "tools/studio_local_bridge.py"),
-                     "--repo", str(root),
-                     "--web", str(root / "apps/studio-web"),
-                     "--workspace", str(workspace),
-                     "--port", str(port)],
-                    cwd=root, env=env, stdin=subprocess.DEVNULL,
-                    stdout=log, stderr=subprocess.STDOUT,
-                )
-                deadline = time.monotonic() + timeout_seconds
-                status = None
-                while time.monotonic() < deadline:
-                    if process.poll() is not None:
-                        raise SmokeError(
-                            "Studio exited before the localhost health check: "
-                            + log_path.read_text(encoding="utf-8", errors="replace")[-1400:]
-                        )
-                    try:
-                        code, raw = _fetch(url + "/api/status")
-                        if code == 200:
-                            status = json.loads(raw)
-                            break
-                    except (URLError, TimeoutError, ConnectionError, ValueError):
-                        pass
-                    time.sleep(0.2)
-                if status is None:
+            process = subprocess.Popen(
+                [python, str(root / "tools/studio_local_bridge.py"),
+                 "--repo", str(root),
+                 "--web", str(root / "apps/studio-web"),
+                 "--workspace", str(workspace),
+                 "--port", str(port)],
+                cwd=root, env=env, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+            drain_thread = threading.Thread(
+                target=drain_stdout,
+                name="studio-smoke-output-drain",
+                daemon=True,
+            )
+            drain_thread.start()
+            deadline = time.monotonic() + timeout_seconds
+            status = None
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
                     raise SmokeError(
-                        "Studio local server did not become healthy: "
-                        + log_path.read_text(encoding="utf-8", errors="replace")[-1400:]
+                        "Studio exited before the localhost health check: "
+                        + output_excerpt()
                     )
-                if status.get("connected") is not False:
-                    raise SmokeError("Isolated smoke workspace falsely has a source connection.")
-                if not isinstance(status.get("token"), str) or len(status["token"]) < 16:
-                    raise SmokeError("Localhost session token is missing.")
-                page_code, page = _fetch(url + "/")
-                if page_code != 200 or b"CutSceneAI" not in page:
-                    raise SmokeError("Studio browser entrypoint is unavailable.")
-                js_code, js = _fetch(url + "/cinematic.js")
-                if js_code != 200 or len(js) < 2048:
-                    raise SmokeError("The standard Studio browser bundle is missing.")
-                report_code, report_raw = _fetch(url + "/api/release-readiness")
-                report = json.loads(report_raw)
-                if report_code != 200 or report.get("release_ready") is not False:
-                    raise SmokeError("Fresh Studio workspace falsely claims release readiness.")
-                flow_code, flow_raw = _fetch(url + "/api/flow-diagnostics")
-                flow = json.loads(flow_raw)
-                if (flow_code != 200
-                        or flow.get("native_replay_authorized") is not False
-                        or flow.get("source_and_native_full_fidelity_verified") is not False):
-                    raise SmokeError("Fresh workflow diagnostics authorized native replay.")
-                post_code, _ = _fetch(
-                    url + "/api/connect", method="POST", body=b"{}",
-                    headers={"Content-Type": "application/json"},
-                )
-                if post_code != 403:
-                    raise SmokeError("Local session token was not required for mutations.")
-                hostile_code, _ = _fetch(
-                    url + "/api/status",headers={"Host": "untrusted.example"},
-                )
-                if hostile_code != 403:
-                    raise SmokeError("Studio HTTP service accepted a foreign Host.")
-                if any(workspace.glob("active-job.json")) or any(workspace.glob("jobs/*.json")):
-                    raise SmokeError("Startup smoke unexpectedly queued a native job.")
-                result = {
-                    "kind": "cutsceneai.studio.phase10_5.localhost_startup_smoke",
-                    "status": "LIVE_LOCALHOST_AND_UI_SMOKE_PASSED_ENGINE_UNVERIFIED",
-                    "checks": {
-                        "actual_server_process_started": "PASS",
-                        "isolated_workspace_no_source": "PASS",
-                        "session_token_required": "PASS",
-                        "html_and_js_available": "PASS",
-                        "source_bound_workflow_diagnostics": "PASS",
-                        "no_forged_release_readiness": "PASS",
-                        "foreign_host_rejected": "PASS",
-                        "no_native_job_created": "PASS",
-                    },
-                    "source_distribution_sha256": source_sha,
-                    "source_manifest_sha256": source_manifest_sha,
-                    "portable_source_manifest_sha256": portable_source_sha,
-                    "native_editor_started": False,
-                    "unity_editor_started": False,
-                    "model_invoked": False,
-                    "full_cutscene_fidelity_verified": False,
-                    "production_release_ready": False,
-                }
-                return result
-        finally:
-            if process is not None and process.poll() is None:
-                process.terminate()
                 try:
-                    process.wait(timeout=6)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=6)
+                    code, raw = _fetch(url + "/api/status")
+                    if code == 200:
+                        status = json.loads(raw)
+                        break
+                except (URLError, TimeoutError, ConnectionError, ValueError):
+                    pass
+                time.sleep(0.2)
+            if status is None:
+                raise SmokeError(
+                    "Studio local server did not become healthy: "
+                    + output_excerpt()
+                )
+            if status.get("connected") is not False:
+                raise SmokeError("Isolated smoke workspace falsely has a source connection.")
+            if not isinstance(status.get("token"), str) or len(status["token"]) < 16:
+                raise SmokeError("Localhost session token is missing.")
+            page_code, page = _fetch(url + "/")
+            if page_code != 200 or b"CutSceneAI" not in page:
+                raise SmokeError("Studio browser entrypoint is unavailable.")
+            js_code, js = _fetch(url + "/cinematic.js")
+            if js_code != 200 or len(js) < 2048:
+                raise SmokeError("The standard Studio browser bundle is missing.")
+            report_code, report_raw = _fetch(url + "/api/release-readiness")
+            report = json.loads(report_raw)
+            if report_code != 200 or report.get("release_ready") is not False:
+                raise SmokeError("Fresh Studio workspace falsely claims release readiness.")
+            flow_code, flow_raw = _fetch(url + "/api/flow-diagnostics")
+            flow = json.loads(flow_raw)
+            if (flow_code != 200
+                    or flow.get("native_replay_authorized") is not False
+                    or flow.get("source_and_native_full_fidelity_verified") is not False):
+                raise SmokeError("Fresh workflow diagnostics authorized native replay.")
+            post_code, _ = _fetch(
+                url + "/api/connect", method="POST", body=b"{}",
+                headers={"Content-Type": "application/json"},
+            )
+            if post_code != 403:
+                raise SmokeError("Local session token was not required for mutations.")
+            hostile_code, _ = _fetch(
+                url + "/api/status",headers={"Host": "untrusted.example"},
+            )
+            if hostile_code != 403:
+                raise SmokeError("Studio HTTP service accepted a foreign Host.")
+            if any(workspace.glob("active-job.json")) or any(workspace.glob("jobs/*.json")):
+                raise SmokeError("Startup smoke unexpectedly queued a native job.")
+            result = {
+                "kind": "cutsceneai.studio.phase10_5.localhost_startup_smoke",
+                "status": "LIVE_LOCALHOST_AND_UI_SMOKE_PASSED_ENGINE_UNVERIFIED",
+                "checks": {
+                    "actual_server_process_started": "PASS",
+                    "isolated_workspace_no_source": "PASS",
+                    "session_token_required": "PASS",
+                    "html_and_js_available": "PASS",
+                    "source_bound_workflow_diagnostics": "PASS",
+                    "no_forged_release_readiness": "PASS",
+                    "foreign_host_rejected": "PASS",
+                    "no_native_job_created": "PASS",
+                },
+                "source_distribution_sha256": source_sha,
+                "source_manifest_sha256": source_manifest_sha,
+                "portable_source_manifest_sha256": portable_source_sha,
+                "native_editor_started": False,
+                "unity_editor_started": False,
+                "model_invoked": False,
+                "full_cutscene_fidelity_verified": False,
+                "production_release_ready": False,
+            }
+            return result
+        finally:
+            if process is not None:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=6)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=6)
+                if drain_thread is not None:
+                    drain_thread.join(timeout=2)
+                # Do not wait indefinitely for grandchildren that inherited
+                # stdout. They cannot lock a temp log because no file exists.
+                if (process.stdout is not None
+                        and (drain_thread is None or not drain_thread.is_alive())):
+                    process.stdout.close()
 
 
 def main(argv=None) -> int:
