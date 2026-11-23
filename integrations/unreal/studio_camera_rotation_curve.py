@@ -226,3 +226,44 @@ def realize(api:Any, sequence:Any, section:Any, action:dict, plan:dict) -> dict:
                 raise CameraCurveError(
                     "Native camera rotation curve rollback unverified."
                 ) from exc
+
+
+def realize_from_original(
+    api:Any, sequence:Any, staged_actors:list, source:dict,
+    observed:dict, action:dict, approval:dict, *,
+    source_entity_id:str, source_camera_name:str, target_actor_label:str,
+    duration_frames:int, display_rate:dict,
+) -> dict:
+    """Recheck ORIGINAL source/native frames and the exact live Unreal owner.
+
+    This is the safe direct entry point for the reviewed 3-axis adapter.
+    There is deliberately no model/AI dispatch or generic auto-repair.
+    """
+    if (not isinstance(source_camera_name,str) or not source_camera_name
+            or not isinstance(staged_actors,list) or len(staged_actors)>256
+            or not isinstance(target_actor_label,str) or not target_actor_label
+            or action.get("entity_name")!=source_camera_name
+            or action.get("actor_label")!=target_actor_label):
+        raise CameraCurveError("Original CineCamera source/staged identity is ambiguous.")
+    proof=compile_rotation_curve(
+        action,source,observed,approval,source_id=source_entity_id,
+        target_label=target_actor_label,duration_frames=duration_frames,
+        display_rate=display_rate,
+    )
+    native_owner_proof={
+        "source_camera_name":source_camera_name,
+        "target_actor_label":target_actor_label,
+    }
+    # The existing camera repair owner checker verifies exact staged UObject
+    # path, live binding, only absolute source transform section, nine-channel
+    # ownership, attachment absence, unmixed shot/time tracks and frame range.
+    try:
+        section=native._live_owner(
+            api,sequence,staged_actors,native_owner_proof,action,
+        )
+    except (native.AnimatedCameraNativeError,
+            AttributeError,RuntimeError,TypeError,ValueError) as exc:
+        raise CameraCurveError(
+            "Live Unreal camera binding/section is not original source-owned."
+        ) from exc
+    return realize(api,sequence,section,action,proof)
