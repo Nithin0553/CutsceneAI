@@ -25,6 +25,7 @@ def _fixture(tmp_path):
         "native_replay_contract":"PASS_NO_REPLAY",
         "phase10_4_scenario_count":19,
         "source_bundle_sha256":hashlib.sha256(bundle.read_bytes()).hexdigest(),
+        "source_manifest_sha256":"c"*64,
     }
     preflight={
         "kind":"cutsceneai.studio.phase10_5.pre_engine_freeze_preflight",
