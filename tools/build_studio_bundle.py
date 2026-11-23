@@ -27,6 +27,11 @@ SUFFIXES = {
 MAX_TOTAL=96*1024*1024
 MAX_FILE=8*1024*1024
 MAX_COUNT=2600
+# Git checkout may use CRLF on Windows. Preserve actual archive SHA256 for
+# installation integrity, but compare a second canonical manifest using only
+# CRLF -> LF normalization for explicitly allowed text-source extensions.
+BINARY_SUFFIXES={".png",".jpg",".jpeg"}
+
 TOPDIR="CutSceneAI-Studio/"
 MANIFEST=TOPDIR+"studio-distribution-manifest.json"
 
@@ -81,6 +86,9 @@ def _files(repo:Path)->list[tuple[str,bytes]]:
     for key in (
         "tools/install_studio.ps1","tools/start_studio.ps1",
         "tools/studio_local_bridge.py","tools/studio_companion_install.py",
+        "tools/studio_startup_smoke.py","tools/phase10_5_freeze_preflight.py",
+        "tools/launch_studio.ps1",
+        "tools/phase10_5_package_acceptance.py",
         "packages/studio/studio_phase10_3_flow.py",
         "apps/studio-web/cinematic.js",
         "integrations/unity/com.cutsceneai.extractor/package.json",
@@ -141,20 +149,32 @@ def verify(archive_path:Path)->dict[str,Any]:
         if any(not x.startswith(TOPDIR) or ".." in Path(x).parts
                for x in names):
             raise BundleError("Unsafe source bundle archive entry.")
-        manifest=json.loads(archive.read(MANIFEST))
+        manifest_bytes=archive.read(MANIFEST)
+        manifest=json.loads(manifest_bytes)
         if (manifest.get("kind")!="cutsceneai.studio.source_distribution_manifest"
                 or manifest.get("engine_binaries_bundled") is not False
                 or not isinstance(manifest.get("files"),dict)):
             raise BundleError("Source bundle manifest is invalid.")
         if set(names)!={MANIFEST}|{TOPDIR+name for name in manifest["files"]}:
             raise BundleError("Undocumented source artifact found in archive.")
+        portable_inventory={}
         for relative,row in manifest["files"].items():
             payload=archive.read(TOPDIR+relative)
             if len(payload)!=row["size_bytes"] or digest(payload)!=row["sha256"]:
                 raise BundleError("Source distribution asset hash mismatch: "+relative)
+            if Path(relative).suffix.lower() not in BINARY_SUFFIXES:
+                payload=payload.replace(b"\r\n",b"\n")
+            portable_inventory[relative]={
+                "sha256":digest(payload),
+                "size_bytes":len(payload),
+            }
+    portable_bytes=json.dumps(portable_inventory,sort_keys=True,
+                              separators=(",",":"),ensure_ascii=False).encode("utf-8")
     return {
         "status":"SOURCE_BUNDLE_HASHES_VERIFIED_ENGINE_PENDING",
         "file_count":len(manifest["files"]),
+        "source_manifest_sha256":digest(manifest_bytes),
+        "portable_source_manifest_sha256":digest(portable_bytes),
         "sha256":digest(archive_path.read_bytes()),
         "full_cutscene_fidelity_verified":False,
     }
