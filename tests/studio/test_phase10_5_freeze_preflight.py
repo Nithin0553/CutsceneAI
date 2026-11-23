@@ -42,9 +42,9 @@ def _ready(tmp_path,monkeypatch):
         ],
     }
     receipt.write_text(json.dumps(proof),encoding="utf-8")
-    monkeypatch.setattr(freeze.bundle,"verify",lambda _: {
+    monkeypatch.setattr(freeze.bundle,"verify_exact_checkout",lambda _root,_archive: {
         "status":"SOURCE_BUNDLE_HASHES_VERIFIED_ENGINE_PENDING",
-        "sha256":"e"*64,"file_count":600,
+        "sha256":"e"*64,"file_count":600,"exact_checked_out_source_verified":True,
     })
     monkeypatch.setattr(freeze.rehearsal,"plan",lambda _:plan)
     monkeypatch.setattr(freeze.matrix,"verify",lambda _:matrix)
@@ -121,7 +121,7 @@ def test_10_5_refuses_stale_suite_hashes(tmp_path,monkeypatch):
 
 def test_10_5_refuses_invalid_bundle_verification(tmp_path,monkeypatch):
     root,zip_path,receipt,_=_ready(tmp_path,monkeypatch)
-    monkeypatch.setattr(freeze.bundle,"verify",lambda _: {
+    monkeypatch.setattr(freeze.bundle,"verify_exact_checkout",lambda _root,_archive: {
         "status":"SOURCE_BUNDLE_HASHES_FAILED",
     })
     with pytest.raises(freeze.FreezeError,match="Distribution source"):
