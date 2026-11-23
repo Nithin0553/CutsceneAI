@@ -41,6 +41,7 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
                 "restore_static_character_actor_yaw",
                 "restore_single_animated_camera_position_key",
                 "restore_two_animated_camera_position_keys",
+                "restore_single_animated_camera_yaw_key",
             }
             or request.get("sequence_path") != job["sequence_path"]
             or request.get("expected_project") != job["expected_project"]
@@ -133,6 +134,11 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
     if request["strategy"] == "restore_two_animated_camera_position_keys":
         import studio_camera_key_repair
         return studio_camera_key_repair.attempt_two(
+            api, workspace, job, request,
+        )
+    if request["strategy"] == "restore_single_animated_camera_yaw_key":
+        import studio_camera_key_repair
+        return studio_camera_key_repair.attempt_yaw(
             api, workspace, job, request,
         )
     if request["strategy"] == "restore_static_character_actor_yaw":
