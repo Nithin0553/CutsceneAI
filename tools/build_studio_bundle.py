@@ -82,6 +82,7 @@ def _files(repo:Path)->list[tuple[str,bytes]]:
         "tools/install_studio.ps1","tools/start_studio.ps1",
         "tools/studio_local_bridge.py","tools/studio_companion_install.py",
         "tools/studio_startup_smoke.py","tools/phase10_5_freeze_preflight.py",
+        "tools/launch_studio.ps1",
         "packages/studio/studio_phase10_3_flow.py",
         "apps/studio-web/cinematic.js",
         "integrations/unity/com.cutsceneai.extractor/package.json",
