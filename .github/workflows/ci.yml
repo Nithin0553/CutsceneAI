@@ -25,6 +25,17 @@ jobs:
         run: python -m pytest -q
       - name: Check Studio JavaScript syntax
         run: node --check apps/studio-web/app.js && node --check apps/studio-web/cinematic.js && node tests/studio/test_cinematic_ui.cjs
+      - name: Build and independently verify source-only workstation distribution
+        run: |
+          python tools/build_studio_bundle.py --output "$RUNNER_TEMP/CutSceneAI-Studio-source.zip"
+          python tools/build_studio_bundle.py --output "$RUNNER_TEMP/CutSceneAI-Studio-source.zip" --verify
+      - name: Publish verified Studio source distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-source-bundle-${{ github.sha }}
+          path: ${{ runner.temp }}/CutSceneAI-Studio-source.zip
+          if-no-files-found: error
+          retention-days: 30
       - name: Phase 10.4 source-only end-to-end interruption rehearsal
         run: python tools/phase10_4_rehearse.py --output "$RUNNER_TEMP/phase10_4-rehearsal.json"
       - name: Upload Phase 10.4 synthetic rehearsal evidence
