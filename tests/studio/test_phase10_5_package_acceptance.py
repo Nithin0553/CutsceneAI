@@ -42,6 +42,7 @@ def _fixture(tmp_path):
         "status":"LIVE_LOCALHOST_AND_UI_SMOKE_PASSED_ENGINE_UNVERIFIED",
         "source_distribution_sha256":hashlib.sha256(bundle.read_bytes()).hexdigest(),
         "source_manifest_sha256":"c"*64,
+        "portable_source_manifest_sha256":"d"*64,
         "checks":{item:"PASS" for item in contract.STARTUP_CHECKS},
         "native_editor_started":False,"unity_editor_started":False,
         "model_invoked":False,"full_cutscene_fidelity_verified":False,
@@ -139,7 +140,19 @@ def test_mismatched_handoff_commit_is_rejected(tmp_path):
 
 def test_packaged_windows_source_zip_different_from_linux_is_rejected(tmp_path):
     bundle,docs,_,smoke,_=_fixture(tmp_path)
-    smoke["source_manifest_sha256"]="f"*64
+    smoke["portable_source_manifest_sha256"]="f"*64
     docs[1].write_text(json.dumps(smoke),encoding="utf-8")
-    with pytest.raises(contract.PackageAcceptanceError,match="source manifest differs"):
+    with pytest.raises(contract.PackageAcceptanceError,match="normalized source content differs"):
         _check(bundle,docs)
+
+
+def test_raw_windows_zip_compression_can_differ_when_source_files_match(tmp_path):
+    bundle,docs,_,smoke,_=_fixture(tmp_path)
+    smoke["source_distribution_sha256"]="e"*64
+    smoke["source_manifest_sha256"]="f"*64
+    # Both archives are independently verified by preceding stages; only
+    # their uncompressed canonical source content must be equal across OSes.
+    docs[1].write_text(json.dumps(smoke),encoding="utf-8")
+    result=_check(bundle,docs)
+    assert result["status"]=="SOFTWARE_PACKAGE_READY_FOR_ENGINE_TEST"
+    assert result["verified"]["portable_source_manifest_sha256"]=="d"*64
