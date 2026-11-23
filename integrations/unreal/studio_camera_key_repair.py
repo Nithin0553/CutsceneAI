@@ -71,7 +71,8 @@ def _read_many_channels(api: Any, section: Any, prepared: dict,
             or any(k.get("frame") != i for i, k in enumerate(keys))):
         raise AnimatedCameraNativeError("Original CineTwin evaluated camera frame grid invalid.")
     if (not isinstance(repairs, list)
-            or len(repairs) not in ((1,) if yaw_only else (1, 2))
+            or len(repairs) not in (range(1,evidence.MAX_MULTI_YAW_KEYS+1)
+                                    if yaw_only else (1, 2))
             or any(not isinstance(row, dict) for row in repairs)):
         raise AnimatedCameraNativeError("Only one or exactly two measured camera keys are supported.")
     exceptions = {}
@@ -84,6 +85,13 @@ def _read_many_channels(api: Any, section: Any, prepared: dict,
                 or (frame, axis) in exceptions):
             raise AnimatedCameraNativeError("Native camera exception is not one unique interior XYZ key.")
         exceptions[(frame, axis)] = row
+    if yaw_only and len(repairs)>1:
+        yaw_frames=[row["source_key_frame"] for row in repairs]
+        if (yaw_frames!=sorted(set(yaw_frames))
+                or any(b-a<2 for a,b in zip(yaw_frames,yaw_frames[1:]))):
+            raise AnimatedCameraNativeError(
+                "Animated camera yaw repair requires unique sorted nonadjacent frames."
+            )
     if len(repairs) == 2:
         first, second = repairs
         if (first["native_channel_index"] != second["native_channel_index"]
