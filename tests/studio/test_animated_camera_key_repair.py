@@ -162,6 +162,8 @@ class FakeKey:
         return NS(frame_number=NS(value=self.frame),sub_frame=0.)
     def get_value(self):
         return self.value
+    def get_interpolation_mode(self):
+        return "RCIM_LINEAR"
     def set_value(self,new):
         self.value=float(new)
         if self.fail_after:
@@ -193,9 +195,14 @@ class FakeSection:
         self.channels.extend(FakeChannel() for _ in range(3))
     def get_all_channels(self):
         return list(self.channels)
+    def get_is_active(self):
+        return True
+    def get_blend_type(self):
+        return "ABSOLUTE"
 
 
-API=NS(MovieSceneTimeUnit=NS(DISPLAY_RATE="DISPLAY_RATE"))
+API=NS(MovieSceneTimeUnit=NS(DISPLAY_RATE="DISPLAY_RATE"),
+       RichCurveInterpMode=NS(RCIM_LINEAR="RCIM_LINEAR"))
 
 
 def _native():
@@ -278,6 +285,7 @@ def test_native_single_key_transaction_confirms_save_and_does_not_retry(monkeypa
     monkeypatch.setattr(native,"_load",read)
     monkeypatch.setattr(native,"_live_owner",lambda *args:section)
     api=NS(load_asset=lambda s: NS(),MovieSceneTimeUnit=API.MovieSceneTimeUnit,
+           RichCurveInterpMode=API.RichCurveInterpMode,
            EditorAssetLibrary=NS(save_loaded_asset=lambda s:True))
     old=section.channels[1].keys[2]
     result=native.attempt(api,tmp_path,job,request)
@@ -339,6 +347,7 @@ def test_mutate_then_throw_native_key_setter_rolls_back(monkeypatch,tmp_path):
     with pytest.raises(RuntimeError,match="native setter"):
         native.attempt(NS(load_asset=lambda s:NS(),
                           MovieSceneTimeUnit=API.MovieSceneTimeUnit,
+                          RichCurveInterpMode=API.RichCurveInterpMode,
                           EditorAssetLibrary=NS(save_loaded_asset=lambda s:True)),
                        tmp_path,job,req)
     assert key.get_value()==405
@@ -362,7 +371,7 @@ def test_native_camera_binding_must_be_original_staged_uobject_not_label_only():
         def get_attach_parent_actor(self):
             return self.parent
         def get_cine_camera_component(self):
-            return NS()
+            return NS(get_path_name=lambda:path+".CameraComponent")
     class FakeTrack:
         def __init__(self,name,section=None):
             self.name=name
@@ -385,7 +394,11 @@ def test_native_camera_binding_must_be_original_staged_uobject_not_label_only():
         get_tracks=lambda seq:list(roots),
         locate_bound_objects=lambda seq,b,w:[b.owner],
     )
+    sections=NS(get_start_frame=lambda sec:NS(value=0),
+                get_end_frame=lambda sec:NS(value=5))
     api=NS(MovieSceneSequenceExtensions=ext,
+           MovieSceneSectionExtensions=sections,
+           MovieSceneBlendType=NS(ABSOLUTE="ABSOLUTE"),
            UnrealEditorSubsystem="world",
            EditorActorSubsystem="actor",
            get_editor_subsystem=lambda cls:native_world
