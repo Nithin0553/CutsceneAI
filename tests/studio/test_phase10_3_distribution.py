@@ -97,3 +97,20 @@ def test_distribution_rejects_extra_or_missing_manifest_entries(tmp_path):
         zipfile_writer.writestr("CutSceneAI-Studio/unlisted.py","malicious")
     with pytest.raises(bundle.BundleError,match="Undocumented"):
         bundle.verify(archive)
+
+
+def test_distribution_archive_must_match_exact_checkout_for_freeze(tmp_path):
+    repo=_repo(tmp_path)
+    archive=tmp_path/"release.zip"
+    bundle.build(repo,archive)
+    ok=bundle.verify_exact_checkout(repo,archive)
+    assert ok["exact_checked_out_source_verified"] is True
+    (repo/"packages/studio/module_0.py").write_text(
+        "value = 'different source revision'\n",encoding="utf-8",
+    )
+    # ZIP remains internally valid but no longer represents this checkout.
+    assert bundle.verify(archive)["status"]==(
+        "SOURCE_BUNDLE_HASHES_VERIFIED_ENGINE_PENDING"
+    )
+    with pytest.raises(bundle.BundleError,match="exact checked-out"):
+        bundle.verify_exact_checkout(repo,archive)
