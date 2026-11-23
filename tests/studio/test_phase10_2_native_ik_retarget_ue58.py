@@ -36,10 +36,6 @@ class Inputs:
 
 def _fake(*,wrong=False):
     skeleton=Asset("/Game/Rigs/SK_Target","Skeleton")
-    imported=Asset(
-        "/Game/Anim/AS_Walk" if wrong else "/Game/Anim/AS_Source",
-        "AnimSequence",skeleton,
-    )
     generated=Asset(
         "/Game/Out/AS_Walk" if not wrong else "/Game/Out/WrongName",
         "AnimSequence",skeleton,
