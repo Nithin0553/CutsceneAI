@@ -162,3 +162,13 @@ def test_phase10_2_mismatched_capture_identity_and_forged_report_rejected():
     result=audit.audit(csir,mapping,plan,source_capture=capture)
     result["workstreams"][0]["work_area_fully_complete"]=True
     assert not audit.verify(result,csir,mapping,plan,source_capture=capture)
+
+
+def test_phase10_2_manifest_matches_actual_langgraph_and_native_dispatch():
+    import studio_agent_graph as graph
+    assert set(audit.ADAPTER_SCOPE)==graph.ALLOWED_STRATEGIES-{"report_only"}
+    dispatch=(ROOT/"integrations"/"unreal"/"studio_agent_executor.py").read_text(
+        encoding="utf-8"
+    )
+    assert all('"' + strategy + '"' in dispatch
+               for strategy in audit.ADAPTER_SCOPE)
