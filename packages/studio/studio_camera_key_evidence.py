@@ -264,6 +264,30 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
             drift = observed_cm[axis] - source_cm[axis]
             if abs(drift) > OTHER_POSITION_CM:
                 differing.append((frame,axis,drift,observed_cm[axis],source_cm[axis]))
+    if yaw_key:
+        if (not all_source_rotations
+                or max(abs(yaw._wrap(r[2]-all_source_rotations[0][2]))
+                       for r in all_source_rotations) < 2.):
+            raise AnimatedCameraKeyError(
+                "Source camera yaw is not animated; static adapter owns it."
+            )
+        if len(yaw_differences) != 1:
+            raise AnimatedCameraKeyError(
+                "Exactly one independently measured camera yaw key discrepancy required."
+            )
+        frame,delta,observed,expected = yaw_differences[0]
+        if (frame in (0,plan["duration_frames"])
+                or not MIN_YAW_DEGREES <= abs(delta) <= MAX_YAW_DEGREES):
+            raise AnimatedCameraKeyError(
+                "Camera yaw key must be an interior bounded 3-30 degree correction."
+            )
+        return {
+            "source_key_frame":frame,"native_channel_index":5,
+            "native_key_value_before_degrees":round(observed,6),
+            "source_key_value_degrees":round(expected,6),
+            "native_source_yaw_error_degrees":round(abs(delta),6),
+            "sample_count":len(action["keys"]),
+        }
     if max(math.dist(v,all_source_positions[0])
            for v in all_source_positions) < 10.:
         raise AnimatedCameraKeyError(
@@ -317,7 +341,8 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
     }
 
 
-def build(workspace: Path, job: dict[str,Any], *, two: bool = False) -> dict[str,Any]:
+def build(workspace: Path, job: dict[str,Any], *, two: bool = False,
+          yaw_key: bool = False) -> dict[str,Any]:
     if not isinstance(job,dict):
         raise AnimatedCameraKeyError("Native camera job missing.")
     try:
@@ -391,7 +416,8 @@ def build(workspace: Path, job: dict[str,Any], *, two: bool = False) -> dict[str
         raise AnimatedCameraKeyError(
             "Original compiled camera action is not evaluated CineTwin motion."
         )
-    grid=_analyze_grid(source,target,camera,label,actions[0],compiled,csir,two=two)
+    grid=_analyze_grid(source,target,camera,label,actions[0],compiled,csir,
+                       two=two,yaw_key=yaw_key)
     workflow=repair._snapshot(candidate)
     if workflow is None:
         raise AnimatedCameraKeyError("Source occurrence plan missing.")
@@ -405,12 +431,13 @@ def build(workspace: Path, job: dict[str,Any], *, two: bool = False) -> dict[str
     if (len(matches)!=1 or len(rows)!=1
             or rows[0].get("latest_status")!="DIRECT_MEASURED_DIFFERENCE"
             or rows[0].get("latest_discrepancy_flags")
-            !=["WORLD_POSITION_OUTSIDE_TOLERANCE"]):
+            !=(["WORLD_ROTATION_OUTSIDE_TOLERANCE"] if yaw_key else
+                 ["WORLD_POSITION_OUTSIDE_TOLERANCE"])):
         raise AnimatedCameraKeyError(
             "One exact camera source occurrence was not separately measured discrepant."
         )
     result={
-        "kind":KIND_TWO if two else KIND,"eligible":True,
+        "kind":KIND_YAW if yaw_key else KIND_TWO if two else KIND,"eligible":True,
         "source_camera_name":name,"source_entity_id":ident,
         "source_camera_occurrence_id":matches[0],
         "target_actor_label":label,
@@ -424,7 +451,8 @@ def build(workspace: Path, job: dict[str,Any], *, two: bool = False) -> dict[str
         "full_cutscene_fidelity_verified":False,
     }
     digest_name = (
-        "animated_camera_two_key_repair_sha256" if two
+        "animated_camera_yaw_key_repair_sha256" if yaw_key
+        else "animated_camera_two_key_repair_sha256" if two
         else "animated_camera_key_repair_sha256"
     )
     result[digest_name] = position._hash(result)
@@ -434,3 +462,8 @@ def build(workspace: Path, job: dict[str,Any], *, two: bool = False) -> dict[str
 def build_two(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
     """Independently verify the same immutable original chain for exactly two keys."""
     return build(workspace, job, two=True)
+
+
+def build_yaw_key(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
+    """Independently prove one isolated, captured animated CineCamera YAW key."""
+    return build(workspace, job, yaw_key=True)
