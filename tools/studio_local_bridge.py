@@ -1026,7 +1026,7 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                 try:
                     if active.is_symlink():
                         raise ValueError('Active job pointer is a symlink.')
-                    query = parse_qs(urlparse(self.path).query)
+                    query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
                     if set(query) - {'offset', 'job_id'}:
                         raise ValueError('Unknown final-outcome query parameter.')
                     pages = query.get('offset', ['0'])
