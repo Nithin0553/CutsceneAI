@@ -89,3 +89,31 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Studio installation failed." }
           & .\.venv-studio\Scripts\python.exe .\tools\check_studio_setup.py --strict --json
           if ($LASTEXITCODE -ne 0) { throw "Studio diagnostics failed." }
+      - name: Build, unzip, install and live-smoke Studio on clean Windows distribution
+        shell: pwsh
+        run: |
+          $Zip = Join-Path $env:RUNNER_TEMP "CutSceneAI-Studio-source-Windows.zip"
+          $Dist = Join-Path $env:RUNNER_TEMP "cutsceneai-clean-workstation"
+          & .\.venv-studio\Scripts\python.exe .\tools\build_studio_bundle.py --repo . --output $Zip
+          if ($LASTEXITCODE -ne 0) { throw "Windows distribution ZIP build failed." }
+          & .\.venv-studio\Scripts\python.exe .\tools\build_studio_bundle.py --output $Zip --verify
+          if ($LASTEXITCODE -ne 0) { throw "Windows ZIP manifest verification failed." }
+          Expand-Archive -LiteralPath $Zip -DestinationPath $Dist
+          $Studio = Join-Path $Dist "CutSceneAI-Studio"
+          if (-not (Test-Path (Join-Path $Studio "tools\install_studio.ps1") -PathType Leaf)) {
+            throw "Extracted source distribution is missing its installer."
+          }
+          & (Join-Path $Studio "tools\install_studio.ps1") -Python python
+          if ($LASTEXITCODE -ne 0) { throw "Clean source ZIP installation failed." }
+          $Python = Join-Path $Studio ".venv-studio\Scripts\python.exe"
+          & $Python (Join-Path $Studio "tools\check_studio_setup.py") --repo $Studio --strict --json
+          if ($LASTEXITCODE -ne 0) { throw "Extracted Studio strict setup failed." }
+          & $Python (Join-Path $Studio "tools\studio_startup_smoke.py") --repo $Studio --timeout 70 --output (Join-Path $env:RUNNER_TEMP "phase10_5-windows-startup-smoke.json")
+          if ($LASTEXITCODE -ne 0) { throw "Actual packaged Studio localhost UI startup smoke failed." }
+      - name: Archive Windows packaged-Studio startup smoke
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase10-5-windows-packaged-studio-startup-${{ github.sha }}
+          path: ${{ runner.temp }}/phase10_5-windows-startup-smoke.json
+          if-no-files-found: error
+          retention-days: 30
