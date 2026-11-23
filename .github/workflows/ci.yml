@@ -25,6 +25,15 @@ jobs:
         run: python -m pytest -q
       - name: Check Studio JavaScript syntax
         run: node --check apps/studio-web/app.js && node --check apps/studio-web/cinematic.js && node tests/studio/test_cinematic_ui.cjs
+      - name: Phase 10.4 source-only end-to-end interruption rehearsal
+        run: python tools/phase10_4_rehearse.py --output "$RUNNER_TEMP/phase10_4-rehearsal.json"
+      - name: Upload Phase 10.4 synthetic rehearsal evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase10-4-synthetic-rehearsal-${{ github.sha }}
+          path: ${{ runner.temp }}/phase10_4-rehearsal.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Ruff test checks
         run: python -m ruff check tests
       - name: Repository hygiene and docs navigation
