@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import itertools
 import json
 import math
 import sys
@@ -470,4 +471,4 @@ def test_phase10_2_baked_quaternion_hemisphere_is_continuous():
     keys=_compile(csir,capture,approval)["bone_tracks"][0]["rotation_keys_xyzw"]
     assert len(keys)==3
     assert all(sum(a*b for a,b in zip(first,second)) >= 0
-               for first,second in zip(keys,keys[1:]))
+               for first,second in itertools.pairwise(keys))
