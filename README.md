@@ -62,6 +62,26 @@ Compare -> report PASS / FAIL / INCOMPLETE per required feature
 
 See [Repository Guide](docs/REPOSITORY_GUIDE.md) for file ownership and safe development practices.
 
+## Launch the full Studio UI on Windows
+
+A reviewed Phase 10.5 source distribution has a guarded one-command launch
+path. From a new checkout or the extracted, SHA-verified source ZIP, run:
+
+```powershell
+.\tools\launch_studio.ps1
+```
+
+It installs an isolated local Python environment when needed, starts and
+stops a temporary live localhost smoke test, then runs the supervised Studio
+server. Open **http://127.0.0.1:8765** in your browser. No native Unity/Unreal
+operation is performed without connecting editor companions and explicit
+source-bound transfer approval.
+
+See [Phase 10.5 software packaging, engine-test handoff and complete first
+testing procedure](docs/studio/PHASE10_5_FINAL_SOFTWARE_PACKAGE_AND_LIVE_ENGINE_TEST_ENTRY.md).
+A passing ZIP/host CI run only qualifies the build for **real-engine testing**;
+it does not establish cutscene parity or authorize a production release.
+
 ## Quick start (Python-only)
 
 **Requirements:** Python 3.11+, Git. Unity and Unreal are needed only for actual engine operations.
