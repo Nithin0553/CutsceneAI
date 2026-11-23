@@ -45,6 +45,8 @@ def compile_rotation_curve(action:dict, original:dict, observed:dict,
             or approval.get("original_native_capture_sha256")!=_sha(observed)
             or approval.get("source_entity_id")!=source_id
             or approval.get("native_actor_label")!=target_label
+            or not isinstance(approval.get("target_sequence_path"),str)
+            or not approval["target_sequence_path"].startswith("/Game/")
             or not isinstance(display_rate,dict)):
         raise CameraCurveError("Explicit source/native capture-bound camera curve approval required.")
     if action.get("source_behavior_strategy")!=grid.CAPTURE_STRATEGY:
@@ -105,6 +107,7 @@ def compile_rotation_curve(action:dict, original:dict, observed:dict,
         "schema_version":"1",
         "source_camera_occurrence_id":source_id,
         "target_actor_label":target_label,
+        "target_sequence_path":approval["target_sequence_path"],
         "source_camera_action_sha256":_sha(action),
         "original_source_capture_sha256":_sha(original),
         "original_native_capture_sha256":_sha(observed),
@@ -118,7 +121,7 @@ def compile_rotation_curve(action:dict, original:dict, observed:dict,
     return report
 
 
-def realize(api:Any, section:Any, action:dict, plan:dict) -> dict:
+def realize(api:Any, sequence:Any, section:Any, action:dict, plan:dict) -> dict:
     """Complete native nine-channel readback and rollback for *existing* keys.
 
     Caller must first resolve section using
@@ -128,6 +131,10 @@ def realize(api:Any, section:Any, action:dict, plan:dict) -> dict:
     if (not isinstance(plan,dict)
             or plan.get("kind")!="cutsceneai.studio.approved_camera_rotation_curve_plan"
             or plan.get("source_camera_action_sha256")!=_sha(action)
+            or sequence is None
+            or not callable(getattr(sequence,"get_path_name",None))
+            or str(sequence.get_path_name()).split(".",1)[0]
+                !=plan.get("target_sequence_path")
             or plan.get("canonical_curve_plan_sha256")!=_sha({
                 k:v for k,v in plan.items()
                 if k!="canonical_curve_plan_sha256"
@@ -195,7 +202,6 @@ def realize(api:Any, section:Any, action:dict, plan:dict) -> dict:
             changed.append((original_key,original_value))
             key.set_value(wanted)
         native._all_camera_keys_match_source(api,section,action)
-        sequence=plan.get("_verified_runtime_sequence")
         save=getattr(getattr(api,"EditorAssetLibrary",None),"save_loaded_asset",None)
         if sequence is None or not callable(save) or save(sequence) is not True:
             raise CameraCurveError("Native source camera curve save not confirmed.")
