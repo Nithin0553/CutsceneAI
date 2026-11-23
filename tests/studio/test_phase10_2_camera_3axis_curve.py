@@ -122,3 +122,54 @@ def test_camera_rig_scale_position_and_pitch_pole_refuse_source_curve_approval()
     approval["original_native_capture_sha256"]=curve._sha(new_target)
     with pytest.raises(curve.CameraCurveError,match="rotation-only"):
         _compile(source,new_target,action,approval,scope)
+
+
+def test_safe_entrypoint_requires_exact_live_owner_and_original_captures(monkeypatch):
+    source,target,action,approval,scope=_fixture()
+    report=_compile(source,target,action,approval,scope)
+    api,sequence,section=_native_scene(action,report)
+    staged=[{"kind":"entity.camera","name":"CAM","label":"CameraUE",
+             "native_actor_path":"/Game/Stage.CineCam"}]
+    calls=[]
+    def owner(api,sequence,actors,identity,source_action):
+        calls.append((actors,identity,source_action))
+        return section
+    monkeypatch.setattr(curve.native,"_live_owner",owner)
+    receipt=curve.realize_from_original(
+        api,sequence,staged,source,target,action,approval,
+        source_entity_id="cam:1",source_camera_name="CAM",
+        target_actor_label="CameraUE",duration_frames=scope["duration_frames"],
+        display_rate=scope["display_rate"],
+    )
+    assert receipt["native_changed_keys"]==len(report["changes"])
+    assert calls and calls[0][1]=={
+        "source_camera_name":"CAM","target_actor_label":"CameraUE",
+    }
+    altered=copy.deepcopy(target)
+    altered["samples"][1]["entities"][0]["world_transform"][
+        "position_m"][0]+=0.1
+    calls.clear()
+    with pytest.raises(curve.CameraCurveError,match="approval"):
+        curve.realize_from_original(
+            api,sequence,staged,source,altered,action,approval,
+            source_entity_id="cam:1",source_camera_name="CAM",
+            target_actor_label="CameraUE",duration_frames=scope["duration_frames"],
+            display_rate=scope["display_rate"],
+        )
+    assert not calls
+
+
+def test_safe_entrypoint_refuses_unknown_cinecamera_binding(monkeypatch):
+    source,target,action,approval,scope=_fixture()
+    report=_compile(source,target,action,approval,scope)
+    api,sequence,_section=_native_scene(action,report)
+    def refuse(*args):
+        raise curve.native.AnimatedCameraNativeError("camera is attached to unknown rig")
+    monkeypatch.setattr(curve.native,"_live_owner",refuse)
+    with pytest.raises(curve.CameraCurveError,match="not original"):
+        curve.realize_from_original(
+            api,sequence,[],source,target,action,approval,
+            source_entity_id="cam:1",source_camera_name="CAM",
+            target_actor_label="CameraUE",duration_frames=scope["duration_frames"],
+            display_rate=scope["display_rate"],
+        )
