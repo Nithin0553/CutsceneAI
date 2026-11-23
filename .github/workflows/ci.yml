@@ -117,3 +117,53 @@ jobs:
           path: ${{ runner.temp }}/phase10_5-windows-startup-smoke.json
           if-no-files-found: error
           retention-days: 30
+
+  studio-package-handoff:
+    name: Cross-platform packaged Studio software acceptance (engine pending)
+    needs: [python-contracts, studio-windows-bootstrap]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download verified source-only distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: studio-source-bundle-${{ github.sha }}
+          path: ${{ runner.temp }}/studio-handoff/bundle
+      - name: Download Phase 10.4 synthetic source-gate evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: phase10-4-synthetic-rehearsal-${{ github.sha }}
+          path: ${{ runner.temp }}/studio-handoff/rehearsal
+      - name: Download exact-head pre-engine freeze report
+        uses: actions/download-artifact@v4
+        with:
+          name: phase10-5-pre-engine-handoff-${{ github.sha }}
+          path: ${{ runner.temp }}/studio-handoff/preflight
+      - name: Download separately installed Windows Studio live-start evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: phase10-5-windows-packaged-studio-startup-${{ github.sha }}
+          path: ${{ runner.temp }}/studio-handoff/windows
+      - name: Cross-verify same ZIP on Windows and Ubuntu; authorize engine testing only
+        shell: bash
+        run: |
+          python tools/phase10_5_package_acceptance.py \
+            --commit "$GITHUB_SHA" \
+            --bundle "$RUNNER_TEMP/studio-handoff/bundle/CutSceneAI-Studio-source.zip" \
+            --rehearsal "$RUNNER_TEMP/studio-handoff/rehearsal/phase10_4-rehearsal.json" \
+            --preflight "$RUNNER_TEMP/studio-handoff/preflight/phase10_5-freeze-preflight.json" \
+            --startup "$RUNNER_TEMP/studio-handoff/windows/phase10_5-windows-startup-smoke.json" \
+            --output "$RUNNER_TEMP/studio-handoff/software-package-engine-test-entry.json"
+      - name: Publish final software-only engine-test entry receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase10-5-software-ready-for-engine-test-${{ github.sha }}
+          path: ${{ runner.temp }}/studio-handoff/software-package-engine-test-entry.json
+          if-no-files-found: error
+          retention-days: 90
