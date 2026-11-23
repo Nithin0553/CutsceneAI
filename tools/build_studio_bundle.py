@@ -27,6 +27,11 @@ SUFFIXES = {
 MAX_TOTAL=96*1024*1024
 MAX_FILE=8*1024*1024
 MAX_COUNT=2600
+# Git checkout may use CRLF on Windows. Preserve actual archive SHA256 for
+# installation integrity, but compare a second canonical manifest using only
+# CRLF -> LF normalization for explicitly allowed text-source extensions.
+BINARY_SUFFIXES={".png",".jpg",".jpeg"}
+
 TOPDIR="CutSceneAI-Studio/"
 MANIFEST=TOPDIR+"studio-distribution-manifest.json"
 
@@ -152,14 +157,24 @@ def verify(archive_path:Path)->dict[str,Any]:
             raise BundleError("Source bundle manifest is invalid.")
         if set(names)!={MANIFEST}|{TOPDIR+name for name in manifest["files"]}:
             raise BundleError("Undocumented source artifact found in archive.")
+        portable_inventory={}
         for relative,row in manifest["files"].items():
             payload=archive.read(TOPDIR+relative)
             if len(payload)!=row["size_bytes"] or digest(payload)!=row["sha256"]:
                 raise BundleError("Source distribution asset hash mismatch: "+relative)
+            if Path(relative).suffix.lower() not in BINARY_SUFFIXES:
+                payload=payload.replace(b"\r\n",b"\n")
+            portable_inventory[relative]={
+                "sha256":digest(payload),
+                "size_bytes":len(payload),
+            }
+    portable_bytes=json.dumps(portable_inventory,sort_keys=True,
+                              separators=(",",":"),ensure_ascii=False).encode("utf-8")
     return {
         "status":"SOURCE_BUNDLE_HASHES_VERIFIED_ENGINE_PENDING",
         "file_count":len(manifest["files"]),
         "source_manifest_sha256":digest(manifest_bytes),
+        "portable_source_manifest_sha256":digest(portable_bytes),
         "sha256":digest(archive_path.read_bytes()),
         "full_cutscene_fidelity_verified":False,
     }
