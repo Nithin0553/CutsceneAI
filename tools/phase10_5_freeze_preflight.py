@@ -75,9 +75,10 @@ def assess(repo:Path,*,bundle_path:Path,rehearsal_path:Path,
     observed=head_reader(root)
     _check(observed==expected_sha,
            "Frozen source commit differs from independently observed HEAD.")
-    built=bundle.verify(Path(bundle_path))
-    _check(built.get("status")=="SOURCE_BUNDLE_HASHES_VERIFIED_ENGINE_PENDING",
-           "Distribution source hashes were not independently verified.")
+    built=bundle.verify_exact_checkout(root,Path(bundle_path))
+    _check(built.get("status")=="SOURCE_BUNDLE_HASHES_VERIFIED_ENGINE_PENDING"
+           and built.get("exact_checked_out_source_verified") is True,
+           "Distribution source hashes do not match the inspected Git commit.")
     evidence=_read(Path(rehearsal_path))
     _check(evidence.get("kind")=="cutsceneai.studio.phase10_4.synthetic_rehearsal",
            "Wrong rehearsal evidence type.")
