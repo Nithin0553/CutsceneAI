@@ -96,7 +96,9 @@
     const unity=state.folders.unity||'',project=state.unrealProject||
       state.discovery?.unreal?.project||'';
     if(!unity||!project)return '';
-    const quote=v=>'"'+String(v).replaceAll('"','')+'"';
+    // PowerShell single-quoted literals do not evaluate $() or backticks.
+    // Escape embedded single quotes rather than emitting a runnable fragment.
+    const quote=v=>"'" + String(v).replaceAll("'","''") + "'";
     const command='python tools/studio_companion_install.py --unity '+quote(unity)+
       ' --unreal-uproject '+quote(project);
     return '<details class="companion-setup"><summary>First-time Unity and Unreal companion setup</summary>'+
