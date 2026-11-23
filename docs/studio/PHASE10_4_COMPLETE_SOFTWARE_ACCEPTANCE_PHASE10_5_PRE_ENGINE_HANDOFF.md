@@ -16,15 +16,15 @@
 8. Fault-inject a fresh-worker crash after **each of the nine guarded native checkpoints** and reject a second native editor claim or repeated checkpoint
 9. Restart after submission and once-only native job claim
 10. Interrupted candidate preparation without silent resubmission
-10. Distinct-process reopening requirements and false persistence proof refusal
-11. Natural-language agent feedback, approval boundaries and repair budget
-12. Unsupported shader/VFX/audio/events/physics not becoming false success
-13. Immutable Element 9 source-complete results and bounded remeasurement
-14. Foreign/held-out CineTwin sources and missing engine evidence
-15. Complete mock source-to-Unreal pipeline and resulting incomplete fidelity gate
-16. Active job-pointers, cross-run results and stale source exclusion
-17. Project-local companion setup and deterministic workstation source distribution
-18. Browser-mode/polling/late-response simulations, including default and advanced UI behavior
+11. Distinct-process reopening requirements and false persistence proof refusal
+12. Natural-language agent feedback, approval boundaries and repair budget
+13. Unsupported shader/VFX/audio/events/physics not becoming false success
+14. Immutable Element 9 source-complete results and bounded remeasurement
+15. Foreign/held-out CineTwin sources and missing engine evidence
+16. Complete mock source-to-Unreal pipeline and resulting incomplete fidelity gate
+17. Active job-pointers, cross-run results and stale source exclusion
+18. Project-local companion setup and deterministic workstation source distribution
+19. Browser-mode/polling/late-response simulations, including default and advanced UI behavior
 
 The matrix checks the exact names of required Python tests using their parsed AST; it checks JavaScript scenario definitions **and actual invocations**. The rehearsal runs all underlying test modules, verifies each specifically selected Python test reported **PASSED** (not skipped), counts all Node scenarios, verifies the exact source file SHA256 before/after and refuses incomplete/no-test output. Missing, renamed, skipped or uninvoked cases fail the gate.
 
