@@ -26,6 +26,7 @@ REQUIRED_FILES = (
     "tools/phase10_4_rehearse.py",
     "tools/phase10_5_freeze_preflight.py",
     "tools/studio_startup_smoke.py",
+    "tools/phase10_5_package_acceptance.py",
     "tools/launch_studio.ps1",
     "packages/studio/studio_phase10_4_matrix.py",
     "packages/studio/studio_phase10_3_flow.py",
