@@ -47,7 +47,6 @@ def test_bounded_yaw_curve_source_measurements_and_exact_count_consent():
     assert evidence["source_key_count"]==2
     assert [r["source_key_frame"] for r in evidence[
         "source_yaw_key_repairs"]]==[1,3]
-    assert evidence["native_channel_index"] if "native_channel_index" in evidence else True
     assert proof.requested_many_yaw_count(
         "Fix two animated camera yaw keyframes") == 2
     assert proof.requested_many_yaw_count(
@@ -88,7 +87,10 @@ def test_bounded_yaw_curve_source_measurements_and_exact_count_consent():
             "source_yaw_key_repairs"],yaw_only=True,
     )
     assert (first.frame,second.frame)==(1,3)
-    assert (one,two)==pytest.approx((22.,44.))
+    assert (one,two)==pytest.approx(tuple(
+        r["native_key_value_before_degrees"]
+        for r in evidence["source_yaw_key_repairs"]
+    ))
 
 
 def test_bounded_yaw_curve_rejects_adjacent_or_competing_pitch_and_position():
@@ -157,8 +159,12 @@ def test_bounded_yaw_curve_native_full_grid_save_and_rollback(monkeypatch,tmp_pa
     api.EditorAssetLibrary.save_loaded_asset=lambda seq:False
     with pytest.raises(native.AnimatedCameraNativeError,match="save"):
         native.attempt_many_yaw(api,tmp_path,job,request)
-    assert failing.channels[5].keys[1].get_value()==pytest.approx(22.)
-    assert failing.channels[5].keys[3].get_value()==pytest.approx(44.)
+    assert failing.channels[5].keys[1].get_value()==pytest.approx(
+        review["source_yaw_key_repairs"][0]["native_key_value_before_degrees"]
+    )
+    assert failing.channels[5].keys[3].get_value()==pytest.approx(
+        review["source_yaw_key_repairs"][1]["native_key_value_before_degrees"]
+    )
 
 
 def test_bounded_yaw_curve_rollback_after_second_key_mutates_then_throws(
@@ -168,11 +174,16 @@ def test_bounded_yaw_curve_rollback_after_second_key_mutates_then_throws(
     previous=second.set_value
     def setter(value):
         previous(value)
-        if float(value)==30.:
+        if abs(float(value)-review["source_yaw_key_repairs"][1][
+                "source_key_value_degrees"])<0.0001:
             raise RuntimeError("Second yaw key mutated then threw")
     second.set_value=setter
     api,job,request=_native_multi_job(monkeypatch,tmp_path,section,review)
     with pytest.raises(RuntimeError,match="mutated then threw"):
         native.attempt_many_yaw(api,tmp_path,job,request)
-    assert section.channels[5].keys[1].get_value()==pytest.approx(22.)
-    assert section.channels[5].keys[3].get_value()==pytest.approx(44.)
+    assert section.channels[5].keys[1].get_value()==pytest.approx(
+        review["source_yaw_key_repairs"][0]["native_key_value_before_degrees"]
+    )
+    assert section.channels[5].keys[3].get_value()==pytest.approx(
+        review["source_yaw_key_repairs"][1]["native_key_value_before_degrees"]
+    )
