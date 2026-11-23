@@ -108,7 +108,7 @@ jobs:
           $Python = Join-Path $Studio ".venv-studio\Scripts\python.exe"
           & $Python (Join-Path $Studio "tools\check_studio_setup.py") --repo $Studio --strict --json
           if ($LASTEXITCODE -ne 0) { throw "Extracted Studio strict setup failed." }
-          & $Python (Join-Path $Studio "tools\studio_startup_smoke.py") --repo $Studio --timeout 70 --output (Join-Path $env:RUNNER_TEMP "phase10_5-windows-startup-smoke.json")
+          & $Python (Join-Path $Studio "tools\studio_startup_smoke.py") --repo $Studio --source-bundle $Zip --timeout 70 --output (Join-Path $env:RUNNER_TEMP "phase10_5-windows-startup-smoke.json")
           if ($LASTEXITCODE -ne 0) { throw "Actual packaged Studio localhost UI startup smoke failed." }
       - name: Archive Windows packaged-Studio startup smoke
         uses: actions/upload-artifact@v4
