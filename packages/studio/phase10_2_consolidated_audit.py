@@ -37,6 +37,7 @@ ADAPTER_SCOPE = (
     "restore_single_animated_camera_position_key",
     "restore_two_animated_camera_position_keys",
     "restore_single_animated_camera_yaw_key",
+    "restore_bounded_animated_camera_yaw_keys",
 )
 SCOPES_UNSUPPORTED = (
     "arbitrary_multi_key_pitch_roll_or_quaternion_curve",
