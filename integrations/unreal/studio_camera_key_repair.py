@@ -151,6 +151,53 @@ def _read_channels(api: Any, section: Any, prepared: dict,
     return changed_key,original_value
 
 
+def _all_camera_keys_match_source(api: Any, section: Any, action: dict) -> None:
+    """Independently reread all nine native transform channels after mutation."""
+    from unreal_compat import get_section_channels
+    channels = list(get_section_channels(section))
+    keys = action["keys"]
+    linear = getattr(getattr(api, "RichCurveInterpMode", None),
+                     "RCIM_LINEAR", None)
+    if len(channels) != 9 or linear is None:
+        raise AnimatedCameraNativeError(
+            "Post-write native nine-channel camera readback unavailable."
+        )
+    for channel_index, channel in enumerate(channels):
+        actual_keys = list(channel.get_keys())
+        if channel_index >= 6:
+            has_default = getattr(channel, "has_default", None)
+            get_default = getattr(channel, "get_default", None)
+            if (actual_keys or not callable(has_default)
+                    or has_default() is not True
+                    or not callable(get_default)
+                    or abs(float(get_default()) - 1.0) > 1e-6):
+                raise AnimatedCameraNativeError(
+                    "Camera scale changed after source-key edit."
+                )
+            continue
+        if len(actual_keys) != len(keys):
+            raise AnimatedCameraNativeError(
+                "Native camera lost or gained animation keys after edit."
+            )
+        for frame, (original, observed) in enumerate(zip(keys, actual_keys)):
+            interpolation = getattr(observed, "get_interpolation_mode", None)
+            if (_frame(api, observed) != frame
+                    or not callable(interpolation)
+                    or interpolation() != linear):
+                raise AnimatedCameraNativeError(
+                    "Native camera key timing/interpolation changed after edit."
+                )
+            expected = (
+                *original["location_cm"], *original["rotation_rpy_degrees"]
+            )[channel_index]
+            actual = float(observed.get_value())
+            if (not math.isfinite(actual)
+                    or abs(actual - float(expected)) > 0.02):
+                raise AnimatedCameraNativeError(
+                    "A native camera key differs from the immutable source plan."
+                )
+
+
 def _live_owner(api: Any, sequence: Any, setup: list, proof: dict,
                 action: dict) -> Any:
     ext=getattr(api,"MovieSceneSequenceExtensions",None)
@@ -399,34 +446,9 @@ def attempt(api: Any,workspace: Path,job: dict,request: dict) -> dict:
     try:
         mutated=True
         key.set_value(target)
-        # After editing, the only expected discrepancy now must be absent.
-        # Re-using the same strict scanner with the original "before" value
-        # would reject repaired state, so temporarily inspect its full
-        # nine-channel source-equivalence independently.
-        if abs(float(key.get_value())-target)>0.02:
-            raise AnimatedCameraNativeError(
-                "Unreal camera scripting key setter did not apply exact value."
-            )
-        from unreal_compat import get_section_channels
-        for channel_index,channel in enumerate(get_section_channels(section)[:6]):
-            actual=list(channel.get_keys())
-            if len(actual)!=len(action["keys"]):
-                raise AnimatedCameraNativeError(
-                    "Camera key count changed during single-value repair."
-                )
-            for i,current in enumerate(actual):
-                if _frame(api,current)!=i:
-                    raise AnimatedCameraNativeError(
-                        "Camera frame alignment changed during repair."
-                    )
-                expected=(
-                    list(action["keys"][i]["location_cm"])
-                    +list(action["keys"][i]["rotation_rpy_degrees"])
-                )[channel_index]
-                if abs(float(current.get_value())-float(expected))>0.05:
-                    raise AnimatedCameraNativeError(
-                        "Live native camera tracks did not converge to original keys."
-                    )
+        # The entire source-bound native transform grid must match again,
+        # including interpolation and scale defaults, before saving.
+        _all_camera_keys_match_source(api, section, action)
         asset_lib=getattr(api,"EditorAssetLibrary",None)
         save=getattr(asset_lib,"save_loaded_asset",None)
         if not callable(save) or save(sequence) is not True:
