@@ -38,6 +38,7 @@ def _fixture(tmp_path):
     smoke={
         "kind":"cutsceneai.studio.phase10_5.localhost_startup_smoke",
         "status":"LIVE_LOCALHOST_AND_UI_SMOKE_PASSED_ENGINE_UNVERIFIED",
+        "source_distribution_sha256":hashlib.sha256(bundle.read_bytes()).hexdigest(),
         "checks":{item:"PASS" for item in contract.STARTUP_CHECKS},
         "native_editor_started":False,"unity_editor_started":False,
         "model_invoked":False,"full_cutscene_fidelity_verified":False,
@@ -130,4 +131,12 @@ def test_mismatched_handoff_commit_is_rejected(tmp_path):
     preflight["source_git_sha"]="b"*40
     docs[0].write_text(json.dumps(preflight),encoding="utf-8")
     with pytest.raises(contract.PackageAcceptanceError,match="another commit"):
+        _check(bundle,docs)
+
+
+def test_packaged_windows_source_zip_different_from_linux_is_rejected(tmp_path):
+    bundle,docs,_,smoke,_=_fixture(tmp_path)
+    smoke["source_distribution_sha256"]="f"*64
+    docs[1].write_text(json.dumps(smoke),encoding="utf-8")
+    with pytest.raises(contract.PackageAcceptanceError,match="different source ZIP"):
         _check(bundle,docs)
