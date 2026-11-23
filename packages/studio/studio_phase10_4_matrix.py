@@ -39,6 +39,10 @@ SCENARIOS = (
         "tests/studio/test_studio_generation_recovery.py::test_failed_generator_records_one_attempt_and_preserves_job",
         "tests/studio/test_studio_autopilot.py::test_native_execution_cannot_be_interrupted_by_autopilot_cancel",
     )),
+    ("native_each_checkpoint_kill", "Every Element 6 native stage interruption", (
+        "tests/studio/test_element6_guarded_execution.py::test_phase10_4_interrupt_each_guarded_native_checkpoint_never_replays",
+        "tests/studio/test_element6_guarded_execution.py::test_structured_stage_checkpoints_are_ordered_and_never_overwritten",
+    )),
     ("crash_after_queue", "Crash/restart may not duplicate native execution", (
         "tests/studio/test_studio_autopilot.py::test_crash_after_unreal_job_submission_recovers_without_requeue",
         "tests/studio/test_studio_autopilot.py::test_crash_recovery_refuses_duplicate_jobs_and_conflicting_pointer",
