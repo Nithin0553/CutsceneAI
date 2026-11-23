@@ -72,7 +72,26 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
       const body = opts.body ? JSON.parse(opts.body) : {};
       requests.push({url,body});
       let result = {};
-      if (url.startsWith('/api/final-outcome?')) {
+      if (url === '/api/flow-diagnostics') {
+        result={
+          kind:'cutsceneai.studio.phase10_3.flow_diagnostics',
+          schema_version:'1',autopilot_status:autopilot.status,
+          native_replay_authorized:false,
+          source_and_native_full_fidelity_verified:false,
+          issues:['Inspect the exact current source and editor owner.'],
+          next_action:'Inspect the exact current source and editor owner.',
+          stages:[
+            'Unity source and CineTwin','CED knowledge retrieval',
+            'AI conversion planning','Strategy validation',
+            'Source-bound conversion plan','Guarded Unreal execution',
+            'Native CineTwin readback','Bounded repairs','Final source report',
+          ].map((label,i)=>({
+            id:i+1,label,status:i<=2?'ACTIVE_OR_PENDING':'NOT_VERIFIED',
+            next_action:'Inspect exact immutable source evidence.',
+            native_or_rendered_fidelity_verified:false,
+          })),
+        };
+      } else if (url.startsWith('/api/final-outcome?')) {
         const requested = new URL(url,'http://localhost').searchParams;
         const expected = currentJob?.job_id || '';
         assert.equal(requested.get('job_id'),expected,
@@ -236,6 +255,25 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
         generation_status:'GENERATED_UNVERIFIED',
         status:'GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED',
         generated_sequence:'/Game/Example/LS_Transferred'};done=true;}};
+}
+
+async function testSharedNineStagesAndOptInCompanionPreview() {
+  const x=boot({simple:true});
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  assert.match(x.app.innerHTML,/First-time Unity and Unreal companion setup/);
+  assert.match(x.app.innerHTML,/studio_companion_install.py/);
+  assert.match(x.app.innerHTML,/--unreal-uproject/);
+  assert.match(x.app.innerHTML,/--apply/);
+  await x.click('quick-transfer');
+  await x.poll();
+  assert.match(x.app.innerHTML,/Detailed AI workflow · 9 stages/);
+  assert.match(x.app.innerHTML,/Guarded Unreal execution/);
+  assert.match(x.app.innerHTML,/Native CineTwin readback/);
+  assert.match(x.app.innerHTML,/Native execution is never repeated automatically/);
+  assert.ok(x.calls.includes('/api/flow-diagnostics'));
 }
 
 async function testSimpleOfflineUnrealProvidesActionableConnectionReason() {
@@ -824,6 +862,7 @@ async function testAdvancedJobChangeInvalidatesDiagnostics() {
 }
 
 (async()=>{
+  await testSharedNineStagesAndOptInCompanionPreview();
   await testSimpleOfflineUnrealProvidesActionableConnectionReason();
   await testSimpleSourceOutcomeAutoloadAndPagination();
   await testSimpleSourceOutcomeMissingEvidenceAndExplicitRetry();
@@ -848,5 +887,5 @@ async function testAdvancedJobChangeInvalidatesDiagnostics() {
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
   await testMissingSelectedCensusFailsClosed();
-  console.log('Cinematic + advanced UI backend contract: 24 scenarios including job-switch cache invalidation, old-job isolation after blocked autopilot, fresh transfers and native errors passed.');
+  console.log('Cinematic + advanced UI backend contract: 25 scenarios including job-switch cache invalidation, old-job isolation after blocked autopilot, fresh transfers and native errors passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
