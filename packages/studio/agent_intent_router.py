@@ -311,7 +311,9 @@ def route(
         animated_camera_key_eligible = bool(
             message_requests_key(message)
             and intent["mode"]=="user_feedback"
-            and not intent["ambiguous"]
+            # Camera + animation + position are three *overlapping*
+            # semantic cues for this one exact native key operation.
+            # Generic multi-domain requests remain ambiguous elsewhere.
             and scope=="unspecified"
             and set(domains)=={"camera","animation","transform"}
             and generation_complete and completed_repairs<repair_budget
