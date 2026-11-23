@@ -4,6 +4,30 @@
 procedure does not open Unity/Unreal, invoke an external model or import assets.
 It tests only the local Python/web Studio prerequisites.
 
+## Phase 10.5 Windows first-run launcher
+
+For a fresh checkout or extracted `CutSceneAI-Studio-source.zip`, open
+PowerShell in the Studio root and run:
+
+```powershell
+.\tools\launch_studio.ps1
+```
+
+The launcher performs an isolated first-time dependency installation if
+necessary, a strict setup preflight and a **real localhost Studio startup
+smoke in a temporary workspace**, before starting the normal supervised UI.
+Then open **http://127.0.0.1:8765**. It does not launch/restart Unity or
+Unreal, invoke an LLM, or queue a transfer. Source-backed engine connections
+and final fidelity remain separate. See [Phase 10.5 full engine-test entry
+runbook](PHASE10_5_FINAL_SOFTWARE_PACKAGE_AND_LIVE_ENGINE_TEST_ENTRY.md).
+
+The CI distribution job extracts the source ZIP into a clean Windows directory,
+installs it independently, verifies the ZIP bytes against the extracted
+workspace, starts the actual Studio server and archives a separate
+source-hash-matched startup report. Only a fully green cross-platform
+software-acceptance job may label the package
+`SOFTWARE_PACKAGE_READY_FOR_ENGINE_TEST`.
+
 ## Isolated bootstrap
 
 From a full checkout of the release-candidate branch in Windows PowerShell:
