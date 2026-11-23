@@ -22,7 +22,7 @@ from test_animated_camera_key_repair import (
 
 
 def _fixture():
-    original,target,cam,label,action,plan,_=_yaw_scenario()
+    original,target,_cam,label,action,plan,_=_yaw_scenario()
     # The independent target captured a separate physical roll deviation.
     theta=math.radians(9)/2
     dq=(math.sin(theta),0.,0.,math.cos(theta))
@@ -87,11 +87,11 @@ def test_saving_failed_camera_rotation_restores_all_native_original_keys():
     source,target,action,approved,scope=_fixture()
     plan=_compile(source,target,action,approved,scope)
     api,sequence,section=_native_scene(action,plan,save=False)
-    before=[list(k.get_value() for k in channel.get_keys())
+    before=[[k.get_value() for k in channel.get_keys()]
             for channel in section.channels]
     with pytest.raises(curve.CameraCurveError,match="save"):
         curve.realize(api,sequence,section,action,plan)
-    after=[list(k.get_value() for k in channel.get_keys())
+    after=[[k.get_value() for k in channel.get_keys()]
            for channel in section.channels]
     assert before==after
 
