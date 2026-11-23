@@ -1,0 +1,539 @@
+"""Element 3 exact native action consent, dispatch receipts and worker guards.
+
+All direct tests use synthetic plans and fake receipts. They DO NOT run Unreal.
+"""
+from __future__ import annotations
+
+import copy
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "packages" / "studio"))
+sys.path.insert(0, str(ROOT / "integrations" / "unreal"))
+sys.path.insert(0, str(ROOT / "tests" / "studio"))
+
+import studio_element_native_execution as native
+import studio_element_native_gate as native_gate
+import studio_element_workflow as workflow
+from test_element_studio_workflow import _setup, _write
+
+
+def _manifest(tmp_path, *, two_actions=False):
+    work, worker, target = _setup(tmp_path)
+    candidate = json.loads((work / "active-candidate.json").read_text())
+    location = work / "candidates" / candidate["candidate_id"]
+    actions = [
+        {"kind": "camera_setup", "source_location": "entities[1]",
+         "source_ced": "entity.camera", "entity_name": "Camera"}
+    ]
+    if two_actions:
+        actions.append({"kind": "audio", "unattributed_legacy": True})
+    _write(location / "transfer-plan.json", {
+        "sequence_asset_path": "/Game/Demo/LS_Trial", "actions": actions,
+    })
+    report = workflow.prepare(work, worker)
+    manifest = native.inventory(
+        json.loads((location / "transfer-plan.json").read_text()),
+        workflow._active(work)["element_plan"],
+    )
+    return work, worker, target, report, manifest
+
+
+def test_explicit_registered_native_actions_are_bound_to_original_occurrences(tmp_path):
+    _work, _worker, _target, summary, manifest = _manifest(tmp_path)
+    assert summary["native_actions"]["action_count"] == 1
+    assert manifest["action_count"] == 1
+    row, = manifest["actions"]
+    source = summary["elements"][1]
+    assert row["kind"] == "camera_setup"
+    assert row["source_occurrence_ids"] == [source["occurrence_id"]]
+    assert row["source_attribution"] == "EXPLICIT_REGISTERED_SOURCE_LOCATION"
+    assert row["native_execution_verified"] is False
+    assert summary["native_actions"]["approved_for_existing_native_preflight"] is False
+    assert manifest["full_cutscene_fidelity_verified"] is False
+
+
+def test_unregistered_or_foreign_source_native_actions_fail_closed(tmp_path):
+    work, _worker, _target, _summary, _manifest_doc = _manifest(tmp_path)
+    report = workflow._active(work)["element_plan"]
+    for action, expected in [
+        ({"kind": "execute_python"}, "builder"),
+        ({"kind": "camera_setup", "source_location": "entities[999]"}, "foreign"),
+        ({"kind": "camera_setup", "source_location": "entities[1]",
+          "source_ced": "Vendor.SecretProperty"}, "semantic"),
+    ]:
+        with pytest.raises(ValueError, match=expected):
+            native.inventory({"sequence_asset_path": "/Game/Demo/LS_Trial",
+                              "actions": [action]}, report)
+    unavailable = native.inventory({
+        "sequence_asset_path": "/Game/Demo/LS_Trial",
+        "actions": [{"kind": "audio", "source_location": "entities[1]"}],
+    }, report)
+    assert unavailable["blocked_action_count"] == 1
+    assert unavailable["actions"][0]["native_action_eligible"] is False
+    with pytest.raises(native.ElementNativeExecutionError, match="source-blocked"):
+        native.authorize(
+            unavailable, candidate_id="20261121T183000Z_deadbeef",
+            workflow_sha256="a" * 64, transfer_plan_sha256="b" * 64,
+            approved_action_ids=["A00000"], accept_legacy_unattributed=False,
+        )
+
+
+def test_separate_native_approval_covers_exact_actions_and_legacy_unattributed(tmp_path):
+    work, worker, _target, summary, manifest = _manifest(tmp_path, two_actions=True)
+    assert manifest["unattributed_count"] == 1
+    workflow.acknowledge(work, worker, summary["workflow_sha256"])
+    with pytest.raises(native.ElementNativeExecutionError, match="separate explicit"):
+        workflow.approve_native_actions(
+            work, worker, workflow_sha256=summary["workflow_sha256"],
+            inventory_sha256=native.digest(manifest),
+            review_all=True, accept_legacy_unattributed=False,
+        )
+    granted = workflow.approve_native_actions(
+        work, worker, workflow_sha256=summary["workflow_sha256"],
+        inventory_sha256=native.digest(manifest),
+        review_all=True, accept_legacy_unattributed=True,
+    )
+    assert granted["action_count"] == 2
+    assert granted["unattributed_count"] == 1
+    assert granted["native_builder_executed"] is False
+    latest = workflow.current(work, worker)
+    assert latest["native_actions"]["approved_for_existing_native_preflight"] is True
+    assert latest["native_execution_authorized"] is False
+    assert workflow.require_native_action_authorization(
+        work, worker, latest["candidate_id"]
+    ) == granted["native_action_authorization_sha256"]
+    candidate = json.loads((work / "active-candidate.json").read_text())
+    approval_path = (work / "candidates" / candidate["candidate_id"] /
+                     "element-native-approval.json")
+    permission = json.loads(approval_path.read_text())
+    assert permission["full_cutscene_fidelity_verified"] is False
+    assert permission["runtime_dispatched"] is False
+
+
+def test_approved_all_actions_reject_omissions_duplicates_and_stale_plan_hash(tmp_path):
+    _work, _worker, _target, summary, manifest = _manifest(tmp_path, two_actions=True)
+    values = ["A00000", "A00001"]
+    for ids in (values[:-1], values + values[:1], values[::-1], ["A00000", "A00000"]):
+        with pytest.raises(native.ElementNativeExecutionError, match="entire immutable"):
+            native.authorize(
+                manifest, candidate_id=summary["candidate_id"],
+                workflow_sha256=summary["workflow_sha256"],
+                transfer_plan_sha256="b" * 64,
+                approved_action_ids=ids, accept_legacy_unattributed=True,
+            )
+    consent = native.authorize(
+        manifest, candidate_id=summary["candidate_id"],
+        workflow_sha256=summary["workflow_sha256"],
+        transfer_plan_sha256="b" * 64,
+        approved_action_ids=values, accept_legacy_unattributed=True,
+    )
+    changed = copy.deepcopy(consent)
+    changed["transfer_plan_sha256"] = "c" * 64
+    changed["authorization_sha256"] = native.digest({
+        k: v for k, v in changed.items() if k != "authorization_sha256"
+    })
+    with pytest.raises(native.ElementNativeExecutionError, match="stale"):
+        native.verify_authorization(
+            changed, manifest, candidate_id=summary["candidate_id"],
+            workflow_sha256=summary["workflow_sha256"],
+            transfer_plan_sha256="b" * 64,
+        )
+
+
+def test_exact_grant_is_checked_again_before_engine_mutation_and_receipted(tmp_path):
+    work, worker, _target, summary, manifest = _manifest(tmp_path)
+    with pytest.raises(workflow.ElementWorkflowError, match="acknowledged"):
+        workflow.require_native_action_authorization(
+            work, worker, summary["candidate_id"],
+        )
+    workflow.acknowledge(work, worker, summary["workflow_sha256"])
+    with pytest.raises(workflow.ElementWorkflowError, match="Approve"):
+        workflow.require_native_action_authorization(
+            work, worker, summary["candidate_id"],
+        )
+    approved = workflow.approve_native_actions(
+        work, worker, workflow_sha256=summary["workflow_sha256"],
+        inventory_sha256=native.digest(manifest),
+        review_all=True, accept_legacy_unattributed=False,
+    )
+    current = json.loads((work / "active-candidate.json").read_text())
+    config = json.loads((work / "connection.json").read_text())
+    location = work / "candidates" / current["candidate_id"]
+    job_id = "a" * 32
+    job = {
+        "kind": "cutsceneai.studio.local_unreal_job",
+        "job_id": job_id, "candidate_id": summary["candidate_id"],
+        "candidate_dir": str(location),
+        "csir": config["csir"],
+        "mapping": current["mapping_copy"],
+        "sequence_path": current["sequence_path"],
+        "expected_project": config["target_project"],
+        "element_native_authorization_sha256":
+            approved["native_action_authorization_sha256"],
+    }
+    consent, manifest_again = workflow.verify_native_job(work, job)
+    native_permission, native_manifest = native_gate.verify_job(
+        work, job, worker["scene_inventory"]
+    )
+    assert native_permission == consent
+    assert native_manifest == manifest
+    changed_native = copy.deepcopy(worker["scene_inventory"])
+    changed_native["native_capabilities"]["cine_camera_actor"] = False
+    with pytest.raises(native_gate.NativeElementGateError, match="capability"):
+        native_gate.verify_job(work, job, changed_native)
+    assert consent["action_count"] == 1
+    assert manifest_again == manifest
+    receipt_file = location / ("unreal-runtime-receipt-" + job_id + ".json")
+    _write(receipt_file, {
+        "kind": "cutsceneai.unreal.best_effort_receipt",
+        "status": "GENERATED_UNVERIFIED",
+        "stage": "complete",
+        "transfer_plan_sha256": summary["native_actions"] and
+            workflow._active(work)["transfer_plan_sha256"],
+    })
+    recorded = workflow.record_native_job(work, job)
+    assert native_gate.record_job(work, job, worker["scene_inventory"]) == recorded
+    assert recorded["action_count"] == 1
+    assert recorded["native_builder_completed"] is True
+    assert recorded["individual_native_action_readbacks_verified"] is False
+    assert recorded["full_cutscene_fidelity_verified"] is False
+    assert workflow.record_native_job(work, job) == recorded
+    changed = copy.deepcopy(job)
+    changed["element_native_authorization_sha256"] = "f" * 64
+    with pytest.raises(workflow.ElementWorkflowError, match="approved"):
+        workflow.verify_native_job(work, changed)
+    receipt_data = json.loads(receipt_file.read_text())
+    receipt_data["status"] = "BLOCKED"
+    _write(receipt_file, receipt_data)
+    with pytest.raises(native.ElementNativeExecutionError, match="completed"):
+        workflow.record_native_job(work, job)
+
+
+def test_plan_or_capability_changed_after_consent_never_reaches_native_worker(tmp_path):
+    work, worker, _target, summary, manifest = _manifest(tmp_path)
+    workflow.acknowledge(work, worker, summary["workflow_sha256"])
+    workflow.approve_native_actions(
+        work, worker, workflow_sha256=summary["workflow_sha256"],
+        inventory_sha256=native.digest(manifest),
+        review_all=True, accept_legacy_unattributed=False,
+    )
+    location = work / "candidates" / summary["candidate_id"]
+    doc = json.loads((location / "transfer-plan.json").read_text())
+    doc["actions"][0]["kind"] = "transform"
+    _write(location / "transfer-plan.json", doc)
+    with pytest.raises(workflow.ElementWorkflowError, match="stale"):
+        workflow.require_native_action_authorization(
+            work, worker, summary["candidate_id"],
+        )
+
+
+def test_unobserved_editor_capabilities_cannot_grant_native_actions(tmp_path):
+    work, worker, _target, _summary, _manifest_doc = _manifest(tmp_path)
+    worker["connected"] = False
+    report = workflow.prepare(work, worker)
+    workflow.acknowledge(work, worker, report["workflow_sha256"])
+    with pytest.raises(workflow.ElementWorkflowError, match="live native"):
+        workflow.approve_native_actions(
+            work, worker, workflow_sha256=report["workflow_sha256"],
+            inventory_sha256=report["native_actions"]["action_inventory_sha256"],
+            review_all=True, accept_legacy_unattributed=True,
+        )
+
+
+def test_worker_checks_action_grant_before_editor_mutation():
+    worker = (ROOT / "integrations" / "unreal" /
+              "studio_local_editor_worker.py").read_text(encoding="utf-8")
+    assert worker.index("studio_element_native_gate.verify_job(") < (
+        worker.index("_ensure_target_level(job)", worker.index("def _execute(job):"))
+    )
+    assert worker.index("studio_element_native_gate.verify_job(") < (
+        worker.index("studio_auto_scene.run(")
+    )
+    assert worker.index("studio_element_native_gate.record_job(") > (
+        worker.index("build_level_sequence.build_prepared_files(")
+    )
+
+
+def test_engine_reopen_acceptance_recomputes_real_source_bound_occurrences():
+    src = (ROOT / "integrations" / "unreal" /
+           "studio_native_acceptance.py").read_text(encoding="utf-8")
+    assert "target['target']['editor_pid'] != os.getpid()" in src
+    assert "studio_element_native_gate.verify_job(" in src
+    assert "element3_native_authorization_sha256" in src
+    assert "element3_source_occurrence_count" in src
+    assert "full_cutscene_fidelity_verified': False" in src
+    host = (ROOT / "packages" / "studio" /
+            "studio_release_gate.py").read_text(encoding="utf-8")
+    assert "studio_element_cinetwin.build(" in host
+    assert "element3_native_reopened_attribution" in host
+
+
+
+def test_new_element_review_archives_old_native_consent_without_reusing_it(tmp_path):
+    work, worker, _target, summary, manifest = _manifest(tmp_path)
+    workflow.acknowledge(work, worker, summary["workflow_sha256"])
+    approval = workflow.approve_native_actions(
+        work, worker, workflow_sha256=summary["workflow_sha256"],
+        inventory_sha256=native.digest(manifest),
+        review_all=True, accept_legacy_unattributed=False,
+    )
+    config = json.loads((work / "active-candidate.json").read_text())
+    location = work / "candidates" / config["candidate_id"]
+    mapping = Path(config["mapping_copy"])
+    mapping.write_text(mapping.read_text(encoding="utf-8") + " ", encoding="utf-8")
+    changed = workflow.prepare(work, worker)
+    assert changed["workflow_sha256"] != summary["workflow_sha256"]
+    assert changed["native_actions"]["approved_for_existing_native_preflight"] is False
+    assert changed["review_acknowledged"] is False
+    assert not (location / "element-native-approval.json").exists()
+    archived = (location / ("element-native-approval-" +
+                            approval["native_action_authorization_sha256"] + ".json"))
+    assert archived.is_file()
+    assert json.loads(archived.read_text())["authorization_sha256"] == (
+        approval["native_action_authorization_sha256"]
+    )
+
+
+def test_native_unreal_gate_keeps_host_optional_dependencies_out_of_editor_imports():
+    src = (ROOT / "integrations" / "unreal" /
+           "studio_element_native_gate.py").read_text(encoding="utf-8")
+    assert "import studio_element_workflow" not in src
+    assert "import studio_element_plan" not in src
+    assert "import langgraph" not in src
+    assert "import jsonschema" not in src
+    assert "feature_dispatch._source_rows(csir)" in src
+    assert "native_inventory.get(\"available\") is not True" in src
+
+
+
+def test_localhost_native_action_approval_is_explicit_and_session_scoped(tmp_path):
+    import threading
+    from datetime import UTC, datetime
+    from http.server import ThreadingHTTPServer
+
+    from test_studio_local_bridge import bridge, call
+
+    work, worker, _target, _report, _manifest_doc = _manifest(tmp_path)
+    _write(work / "unreal-worker.json", {
+        "heartbeat": datetime.now(UTC).isoformat(),
+        "project": worker["project"],
+        "level": worker["level"],
+        "scene_inventory": worker["scene_inventory"],
+    })
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("Studio", encoding="utf-8")
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), bridge.create_handler(web, work)
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = "http://127.0.0.1:" + str(server.server_port)
+        token = call(base + "/api/status")[1]["token"]
+        prepared_code, prepared = call(
+            base + "/api/elements/prepare", {}, token,
+        )
+        assert prepared_code == 200
+        assert prepared["native_actions"]["action_count"] == 1
+        assert prepared["target_capabilities_observed"] is True
+        approval = {
+            "workflow_sha256": prepared["workflow_sha256"],
+            "action_inventory_sha256": prepared["native_actions"][
+                "action_inventory_sha256"],
+            "review_all": True,
+            "accept_legacy_unattributed": False,
+        }
+        route = base + "/api/elements/approve-native-actions"
+        assert call(route, approval)[0] == 403
+        assert call(route, approval, token, "https://hostile.example")[0] == 403
+        assert call(route, approval, token)[0] == 422
+        assert call(base + "/api/elements/acknowledge", {
+            "workflow_sha256": prepared["workflow_sha256"], "reviewed": True,
+        }, token)[0] == 200
+        wrong = dict(approval, review_all=False)
+        assert call(route, wrong, token)[0] == 422
+        injected = dict(approval, command="import unreal; delete_all_assets()")
+        assert call(route, injected, token)[0] == 422
+        status, approved = call(route, approval, token)
+        assert status == 200
+        assert approved["approved_for_existing_native_preflight"] is True
+        assert approved["native_builder_executed"] is False
+        assert call(base + "/api/elements")[1]["native_actions"][
+            "approved_for_existing_native_preflight"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+
+def test_release_gate_separates_synthetic_dispatch_from_reopened_fidelity(tmp_path):
+    import hashlib
+
+    import studio_release_gate
+
+    work, worker, _target, summary, manifest = _manifest(tmp_path)
+    workflow.acknowledge(work, worker, summary["workflow_sha256"])
+    operator = workflow.approve_native_actions(
+        work, worker, workflow_sha256=summary["workflow_sha256"],
+        inventory_sha256=native.digest(manifest),
+        review_all=True, accept_legacy_unattributed=False,
+    )
+    connected = json.loads((work / "connection.json").read_text())
+    candidate = json.loads((work / "active-candidate.json").read_text())
+    location = work / "candidates" / candidate["candidate_id"]
+    job_id = "b" * 32
+    plan_file = location / "transfer-plan.json"
+    source_file = Path(connected["csir"])
+    _write(location / "session.json", {
+        "kind": "cutsceneai.studio.prepared_transfer",
+        "source": {"csir_path": str(source_file),
+                   "sha256": hashlib.sha256(source_file.read_bytes()).hexdigest()},
+        "target": {"sequence_asset_path": candidate["sequence_path"]},
+        "artifact_sha256": {
+            "transfer-plan.json": hashlib.sha256(plan_file.read_bytes()).hexdigest(),
+        },
+    })
+    job = {
+        "kind": "cutsceneai.studio.local_unreal_job",
+        "job_id": job_id, "candidate_id": candidate["candidate_id"],
+        "candidate_dir": str(location), "csir": connected["csir"],
+        "capture": connected["capture"], "mapping": candidate["mapping_copy"],
+        "expected_project": connected["target_project"],
+        "expected_level": connected["level_path"],
+        "sequence_path": candidate["sequence_path"],
+        "generation_status": "GENERATED_UNVERIFIED",
+        "status": "GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED",
+        "generated_sequence": candidate["sequence_path"],
+        "element_native_authorization_sha256":
+            operator["native_action_authorization_sha256"],
+    }
+    job_path = work / "jobs" / (job_id + ".json")
+    _write(job_path, job)
+    incomplete = studio_release_gate.assess(work, job_id)
+    assert incomplete["checks"]["element3_native_action_consent"]["status"] == "PASS"
+    assert incomplete["checks"]["element3_native_builder_dispatch"]["status"] == "INCOMPLETE"
+    assert incomplete["checks"]["element3_native_reopened_attribution"][
+        "status"] == "INCOMPLETE"
+    assert incomplete["release_ready"] is False
+
+    # SYNTHETIC receipt: tests the source/release-gate contract, not Unreal.
+    runtime = location / ("unreal-runtime-receipt-" + job_id + ".json")
+    _write(runtime, {
+        "kind": "cutsceneai.unreal.best_effort_receipt",
+        "status": "GENERATED_UNVERIFIED", "stage": "complete",
+        "transfer_plan_sha256": hashlib.sha256(plan_file.read_bytes()).hexdigest(),
+    })
+    workflow.record_native_job(work, job)
+    job["element_native_dispatch_status"] = (
+        "REGISTERED_BUILDER_COMPLETED_INDIVIDUAL_READBACK_UNVERIFIED"
+    )
+    job["element_native_dispatch_receipt"] = str(
+        location / ("element-native-dispatch-" + job_id + ".json")
+    )
+    _write(job_path, job)
+    accepted = studio_release_gate.assess(work, job_id)
+    assert accepted["checks"]["element3_native_action_consent"]["status"] == "PASS"
+    assert accepted["checks"]["element3_native_builder_dispatch"]["status"] == "PASS"
+    assert accepted["checks"]["element3_native_reopened_attribution"]["status"] == "INCOMPLETE"
+    assert accepted["release_ready"] is False
+    assert accepted["fidelity_verified"] is False
+    assert "rendered_frame_parity" in accepted["incomplete"]
+    changed = json.loads(runtime.read_text())
+    changed["transfer_plan_sha256"] = "f" * 64
+    _write(runtime, changed)
+    tampered = studio_release_gate.assess(work, job_id)
+    assert tampered["checks"]["element3_native_builder_dispatch"]["status"] == "FAIL"
+    assert tampered["status"] == "BLOCKED"
+
+
+
+def test_adaptive_strategy_dependency_or_route_block_is_a_hard_native_gate(tmp_path):
+    work, _worker, _target, summary, manifest = _manifest(tmp_path)
+    record = workflow._active(work)
+    strategy = copy.deepcopy(record["element_strategy"])
+    ident = manifest["actions"][0]["source_occurrence_ids"][0]
+    comparison = next(item for item in strategy["comparisons"]
+                      if item["occurrence_id"] == ident)
+    eligible = next(item for item in comparison["alternatives"]
+                    if item["action"] == "camera_setup")
+    assert eligible["eligible_for_model_proposal"] is True
+    eligible["eligible_for_model_proposal"] = False
+    strategy.pop("comparison_sha256")
+    strategy["comparison_sha256"] = native.digest(strategy)
+    current = work / "candidates" / summary["candidate_id"] / "transfer-plan.json"
+    plan = json.loads(current.read_text(encoding="utf-8"))
+    downgraded = native.inventory(plan, record["element_plan"], strategy)
+    assert downgraded["blocked_action_count"] == 1
+    assert downgraded["actions"][0]["native_action_blocker"] == (
+        "SOURCE_STRATEGY_OR_DEPENDENCY_NOT_ELIGIBLE"
+    )
+    with pytest.raises(native.ElementNativeExecutionError, match="source-blocked"):
+        native.authorize(
+            downgraded, candidate_id=summary["candidate_id"],
+            workflow_sha256=summary["workflow_sha256"],
+            transfer_plan_sha256="c" * 64,
+            approved_action_ids=["A00000"], accept_legacy_unattributed=False,
+        )
+
+
+
+def test_separate_native_action_pagination_does_not_truncate_source_occurrences(tmp_path):
+    from test_element_studio_workflow import _setup
+
+    work, worker, _target = _setup(tmp_path)
+    candidate = json.loads((work / "active-candidate.json").read_text())
+    path = work / "candidates" / candidate["candidate_id"] / "transfer-plan.json"
+    _write(path, {
+        "sequence_asset_path": candidate["sequence_path"],
+        "actions": [{"kind": "audio"} for _ in range(65)],
+    })
+    first = workflow.prepare(work, worker)
+    assert first["native_actions"]["action_count"] == 65
+    assert first["native_actions"]["unattributed_count"] == 65
+    assert len(first["native_actions"]["candidate_actions"]) == 60
+    assert first["native_actions"]["has_more_actions"] is True
+    next_page = workflow.current(work, worker, action_offset=60)
+    assert len(next_page["native_actions"]["candidate_actions"]) == 5
+    assert next_page["native_actions"]["has_more_actions"] is False
+    assert next_page["elements"] == first["elements"]
+    assert next_page["source_occurrence_count"] == first["source_occurrence_count"]
+    assert next_page["native_actions"]["candidate_actions"][0]["action_id"] == "A00060"
+    with pytest.raises(workflow.ElementWorkflowError, match="action review"):
+        workflow.current(work, worker, action_offset=-1)
+
+
+
+def test_explicit_covered_source_list_cannot_launder_unregistered_occurrences(tmp_path):
+    work, _worker, _target, _summary, _manifest_doc = _manifest(tmp_path)
+    snapshot = workflow._active(work)
+    plan = {
+        "sequence_asset_path": "/Game/Demo/LS_Trial",
+        "actions": [{
+            "kind": "camera_setup", "source_location": "entities[1]",
+            "source_ced": "entity.camera",
+            "covered_source_locations": ["entities[2]"],
+        }],
+    }
+    native_inventory = native.inventory(
+        plan, snapshot["element_plan"], snapshot["element_strategy"],
+    )
+    assert native_inventory["blocked_action_count"] == 1
+    assert native_inventory["actions"][0]["native_action_blocker"] in {
+        "COVERED_SOURCE_OCCURRENCE_ACTION_UNAVAILABLE",
+        "COVERED_SOURCE_STRATEGY_OR_DEPENDENCY_BLOCKED",
+    }
+    with pytest.raises(native.ElementNativeExecutionError, match="source-blocked"):
+        native.authorize(
+            native_inventory, candidate_id=snapshot["candidate_id"],
+            workflow_sha256=snapshot["workflow_sha256"],
+            transfer_plan_sha256="d" * 64,
+            approved_action_ids=["A00000"], accept_legacy_unattributed=False,
+        )

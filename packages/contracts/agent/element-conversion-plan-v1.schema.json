@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cutsceneai://contracts/agent/element-conversion-plan/v1",
+  "title": "CutSceneAI Studio Source-Bound Per-Occurrence Agent Plan v1",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "source_csir_sha256",
+    "ced_knowledge_sha256",
+    "target_capabilities_sha256",
+    "source_occurrence_count",
+    "model_reviewed_count",
+    "no_native_execution_permission",
+    "native_conversion_executed",
+    "elements",
+    "element_plan_sha256"
+  ],
+  "properties": {
+    "kind": {
+      "const": "cutsceneai.studio.element_conversion_plan"
+    },
+    "schema_version": {
+      "const": "1"
+    },
+    "source_csir_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "ced_knowledge_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "target_capabilities_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source_occurrence_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 30000
+    },
+    "model_reviewed_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 30000
+    },
+    "no_native_execution_permission": {
+      "const": true
+    },
+    "native_conversion_executed": {
+      "const": false
+    },
+    "element_plan_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "elements": {
+      "type": "array",
+      "maxItems": 30000,
+      "items": {
+        "type": "object",
+        "required": [
+          "occurrence_id",
+          "source_location",
+          "source_kind",
+          "ced",
+          "dependencies",
+          "unresolved_dependencies",
+          "candidate_actions",
+          "missing_target_capabilities",
+          "state",
+          "selected_action",
+          "model_reviewed"
+        ],
+        "properties": {
+          "occurrence_id": {
+            "type": "string",
+            "pattern": "^E[0-9]{5}$"
+          },
+          "source_location": {
+            "type": "string",
+            "pattern": "^(?:assets|entities|tracks|relationships)\\[[0-9]+\\](?:\\.sections\\[[0-9]+\\](?:\\.payload\\.animation\\.curves\\[[0-9]+\\])?)?$"
+          },
+          "source_kind": {
+            "enum": [
+              "assets",
+              "entities",
+              "tracks",
+              "sections",
+              "curves",
+              "relationships"
+            ]
+          },
+          "ced": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+          },
+          "dependencies": {
+            "type": "array",
+            "maxItems": 6,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^E[0-9]{5}$"
+            }
+          },
+          "unresolved_dependencies": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "enum": [
+                "parent_MISSING_OR_AMBIGUOUS",
+                "asset_MISSING_OR_AMBIGUOUS",
+                "binding_MISSING_OR_AMBIGUOUS",
+                "source_MISSING_OR_AMBIGUOUS",
+                "target_MISSING_OR_AMBIGUOUS"
+              ]
+            }
+          },
+          "candidate_actions": {
+            "type": "array",
+            "maxItems": 13,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "camera_setup",
+                "camera_cut",
+                "camera_fov",
+                "transform",
+                "skeletal_animation",
+                "light_intensity",
+                "audio",
+                "marker",
+                "skeletal_world_root_lock",
+                "actor_visibility",
+                "property_float",
+                "property_bool",
+                "collider_primitive_shape"
+              ]
+            }
+          },
+          "missing_target_capabilities": {
+            "type": "array",
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "cine_camera_actor",
+                "sequencer_skeletal_animation_track",
+                "sequencer_visibility_track"
+              ]
+            }
+          },
+          "state": {
+            "enum": [
+              "UNRESOLVED_SOURCE_DEPENDENCY",
+              "UNKNOWN_SEMANTIC_INVESTIGATE",
+              "CED_KNOWLEDGE_MISSING",
+              "NATIVE_ACTION_CANDIDATES_REQUIRE_PREFLIGHT",
+              "TARGET_CAPABILITY_MISSING",
+              "NO_REGISTERED_NATIVE_ACTION"
+            ]
+          },
+          "selected_action": {
+            "enum": [
+              "report_only",
+              "camera_setup",
+              "camera_cut",
+              "camera_fov",
+              "transform",
+              "skeletal_animation",
+              "light_intensity",
+              "audio",
+              "marker",
+              "skeletal_world_root_lock",
+              "actor_visibility",
+              "property_float",
+              "property_bool",
+              "collider_primitive_shape"
+            ]
+          },
+          "model_reviewed": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

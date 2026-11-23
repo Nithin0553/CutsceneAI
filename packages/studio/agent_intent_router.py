@@ -137,6 +137,17 @@ def route(
     adapter_catalog: object = None,
     fallback_observation_scope: str = "character",
     transform_repair_evidence: dict[str, Any] | None = None,
+    camera_lens_repair_evidence: dict[str, Any] | None = None,
+    camera_cut_repair_evidence: dict[str, Any] | None = None,
+    two_shot_cut_repair_evidence: dict[str, Any] | None = None,
+    camera_position_repair_evidence: dict[str, Any] | None = None,
+    camera_yaw_repair_evidence: dict[str, Any] | None = None,
+    animated_camera_key_evidence: dict[str, Any] | None = None,
+    animated_camera_two_key_evidence: dict[str, Any] | None = None,
+    animated_camera_yaw_key_evidence: dict[str, Any] | None = None,
+    animated_camera_many_yaw_evidence: dict[str, Any] | None = None,
+    character_facing_review: dict[str, Any] | None = None,
+    static_character_yaw_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Choose *admissible strategies*, not a repair or an engine operation.
 
@@ -188,12 +199,341 @@ def route(
         and transform_repair_evidence.get("eligible") is True
         and isinstance(transform_repair_evidence.get("entity"), str)
     )
-    if transform_eligible:
+    camera_eligible = bool(
+        intent["mode"] == "user_feedback"
+        and domains == ["camera"] and not intent["ambiguous"]
+        and generation_complete and completed_repairs < repair_budget
+        and isinstance(camera_lens_repair_evidence, dict)
+        and camera_lens_repair_evidence.get("eligible") is True
+        and camera_lens_repair_evidence.get("kind")
+        == "cutsceneai.studio.static_camera_lens_review"
+        and isinstance(camera_lens_repair_evidence.get("camera_repair_sha256"), str)
+    )
+    camera_cut_eligible = bool(
+        intent["mode"] == "user_feedback"
+        and domains == ["camera"] and not intent["ambiguous"]
+        and generation_complete and completed_repairs < repair_budget
+        and isinstance(camera_cut_repair_evidence, dict)
+        and camera_cut_repair_evidence.get("eligible") is True
+        and camera_cut_repair_evidence.get("kind")
+        == "cutsceneai.studio.single_camera_cut_repair_review"
+        and isinstance(camera_cut_repair_evidence.get(
+            "camera_cut_repair_sha256"
+        ), str)
+    )
+    two_shot_eligible = False
+    if isinstance(two_shot_cut_repair_evidence, dict):
+        from studio_two_shot_cut_evidence import message_requests_two_shot
+        two_shot_eligible = bool(
+            message_requests_two_shot(message)
+            and intent["mode"] == "user_feedback"
+            and domains == ["camera"] and not intent["ambiguous"]
+            and generation_complete and completed_repairs < repair_budget
+            and two_shot_cut_repair_evidence.get("eligible") is True
+            and two_shot_cut_repair_evidence.get("kind")
+            == "cutsceneai.studio.two_shot_camera_boundary_review"
+            and two_shot_cut_repair_evidence.get("camera_count") == 2
+            and two_shot_cut_repair_evidence.get("switch_count") == 1
+            and two_shot_cut_repair_evidence.get("native_edit_authorized") is False
+            and isinstance(two_shot_cut_repair_evidence.get(
+                "two_shot_cut_repair_sha256"
+            ), str)
+        )
+    camera_yaw_request_valid = False
+    if isinstance(camera_yaw_repair_evidence, dict):
+        from studio_camera_yaw_evidence import message_requests_yaw
+        camera_yaw_request_valid = message_requests_yaw(message)
+    camera_yaw_eligible = bool(
+        camera_yaw_request_valid
+        and intent["mode"] == "user_feedback"
+        and domains in (["camera"], ["camera", "transform"])
+        and scope == "unspecified"
+        and generation_complete and completed_repairs < repair_budget
+        and camera_yaw_repair_evidence.get("kind")
+        == "cutsceneai.studio.static_camera_yaw_review"
+        and camera_yaw_repair_evidence.get("eligible") is True
+        and camera_yaw_repair_evidence.get("native_edit_authorized") is False
+        and isinstance(camera_yaw_repair_evidence.get(
+            "camera_yaw_repair_sha256"), str)
+    )
+    camera_position_request_valid = False
+    if isinstance(camera_position_repair_evidence, dict):
+        # A multi-domain message (e.g. "camera position and lens") may share
+        # the same generic domain labels. Preserve the exact native adapter
+        # intent matcher here as well as in the Unreal consent recheck.
+        from studio_camera_position_evidence import message_requests_position
+        camera_position_request_valid = message_requests_position(message)
+    camera_position_eligible = bool(
+        camera_position_request_valid
+        and intent["mode"] == "user_feedback"
+        and domains in (["camera", "transform"], ["camera"])
+        and generation_complete and completed_repairs < repair_budget
+        and isinstance(camera_position_repair_evidence, dict)
+        and camera_position_repair_evidence.get("eligible") is True
+        and camera_position_repair_evidence.get("kind")
+        == "cutsceneai.studio.static_camera_position_review"
+        and isinstance(camera_position_repair_evidence.get(
+            "camera_position_repair_sha256"), str)
+    )
+    from studio_character_facing_review import relevant_feedback
+    character_facing_observed = bool(
+        relevant_feedback(message)
+        and intent["mode"] == "user_feedback"
+        and domains == ["animation"] and not intent["ambiguous"]
+        and scope == "character" and generation_complete
+        and completed_repairs < repair_budget
+        and isinstance(character_facing_review, dict)
+        and character_facing_review.get("kind")
+        == "cutsceneai.studio.character_facing_owner_review"
+        and character_facing_review.get("status")
+        == "REOPENED_CHARACTER_OWNER_DIAGNOSTIC_ONLY"
+        and character_facing_review.get("native_owner_observation_available") is True
+        and character_facing_review.get("native_edit_authorized") is False
+        and character_facing_review.get("model_command_authorized") is False
+    )
+    static_character_yaw_eligible = False
+    if isinstance(static_character_yaw_evidence, dict):
+        from studio_static_character_yaw_evidence import message_requests_static_yaw
+        static_character_yaw_eligible = bool(
+            message_requests_static_yaw(message)
+            and intent["mode"] == "user_feedback"
+            and domains in (["animation"], ["transform"])
+            and not intent["ambiguous"] and scope == "character"
+            and generation_complete and completed_repairs < repair_budget
+            and static_character_yaw_evidence.get("kind")
+            == "cutsceneai.studio.static_character_yaw_review"
+            and static_character_yaw_evidence.get("eligible") is True
+            and static_character_yaw_evidence.get("native_edit_authorized") is False
+            and isinstance(static_character_yaw_evidence.get(
+                "character_yaw_repair_sha256"
+            ), str)
+        )
+    animated_camera_key_eligible = False
+    if isinstance(animated_camera_key_evidence,dict):
+        from studio_camera_key_evidence import message_requests_key
+        animated_camera_key_eligible = bool(
+            message_requests_key(message)
+            and intent["mode"]=="user_feedback"
+            # Camera + animation + position are three *overlapping*
+            # semantic cues for this one exact native key operation.
+            # Generic multi-domain requests remain ambiguous elsewhere.
+            and scope=="unspecified"
+            and set(domains)=={"camera","animation","transform"}
+            and generation_complete and completed_repairs<repair_budget
+            and animated_camera_key_evidence.get("kind")
+                == "cutsceneai.studio.single_animated_camera_position_key_review"
+            and animated_camera_key_evidence.get("eligible") is True
+            and animated_camera_key_evidence.get("native_edit_authorized") is False
+            and type(animated_camera_key_evidence.get("source_key_frame")) is int
+            and animated_camera_key_evidence.get("native_channel_index") in (0,1,2)
+            and isinstance(animated_camera_key_evidence.get(
+                "animated_camera_key_repair_sha256"),str)
+        )
+    animated_camera_two_key_eligible = False
+    if isinstance(animated_camera_two_key_evidence, dict):
+        from studio_camera_key_evidence import message_requests_two_keys
+        rows = animated_camera_two_key_evidence.get("source_position_key_repairs")
+        animated_camera_two_key_eligible = bool(
+            message_requests_two_keys(message)
+            and intent["mode"] == "user_feedback"
+            and scope == "unspecified"
+            and set(domains) == {"camera", "animation", "transform"}
+            and generation_complete and completed_repairs < repair_budget
+            and animated_camera_two_key_evidence.get("kind")
+                == "cutsceneai.studio.two_animated_camera_position_keys_review"
+            and animated_camera_two_key_evidence.get("eligible") is True
+            and animated_camera_two_key_evidence.get("native_edit_authorized") is False
+            and animated_camera_two_key_evidence.get("source_key_count") == 2
+            and isinstance(rows, list) and len(rows) == 2
+            and all(isinstance(row, dict)
+                    and type(row.get("source_key_frame")) is int
+                    and row.get("native_channel_index") in (0, 1, 2)
+                    for row in rows)
+            and rows[0]["native_channel_index"] == rows[1]["native_channel_index"]
+            and abs(rows[0]["source_key_frame"]-rows[1]["source_key_frame"]) >= 2
+            and isinstance(animated_camera_two_key_evidence.get(
+                "animated_camera_two_key_repair_sha256"), str)
+            and re.fullmatch("[a-f0-9]{64}", animated_camera_two_key_evidence[
+                "animated_camera_two_key_repair_sha256"]) is not None
+        )
+    animated_camera_yaw_key_eligible = False
+    if isinstance(animated_camera_yaw_key_evidence,dict):
+        from studio_camera_key_evidence import message_requests_yaw_key
+        animated_camera_yaw_key_eligible = bool(
+            message_requests_yaw_key(message)
+            and intent["mode"] == "user_feedback"
+            and scope == "unspecified"
+            and set(domains) in (
+                {"camera", "animation"},
+                {"camera", "animation", "transform"},
+            )
+            and generation_complete and completed_repairs < repair_budget
+            and animated_camera_yaw_key_evidence.get("kind")
+                == "cutsceneai.studio.single_animated_camera_yaw_key_review"
+            and animated_camera_yaw_key_evidence.get("eligible") is True
+            and animated_camera_yaw_key_evidence.get("native_edit_authorized") is False
+            and type(animated_camera_yaw_key_evidence.get("source_key_frame")) is int
+            and animated_camera_yaw_key_evidence.get("native_channel_index") == 5
+            and type(animated_camera_yaw_key_evidence.get(
+                "native_source_yaw_error_degrees")) in (int,float)
+            and isinstance(animated_camera_yaw_key_evidence.get(
+                "animated_camera_yaw_key_repair_sha256"),str)
+            and re.fullmatch("[a-f0-9]{64}", animated_camera_yaw_key_evidence[
+                "animated_camera_yaw_key_repair_sha256"]) is not None
+        )
+    many_yaw_eligible = False
+    if isinstance(animated_camera_many_yaw_evidence,dict):
+        from studio_camera_key_evidence import requested_many_yaw_count
+        count = requested_many_yaw_count(message)
+        rows = animated_camera_many_yaw_evidence.get("source_yaw_key_repairs")
+        many_yaw_eligible = bool(
+            count is not None
+            and intent["mode"]=="user_feedback"
+            and scope=="unspecified"
+            and set(domains) in (
+                {"camera","animation"},{"camera","animation","transform"},
+            )
+            and generation_complete and completed_repairs<repair_budget
+            and animated_camera_many_yaw_evidence.get("kind")
+                == "cutsceneai.studio.multi_animated_camera_yaw_keys_review"
+            and animated_camera_many_yaw_evidence.get("eligible") is True
+            and animated_camera_many_yaw_evidence.get("native_edit_authorized") is False
+            and animated_camera_many_yaw_evidence.get("source_key_count")==count
+            and isinstance(rows,list) and len(rows)==count
+            and all(isinstance(row,dict)
+                    and type(row.get("source_key_frame")) is int
+                    and row.get("native_channel_index")==5 for row in rows)
+            and all(b["source_key_frame"]-a["source_key_frame"]>=2
+                    for a,b in zip(rows,rows[1:]))
+            and isinstance(animated_camera_many_yaw_evidence.get(
+                "animated_camera_many_yaw_repair_sha256"),str)
+            and re.fullmatch("[a-f0-9]{64}", animated_camera_many_yaw_evidence[
+                "animated_camera_many_yaw_repair_sha256"]) is not None
+        )
+    if many_yaw_eligible:
+        disposition = "GUARDED_BOUNDED_ANIMATED_CAMERA_YAW_KEYS_AVAILABLE"
+        reason = (
+            "Only an explicit count of 2–8 source-measured, nonadjacent camera "
+            "yaw-only keys can be restored. Exact original capture/plan, "
+            "nine-channel Sequencer readback, user consent and native "
+            "rollback are mandatory. No arbitrary pitch/roll/rig/shot "
+            "curves or rendered fidelity claim."
+        )
+        allowed = ["report_only","restore_bounded_animated_camera_yaw_keys"]
+    elif animated_camera_yaw_key_eligible:
+        disposition = "GUARDED_ONE_ANIMATED_CAMERA_YAW_KEY_AVAILABLE"
+        reason = (
+            "One source-measured interior animated CineCamera yaw key differs "
+            "by 3–30 degrees; every other position/orientation/scale and "
+            "CineTwin domain matches. Native must recheck original actor, "
+            "full nine-channel linear grid, exact Euler ownership and "
+            "explicit yaw-key consent, then rollback on failure. A saved "
+            "key does not prove reopened CineTwin or rendered parity."
+        )
+        allowed = ["report_only", "restore_single_animated_camera_yaw_key"]
+    elif animated_camera_two_key_eligible:
+        disposition = "GUARDED_TWO_ANIMATED_CAMERA_POSITION_KEYS_AVAILABLE"
+        reason = (
+            "Only two independently measured, nonadjacent interior XYZ camera "
+            "position keys on the same axis are eligible. Native Sequencer "
+            "must recheck all nine channels, source-bound owner and current "
+            "two-key consent. Rollback and asset save must be confirmed; "
+            "reopened CineTwin and rendered motion remain unverified."
+        )
+        allowed = ["report_only", "restore_two_animated_camera_position_keys"]
+    elif animated_camera_key_eligible:
+        disposition="GUARDED_ONE_ANIMATED_CAMERA_POSITION_KEY_AVAILABLE"
+        reason=(
+            "An original authenticated evaluated Unity camera-world grid and "
+            "independent reopened CineTwin reveal exactly one bounded "
+            "camera position-axis frame discrepancy. Native Unreal must recheck "
+            "every other Sequencer transform key, original staged actor UObject "
+            "and current explicit feedback. Only one existing key value may "
+            "change with rollback; saved native key readback is not reopened "
+            "CineTwin or rendered fidelity."
+        )
+        allowed=["report_only","restore_single_animated_camera_position_key"]
+    elif static_character_yaw_eligible:
+        disposition = "GUARDED_STATIC_CHARACTER_ACTOR_YAW_AVAILABLE"
+        reason = (
+            "One unmoving source character has an independently approved "
+            "anatomical mesh axis, full-grid stable yaw, matching static "
+            "calibrated skeletal motion and read-only native actor/mesh "
+            "ownership. This is only eligibility for a source-derived "
+            "user-requested actor base yaw; the live editor must recheck "
+            "inactive animation, physics, hierarchy, Sequencer and "
+            "rollback before saving. Reopened CineTwin remains pending."
+        )
+        allowed = ["report_only", "restore_static_character_actor_yaw"]
+    elif camera_yaw_eligible:
+        disposition = "GUARDED_STATIC_CAMERA_YAW_AVAILABLE"
+        reason = (
+            "One exact source-mapped static CineCamera has an isolated "
+            "world-yaw mismatch with native pitch/roll, actor position, "
+            "scale, lens and camera-cut timing already aligned. The Unreal "
+            "editor must independently check original staged actor UObject, "
+            "unparented component/world basis, native Sequencer ownership, "
+            "fresh live orientation and current user feedback before a "
+            "single rollback-safe world yaw change. Reopened CineTwin "
+            "and rendered framing remain unverified."
+        )
+        allowed = ["report_only", "restore_static_camera_actor_yaw"]
+    elif camera_position_eligible:
+        disposition = "GUARDED_STATIC_CAMERA_PLACEMENT_AVAILABLE"
+        reason = (
+            "An exact-source, single CineCamera has a constant sampled world "
+            "offset with matching rotation and scale. The editor must check "
+            "native Sequencer ownership, staged camera identity, live base "
+            "transform and explicit current user consent before one edit."
+        )
+        allowed = ["report_only", "restore_static_camera_position"]
+    elif two_shot_eligible:
+        disposition = "GUARDED_TWO_SHOT_SWITCH_BOUNDARY_AVAILABLE"
+        reason = (
+            "Two source-authored, frame-aligned, uniquely bound CineCameras "
+            "have a single mismatched shared switch frame within eight frames. "
+            "All outer frames, shot order and native bindings match. "
+            "Unreal must recheck exact staged camera objects, native Sequencer "
+            "track ownership and current consent, then repair both ranges "
+            "with rollback and independent reopen verification pending."
+        )
+        allowed = ["report_only", "restore_two_shot_camera_switch"]
+    elif camera_cut_eligible:
+        disposition = "GUARDED_ONE_CAMERA_CUT_TIMING_AVAILABLE"
+        reason = (
+            "An exact-source frame-aligned single camera cut was observed "
+            "with a bounded native start/end discrepancy. Native Sequencer "
+            "binding ownership must be independently rechecked; only an "
+            "explicit user-scoped one-section edit is eligible."
+        )
+        allowed = ["report_only", "restore_single_camera_cut_timing"]
+    elif camera_eligible:
+        disposition = "GUARDED_STATIC_CAMERA_LENS_REPAIR_AVAILABLE"
+        reason = (
+            "An exact-source, single native CineCamera has an independently "
+            "measured constant vertical FOV mismatch and no planned camera "
+            "FOV animation. The editor must independently recheck the "
+            "current component/Sequencer key ownership before a single "
+            "user-authorized, rollback-protected focal-length edit."
+        )
+        allowed = ["report_only", "restore_static_camera_lens"]
+    elif transform_eligible:
         disposition = "GUARDED_ACTOR_TRANSLATION_AVAILABLE"
         reason = ("The exact user-named character has an independently sampled "
                   "constant actor/root offset, without conflicting native transform "
                   "tracks. Unreal must remeasure and validate before any edit.")
         allowed = ["report_only", "restore_constant_actor_offset"]
+    elif character_facing_observed:
+        disposition = "NATIVE_CHARACTER_ROTATION_OWNERSHIP_REVIEW_ONLY"
+        reason = (
+            "The exact reopened Unreal character/mesh owner inventory and "
+            "source-bound CineTwin evidence are available for diagnosis. "
+            "Actor, skeletal component, imported mesh, Sequencer and root "
+            "motion are separate rotation owners; no native facing repair "
+            "is permitted until a registered reversible writer and "
+            "independent post-edit readback are proven."
+        )
+        allowed = ["report_only"]
     elif eligibility:
         disposition = "GUARDED_MATERIAL_REPAIR_AVAILABLE"
         reason = ("A source-backed material fallback was observed in native "
@@ -245,7 +585,12 @@ def route(
         "native_material_fallback_slots": native_material_fallback_slots,
         "registered_adapters_informational": _sanitized_adapters(adapter_catalog),
         "safe_strategies": allowed,
-        "requires_editor_receipt": eligibility or transform_eligible,
+        "requires_editor_receipt": (
+            eligibility or transform_eligible or camera_eligible
+            or camera_cut_eligible or two_shot_eligible
+            or camera_position_eligible or camera_yaw_eligible
+            or static_character_yaw_eligible
+        ),
         "user_observation_verified": False,
         "native_fidelity_verified": False,
         "model_can_authorize_native_commands": False,

@@ -4,6 +4,20 @@ This is the maintained navigation page for CutSceneAI Studio. Documents marked *
 
 ## Start here
 
+- [Consolidated Elements 1–9 technical audit and guarded autonomous repair expansion](studio/ELEMENT1_TO_9_INTEGRATED_AUDIT_AND_REPAIR_EXPANSION_V01.md) — cross-element trust contracts, supported native adapters, measured vs unverified capability matrix and engine acceptance plan
+- [Element 9: final remeasurement and limitation outcome](studio/ELEMENT9_FINAL_REMEASUREMENT_LIMITATIONS_V01.md) — complete source status, measured vs unverified domains and strict repair stop decisions
+- [Element 8: bounded CineTwin repair agent](studio/ELEMENT8_BOUNDED_REPAIR_AGENT_V01.md) — read-only source-bound triage, measured progress/stop budget and guarded existing repair adapters
+- [Element 7: native readback + CineTwin](studio/ELEMENT7_NATIVE_READBACK_CINETWIN_V01.md) — source-bound independent native observation, per-occurrence attribution and exact Element 6 receipt
+- [Element 6: guarded Unreal execution](studio/ELEMENT6_GUARDED_UNREAL_EXECUTION_V01.md) — durable one-attempt claim, no-replay checkpoints, conservative builder receipts
+- [Element 5: source-bound conversion plan](studio/ELEMENT5_SOURCE_BOUND_CONVERSION_PLAN_V01.md) — complete CSIR-to-deterministic-native action reconciliation, source provenance, independent editor gate
+- [Element 4: validated strategy and bounded alternative reasoning](studio/ELEMENT4_VALIDATED_STRATEGY_BOUNDED_ALTERNATIVES_V01.md) — independently revalidated decisions and a strict No → alternative → revalidate loop
+- [Element 3 consolidated native execution and acceptance](studio/ELEMENT3_CONSOLIDATED_NATIVE_ACCEPTANCE_V01.md) — source-bound action authorization, real Unreal dispatch evidence and different-editor CineTwin validation
+- [Element 3 Studio workflow integration](studio/ELEMENT3_STUDIO_WORKFLOW_INTEGRATION_V01.md) — candidate-bound source review, explicit acknowledgment and persistent CineTwin readback
+- [Element 3.5: CineTwin per-element discrepancy attribution and bounded recovery](studio/ELEMENT3_CINETWIN_ATTRIBUTION_RECOVERY_V01.md) — fresh native observation comparisons and non-executable per-element recovery review
+- [Element 3.4: Source-bound investigation and registered alternatives](studio/ELEMENT3_INVESTIGATION_AND_ALTERNATIVES_V01.md) — complete diagnostic cases, opt-in model triage, strict evidence/permissions
+- [Element 3.3: Adaptive CED strategy decisions](studio/ELEMENT3_ADAPTIVE_CED_STRATEGY_V01.md) — ranked evidence, source-native routing, bounded model alternatives, and independent verification
+- [Element 3.2: Dependency-aware reasoning and resumable model reviews](studio/ELEMENT3_DEPENDENCY_AWARE_REASONING_V01.md) — DAG waves, Timeline conflict blockers, validated advisory schedules, durable AI review checkpoints
+- [Element 3.1: Source-complete per-element AI conversion planning](studio/ELEMENT3_PER_ELEMENT_AGENT_PLANNING_V01.md) — source occurrence contracts, opt-in model review, evidence and native permission boundaries
 - [Element 2: Hybrid CED completion, signed releases and learning acceptance](studio/CED_HYBRID_COMPLETION_V02.md) — four phases, operator CLI, readback gates, security and native acceptance gaps
 - [Hybrid CED knowledge service (shared baseline, local learning, reviewed promotion)](studio/CED_HYBRID_KNOWLEDGE_ARCHITECTURE_V1.md) — Element 2 contracts, contextual retrieval, privacy and validation gates
 - [Agent-centric CED knowledge, LangGraph orchestration and local-model architecture](studio/AGENT_CENTRIC_ARCHITECTURE_V1.md) — active experimental refactor, explicit native safety and remaining fidelity gates

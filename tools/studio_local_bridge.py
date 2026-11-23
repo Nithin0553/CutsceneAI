@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import secrets
 import sys
 import threading
@@ -596,6 +597,18 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
             policy.verify_plan(character_report, decision['animation_conversion'], copied_mapping,
                                load_json(candidate_dir / 'transfer-plan.json'), manifest)
         conversion_sha = hashlib.sha256(conversion_record.read_bytes()).hexdigest()
+    # Optional Element 3 workflow: when the user prepared an explicit
+    # occurrence review, require acknowledgement of the *current* evidence
+    # before queuing. This never adds AI-native execution permission and does
+    # not break legacy unattended jobs without an Element 3 review.
+    tool_module_dir = str(ROOT / 'tools')
+    if tool_module_dir not in sys.path:
+        sys.path.insert(0, tool_module_dir)
+    import studio_element_workflow
+    studio_element_workflow.require_acknowledgment(folder, heartbeat, candidate_id)
+    element_native_sha = studio_element_workflow.require_native_action_authorization(
+        folder, heartbeat, candidate_id,
+    )
     job_id = uuid.uuid4().hex
     job = {'kind': 'cutsceneai.studio.local_unreal_job', 'schema_version': '0.1.0',
            'job_id': job_id, 'status': 'QUEUED', 'candidate_id': candidate_id,
@@ -611,6 +624,7 @@ def queue_trial(candidate_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
            'created_at': datetime.now(timezone.utc).isoformat(),
            'ai_agents_enabled': selected_agent,
            'ai_conversion_decision_sha256': conversion_sha,
+           'element_native_authorization_sha256': element_native_sha,
            'generation_status': 'NOT_STARTED', 'fidelity_verified': False}
     if character_record_sha:
         job['character_compatibility_sha256'] = character_record_sha
@@ -636,7 +650,37 @@ def job_status(job_id: str, folder: Path = WORKSPACE) -> dict[str, Any]:
         'visual_audit_status', 'visual_audit_error', 'closed_loop_status',
         'closed_loop_report_file', 'closed_loop_error', 'repair_iterations',
         'repair_changes', 'repair_status', 'repair_error', 'ai_agents_enabled',
-        'execution_stage', 'failure_stage')}
+        'element_native_authorization_sha256', 'element_native_dispatch_receipt',
+        'element_native_dispatch_status',
+        'execution_stage', 'failure_stage',
+        'element6_guard_status', 'element6_claim_sha256',
+        'element6_receipt_sha256', 'element6_runtime_receipt_sha256',
+        'element6_guard_error', 'element6_replay_allowed')}
+    # The Element 6 ledger is inspected without native code execution,
+    # resubmission or an automatic retry. A stale heartbeat while RUNNING
+    # means the attempt is unobservable; never equate it with a success.
+    try:
+        guard_dir = str(ROOT / 'packages/studio')
+        if guard_dir not in sys.path:
+            sys.path.insert(0, guard_dir)
+        import studio_element6_execution
+        guard_state = studio_element6_execution.inspect(folder, job)
+        if guard_state['available']:
+            if (job.get('status') == 'RUNNING'
+                    and not worker_connected(folder).get('connected')):
+                guard_state['status'] = (
+                    'NATIVE_ATTEMPT_UNOBSERVABLE_INSPECT_BEFORE_RECOVERY'
+                )
+                guard_state['requires_manual_inspection'] = True
+            result['element6_execution'] = guard_state
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        result['element6_execution'] = {
+            'available': False,
+            'status': 'NATIVE_ATTEMPT_LEDGER_UNVERIFIABLE_MANUAL_INSPECTION',
+            'reason_code': type(exc).__name__,
+            'native_replay_allowed': False,
+            'full_cutscene_fidelity_verified': False,
+        }
     # Read only the exact receipt belonging to this job's candidate.
     # Expose the actionable failed operation without publishing a traceback
     # or allowing a forged job path to read files outside Studio's workspace.
@@ -783,6 +827,9 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
     readiness_dir = str(ROOT / 'packages' / 'readiness')
     if readiness_dir not in sys.path:
         sys.path.insert(0, readiness_dir)
+    studio_dir = str(ROOT / 'packages' / 'studio')
+    if studio_dir not in sys.path:
+        sys.path.insert(0, studio_dir)
     import studio_project_discovery
     class StudioHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -815,6 +862,49 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
             if path == '/api/autopilot':
                 import studio_autopilot
                 return self.reply(200, studio_autopilot.status(folder))
+            if path == '/api/flow-diagnostics':
+                # One source of truth for default/advanced Stage 1–9 progress.
+                # Read-only and never an authorization to requeue native work.
+                import studio_autopilot
+                import studio_phase10_3_flow
+                try:
+                    run = studio_autopilot.status(folder)
+                    active = folder / 'active-job.json'
+                    if active.is_symlink():
+                        raise ValueError('Unsafe active native job pointer.')
+                    active_id = ''
+                    native = None
+                    if active.is_file():
+                        active_id = str(load_json(active).get('job_id') or '')
+                        if re.fullmatch(r'[a-f0-9]{32}', active_id) is None:
+                            raise ValueError('Invalid active native job identity.')
+                        if not run.get('active') or run.get('job_id') == active_id:
+                            job_file = folder / 'jobs' / (active_id + '.json')
+                            if job_file.is_symlink() or not job_file.is_file():
+                                raise ValueError('Native job evidence unavailable.')
+                            native = load_json(job_file)
+                            if native.get('job_id') != active_id:
+                                raise ValueError('Native job evidence belongs to another transfer.')
+                    cfg = folder / 'connection.json'
+                    candidate = folder / 'active-candidate.json'
+                    if cfg.is_symlink() or candidate.is_symlink():
+                        raise ValueError('Unsafe source or candidate pointer.')
+                    snapshot = {
+                        'active_job': active_id,
+                        'connection': load_json(cfg) if cfg.is_file() else None,
+                        'candidate': load_json(candidate) if candidate.is_file() else None,
+                        'unreal_worker': worker_connected(folder),
+                        'unity_editor': _unity_live_status(folder),
+                        'destination_readiness': destination_readiness(folder),
+                    }
+                    return self.reply(200, studio_phase10_3_flow.summarize(
+                        snapshot, run, native,
+                    ))
+                except (ValueError, KeyError, TypeError, OSError) as exc:
+                    return self.reply(409, {
+                        'error': 'Stage diagnostics unavailable: ' + str(exc)[:260],
+                        'native_replay_authorized': False,
+                    })
             if path == '/api/agent-conversation':
                 import studio_agent_feedback
                 active = folder / 'active-job.json'
@@ -860,6 +950,30 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         'reason': 'Connect real projects first.',
                     },
                 )
+            if path == '/api/elements':
+                import studio_element_workflow
+                from urllib.parse import parse_qs
+                try:
+                    if not (folder / 'active-candidate.json').is_file():
+                        return self.reply(200, {
+                            'available': False, 'status': 'NO_ACTIVE_CANDIDATE',
+                            'native_execution_authorized': False,
+                        })
+                    params = parse_qs(urlparse(self.path).query)
+                    raw = params.get('offset', ['0'])
+                    actions_raw = params.get('action_offset', ['0'])
+                    if (len(raw) != 1 or not raw[0].isdigit()
+                            or len(actions_raw) != 1
+                            or not actions_raw[0].isdigit()):
+                        raise ValueError('Invalid occurrence or action page offset.')
+                    result = studio_element_workflow.current(
+                        folder, worker_connected(folder),
+                        offset=int(raw[0]), action_offset=int(actions_raw[0]))
+                    return self.reply(200, result)
+                except (ValueError, KeyError, OSError, RuntimeError) as exc:
+                    return self.reply(409, {
+                        'error': 'Element review evidence unavailable: ' + str(exc)[:400]
+                    })
             if path == '/api/verification':
                 import studio_ui_features
                 active_file = folder / 'active-job.json'
@@ -869,11 +983,26 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                         'hierarchy': None, 'visual': None,
                         'fidelity_verified': False,
                     })
-                active = load_json(active_file)
-                job_file = folder / 'jobs' / (str(active['job_id']) + '.json')
-                return self.reply(
-                    200, studio_ui_features.verification(folder, active, load_json(job_file))
-                )
+                try:
+                    active = load_json(active_file)
+                    job_id = active.get('job_id')
+                    if (not isinstance(job_id, str) or len(job_id) != 32
+                            or any(c not in '0123456789abcdef' for c in job_id)):
+                        raise ValueError('Invalid active verification job identity.')
+                    job_file = folder / 'jobs' / (job_id + '.json')
+                    if job_file.is_symlink():
+                        raise ValueError('Symlinked verification job is unsafe.')
+                    job = load_json(job_file)
+                    if job.get('job_id') != job_id:
+                        raise ValueError('Native job identity does not match verification request.')
+                    return self.reply(
+                        200, studio_ui_features.verification(folder, active, job)
+                    )
+                except (ValueError, KeyError, TypeError, OSError) as exc:
+                    return self.reply(409, {
+                        'error': 'Job-bound native verification unavailable: '
+                                 + str(exc)[:300],
+                    })
             if path == '/api/status':
                 cfg = folder / 'connection.json'
                 return self.reply(200, {'service': 'CutSceneAI Studio Local Companion',
@@ -905,18 +1034,76 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                 active_path = folder / 'active-job.json'
                 if not active_path.is_file():
                     return self.reply(200, {'available': False, 'status': 'NOT_GENERATED'})
-                current_job = load_json(active_path)
-                job = load_json(folder / 'jobs' / (current_job['job_id'] + '.json'))
-                candidate = Path(job.get('candidate_dir') or '').resolve()
-                if not candidate.is_relative_to((folder / 'candidates').resolve()):
-                    return self.reply(409, {'error': 'Unsafe candidate path.'})
-                report = candidate / ('closed-loop-evaluation-' + current_job['job_id'] + '.json')
-                if not report.is_file():
-                    return self.reply(200, {'available': False, 'status': 'EVIDENCE_INCOMPLETE'})
-                data = load_json(report)
-                if data.get('kind') != 'cutsceneai.studio.closed_loop_evaluation':
-                    return self.reply(409, {'error': 'Unexpected feedback report type.'})
-                return self.reply(200, {'available': True, **data})
+                try:
+                    current_job = load_json(active_path)
+                    job_id = current_job.get('job_id')
+                    if (not isinstance(job_id, str) or len(job_id) != 32
+                            or any(c not in '0123456789abcdef' for c in job_id)):
+                        raise ValueError('Invalid active closed-loop job identity.')
+                    job_file = folder / 'jobs' / (job_id + '.json')
+                    if job_file.is_symlink():
+                        raise ValueError('Symlinked closed-loop job is unsafe.')
+                    job = load_json(job_file)
+                    if job.get('job_id') != job_id:
+                        raise ValueError('Native job identity does not match feedback request.')
+                    candidate = Path(job.get('candidate_dir') or '').resolve()
+                    if not candidate.is_relative_to((folder / 'candidates').resolve()):
+                        raise ValueError('Unsafe candidate path.')
+                    report = candidate / ('closed-loop-evaluation-' + job_id + '.json')
+                    if report.is_symlink():
+                        raise ValueError('Symlinked closed-loop report is unsafe.')
+                    if not report.is_file():
+                        return self.reply(200, {'available': False, 'status': 'EVIDENCE_INCOMPLETE'})
+                    data = load_json(report)
+                    if data.get('kind') != 'cutsceneai.studio.closed_loop_evaluation':
+                        raise ValueError('Unexpected feedback report type.')
+                    return self.reply(200, {'available': True, **data})
+                except (ValueError, KeyError, TypeError, OSError) as exc:
+                    return self.reply(409, {
+                        'error': 'Job-bound closed-loop evidence unavailable: '
+                                 + str(exc)[:300],
+                    })
+            if path == '/api/final-outcome':
+                import studio_element9_outcome
+                from urllib.parse import parse_qs
+                active = folder / 'active-job.json'
+                try:
+                    if active.is_symlink():
+                        raise ValueError('Active job pointer is a symlink.')
+                    query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                    if set(query) - {'offset', 'job_id'}:
+                        raise ValueError('Unknown final-outcome query parameter.')
+                    pages = query.get('offset', ['0'])
+                    if (len(pages) != 1 or not pages[0].isdigit()
+                            or len(pages[0]) > 5):
+                        raise ValueError('Invalid final-outcome page offset.')
+                    requested = query.get('job_id')
+                    if requested is not None and (
+                            len(requested) != 1
+                            or re.fullmatch(r'[a-f0-9]{32}', requested[0]) is None):
+                        raise ValueError('Invalid requested final-outcome job identity.')
+                    if not active.is_file():
+                        if requested is not None:
+                            raise ValueError('The requested transfer is no longer active.')
+                        return self.reply(200, {
+                            'available': False, 'status': 'NO_ACTIVE_TRANSFER',
+                            'release_ready': False,
+                            'full_cutscene_fidelity_verified': False,
+                        })
+                    job_id = str(load_json(active)['job_id'])
+                    if re.fullmatch(r'[a-f0-9]{32}', job_id) is None:
+                        raise ValueError('Active transfer job identity is invalid.')
+                    if requested is not None and requested[0] != job_id:
+                        raise ValueError('Requested result belongs to a different active transfer.')
+                    result = studio_element9_outcome.build(folder, job_id)
+                    return self.reply(200, studio_element9_outcome.page(
+                        result, int(pages[0]),
+                    ))
+                except (ValueError, KeyError, TypeError, OSError) as exc:
+                    return self.reply(409, {
+                        'error': 'Final source-bound outcome evidence unavailable: '
+                                 + str(exc)[:400],
+                    })
             if path == '/api/release-readiness':
                 import studio_release_gate
                 active_path = folder / 'active-job.json'
@@ -1079,6 +1266,39 @@ def create_handler(webroot: Path, folder: Path = WORKSPACE):
                                 roots[0], str(data.get('request_id') or ''))
                         else:
                             raise ValueError('Unsupported Unity source analysis action.')
+                    elif route == '/api/elements/prepare':
+                        import studio_element_workflow
+                        if data:
+                            raise ValueError('Element review preparation accepts no arbitrary inputs.')
+                        result = studio_element_workflow.prepare(
+                            folder, worker_connected(folder))
+                    elif route == '/api/elements/acknowledge':
+                        import studio_element_workflow
+                        if set(data) != {'workflow_sha256', 'reviewed'} or data['reviewed'] is not True:
+                            raise ValueError('Explicit exact-workflow issue review is required.')
+                        result = studio_element_workflow.acknowledge(
+                            folder, worker_connected(folder),
+                            data['workflow_sha256'])
+                    elif route == '/api/elements/approve-native-actions':
+                        import studio_element_workflow
+                        if set(data) != {
+                            'workflow_sha256', 'action_inventory_sha256',
+                            'review_all', 'accept_legacy_unattributed',
+                        }:
+                            raise ValueError('Explicit full prepared-action approval contract required.')
+                        result = studio_element_workflow.approve_native_actions(
+                            folder, worker_connected(folder),
+                            workflow_sha256=data['workflow_sha256'],
+                            inventory_sha256=data['action_inventory_sha256'],
+                            review_all=data['review_all'],
+                            accept_legacy_unattributed=data['accept_legacy_unattributed'],
+                        )
+                    elif route == '/api/elements/verify-target':
+                        import studio_element_workflow
+                        if set(data) != {'path'} or not isinstance(data['path'], str):
+                            raise ValueError('Select exactly one existing CineTwin target observation.')
+                        result = studio_element_workflow.verify_target(
+                            folder, worker_connected(folder), data['path'])
                     elif route == '/api/prepare':
                         result = prepare(folder, data)
                     elif route == '/api/approve-one-click':

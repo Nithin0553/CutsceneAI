@@ -427,6 +427,10 @@ def compare(
     if not isinstance(bone_maps, dict) or set(bone_maps) - rig_ids:
         raise BehavioralComparisonError("An observed bone map identifies an unknown source rig.")
     rig_diagnostics = []
+    actor_orientation_by_id = {
+        item["entity_id"]: item["max_world_rotation_error_degrees"]
+        for item in results
+    }
     for eid in sorted(rig_ids):
         src_motion = _pose_motion_cm(source_samples, eid, target=False)
         tgt_motion = _pose_motion_cm(target_samples, eid, target=True)
@@ -489,6 +493,41 @@ def compare(
                 ) from exc
             if anatomical_forward["status"] == "FAIL":
                 flags.append("CHARACTER_MESH_ANATOMICAL_FORWARD_MISMATCH")
+        # A matching actor quaternion is not proof that imported FBX
+        # geometry, component bases or the retargeted skeletal root face in
+        # the same direction. Keep the separately measured orientation
+        # layers visible to Element 8, without identifying a native writer.
+        actor_angle = actor_orientation_by_id[eid]
+        mesh_status = anatomical_forward["status"]
+        if mesh_status == "INCOMPLETE":
+            facing_domain = "ACTOR_ONLY_ANATOMICAL_MESH_UNMEASURED"
+        elif mesh_status == "PASS":
+            facing_domain = (
+                "ACTOR_ROTATION_DIFFERS_BUT_MESH_FORWARD_MATCHES"
+                if actor_angle > orientation_limit
+                else "MEASURED_ACTOR_AND_MESH_FORWARD_WITHIN_TOLERANCE"
+            )
+        elif actor_angle <= orientation_limit:
+            facing_domain = "ACTOR_ALIGNED_MESH_OR_COMPONENT_BASIS_DIFFERS"
+        else:
+            facing_domain = "ACTOR_AND_ANATOMICAL_MESH_ORIENTATION_BOTH_DIFFER"
+        facing_ownership = {
+            "diagnostic": facing_domain,
+            "actor_world_rotation_error_degrees": actor_angle,
+            "approved_mesh_anatomical_forward_status": mesh_status,
+            "constant_yaw_diagnostic_status": anatomical_forward.get(
+                "constant_yaw_diagnostic_status", "NOT_MEASURED"
+            ),
+            "native_rotation_owner_isolated": False,
+            "native_character_rotation_repair_authorized": False,
+            "full_skeletal_pose_verified": False,
+            "note": (
+                "Actor world rotation, target mesh component world orientation "
+                "and skeletal root/retarget ownership are distinct. This "
+                "comparison cannot select a native rotation owner or authorize "
+                "a character-facing edit."
+            ),
+        }
         rig_diagnostics.append({
             "entity_id": eid, "source_name": by_id[eid].get("name", ""),
             "source": src_motion, "target": tgt_motion,
@@ -497,6 +536,7 @@ def compare(
             "joint_angular_motion": angular,
             "joint_reference_orientation": absolute_orientation,
             "anatomical_mesh_forward": anatomical_forward,
+            "facing_ownership_diagnostic": facing_ownership,
             "skeletal_root_world": _skeletal_root_world(
                 source_samples, target_samples, source_rigs[eid], native_rigs[eid], joints, position_limit,
             ),

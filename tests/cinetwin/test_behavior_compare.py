@@ -441,3 +441,51 @@ def test_mesh_forward_requires_independent_approved_axes_and_real_component(tamp
         approval["reviewed_anatomical_axes"] = False
     with pytest.raises(BehavioralComparisonError, match="mesh forward"):
         compare(plan, source, target, mesh_forward_approval=approval)
+
+
+def test_character_facing_ownership_diagnostics_separate_actor_and_mesh_layers():
+    plan, source, target = _fixtures()
+    # No independently approved mesh anatomy = actor comparison only.
+    absent = compare(plan, source, target)["rig_motion_diagnostics"][0][
+        "facing_ownership_diagnostic"
+    ]
+    assert absent["diagnostic"] == "ACTOR_ONLY_ANATOMICAL_MESH_UNMEASURED"
+    assert absent["native_rotation_owner_isolated"] is False
+
+    approved = _approved_mesh_anatomy(plan, target, target_direction=(1, 0, 0))
+    mesh = compare(plan, source, target, mesh_forward_approval=approved)[
+        "rig_motion_diagnostics"
+    ][0]["facing_ownership_diagnostic"]
+    assert mesh["diagnostic"] == "ACTOR_ALIGNED_MESH_OR_COMPONENT_BASIS_DIFFERS"
+    assert mesh["actor_world_rotation_error_degrees"] == pytest.approx(0)
+    assert mesh["approved_mesh_anatomical_forward_status"] == "FAIL"
+    assert mesh["native_character_rotation_repair_authorized"] is False
+    assert mesh["constant_yaw_diagnostic_status"] == (
+        "STABLE_SAMPLED_YAW_DIAGNOSTIC_ONLY"
+    )
+
+    # Actor and mesh orientation are both wrong; neither single native
+    # transform layer is proved to own the discrepancy.
+    for frame in target["samples"]:
+        frame["entities"][0]["world_transform"]["rotation_xyzw"] = [0, 0, 1, 0]
+    mixed = compare(plan, source, target, mesh_forward_approval=approved)[
+        "rig_motion_diagnostics"
+    ][0]["facing_ownership_diagnostic"]
+    assert mixed["diagnostic"] == "ACTOR_AND_ANATOMICAL_MESH_ORIENTATION_BOTH_DIFFER"
+    assert mixed["native_character_rotation_repair_authorized"] is False
+
+
+def test_matching_mesh_forward_does_not_hide_bad_actor_rotation():
+    plan, source, target = _fixtures()
+    approved = _approved_mesh_anatomy(plan, target)
+    for frame in target["samples"]:
+        frame["entities"][0]["world_transform"]["rotation_xyzw"] = [0, 0, 1, 0]
+    report = compare(plan, source, target, mesh_forward_approval=approved)
+    ownership = report["rig_motion_diagnostics"][0]["facing_ownership_diagnostic"]
+    assert ownership["diagnostic"] == "ACTOR_ROTATION_DIFFERS_BUT_MESH_FORWARD_MATCHES"
+    assert ownership["approved_mesh_anatomical_forward_status"] == "PASS"
+    assert ownership["actor_world_rotation_error_degrees"] == pytest.approx(180)
+    assert ownership["native_character_rotation_repair_authorized"] is False
+    assert "WORLD_ROTATION_OUTSIDE_TOLERANCE" in next(
+        e for e in report["entities"] if e["entity_id"] == "character"
+    )["flags"]

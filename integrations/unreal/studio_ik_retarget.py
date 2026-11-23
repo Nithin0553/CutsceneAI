@@ -27,13 +27,18 @@ def prepare(api, manifest):
         return {}
     if not all(callable(getattr(getattr(api, owner, None), name, None)) for owner, name in (
             ('IKRetargeterController', 'get_controller'),
-            ('IKRetargetBatchOperation', 'duplicate_and_retarget'),
             ('EditorAssetLibrary', 'find_asset_data'),
             ('EditorAssetLibrary', 'save_loaded_asset'),
             ('AnimPoseExtensions', 'get_reference_pose'),
             ('AnimPoseExtensions', 'get_bone_names'),
             ('AnimPoseExtensions', 'get_bone_pose'))):
         raise RetargetError('Unreal IKRig Editor and reference-pose Python APIs are required.')
+    batch = getattr(api, 'IKRetargetBatchOperation', None)
+    if not any(callable(getattr(batch, operation, None)) for operation in (
+            'run_batch_retarget', 'duplicate_and_retarget')):
+        raise RetargetError(
+            'Unreal IKRig Editor batch-retarget API unavailable.'
+        )
     roles = getattr(api, 'RetargetSourceOrTarget', None)
     if roles is None or not hasattr(roles, 'SOURCE') or not hasattr(roles, 'TARGET'):
         raise RetargetError('Unreal IKRig retarget source and target roles are unavailable.')
@@ -87,11 +92,44 @@ def duplicate_clip(api, row, staged_mesh, approved):
     assets = api.EditorAssetLibrary
     if assets.does_asset_exist(dest):
         raise RetargetError('IK retargeting refuses to overwrite ' + dest)
-    created = api.IKRetargetBatchOperation.duplicate_and_retarget(
-        [assets.find_asset_data(source)], staged_mesh, approved['target'], approved['retargeter'],
-        target_path=dest.rsplit('/', 1)[0], use_source_path=False,
-        include_referenced_assets=False, overwrite_existing_files=False,
-    )
+    native_inputs = getattr(api, 'IKRetargetBatchOperationInputs', None)
+    native_run = getattr(api.IKRetargetBatchOperation, 'run_batch_retarget', None)
+    if native_inputs is not None and callable(native_run):
+        # Epic 5.8's supported typed input replaces the deprecated multi-positional
+        # duplicate_and_retarget API. Require exact input property support.
+        item = native_inputs()
+        params = {
+            'assets_to_retarget': [assets.find_asset_data(source)],
+            'source_mesh': staged_mesh,
+            'target_mesh': approved['target'],
+            'ik_retarget_asset': approved['retargeter'],
+            'target_path': dest.rsplit('/', 1)[0],
+            'use_source_path': False,
+            'include_referenced_assets': False,
+            'overwrite_existing_files': False,
+            'retain_additive_flags': False,
+        }
+        setter = getattr(item, 'set_editor_property', None)
+        if not callable(setter):
+            raise RetargetError('Unreal 5.8 batch retarget inputs are not reflected.')
+        try:
+            for property_name, value in params.items():
+                setter(property_name, value)
+        except (AttributeError, TypeError, RuntimeError, ValueError) as exc:
+            raise RetargetError('Unreal batch retarget input schema differs from approved profile.') from exc
+        created = native_run(item)
+    else:
+        # Compatibility fallback for installed runtimes that still expose only
+        # the old IKRig Python entrypoint.
+        legacy = getattr(api.IKRetargetBatchOperation, 'duplicate_and_retarget', None)
+        if not callable(legacy):
+            raise RetargetError('No supported IK retarget operation is available.')
+        created = legacy(
+            [assets.find_asset_data(source)], staged_mesh, approved['target'],
+            approved['retargeter'],
+            target_path=dest.rsplit('/', 1)[0], use_source_path=False,
+            include_referenced_assets=False, overwrite_existing_files=False,
+        )
     if len(created) != 1:
         raise RetargetError('IK Retargeter did not create exactly one animation at ' + dest)
     clip = created[0].get_asset()

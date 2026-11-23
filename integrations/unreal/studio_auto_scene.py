@@ -352,7 +352,23 @@ def run(manifest_path, receipt_path, *,csir_path,mapping_path,plan_path,
             if actor.get_actor_label()!=row['label']:
                 raise AutomaticSetupError('Unreal renamed actor unexpectedly: '+row['name'])
             operation['status']='ACTOR_LABEL_CHECKED'
-            receipt['actors_created'].append({'name':row['name'],'label':row['label'],'kind':kind})
+            staged_identity={'name':row['name'],'label':row['label'],'kind':kind}
+            # Exact native object identity is optional for historical
+            # material/camera consumers, but REQUIRED by the new static
+            # character yaw writer. An actor with the same display label
+            # must not silently replace the originally staged character.
+            get_path=getattr(actor,'get_path_name',None)
+            if kind in ('entity.character','entity.camera') and callable(get_path):
+                try:
+                    native_actor_path=str(get_path())
+                except (AttributeError,TypeError,RuntimeError,ValueError):
+                    # Staging should still work when a plugin omits UObject
+                    # path introspection. The optional static yaw repair then
+                    # refuses rather than guessing an actor from its label.
+                    native_actor_path=''
+                if native_actor_path.startswith('/Game/') and len(native_actor_path)<=1024:
+                    staged_identity['native_actor_path']=native_actor_path
+            receipt['actors_created'].append(staged_identity)
             created_by_label[row['label']]=actor
             receipt['failed_step']=None
         if retargeting:

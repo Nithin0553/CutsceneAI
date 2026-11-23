@@ -99,3 +99,26 @@ not a substitute for adapting and testing more element types.
   assets, saves the level and only then generates the sequence. Preview warnings
   before staging must not be reported as completed conversion.
 - Unreal official audio reference: https://dev.epicgames.com/documentation/unreal-engine/importing-audio-files
+
+
+## Phase 10.2 — seven-area consolidated software evidence (November 2026)
+
+The [Phase 10.2 consolidated audit](PHASE10_2_SEVEN_WORKSTREAM_CONSOLIDATED_V01.md)
+uses the original `feature_dispatch` ledger and a recomputed source-bound
+matrix, rather than promoting installed adapter metadata to engine verification.
+
+| Family | New software evidence / installed behavior | Native/behavior acceptance |
+| --- | --- | --- |
+| Animated camera | Eleven prior guarded families plus counted, nonadjacent 2–8 animated yaw key restoration (12 total); full nine-channel original native contract | Real editors, postrepair CineTwin, pitch/roll/multi-axis and rendered continuity **UNVERIFIED** |
+| Timeline | Tracks all authored cut/shot/easing/overlap/nested/time-warp source owners with explicit blockers | General subsequences, weighted blends and >2-camera rendered switching **UNSUPPORTED** |
+| Moving character | Complete source-grid actor pose checks; reject malformed world-root rotations/positions and time grids | Dynamic skeletal root ownership and retargeted position/facing **UNVERIFIED** |
+| Skeletal | Source bone parent DAG; approved local reference pose, source-evaluated local pose baker and sign-continuous native quaternion keys | Target native rest bone ancestry, IKRig and skinned vertex parity **UNVERIFIED** |
+| Multi-character | One timestamp grid for all mapped actors; source hierarchy cycles and world-position/rotation drift detected | Joint pose coordination, attachments/contacts and real interaction playback **UNVERIFIED** |
+| Lighting / shaders / audio / VFX / events / physics | Six separate source occurrence ledgers; lossless CED accounting and lossy marker/audio action disclosures | Photometry, custom shader and GPU effects, waveform, signal side effects and physics parity **UNVERIFIED** |
+| Production contracts | Exact native-action source census, seven work-area audit, immutable once-only CLI receipt and release-gate recomputation | All-feature native save/reopen and held-out Unity→Unreal benchmarks **UNVERIFIED** |
+
+Every unknown proprietary source Playable/plugin remains present in the CED
+source census. There is **no universal compatibility flag** and no inference
+of target parity from source-side evidence. When a native adapter does not
+exist, the correct result remains explicit NEEDS_ADAPTER/BLOCKED, never
+"successful conversion".

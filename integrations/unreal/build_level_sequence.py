@@ -40,6 +40,7 @@ import hierarchy_realization
 import readiness_loader
 import csir_plan
 import scene_prep
+import studio_camera_motion_contract
 import studio_collider_shapes
 import unreal_compat
 
@@ -135,6 +136,25 @@ def _preflight(plan: dict[str, Any]) -> None:
                     f"Invalid {field}={seconds} in prepared action; "
                     "no scene changes made. Re-prepare an immutable new plan."
                 )
+
+    # Camera source-frame coverage and every native channel must be validated
+    # before mutating ANY actor or Level Sequence. A model-supplied plan
+    # cannot authorize a silent gap or malformed source-frame trajectory.
+    try:
+        camera_motion_contracts = studio_camera_motion_contract.validate_plan(plan)
+    except studio_camera_motion_contract.CameraMotionContractError as exc:
+        raise UnrealBuildError(
+            "Source-baked camera motion preflight failed: " + str(exc)
+        ) from exc
+    if camera_motion_contracts:
+        if (getattr(unreal, "MovieScene3DTransformTrack", None) is None
+                or getattr(getattr(unreal, "MovieSceneBlendType", None),
+                           "ABSOLUTE", None) is None
+                or getattr(getattr(unreal, "MovieSceneKeyInterpolation", None),
+                           "LINEAR", None) is None):
+            raise UnrealBuildError(
+                "Native nine-channel absolute/linear camera transform API unavailable."
+            )
 
     # New cinematic features are preflighted BEFORE changing any level actor.
     needs_easing = any(
@@ -469,9 +489,33 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
     boundary = 1 if any(int(k["frame"]) == end_frame for k in action["keys"]) else 0
     section.set_range(0, end_frame + boundary)
     channels = unreal_compat.get_section_channels(section)
-    if len(channels) < 6:
-        raise UnrealBuildError("Unexpected Unreal transform channel layout; expected at least 6 channels.")
-    if action.get("source_behavior_strategy") == "cinetwin_verified_actor_world_trajectory_v1":
+    camera_grid = (
+        action.get("source_behavior_strategy")
+        in studio_camera_motion_contract.CAMERA_STRATEGIES
+    )
+    if camera_grid:
+        # Unreal 3D transform tracks use 9 independent channels:
+        # X/Y/Z translation; roll/pitch/yaw; X/Y/Z scale.
+        # Uninitialized scale channels may silently squash the camera basis
+        # even when its animation only authors position/orientation.
+        if len(channels) != 9 or any(
+                not callable(getattr(channel, "set_default", None))
+                for channel in channels[6:9]):
+            raise UnrealBuildError(
+                "Native CineCamera must expose all nine writable transform channels."
+            )
+        section.set_is_active(True)
+        section.set_blend_type(unreal.MovieSceneBlendType.ABSOLUTE)
+        for channel in channels[6:9]:
+            channel.set_default(1.0)
+    elif len(channels) < 6:
+        raise UnrealBuildError(
+            "Unexpected Unreal transform channel layout; expected at least 6 channels."
+        )
+    if action.get("source_behavior_strategy") in {
+        "cinetwin_verified_actor_world_trajectory_v1",
+        "approved_measured_skeletal_root_6dof_actor_world_v1",
+    }:
         import studio_character_motion
         section.set_is_active(True)
         section.set_blend_type(unreal.MovieSceneBlendType.ABSOLUTE)
@@ -487,7 +531,9 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
         values = (*location, *rotation)
         for channel, value in zip(channels[:6], values):
             if action.get("baked_source_curves"):
-                unreal_compat.add_linear_channel_key(channel, int(key["frame"]), float(value))
+                unreal_compat.add_linear_channel_key(
+                    channel, int(key["frame"]), float(value)
+                )
             else:
                 channel.add_key(frame, float(value))
     # Frame-baked curves must not be smoothed by Unreal auto tangents.
@@ -681,7 +727,13 @@ def _add_camera_fov(sequence: unreal.LevelSequence, actor: unreal.Actor, action:
         str(fov_spec["property_path"]),
     )
     section = track.add_section()
-    section.set_range(0, sequence.get_playback_end())
+    end_frame = int(sequence.get_playback_end())
+    # Preserve an authenticated source capture at the exclusive playback
+    # end. Without a native terminal key, the last active interval may use
+    # stale lens values rather than the final source-authored FOV trajectory.
+    terminal = any(int(key["frame"]) == end_frame
+                   for key in action["keys"])
+    section.set_range(0, end_frame + (1 if terminal else 0))
     channels = unreal_compat.get_section_channels(section)
     if len(channels) != 1:
         raise UnrealBuildError("Unexpected camera lens channel layout; expected one float/double channel.")
@@ -1075,7 +1127,13 @@ def _build_prepared_plan(
                     "created for " + correction["entity_name"]
                     + "; independently validate actual target bone trajectory."
                 )
-        unreal.EditorAssetLibrary.save_loaded_asset(sequence)
+        saved = unreal.EditorAssetLibrary.save_loaded_asset(sequence)
+        if saved is not True:
+            raise UnrealBuildError(
+                "Native generated Level Sequence save was not confirmed. "
+                "The generated sequence remains an incomplete attempt; "
+                "inspect it in Unreal before any new transfer."
+            )
         unreal.LevelSequenceEditorBlueprintLibrary.open_level_sequence(sequence)
         unreal.LevelSequenceEditorBlueprintLibrary.refresh_current_level_sequence()
         unreal.log(f"[CutSceneAI] Generated Level Sequence: {plan['sequence_asset_path']}")

@@ -27,6 +27,24 @@ MODULES = (
     ("character_motion", "packages/studio"),
     ("transfer_backend", "packages/studio"),
     ("prepared_transfer", "packages/studio"),
+    # Reload the exact compiler/action reconciliation and authorizing editor
+    # gate in the SAME session before any native writes. Never reuse a cached
+    # Element 5 plan implementation after switching Studio branches.
+    ("studio_element_native_execution", "packages/studio"),
+    ("studio_element5_plan", "packages/studio"),
+    ("studio_element6_execution", "packages/studio"),
+    # Reopened CineTwin readback uses the same canonical native execution
+    # contract and source occurrence attribution in the long-lived editor.
+    ("studio_element_cinetwin", "packages/studio"),
+    ("studio_element7_readback", "packages/studio"),
+    ("studio_element8_repair", "packages/studio"),
+    ("studio_element9_outcome", "packages/studio"),
+    ("studio_camera_lens_evidence", "packages/studio"),
+    ("studio_camera_cut_evidence", "packages/studio"),
+    ("studio_element_native_gate", "integrations/unreal"),
+    ("studio_camera_lens_repair", "integrations/unreal"),
+    ("studio_camera_cut_repair", "integrations/unreal"),
+    ("studio_agent_executor", "integrations/unreal"),
     # The automatic asset manifest is created by the Studio host Python
     # process, then re-verified by Unreal's long-lived Python process.
     # A stale cached asset inspector changes its actor/import plan even when

@@ -4,6 +4,30 @@
 procedure does not open Unity/Unreal, invoke an external model or import assets.
 It tests only the local Python/web Studio prerequisites.
 
+## Phase 10.5 Windows first-run launcher
+
+For a fresh checkout or extracted `CutSceneAI-Studio-source.zip`, open
+PowerShell in the Studio root and run:
+
+```powershell
+.\tools\launch_studio.ps1
+```
+
+The launcher performs an isolated first-time dependency installation if
+necessary, a strict setup preflight and a **real localhost Studio startup
+smoke in a temporary workspace**, before starting the normal supervised UI.
+Then open **http://127.0.0.1:8765**. It does not launch/restart Unity or
+Unreal, invoke an LLM, or queue a transfer. Source-backed engine connections
+and final fidelity remain separate. See [Phase 10.5 full engine-test entry
+runbook](PHASE10_5_FINAL_SOFTWARE_PACKAGE_AND_LIVE_ENGINE_TEST_ENTRY.md).
+
+The CI distribution job extracts the source ZIP into a clean Windows directory,
+installs it independently, verifies the ZIP bytes against the extracted
+workspace, starts the actual Studio server and archives a separate
+source-hash-matched startup report. Only a fully green cross-platform
+software-acceptance job may label the package
+`SOFTWARE_PACKAGE_READY_FOR_ENGINE_TEST`.
+
 ## Isolated bootstrap
 
 From a full checkout of the release-candidate branch in Windows PowerShell:
@@ -48,6 +72,39 @@ A developer can inspect prerequisites without launching Studio:
 layout. It does **not** confirm a running engine, an installed/enabled editor
 companion, valid source capture, an actual OpenAI response, generated native
 assets or cross-engine fidelity.
+
+## Phase 10.3 — Project companion setup with explicit opt-in
+
+The repository now includes a project-local, two-stage wiring tool. It does
+**not** open either Editor or claim a connected companion. Run the first
+command without `--apply` to inspect the complete proposed changes:
+
+```powershell
+python tools/studio_companion_install.py --unity "D:\\UnityProject" --unreal-uproject "D:\\UnrealProject\\Game.uproject"
+python tools/studio_companion_install.py --unity "D:\\UnityProject" --unreal-uproject "D:\\UnrealProject\\Game.uproject" --apply
+```
+
+Only the second, explicitly approved command writes project-local files.
+Unity receives a source-repository UPM file dependency in
+`Packages/manifest.json`, preserving a before-install backup. Unreal
+receives `Content/Python/init_unreal.py` only if the selected .uproject
+already enables `PythonScriptPlugin` and the startup file is absent or
+exactly Studio-owned. Foreign startup scripts, redirects and conflicting
+Unity dependencies **block without overwriting**. Unreal's startup hook
+still needs real Editor/worker heartbeat verification; Unity's source bridge
+must still be enabled once in that project.
+
+A source-only, reproducible ZIP for clean-workstation bootstrap is available:
+
+```powershell
+python tools/build_studio_bundle.py --output "D:\\Releases\\CutSceneAI-Studio-source.zip"
+python tools/build_studio_bundle.py --output "D:\\Releases\\CutSceneAI-Studio-source.zip" --verify
+```
+
+CI checks the exact ZIP hashes and publishes it as an Actions artifact.
+This distribution is **not** a signed standalone desktop installer; Python
+dependencies and the actual Unity/Unreal installations are external.
+See [Phase 10.3 six-area software contract](PHASE10_3_SIX_AREA_CONSOLIDATION_AND_10_4_START.md).
 
 ## Companion setup remains explicit and bounded
 

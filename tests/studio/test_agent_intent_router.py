@@ -208,3 +208,41 @@ def test_model_report_only_preserves_exact_reason_for_unavailable_domain(tmp_pat
     assert "No executable and independently verified" in result["reasoning"]
     assert result["intent_routing"]["intent"]["domains"] == ["vfx"]
     assert list(candidate.glob("agent-request-*.json")) == []
+
+
+
+def test_langgraph_native_facing_ownership_is_report_only_even_with_clean_candidate(
+        tmp_path, monkeypatch):
+    import studio_character_facing_review as facing
+
+    workspace, candidate, job, _ = staged(tmp_path)
+    feedback.submit(workspace, job, "The character is facing the wrong direction.")
+    observed = {
+        "kind": facing.KIND,
+        "status": "REOPENED_CHARACTER_OWNER_DIAGNOSTIC_ONLY",
+        "native_owner_observation_available": True,
+        "observed_character_count": 1,
+        "native_edit_authorized": False,
+        "model_command_authorized": False,
+        "full_cutscene_fidelity_verified": False,
+    }
+    monkeypatch.setattr(facing, "build", lambda *args: observed)
+    summaries = []
+    state = graph.run_once(workspace, job, lambda summary: (
+        summaries.append(summary) or {
+            "strategy": "report_only",
+            "reason": "Native actor, mesh and animation owners are not yet proven.",
+        }
+    ))
+    assert state["intent_routing"]["disposition"] == (
+        "NATIVE_CHARACTER_ROTATION_OWNERSHIP_REVIEW_ONLY"
+    )
+    assert state["intent_routing"]["safe_strategies"] == ["report_only"]
+    assert summaries[0]["verified_character_facing_owner_review"]["status"] == (
+        "REOPENED_CHARACTER_OWNER_DIAGNOSTIC_ONLY"
+    )
+    assert summaries[0]["verified_character_facing_owner_review"][
+        "native_edit_authorized"
+    ] is False
+    assert state["status"] == "UNRESOLVED_NO_SAFE_STRATEGY"
+    assert not list(candidate.glob("agent-request-*.json"))

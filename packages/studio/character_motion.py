@@ -20,8 +20,14 @@ class MotionError(ValueError):
 
 
 def conjugate(q):
+    """Unit inverse; reject invalid source poses before applying any root correction."""
+    if (not isinstance(q, (list,tuple)) or len(q) != 4
+            or any(type(v) not in (int,float) or not math.isfinite(v)
+                   for v in q)):
+        raise MotionError("Invalid observed actor/root quaternion.")
     length = math.hypot(*q)
-    if len(q) != 4 or not math.isfinite(length) or not math.isclose(length, 1, abs_tol=0.01):
+    if (not math.isfinite(length) or length == 0
+            or not math.isclose(length, 1, abs_tol=0.01)):
         raise MotionError("Invalid observed actor/root quaternion.")
     return [-q[0] / length, -q[1] / length, -q[2] / length, q[3] / length]
 
@@ -34,11 +40,30 @@ def multiply(a, b):
 
 
 def relative_root(actor, root):
-    inverse = conjugate(actor["rotation_xyzw"])
-    conjugate(root["rotation_xyzw"])
-    delta = [r - a for r, a in zip(root["position_m"], actor["position_m"])]
-    position = multiply(multiply(inverse, [*delta, 0]), conjugate(inverse))[:3]
-    return position, multiply(inverse, root["rotation_xyzw"])
+    """Measured actor-local skeletal root, including 3-D facing and translation.
+
+    Reject missing axes and non-unit quaternions. Component-space data is not
+    interchangeable with actor-world root motion, especially during turns.
+    """
+    if not isinstance(actor, dict) or not isinstance(root, dict):
+        raise MotionError("Missing observed actor/root world transform.")
+    for row in (actor,root):
+        pos = row.get("position_m")
+        if (not isinstance(pos,(list,tuple)) or len(pos) != 3
+                or any(type(v) not in (int,float) or not math.isfinite(v)
+                       for v in pos)):
+            raise MotionError("Actor/root world position must be three finite axes.")
+    inverse = conjugate(actor.get("rotation_xyzw"))
+    root_inverse = conjugate(root.get("rotation_xyzw"))
+    # Preserve a normalized root input, regardless of the quaternion sign.
+    normalized_root = [-root_inverse[0],-root_inverse[1],
+                       -root_inverse[2],root_inverse[3]]
+    delta = [r - a for r, a in zip(root["position_m"],actor["position_m"])]
+    position = multiply(multiply(inverse,[*delta,0.]),conjugate(inverse))[:3]
+    relative_orientation = multiply(inverse,normalized_root)
+    if not all(math.isfinite(x) for x in (*position,*relative_orientation)):
+        raise MotionError("Relative root pose contains nonfinite components.")
+    return position,relative_orientation
 
 
 def _seconds(value):
@@ -68,8 +93,15 @@ def trajectory(csir, capture, identifier):
     if hz <= 0 or hz > 240 or start != 0 or count.denominator != 1 or not 1 <= count < MAX_FRAMES:
         raise MotionError("MOVING_ACTOR_REQUIRES_BOUNDED_INTEGRAL_DISPLAY_FRAME_RANGE")
     by_time = {}
+    if not isinstance(capture,dict) or not isinstance(capture.get("samples"),list):
+        raise MotionError("MISSING_SOURCE_ACTOR_CAPTURE")
     for sample in capture["samples"]:
-        time = round(float(sample["time_seconds"]), 8)
+        if not isinstance(sample,dict) or type(sample.get("time_seconds")) not in (int,float):
+            raise MotionError("INVALID_SOURCE_ACTOR_TIMESTAMP")
+        raw_time = sample["time_seconds"]
+        if not math.isfinite(raw_time) or not 0 <= raw_time <= float(end):
+            raise MotionError("OUT_OF_RANGE_SOURCE_ACTOR_TIMESTAMP")
+        time = round(raw_time,8)
         if time in by_time:
             raise MotionError("DUPLICATE_SOURCE_TIMESTAMP")
         by_time[time] = sample
@@ -78,12 +110,23 @@ def trajectory(csir, capture, identifier):
         sample = by_time.get(round(float(start + frame / hz), 8))
         if sample is None:
             raise MotionError("MISSING_EXACT_SOURCE_DISPLAY_FRAME")
-        poses = [e for e in sample["entities"] if e["entity_id"] == identifier]
+        entities = sample.get("entities")
+        if not isinstance(entities,list):
+            raise MotionError("MISSING_SOURCE_ACTOR_FRAME_ENTITIES")
+        poses = [e for e in entities
+                 if isinstance(e,dict) and e.get("entity_id") == identifier]
         if len(poses) != 1:
             raise MotionError("AMBIGUOUS_SOURCE_ACTOR_FRAME")
-        pose = poses[0]["world_transform"]
-        conjugate(pose["rotation_xyzw"])
-        position = csir_plan.canonical_position_to_unreal_cm(pose["position_m"])
+        pose = poses[0].get("world_transform")
+        if not isinstance(pose,dict):
+            raise MotionError("MISSING_SOURCE_ACTOR_WORLD_TRANSFORM")
+        conjugate(pose.get("rotation_xyzw"))
+        raw_pos = pose.get("position_m")
+        if (not isinstance(raw_pos,(tuple,list)) or len(raw_pos)!=3
+                or any(type(v) not in (int,float) or not math.isfinite(v)
+                       for v in raw_pos)):
+            raise MotionError("INVALID_SOURCE_ACTOR_WORLD_POSITION")
+        position = csir_plan.canonical_position_to_unreal_cm(raw_pos)
         rotation = csir_plan.continuous_unreal_rotator(
             previous, csir_plan.canonical_quat_to_unreal_rotator(pose["rotation_xyzw"])
         )

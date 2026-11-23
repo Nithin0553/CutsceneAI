@@ -194,3 +194,41 @@
 .ai-conversion-summary strong{color:#b6efab;font-weight:650}
 .ai-conversion-summary .subnote{font-size:12px;color:#a1aba3;margin-top:12px;border-top:1px solid #29352b;padding-top:12px}
 @media(max-width:600px){.ai-conversion-summary{padding:16px 14px}}
+
+/* Phase 10.3: readable, source-bound final transfer accounting.
+   Uses the existing dark visual system; detailed findings are collapsed. */
+.outcome-panel{width:min(760px,100%);margin:24px auto 4px;padding:20px 24px;border:1px solid #37443b;background:#0d110e;border-radius:14px;text-align:left}
+.outcome-heading{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.outcome-heading h2{font-size:18px;letter-spacing:-.02em;margin:0;color:#e8f5e8}
+.outcome-heading .button{font-size:12px;padding:8px 13px;min-height:36px;white-space:nowrap}
+.outcome-panel .subnote{margin:10px 0;line-height:1.6}
+.outcome-state{color:#d3e9cf;font-size:13px;overflow-wrap:anywhere;margin:16px 0}
+.outcome-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:16px 0}
+.outcome-facts div{padding:13px;border:1px solid #2a392e;background:#111912;border-radius:10px;display:flex;flex-direction:column;gap:4px}
+.outcome-facts strong{font-size:23px;font-weight:680;color:#a5ec96;font-variant-numeric:tabular-nums}
+.outcome-facts span{font-size:11px;color:#aeb9af;line-height:1.4}
+.outcome-counts{display:flex;flex-wrap:wrap;gap:7px;margin:13px 0 16px}
+.outcome-counts span{border-radius:7px;padding:5px 9px;border:1px solid #344736;background:#152018;color:#cdd8cc;font-size:11px}
+.outcome-counts strong{margin-left:4px;color:#c4f3be}
+.outcome-details{border-top:1px solid #2c3b2e;padding-top:12px}
+.outcome-details summary{font-weight:650;color:#e3f0e2;cursor:pointer;font-size:13px}
+.outcome-occurrences{max-height:360px;overflow:auto;scrollbar-color:#49634a #0c120c;margin:12px 0}
+.outcome-occurrence{border-bottom:1px solid #263629;padding:10px 3px;overflow-wrap:anywhere}
+.outcome-occurrence strong{font-size:12px;color:#dce8dd}
+.outcome-occurrence p{margin:3px 0;color:#b8e6ae;font-size:12px}
+.outcome-occurrence small{font-size:11px;color:#a5ada6;line-height:1.5}
+.outcome-page{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px}
+.outcome-page span{font-size:12px;color:#afb9b0;margin-right:auto}
+.outcome-page .button{font-size:12px;padding:8px 12px;min-height:36px}
+@media(max-width:560px){.outcome-panel{padding:16px 12px}.outcome-heading{align-items:start}.outcome-heading .button{padding:7px 9px}.outcome-facts{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.outcome-facts div{padding:9px 7px}.outcome-facts strong{font-size:20px}.outcome-facts span{font-size:10px}}
+
+/* Phase 10.3 shared source-bound diagnostics; hidden unless requested. */
+.stage-diagnostics,.companion-setup{max-width:780px;margin:16px auto;padding:15px 18px;border:1px solid #34413a;border-radius:12px;background:#0d130f;text-align:left;color:#d5dfd8}
+.stage-diagnostics summary,.companion-setup summary{cursor:pointer;font-weight:650;font-size:13px;color:#d9e8db}
+.stage-diagnostics ol,.stage-diagnostics-list{padding-left:24px;margin:13px 0}
+.stage-diagnostics li,.stage-diagnostics-list li{padding:9px 0;border-bottom:1px solid #26332b;font-size:12px}
+.stage-diagnostics li strong,.stage-diagnostics-list li strong{color:#dceadd;margin-right:12px}
+.stage-diagnostics li span,.stage-diagnostics-list li span{display:inline-block;color:#ace3a1}
+.stage-diagnostics li small,.stage-diagnostics-list li small{display:block;color:#aab3ab;line-height:1.5;margin-top:4px}
+.companion-setup code{display:block;overflow-wrap:anywhere;white-space:pre-wrap;background:#131c15;border:1px solid #2d3b30;border-radius:7px;padding:10px;font-size:11px;color:#c1f4b9}
+.companion-setup p{font-size:12px;line-height:1.55;color:#aebcad}

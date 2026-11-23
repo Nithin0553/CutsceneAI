@@ -22,7 +22,16 @@ from closed_loop_evaluation import redact_component_catalog
 
 MAX_REPAIRS = 2
 MAX_USER_COMMENT = 1200
-ALLOWED_STRATEGIES = {"restore_source_albedo", "restore_constant_actor_offset", "report_only"}
+ALLOWED_STRATEGIES = {
+    "restore_source_albedo", "restore_constant_actor_offset",
+    "restore_static_camera_lens", "restore_single_camera_cut_timing",
+    "restore_static_camera_position", "restore_static_character_actor_yaw",
+    "restore_two_shot_camera_switch", "restore_static_camera_actor_yaw",
+    "restore_single_animated_camera_position_key",
+    "restore_two_animated_camera_position_keys",
+    "restore_single_animated_camera_yaw_key",
+    "restore_bounded_animated_camera_yaw_keys", "report_only",
+}
 
 
 class AgentError(RuntimeError):
@@ -50,6 +59,18 @@ class AgentState(TypedDict, total=False):
     feedback_id: str
     intent_routing: dict[str, Any]
     transform_candidate: dict[str, Any]
+    element8_review: dict[str, Any]
+    camera_lens_candidate: dict[str, Any]
+    camera_cut_candidate: dict[str, Any]
+    two_shot_cut_candidate: dict[str, Any]
+    camera_position_candidate: dict[str, Any]
+    camera_yaw_candidate: dict[str, Any]
+    animated_camera_key_candidate: dict[str, Any]
+    animated_camera_two_key_candidate: dict[str, Any]
+    animated_camera_yaw_key_candidate: dict[str, Any]
+    animated_camera_many_yaw_candidate: dict[str, Any]
+    character_facing_candidate: dict[str, Any]
+    static_character_yaw_candidate: dict[str, Any]
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -280,7 +301,66 @@ def _model_reasoner(summary: dict[str, Any]) -> dict[str, str]:
             "and measured Unreal fallback slots. "
             "restore_constant_actor_offset requires exact one-character "
             "source/target world-position evidence and independent native "
-            "remeasurement. If evidence is insufficient or the discrepancy "
+            "remeasurement. restore_static_camera_lens requires an explicit "
+            "user lens correction plus exact reopened native CineCamera "
+            "measurements, constant source FOV, and an independently guarded "
+            "one-camera focal-length component edit. No generic zoom/shot "
+            "rewrites are permitted. restore_single_camera_cut_timing "
+            "requires an exact source-authored single shot, known camera "
+            "binding, small sampled frame discrepancy and separate native "
+            "section readback. No generic multi-shot/subsequence rewrites. "
+            "restore_two_shot_camera_switch supports exactly TWO source-bound "
+            "camera-cut sections with unique native bindings, a shared switch "
+            "boundary misaligned by at most eight frames, original outer "
+            "boundaries unchanged and no camera reordering. The editor "
+            "must recheck the exact two newly staged camera UObject paths, "
+            "then move the shared boundary without overlap and rollback "
+            "both sections on failure. No shot insertion, nested sequences, "
+            "camera retargeting or rendered-equivalence claims. "
+            "restore_static_camera_position requires one source-mapped, "
+            "unparented CineCamera with constant captured world positions, "
+            "matching rotation/scale and verified source/native offset. "
+            "restore_static_camera_actor_yaw requires one source-bound "
+            "unchanging CineCamera, matching position, pitch, roll, scale, "
+            "physical lens and camera cuts, full source/native sampled "
+            "constant world-yaw mismatch and no authored or native camera "
+            "transform tracks. Native actor/component orientation, original "
+            "staged camera UObject, explicit consent and rollback must be "
+            "independently rechecked before one world-yaw-only edit. "
+            "Animated camera rotation and rendered composition are not verified. "
+                "restore_single_animated_camera_position_key is permitted only "
+                "for one source-verified evaluated camera-world frame, one "
+                "native XYZ key and no other source/native differences; "
+                "it has no permission to rewrite entire curves or shots. "
+            "restore_bounded_animated_camera_yaw_keys permits only 2–8 "
+            "nonadjacent source-measured isolated yaw-only key mismatches, "
+            "with exactly matched user-specified count, strict no-wrap "
+            "physical source/native proof and native rollback. Never general "
+            "pitch/roll, timewarp, camera rig, blended shot or arbitrary curve "
+            "rewrites. "
+            "restore_single_animated_camera_yaw_key permits only ONE "
+            "source-measured unaliased 3–30-degree interior YAW rotation key, "
+            "with every other frame/axis correct, no parent/rig/blend and "
+            "current explicit consent. The native adapter rechecks all nine "
+            "channels and rolls the existing key back on failed write/save. "
+            "No pitch/roll/quaternion curve or rendered parity claim. "
+            "restore_two_animated_camera_position_keys permits only TWO "
+            "independently measured nonadjacent interior position keys "
+            "on the same source camera XYZ axis, after explicit two-key consent "
+            "and live nine-channel native ownership checks with rollback. "
+            "No rotation keys, arbitrary curves, blends or shot rewrites. "
+            "Only explicitly enumerated native edits are allowed; rendered framing "
+            "and reopened CineTwin still require independent review. "
+            "restore_static_character_actor_yaw is exclusively for one "
+            "unmoving, upright, newly staged skeletal character with an "
+            "approved anatomical forward axis, independent bone reference "
+            "calibration, complete stable source/target CineTwin yaw evidence "
+            "and no competing native Sequencer/animation/root/attachment "
+            "owner. Only current explicit user feedback can request the "
+            "one rollback-safe actor-base yaw. Animated/moving characters, "
+            "mesh/skeleton changes, general retargeting and multi-character "
+            "repairs remain unsupported; reopened CineTwin remains unverified. "
+            "If evidence is insufficient or the discrepancy "
             "is outside an installed repair adapter, choose report_only. "
             "Never invent engine commands, source paths, executable code, "
             "new mapping rules, or claims of visual/skeletal parity."
@@ -325,6 +405,56 @@ def _material_feedback_scope(message: str) -> bool:
     ))
 
 
+def _element8_review(workspace: Path, candidate: Path,
+                     job: dict[str, Any]) -> dict[str, Any] | None:
+    """Only compare existing source-bound, reopened native CineTwin captures.
+
+    This is model-visible advisory evidence, never engine edit permission.
+    Legacy jobs without Element 7 readback continue under their separately
+    validated, explicitly user-approved native policies.
+    """
+    verified = sorted(
+        candidate.glob("native-acceptance-*/element7-readback.json"),
+        key=lambda item: (item.stat().st_mtime_ns, item.parent.name),
+    )
+    if not verified:
+        return None
+    if len(verified) > 3 or any(
+        path.is_symlink() or path.parent.is_symlink()
+        for path in verified
+    ):
+        raise AgentError("Element 8 native remeasurement budget or evidence path is unsafe.")
+    import studio_element8_repair
+
+    try:
+        proof = studio_element8_repair.build(
+            workspace, job["job_id"], [path.parent for path in verified],
+        )
+    except (studio_element8_repair.BoundedRepairError, OSError, ValueError,
+            KeyError, TypeError) as exc:
+        raise AgentError(
+            "Element 8 raw source/target recovery evidence failed verification."
+        ) from exc
+    return {
+        "status": proof["status"],
+        "repair_plan_sha256": proof["repair_plan_sha256"],
+        "remeasurement_attempts": proof["remeasurement_attempts"],
+        "remaining_manual_observation_budget":
+            proof["remaining_manual_observation_budget"],
+        "native_character_offset_review_available":
+            proof["native_repair_adapter_available_for_review"],
+        "per_occurrence_advisory": [{
+            "occurrence_id": row["occurrence_id"],
+            "strategy": row["advisory_strategy"],
+            "latest_status": row["latest_status"],
+            "remeasurement_result": row["remeasurement_result"],
+        } for row in proof["per_occurrence"][:30]],
+        "native_repair_authorized": False,
+        "automatic_native_retry_authorized": False,
+        "full_cutscene_fidelity_verified": False,
+    }
+
+
 def build_graph(workspace: Path, job: dict[str, Any],
                 reasoner: Callable[[dict[str, Any]], dict[str, str]] | None = None):
     """Return an actual compiled LangGraph StateGraph with conditional retry loop."""
@@ -360,7 +490,149 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 }],
             }, {})
         count = _valid_fallback(visual)
+        element8 = _element8_review(workspace, candidate, job)
         transform_proof = None
+        camera_proof = None
+        cut_proof = None
+        two_shot_proof = None
+        camera_position_proof = None
+        camera_yaw_proof = None
+        animated_camera_key_proof = None
+        animated_camera_two_key_proof = None
+        animated_camera_yaw_key_proof = None
+        animated_camera_many_yaw_proof = None
+        facing_review = None
+        static_yaw_proof = None
+        if comment:
+            import studio_camera_key_evidence
+            if studio_camera_key_evidence.requested_many_yaw_count(
+                    user_message) is not None:
+                try:
+                    animated_camera_many_yaw_proof = (
+                        studio_camera_key_evidence.build_many_yaw_keys(
+                            workspace,job,
+                        )
+                    )
+                except (studio_camera_key_evidence.AnimatedCameraKeyError,
+                        ValueError,KeyError,TypeError,OSError) as exc:
+                    animated_camera_many_yaw_proof = {
+                        "eligible":False,
+                        "reason":"Bounded camera yaw-key grid is not source proven: "
+                                 + str(exc)[:220],
+                    }
+            if studio_camera_key_evidence.message_requests_yaw_key(user_message):
+                try:
+                    animated_camera_yaw_key_proof = (
+                        studio_camera_key_evidence.build_yaw_key(workspace,job)
+                    )
+                except (studio_camera_key_evidence.AnimatedCameraKeyError,
+                        ValueError,KeyError,TypeError,OSError) as exc:
+                    animated_camera_yaw_key_proof = {
+                        "eligible":False,
+                        "reason":"Animated CineCamera yaw key is not source proven: "
+                                 + str(exc)[:220],
+                    }
+            if studio_camera_key_evidence.message_requests_two_keys(user_message):
+                try:
+                    animated_camera_two_key_proof = (
+                        studio_camera_key_evidence.build_two(workspace, job)
+                    )
+                except (studio_camera_key_evidence.AnimatedCameraKeyError,
+                        ValueError, KeyError, TypeError, OSError) as exc:
+                    animated_camera_two_key_proof = {
+                        "eligible": False,
+                        "reason": "Two CineCamera keys are not source proven: "
+                                  + str(exc)[:220],
+                    }
+            if studio_camera_key_evidence.message_requests_key(user_message):
+                try:
+                    animated_camera_key_proof=studio_camera_key_evidence.build(
+                        workspace,job,
+                    )
+                except (studio_camera_key_evidence.AnimatedCameraKeyError,
+                        ValueError,KeyError,TypeError,OSError) as exc:
+                    animated_camera_key_proof={
+                        "eligible":False,
+                        "reason":"Animated CineCamera key is not source proven: "
+                        +str(exc)[:220],
+                    }
+        if comment:
+            import studio_static_character_yaw_evidence
+            if studio_static_character_yaw_evidence.message_requests_static_yaw(
+                    user_message):
+                try:
+                    static_yaw_proof = studio_static_character_yaw_evidence.build(
+                        workspace, job,
+                    )
+                except (studio_static_character_yaw_evidence.StaticCharacterYawError,
+                        ValueError, OSError, KeyError, TypeError) as exc:
+                    static_yaw_proof = {
+                        "eligible": False,
+                        "reason": "Static character actor yaw is not source-proven: "
+                                  + str(exc)[:220],
+                    }
+            import studio_camera_yaw_evidence
+            if studio_camera_yaw_evidence.message_requests_yaw(user_message):
+                try:
+                    camera_yaw_proof = studio_camera_yaw_evidence.build(
+                        workspace, job,
+                    )
+                except (studio_camera_yaw_evidence.StaticCameraYawError,
+                        ValueError, TypeError, OSError, KeyError) as exc:
+                    camera_yaw_proof = {
+                        "eligible": False,
+                        "reason": "No source-bound static camera world yaw proof: "
+                                  + str(exc)[:200],
+                    }
+            import studio_camera_position_evidence
+            if studio_camera_position_evidence.message_requests_position(user_message):
+                try:
+                    camera_position_proof = studio_camera_position_evidence.build(
+                        workspace, job,
+                    )
+                except (studio_camera_position_evidence.StaticCameraPositionError,
+                        ValueError, OSError, KeyError, TypeError) as exc:
+                    camera_position_proof = {
+                        "eligible": False,
+                        "reason": "No exact-source static camera placement proof: "
+                                  + str(exc)[:200],
+                    }
+        if comment and agent_intent_router.recognize(user_message)["domains"] == ["camera"]:
+            import studio_camera_lens_evidence
+            if studio_camera_lens_evidence.message_requests_lens(user_message):
+                try:
+                    camera_proof = studio_camera_lens_evidence.build(workspace, job)
+                except (studio_camera_lens_evidence.CameraLensEvidenceError,
+                        ValueError, OSError, KeyError, TypeError) as exc:
+                    camera_proof = {
+                        "eligible": False,
+                        "reason": "No exact-source native static lens proof: "
+                                  + str(exc)[:200],
+                    }
+            import studio_two_shot_cut_evidence
+            if studio_two_shot_cut_evidence.message_requests_two_shot(user_message):
+                try:
+                    two_shot_proof = studio_two_shot_cut_evidence.build(
+                        workspace, job,
+                    )
+                except (studio_two_shot_cut_evidence.TwoShotEvidenceError,
+                        ValueError, TypeError, OSError, KeyError) as exc:
+                    two_shot_proof = {
+                        "eligible": False,
+                        "reason": "No exact-source two-shot switch proof: "
+                                  + str(exc)[:200],
+                    }
+            import studio_camera_cut_evidence
+            if studio_camera_cut_evidence.message_requests_cut(user_message):
+                try:
+                    cut_proof = studio_camera_cut_evidence.build(workspace, job)
+                except (studio_camera_cut_evidence.CameraCutEvidenceError,
+                        ValueError, OSError, KeyError, TypeError) as exc:
+                    cut_proof = {
+                        "eligible": False,
+                        "reason": "No source-bound camera-cut evidence: "
+                                  + str(exc)[:200],
+                    }
         if (comment and agent_intent_router.recognize(user_message)["domains"] == ["transform"]):
             import agent_transform_evidence
             try:
@@ -375,6 +647,22 @@ def build_graph(workspace: Path, job: dict[str, Any],
                     "eligible": False,
                     "reason": "Missing trusted native evidence: " + str(exc)[:250],
                 }
+        if comment:
+            import studio_character_facing_review
+            if studio_character_facing_review.relevant_feedback(user_message):
+                try:
+                    facing_review = studio_character_facing_review.build(
+                        workspace, job,
+                    )
+                except (studio_character_facing_review.CharacterFacingReviewError,
+                        ValueError, TypeError, KeyError, OSError):
+                    facing_review = {
+                        "kind": studio_character_facing_review.KIND,
+                        "status": "NATIVE_FACING_OWNERSHIP_EVIDENCE_INCOMPLETE",
+                        "native_owner_observation_available": False,
+                        "native_edit_authorized": False,
+                        "model_command_authorized": False,
+                    }
         issues = feedback.get("issues") or []
         if not isinstance(issues, list):
             raise AgentError("Invalid independent issue list.")
@@ -389,6 +677,17 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 repair_budget=MAX_REPAIRS,
                 independent_issues=issues,
                 transform_repair_evidence=transform_proof,
+                camera_lens_repair_evidence=camera_proof,
+                camera_cut_repair_evidence=cut_proof,
+                two_shot_cut_repair_evidence=two_shot_proof,
+                camera_position_repair_evidence=camera_position_proof,
+                camera_yaw_repair_evidence=camera_yaw_proof,
+                animated_camera_key_evidence=animated_camera_key_proof,
+                animated_camera_two_key_evidence=animated_camera_two_key_proof,
+                animated_camera_yaw_key_evidence=animated_camera_yaw_key_proof,
+                animated_camera_many_yaw_evidence=animated_camera_many_yaw_proof,
+                character_facing_review=facing_review,
+                static_character_yaw_evidence=static_yaw_proof,
                 adapter_catalog=feedback.get("component_adapter_catalog"),
                 fallback_observation_scope=(
                     "character" if "character_material_slots_engine_default" in visual
@@ -426,6 +725,18 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "eligible_repair": eligible,
             "intent_routing": routing,
             "transform_candidate": transform_proof or {},
+            "camera_lens_candidate": camera_proof or {},
+            "camera_cut_candidate": cut_proof or {},
+            "two_shot_cut_candidate": two_shot_proof or {},
+            "camera_position_candidate": camera_position_proof or {},
+            "camera_yaw_candidate": camera_yaw_proof or {},
+            "animated_camera_key_candidate":animated_camera_key_proof or {},
+            "animated_camera_two_key_candidate":animated_camera_two_key_proof or {},
+            "animated_camera_yaw_key_candidate":animated_camera_yaw_key_proof or {},
+            "animated_camera_many_yaw_candidate":animated_camera_many_yaw_proof or {},
+            "character_facing_candidate": facing_review or {},
+            "static_character_yaw_candidate": static_yaw_proof or {},
+            "element8_review": element8 or {},
         }
         if not issues:
             return {**base, "status": "NO_DETECTED_GAPS_FIDELITY_UNVERIFIED"}
@@ -462,6 +773,129 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "verified_ced_precedents": _approved_precedents(workspace, job),
             "approved_ced_rulebook_precedents": _approved_ced_rulebook_precedents(workspace, job),
             "verified_transform_candidate": state.get("transform_candidate", {}),
+            "verified_camera_lens_candidate": {
+                "eligible": bool(
+                    state.get("camera_lens_candidate", {}).get("eligible")
+                ),
+                "source_occurrence_id": state.get(
+                    "camera_lens_candidate", {},
+                ).get("source_camera_occurrence_id"),
+                "native_vertical_fov_error_degrees": state.get(
+                    "camera_lens_candidate", {},
+                ).get("measured_native_fov_error_degrees"),
+                "native_edit_authorized": False,
+                "full_cutscene_fidelity_verified": False,
+            },
+            "verified_two_shot_cut_candidate": {
+                "eligible": state.get("two_shot_cut_candidate", {}).get(
+                    "eligible"
+                ) is True,
+                "switch_count": state.get("two_shot_cut_candidate", {}).get(
+                    "switch_count", 0
+                ),
+                "maximum_frame_boundary_error": state.get(
+                    "two_shot_cut_candidate", {},
+                ).get("maximum_frame_boundary_error"),
+                "native_edit_authorized": False,
+                "reopened_cinetwin_verified": False,
+            },
+            "verified_camera_cut_candidate": {
+                "eligible": bool(
+                    state.get("camera_cut_candidate", {}).get("eligible")
+                ),
+                "native_boundary_error_frames": state.get(
+                    "camera_cut_candidate", {},
+                ).get("maximum_frame_boundary_error"),
+                "native_edit_authorized": False,
+                "rendered_shot_equivalence_verified": False,
+            },
+            "verified_animated_camera_key_candidate":{
+                "eligible": state.get("animated_camera_key_candidate",{}).get(
+                    "eligible"
+                ) is True,
+                "one_source_frame":state.get(
+                    "animated_camera_key_candidate",{}
+                ).get("source_key_frame"),
+                "native_edit_authorized":False,
+                "reopened_after_repair_verified":False,
+            },
+            "verified_bounded_camera_yaw_keys_candidate":{
+                "eligible":state.get("animated_camera_many_yaw_candidate",{}).get(
+                    "eligible"
+                ) is True,
+                "measured_key_count":state.get(
+                    "animated_camera_many_yaw_candidate",{}
+                ).get("source_key_count"),
+                "native_edit_authorized":False,
+                "rendered_motion_verified":False,
+            },
+            "verified_animated_camera_yaw_key_candidate":{
+                "eligible":state.get("animated_camera_yaw_key_candidate",{}).get(
+                    "eligible"
+                ) is True,
+                "source_key_frame":state.get(
+                    "animated_camera_yaw_key_candidate",{}
+                ).get("source_key_frame"),
+                "native_edit_authorized":False,
+                "reopened_after_repair_verified":False,
+            },
+            "verified_two_animated_camera_key_candidate": {
+                "eligible": state.get("animated_camera_two_key_candidate", {}).get(
+                    "eligible"
+                ) is True,
+                "measured_key_count": state.get(
+                    "animated_camera_two_key_candidate", {}
+                ).get("source_key_count", 0),
+                "native_edit_authorized": False,
+                "reopened_after_repair_verified": False,
+            },
+            "verified_camera_yaw_candidate": {
+                "eligible": state.get("camera_yaw_candidate", {}).get(
+                    "eligible"
+                ) is True,
+                "sample_count": state.get("camera_yaw_candidate", {}).get(
+                    "sample_count", 0
+                ),
+                "native_yaw_delta_degrees": state.get(
+                    "camera_yaw_candidate", {},
+                ).get("native_yaw_delta_degrees"),
+                "native_edit_authorized": False,
+                "cinetwin_reopened_verified": False,
+            },
+            "verified_camera_position_candidate": {
+                "eligible": bool(
+                    state.get("camera_position_candidate", {}).get("eligible")
+                ),
+                "source_occurrence_id": state.get(
+                    "camera_position_candidate", {},
+                ).get("source_camera_occurrence_id"),
+                "native_edit_authorized": False,
+                "reopened_cinetwin_verified": False,
+            },
+            "verified_static_character_yaw_candidate": {
+                "eligible": state.get("static_character_yaw_candidate", {}).get(
+                    "eligible"
+                ) is True,
+                "sample_count": state.get("static_character_yaw_candidate", {}).get(
+                    "sample_count", 0
+                ),
+                "native_edit_authorized": False,
+                "cinetwin_after_native_repair_verified": False,
+            },
+            "verified_character_facing_owner_review": {
+                "status": state.get("character_facing_candidate", {}).get("status"),
+                "native_owner_observation_available": bool(
+                    state.get("character_facing_candidate", {}).get(
+                        "native_owner_observation_available"
+                    )
+                ),
+                "observed_character_count": state.get(
+                    "character_facing_candidate", {},
+                ).get("observed_character_count", 0),
+                "native_edit_authorized": False,
+                "full_cutscene_fidelity_verified": False,
+            },
+            "element8_native_readback": state.get("element8_review", {}),
         }
         try:
             suggestion = choose(summary)
@@ -480,9 +914,108 @@ def build_graph(workspace: Path, job: dict[str, Any],
             comment and state.get("transform_candidate", {}).get("eligible")
             and "restore_constant_actor_offset" in
             state["intent_routing"]["safe_strategies"]
+            and (
+                not state.get("element8_review")
+                or (
+                    state["element8_review"].get(
+                        "native_character_offset_review_available"
+                    ) is True
+                    and state["element8_review"].get("status") not in {
+                        "STOP_MEASURED_REGRESSION_OR_NO_PROGRESS",
+                        "STOP_REMEASUREMENT_BUDGET_EXHAUSTED",
+                    }
+                )
+            )
         ):
             return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
                     "failure": "Transform proposal was not independently authorized.",
+                    "chosen_strategy": "report_only"}
+        if strategy == "restore_bounded_animated_camera_yaw_keys" and not (
+            comment and state.get("feedback_id")
+            and state.get("animated_camera_many_yaw_candidate",{}).get(
+                "eligible") is True
+            and strategy in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status":"REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure":"Counted source camera yaw-key grid not independently proven.",
+                    "chosen_strategy":"report_only"}
+        if strategy == "restore_single_animated_camera_yaw_key" and not (
+            comment and state.get("feedback_id")
+            and state.get("animated_camera_yaw_key_candidate",{}).get("eligible") is True
+            and strategy in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status":"REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure":"One exact original camera yaw key is not proven.",
+                    "chosen_strategy":"report_only"}
+        if strategy == "restore_two_animated_camera_position_keys" and not (
+            comment and state.get("feedback_id")
+            and state.get("animated_camera_two_key_candidate", {}).get("eligible") is True
+            and strategy in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Exactly two independently measured XYZ keys are not proven.",
+                    "chosen_strategy": "report_only"}
+        if strategy == "restore_single_animated_camera_position_key" and not (
+            comment and state.get("feedback_id")
+            and state.get("animated_camera_key_candidate",{}).get("eligible") is True
+            and strategy in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status":"REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure":"One original measured camera XYZ key is not proven.",
+                    "chosen_strategy":"report_only"}
+        if strategy == "restore_static_character_actor_yaw" and not (
+            comment and state.get("feedback_id")
+            and state.get("static_character_yaw_candidate", {}).get("eligible") is True
+            and "restore_static_character_actor_yaw"
+            in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Static character yaw lacks native/source/rest-pose proof.",
+                    "chosen_strategy": "report_only"}
+        if strategy == "restore_static_camera_actor_yaw" and not (
+            comment and state.get("feedback_id")
+            and state.get("camera_yaw_candidate", {}).get("eligible") is True
+            and "restore_static_camera_actor_yaw"
+            in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Static camera yaw lacks original frame and native owner proof.",
+                    "chosen_strategy": "report_only"}
+        if strategy == "restore_static_camera_position" and not (
+            comment and state.get("feedback_id")
+            and state.get("camera_position_candidate", {}).get("eligible") is True
+            and "restore_static_camera_position"
+            in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Static camera placement lacks source/native proof.",
+                    "chosen_strategy": "report_only"}
+        if strategy == "restore_two_shot_camera_switch" and not (
+            comment and state.get("feedback_id")
+            and state.get("two_shot_cut_candidate", {}).get("eligible") is True
+            and "restore_two_shot_camera_switch"
+            in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Two-shot native binding and shared-frame proof missing.",
+                    "chosen_strategy": "report_only"}
+        if strategy == "restore_single_camera_cut_timing" and not (
+            comment and state.get("feedback_id")
+            and state.get("camera_cut_candidate", {}).get("eligible") is True
+            and "restore_single_camera_cut_timing"
+            in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Camera-cut timing lacks exact native source evidence.",
+                    "chosen_strategy": "report_only"}
+        if strategy == "restore_static_camera_lens" and not (
+            comment and state.get("feedback_id")
+            and state.get("camera_lens_candidate", {}).get("eligible") is True
+            and "restore_static_camera_lens"
+            in state["intent_routing"]["safe_strategies"]
+        ):
+            return {"status": "REJECTED_UNSUPPORTED_STRATEGY",
+                    "failure": "Static camera repair lacks exact native lens evidence.",
                     "chosen_strategy": "report_only"}
         if strategy == "restore_source_albedo" and not (
             state.get("eligible_repair") and relevant_material_request and
@@ -503,7 +1036,19 @@ def build_graph(workspace: Path, job: dict[str, Any],
 
     def dispatch(state: AgentState) -> dict[str, Any]:
         strategy = state.get("chosen_strategy")
-        if strategy not in {"restore_source_albedo", "restore_constant_actor_offset"}:
+        if strategy not in {
+            "restore_source_albedo", "restore_constant_actor_offset",
+            "restore_static_camera_lens",
+            "restore_single_camera_cut_timing",
+            "restore_two_shot_camera_switch",
+            "restore_static_camera_position",
+            "restore_static_camera_actor_yaw",
+            "restore_static_character_actor_yaw",
+            "restore_single_animated_camera_position_key",
+            "restore_two_animated_camera_position_keys",
+            "restore_single_animated_camera_yaw_key",
+            "restore_bounded_animated_camera_yaw_keys",
+        }:
             return {"status": "UNRESOLVED_NO_SAFE_STRATEGY"}
         request_id = uuid.uuid4().hex
         request = {
@@ -518,6 +1063,108 @@ def build_graph(workspace: Path, job: dict[str, Any],
             "iteration": state.get("iterations", 0) + 1,
             "baseline_fallback": state.get("last_fallback", 0),
         }
+        if strategy == "restore_bounded_animated_camera_yaw_keys":
+            many=state.get("animated_camera_many_yaw_candidate") or {}
+            if many.get("eligible") is not True or not state.get("feedback_id"):
+                raise AgentError("Original bounded camera yaw-key approval missing.")
+            request.update({
+                "feedback_id":state["feedback_id"],
+                "animated_camera_many_yaw_repair_sha256":
+                    many["animated_camera_many_yaw_repair_sha256"],
+                "source_camera_occurrence_id":
+                    many["source_camera_occurrence_id"],
+            })
+        if strategy == "restore_single_animated_camera_yaw_key":
+            yaw_key=state.get("animated_camera_yaw_key_candidate") or {}
+            if yaw_key.get("eligible") is not True or not state.get("feedback_id"):
+                raise AgentError("Original animated camera yaw-key approval missing.")
+            request.update({
+                "feedback_id":state["feedback_id"],
+                "animated_camera_yaw_key_repair_sha256":
+                    yaw_key["animated_camera_yaw_key_repair_sha256"],
+                "source_camera_occurrence_id":
+                    yaw_key["source_camera_occurrence_id"],
+            })
+        if strategy == "restore_two_animated_camera_position_keys":
+            pair = state.get("animated_camera_two_key_candidate") or {}
+            if pair.get("eligible") is not True or not state.get("feedback_id"):
+                raise AgentError("Original two-camera-key approval missing.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "animated_camera_two_key_repair_sha256":
+                    pair["animated_camera_two_key_repair_sha256"],
+                "source_camera_occurrence_id":
+                    pair["source_camera_occurrence_id"],
+            })
+        if strategy == "restore_single_animated_camera_position_key":
+            key=state.get("animated_camera_key_candidate") or {}
+            if key.get("eligible") is not True or not state.get("feedback_id"):
+                raise AgentError("Original camera key approval missing.")
+            request.update({
+                "feedback_id":state["feedback_id"],
+                "animated_camera_key_repair_sha256":
+                    key["animated_camera_key_repair_sha256"],
+                "source_camera_occurrence_id":
+                    key["source_camera_occurrence_id"],
+            })
+        if strategy == "restore_static_character_actor_yaw":
+            char_yaw = state.get("static_character_yaw_candidate") or {}
+            if char_yaw.get("eligible") is not True or not state.get("feedback_id"):
+                raise AgentError("Source-bound character actor yaw approval missing.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "source_entity_id": char_yaw["source_entity_id"],
+                "character_yaw_repair_sha256":
+                    char_yaw["character_yaw_repair_sha256"],
+            })
+        if strategy == "restore_static_camera_actor_yaw":
+            camera = state.get("camera_yaw_candidate") or {}
+            if camera.get("eligible") is not True or not state.get("feedback_id"):
+                raise AgentError("Missing source-bound camera yaw consent and proof.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "camera_yaw_repair_sha256": camera["camera_yaw_repair_sha256"],
+                "source_camera_occurrence_id":
+                    camera["source_camera_occurrence_id"],
+            })
+        if strategy == "restore_static_camera_position":
+            camera = state.get("camera_position_candidate") or {}
+            if camera.get("eligible") is not True or not state.get("feedback_id"):
+                raise AgentError("Missing verified static camera placement permission.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "camera_position_repair_sha256": camera["camera_position_repair_sha256"],
+                "source_camera_occurrence_id": camera["source_camera_occurrence_id"],
+            })
+        if strategy == "restore_two_shot_camera_switch":
+            shot = state.get("two_shot_cut_candidate") or {}
+            if (shot.get("eligible") is not True
+                    or not state.get("feedback_id")):
+                raise AgentError("Missing verified two-shot camera switch proof.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "two_shot_cut_repair_sha256": shot["two_shot_cut_repair_sha256"],
+            })
+        if strategy == "restore_single_camera_cut_timing":
+            shot = state.get("camera_cut_candidate") or {}
+            if (shot.get("eligible") is not True
+                    or not state.get("feedback_id")):
+                raise AgentError("Missing verified user-scoped camera-cut evidence.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "camera_cut_repair_sha256": shot["camera_cut_repair_sha256"],
+            })
+        if strategy == "restore_static_camera_lens":
+            camera = state.get("camera_lens_candidate") or {}
+            if (camera.get("eligible") is not True
+                    or not state.get("feedback_id")):
+                raise AgentError("Missing verified user-authorized camera lens evidence.")
+            request.update({
+                "feedback_id": state["feedback_id"],
+                "camera_repair_sha256": camera["camera_repair_sha256"],
+                "source_camera_occurrence_id":
+                    camera["source_camera_occurrence_id"],
+            })
         if strategy == "restore_constant_actor_offset":
             proof = state.get("transform_candidate") or {}
             if not proof.get("eligible") or not state.get("feedback_id"):
@@ -585,6 +1232,373 @@ def build_graph(workspace: Path, job: dict[str, Any],
                     + f" Native actor/root errors after translation: "
                     + f"{actor_after:.3f} cm / {root_after:.3f} cm. "
                     + "Reopened-project persistence and full parity remain unverified."
+                ),
+            }
+        if state.get("chosen_strategy") == "restore_bounded_animated_camera_yaw_keys":
+            curve_candidate=state.get("animated_camera_many_yaw_candidate") or {}
+            rows=curve_candidate.get("source_yaw_key_repairs") or []
+            error=result.get("native_yaw_max_difference_after_degrees")
+            valid=bool(
+                result.get("status")
+                    =="BOUNDED_ANIMATED_CAMERA_YAW_KEYS_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("animated_camera_many_yaw_repair_sha256")
+                    ==curve_candidate.get("animated_camera_many_yaw_repair_sha256")
+                and result.get("source_camera_occurrence_id")
+                    ==curve_candidate.get("source_camera_occurrence_id")
+                and len(rows)==curve_candidate.get("source_key_count")
+                and result.get("source_key_frames")
+                    ==[row.get("source_key_frame") for row in rows]
+                and result.get("native_channel_index")==5
+                and result.get("changes")==len(rows)
+                and result.get("native_complete_transform_key_grid_readback_verified") is True
+                and result.get("sequence_save_confirmed") is True
+                and type(error) in (int,float) and math.isfinite(error)
+                and 0<=error<=0.05
+                and result.get("cinetwin_reopened_after_repair_verified") is False
+                and result.get("rendered_camera_motion_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common={
+                "pending_request":"",
+                "iterations":state.get("iterations",0)+1,
+                "history":(state.get("history") or [])+[{
+                    "request_id":request_id,
+                    "strategy":"restore_bounded_animated_camera_yaw_keys",
+                    "status":str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified":False,
+                }],
+            }
+            if not valid:
+                return {**common,"status":"REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure":str(result.get("error") or
+                            "Bounded native camera yaw-key readback failed")[:500]}
+            return {
+                **common,
+                "status":"BOUNDED_ANIMATED_CAMERA_YAW_KEYS_SAVED_CINETWIN_PENDING",
+                "reasoning":"Exactly the counted independently source-measured "
+                "nonadjacent camera yaw keys were changed with full original "
+                "native grid readback; separate reopened CineTwin and rendered "
+                "parity remain unverified.",
+            }
+        if state.get("chosen_strategy") == "restore_single_animated_camera_yaw_key":
+            yaw_key = state.get("animated_camera_yaw_key_candidate") or {}
+            err = result.get("native_yaw_key_difference_after_degrees")
+            valid = bool(
+                result.get("status")
+                    == "ONE_ANIMATED_CAMERA_YAW_KEY_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("animated_camera_yaw_key_repair_sha256")
+                    == yaw_key.get("animated_camera_yaw_key_repair_sha256")
+                and result.get("source_camera_occurrence_id")
+                    == yaw_key.get("source_camera_occurrence_id")
+                and result.get("source_key_frame")
+                    == yaw_key.get("source_key_frame")
+                and result.get("native_channel_index") == 5
+                and result.get("changes") == 1
+                and result.get("native_complete_transform_key_grid_readback_verified") is True
+                and result.get("sequence_save_confirmed") is True
+                and type(err) in (int,float) and math.isfinite(err)
+                and 0 <= err <= 0.05
+                and result.get("cinetwin_reopened_after_repair_verified") is False
+                and result.get("rendered_camera_motion_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common = {
+                "pending_request":"",
+                "iterations":state.get("iterations",0)+1,
+                "history":(state.get("history") or [])+[{
+                    "request_id":request_id,
+                    "strategy":"restore_single_animated_camera_yaw_key",
+                    "status":str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified":False,
+                }],
+            }
+            if not valid:
+                return {**common,"status":"REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure":str(result.get("error") or
+                            "Native camera yaw-key readback failed")[:500]}
+            return {
+                **common,
+                "status":"ANIMATED_CAMERA_YAW_KEY_SAVED_REOPENED_CINETWIN_PENDING",
+                "reasoning":"Only one original animated camera yaw key "
+                "was restored with complete nine-channel readback. Independent "
+                "post-repair reopened CineTwin and rendered parity are unverified.",
+            }
+        if state.get("chosen_strategy") == "restore_two_animated_camera_position_keys":
+            pair = state.get("animated_camera_two_key_candidate") or {}
+            rows = pair.get("source_position_key_repairs") or []
+            error = result.get("native_key_max_difference_after_cm")
+            valid = bool(
+                result.get("status")
+                    == "TWO_ANIMATED_CAMERA_POSITION_KEYS_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("animated_camera_two_key_repair_sha256")
+                    == pair.get("animated_camera_two_key_repair_sha256")
+                and result.get("source_camera_occurrence_id")
+                    == pair.get("source_camera_occurrence_id")
+                and len(rows) == 2
+                and result.get("source_key_frames")
+                    == [row.get("source_key_frame") for row in rows]
+                and result.get("native_channel_index")
+                    == rows[0].get("native_channel_index")
+                and result.get("changes") == 2
+                and result.get("native_complete_transform_key_grid_readback_verified") is True
+                and result.get("sequence_save_confirmed") is True
+                and type(error) in (int, float) and math.isfinite(error)
+                and 0 <= error <= 0.05
+                and result.get("cinetwin_reopened_after_repair_verified") is False
+                and result.get("rendered_camera_motion_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common = {
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+                "history": (state.get("history") or []) + [{
+                    "request_id": request_id,
+                    "strategy": "restore_two_animated_camera_position_keys",
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified": False,
+                }],
+            }
+            if not valid:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                            "Native two-key camera readback failed")[:500]}
+            return {
+                **common,
+                "status": "TWO_ANIMATED_CAMERA_KEYS_SAVED_REOPENED_CINETWIN_PENDING",
+                "reasoning": "Exactly two source-bound camera position keys "
+                "were restored with nine-channel native readback. Independent "
+                "reopened CineTwin and rendered fidelity remain unverified.",
+            }
+        if state.get("chosen_strategy") == "restore_single_animated_camera_position_key":
+            key=state.get("animated_camera_key_candidate") or {}
+            error=result.get("native_key_difference_after_cm")
+            valid=bool(
+                result.get("status")
+                =="ONE_ANIMATED_CAMERA_POSITION_KEY_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("animated_camera_key_repair_sha256")
+                    ==key.get("animated_camera_key_repair_sha256")
+                and result.get("source_camera_occurrence_id")
+                    ==key.get("source_camera_occurrence_id")
+                and result.get("source_key_frame")==key.get("source_key_frame")
+                and result.get("native_channel_index")==key.get("native_channel_index")
+                and result.get("changes")==1
+                and result.get("native_complete_transform_key_grid_readback_verified") is True
+                and result.get("sequence_save_confirmed") is True
+                and type(error) in (int,float) and math.isfinite(error)
+                and 0<=error<=0.05
+                and result.get("cinetwin_reopened_after_repair_verified") is False
+                and result.get("rendered_camera_motion_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common={
+                "pending_request":"",
+                "iterations":state.get("iterations",0)+1,
+                "history":(state.get("history") or [])+[{
+                    "request_id":request_id,
+                    "strategy":"restore_single_animated_camera_position_key",
+                    "status":str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified":False,
+                }],
+            }
+            if not valid:
+                return {**common,"status":"REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure":str(result.get("error") or
+                          "Native camera key readback failed")[:500]}
+            return {**common,
+                    "status":"ANIMATED_CAMERA_KEY_SAVED_REOPENED_CINETWIN_PENDING",
+                    "reasoning":"Only one existing source-bound camera XYZ key "
+                    "was restored with full keyed-track readback. Independent "
+                    "reopened CineTwin camera motion and rendered continuity "
+                    "remain unverified."}
+        if state.get("chosen_strategy") == "restore_static_camera_actor_yaw":
+            camera = state.get("camera_yaw_candidate") or {}
+            error = result.get("native_actor_yaw_error_after_degrees")
+            valid = bool(
+                result.get("status")
+                == "CAMERA_STATIC_YAW_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("camera_yaw_repair_sha256")
+                == camera.get("camera_yaw_repair_sha256")
+                and result.get("source_camera_occurrence_id")
+                == camera.get("source_camera_occurrence_id")
+                and result.get("native_base_and_component_rotation_readback_verified")
+                is True
+                and type(error) in (int, float) and math.isfinite(error)
+                and 0 <= error <= 0.1
+                and result.get("cinetwin_reopened_time_grid_verified_after_repair")
+                is False
+                and result.get("rendered_camera_facing_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common = {
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+                "history": (state.get("history") or []) + [{
+                    "request_id": request_id,
+                    "strategy": "restore_static_camera_actor_yaw",
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified": False,
+                }],
+            }
+            if not valid:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                                       "Native CineCamera yaw readback failed")[:500]}
+            return {
+                **common,
+                "status": "CAMERA_YAW_SAVED_REOPENED_CINETWIN_PENDING",
+                "reasoning": (
+                    "Only exact source-bound actor yaw/native component basis "
+                    "was read back. Reopened target camera orientation and "
+                    "rendered composition remain unverified."
+                ),
+            }
+        if state.get("chosen_strategy") == "restore_static_camera_position":
+            camera = state.get("camera_position_candidate") or {}
+            error = result.get("native_base_position_error_after_cm")
+            valid = bool(
+                result.get("status")
+                == "CAMERA_STATIC_POSITION_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("camera_position_repair_sha256")
+                == camera.get("camera_position_repair_sha256")
+                and result.get("source_camera_occurrence_id")
+                == camera.get("source_camera_occurrence_id")
+                and result.get("native_base_property_readback_verified") is True
+                and type(error) in (int, float) and math.isfinite(error)
+                and 0 <= error <= 0.1
+                and result.get("cinetwin_reopened_time_grid_verified_after_repair")
+                is False
+                and result.get("rendered_framing_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common = {
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+                "history": (state.get("history") or []) + [{
+                    "request_id": request_id,
+                    "strategy": "restore_static_camera_position",
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified": False,
+                }],
+            }
+            if not valid:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                                       "Native camera position readback failed")[:500]}
+            return {**common,
+                    "status": "CAMERA_POSITION_SAVED_REOPENED_CINETWIN_PENDING",
+                    "reasoning": "Only native CineCamera base placement passed; "
+                                 "reopened shot composition, track time grid and "
+                                 "rendered framing remain unverified."}
+        if state.get("chosen_strategy") == "restore_two_shot_camera_switch":
+            shot = state.get("two_shot_cut_candidate") or {}
+            valid = bool(
+                result.get("status")
+                == "TWO_SHOT_SWITCH_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("two_shot_cut_repair_sha256")
+                == shot.get("two_shot_cut_repair_sha256")
+                and result.get("source_camera_count") == 2
+                and result.get("native_section_binding_readback_verified") is True
+                and result.get("native_shot_order_preserved") is True
+                and result.get("cinetwin_reopened_time_grid_verified_after_repair")
+                is False
+                and result.get("rendered_camera_switching_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common = {
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+                "history": (state.get("history") or []) + [{
+                    "request_id": request_id,
+                    "strategy": "restore_two_shot_camera_switch",
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified": False,
+                }],
+            }
+            if not valid:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                                       "Two-shot native switch readback failed")[:500]}
+            return {
+                **common,
+                "status": "TWO_SHOT_SWITCH_SAVED_REOPENED_CINETWIN_PENDING",
+                "reasoning": (
+                    "Two source-bound sections and bound camera identities "
+                    "were re-read. Real reopened target switching and rendered "
+                    "shot continuity remain unverified."
+                ),
+            }
+        if state.get("chosen_strategy") == "restore_single_camera_cut_timing":
+            shot = state.get("camera_cut_candidate") or {}
+            valid = bool(
+                result.get("status")
+                == "CAMERA_SINGLE_CUT_SECTION_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("camera_cut_repair_sha256")
+                == shot.get("camera_cut_repair_sha256")
+                and result.get("native_section_binding_readback_verified") is True
+                and result.get("cinetwin_reopened_time_grid_verified_after_repair")
+                is False
+                and result.get("rendered_camera_switching_verified") is False
+                and result.get("full_cutscene_fidelity_verified") is False
+            )
+            common = {
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+                "history": (state.get("history") or []) + [{
+                    "request_id": request_id,
+                    "strategy": "restore_single_camera_cut_timing",
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "full_cutscene_fidelity_verified": False,
+                }],
+            }
+            if not valid:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                                       "Camera cut native readback failed")[:500]}
+            return {**common,
+                    "status": "CAMERA_CUT_SAVED_REOPENED_CINETWIN_PENDING",
+                    "reasoning": "Only native source-bound section bounds passed; "
+                                 "reopened camera-switching and rendered shot "
+                                 "equivalence remain unverified."}
+        if state.get("chosen_strategy") == "restore_static_camera_lens":
+            camera = state.get("camera_lens_candidate") or {}
+            value = result.get("native_property_fov_error_after_degrees")
+            passed = bool(
+                result.get("status")
+                == "CAMERA_STATIC_LENS_PROPERTY_SAVED_REOPENED_CINETWIN_PENDING"
+                and result.get("camera_repair_sha256")
+                == camera.get("camera_repair_sha256")
+                and result.get("source_camera_occurrence_id")
+                == camera.get("source_camera_occurrence_id")
+                and result.get("native_property_readback_verified") is True
+                and type(value) in (float, int)
+                and math.isfinite(value) and 0 <= value <= 0.25
+                and result.get("full_cutscene_fidelity_verified") is False
+                and result.get(
+                    "cinetwin_reopened_time_grid_verified_after_repair"
+                ) is False
+            )
+            common = {
+                "pending_request": "",
+                "iterations": state.get("iterations", 0) + 1,
+                "history": (state.get("history") or []) + [{
+                    "request_id": request_id,
+                    "strategy": "restore_static_camera_lens",
+                    "status": str(result.get("status") or "UNKNOWN"),
+                    "native_fov_error_after_degrees": value,
+                    "full_cutscene_fidelity_verified": False,
+                }],
+            }
+            if not passed:
+                return {**common, "status": "REPAIR_FAILED_OR_INCOMPLETE",
+                        "failure": str(result.get("error") or
+                                       "Native camera lens did not pass")[:500]}
+            return {
+                **common,
+                "status": "CAMERA_PROPERTY_CORRECTED_REOPENED_CINETWIN_PENDING",
+                "reasoning": (
+                    "The source-derived static CineCamera focal property "
+                    "passed a native property readback, but matching-time "
+                    "post-reopen CineTwin and rendered fidelity remain unverified."
                 ),
             }
         old_count = state.get("last_fallback", 0)

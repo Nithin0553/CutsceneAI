@@ -84,3 +84,64 @@ def test_native_acceptance_requires_reopen_and_compares_the_exact_full_capture(t
     assert comparison['acceptance_status'] == 'STRUCTURE_AND_MEASURED_MOTION_WITHIN_TOLERANCE'
     assert comparison['observation_editor_pid'] != comparison['generation_editor_pid']
     assert comparison['target_observation_sha256'] == acceptance.persistence._sha(folder / 'target-behavior.json')
+
+
+
+def test_native_acceptance_records_read_only_per_rig_ownership_from_realistic_actor_double():
+    from test_character_facing_native_ownership import FakeActor, editor
+
+    actor = FakeActor("GuardTarget")
+    api = editor()
+    api.EditorActorSubsystem = object()
+    api.get_editor_subsystem = lambda _: SimpleNamespace(
+        get_all_level_actors=lambda: [actor]
+    )
+    api.load_asset = lambda _: object()
+    job = {
+        "job_id": "2" * 32,
+        "candidate_id": "20261122T190000Z_deadbeef",
+        "sequence_path": "/Game/Studio/LS_Stage",
+    }
+    compare = {
+        "entities": [{
+            "entity_id": "guard", "target_actor_label": "GuardTarget",
+        }],
+        "rig_motion_diagnostics": [{"entity_id": "guard"}],
+    }
+    axes = {"characters": {"guard": {
+        "target_mesh_asset_path": "/Game/Characters/Guard",
+    }}}
+    report = acceptance._character_facing_ownership_report(
+        api, job, compare, axes, "a" * 64, "b" * 64
+    )
+    assert report["kind"] == "cutsceneai.studio.native_character_facing_ownership"
+    assert report["job_id"] == job["job_id"]
+    assert report["status"] == "READ_ONLY_NATIVE_OWNER_INSPECTED_NOT_AUTHORIZED"
+    row, = report["characters"]
+    assert row["entity_id"] == "guard"
+    assert row["status"] == "STATIC_NATIVE_OWNER_CANDIDATE_REQUIRES_SOURCE_PROOF"
+    assert row["native_edit_authorized"] is False
+    assert row["actor_yaw_repair_authorized"] is False
+    assert report["full_cutscene_fidelity_verified"] is False
+
+
+def test_native_acceptance_does_not_guess_mesh_or_native_editor_identity():
+    job = {
+        "job_id": "2" * 32,
+        "candidate_id": "20261122T190000Z_deadbeef",
+        "sequence_path": "/Game/Studio/LS_Stage",
+    }
+    compare = {
+        "entities": [{
+            "entity_id": "guard", "target_actor_label": "GuardTarget",
+        }],
+        "rig_motion_diagnostics": [{"entity_id": "guard"}],
+    }
+    report = acceptance._character_facing_ownership_report(
+        SimpleNamespace(), job, compare, {}, "a" * 64, "b" * 64
+    )
+    assert report["status"] == "READ_ONLY_NATIVE_OWNER_INSPECTED_NOT_AUTHORIZED"
+    assert report["characters"][0]["blocking_reasons"] == [
+        "SOURCE_BOUND_MESH_APPROVAL_OR_ACTOR_BINDING_MISSING"
+    ]
+    assert report["native_edit_authorized"] is False

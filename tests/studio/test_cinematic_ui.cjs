@@ -31,6 +31,8 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
   const censusB = unity + '/CutSceneAI/Exports/feature-surface-unity-B.json';
   const invalidCensus = unity + '/CutSceneAI/Exports/feature-surface-unity-foreign.json';
   let availableCensuses = true;
+  let outcomeUnavailable = false;
+  let outcomeDelay = null;
   const level = '/Game/CutSceneAI/L_Trial01';
   const file = unreal + '/CutSceneAI.uproject';
   if(restoredJob || restoredPending) {
@@ -70,7 +72,54 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
       const body = opts.body ? JSON.parse(opts.body) : {};
       requests.push({url,body});
       let result = {};
-      if (url === '/api/status') {
+      if (url === '/api/flow-diagnostics') {
+        result={
+          kind:'cutsceneai.studio.phase10_3.flow_diagnostics',
+          schema_version:'1',autopilot_status:autopilot.status,
+          native_replay_authorized:false,
+          source_and_native_full_fidelity_verified:false,
+          issues:['Inspect the exact current source and editor owner.'],
+          next_action:'Inspect the exact current source and editor owner.',
+          stages:[
+            'Unity source and CineTwin','CED knowledge retrieval',
+            'AI conversion planning','Strategy validation',
+            'Source-bound conversion plan','Guarded Unreal execution',
+            'Native CineTwin readback','Bounded repairs','Final source report',
+          ].map((label,i)=>({
+            id:i+1,label,status:i<=2?'ACTIVE_OR_PENDING':'NOT_VERIFIED',
+            next_action:'Inspect exact immutable source evidence.',
+            native_or_rendered_fidelity_verified:false,
+          })),
+        };
+      } else if (url.startsWith('/api/final-outcome?')) {
+        const requested = new URL(url,'http://localhost').searchParams;
+        const expected = currentJob?.job_id || '';
+        assert.equal(requested.get('job_id'),expected,
+          'source report must always be explicitly bound to the active job');
+        const offset = Number(requested.get('offset')||0);
+        if (outcomeUnavailable) return {
+          ok:false,status:409,
+          json:async()=>({error:'Native source outcome is not ready yet'}),
+        };
+        if (outcomeDelay) await new Promise(resolve=>{outcomeDelay.resolve=resolve;});
+        const total = 53;
+        const shown = Math.max(0,Math.min(50,total-offset));
+        result={
+          available:true,kind:'cutsceneai.studio.element9_final_outcome',
+          status:'NATIVE_ACCEPTANCE_PENDING_ALL_SOURCE_OCCURRENCES_UNVERIFIED',
+          source_occurrence_count:total,page_offset:offset,page_size:50,
+          source_outcome_counts:{NATIVE_ACCEPTANCE_PENDING:50,MEASURED_DIFFERENCE_REMAINS:3},
+          native_observation_count:0,remaining_manual_remeasurement_budget:2,
+          next_step:'CAPTURE_ACTUAL_SAVED_AND_REOPENED_UNREAL_SEQUENCE',
+          source_page:Array.from({length:shown},(_,i)=>({
+            occurrence_id:'E'+String(offset+i).padStart(5,'0'),
+            source_kind:'track.camera',outcome:'NATIVE_ACCEPTANCE_PENDING',
+            next_step:'REMEASURE_NATIVE_CINE_TWIN',
+            explicit_native_source_action_count:1,
+          })),
+          release_ready:false,full_cutscene_fidelity_verified:false,
+        };
+      } else if (url === '/api/status') {
         result = {token: 'stubtoken', repo_root: 'B:/Research/CutSceneAI/CutsceneAI',
           connection: connected, candidate, active_job: currentJob?.job_id || null,
           one_click_approval: approval,
@@ -193,14 +242,124 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
     writes:()=>writes, copied:()=>copied, pause,finish:()=>{done=true;},
     csir,otherCsir,censusA,censusB,invalidCensus,
     removeCensuses:()=>{availableCensuses=false;},
+    setOutcomeUnavailable:(value)=>{outcomeUnavailable=value;},
+    delayOutcome:()=>{outcomeDelay={resolve:null};},
+    resolveOutcome:()=>{if(outcomeDelay?.resolve)outcomeDelay.resolve();
+      outcomeDelay=null;},
     setAutopilot:(status)=>{autopilot={active:true,status,
       message:'Engine-safe transfer stage: '+status,agent_enabled:true};},
     completeAutopilot:()=>{autopilot={active:true,status:'GENERATED_UNVERIFIED',
+      job_id:'a'.repeat(32),
       message:'Editable sequence generated',agent_enabled:true};
       currentJob={job_id:'a'.repeat(32),candidate_id:'candidate001',
         generation_status:'GENERATED_UNVERIFIED',
         status:'GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED',
         generated_sequence:'/Game/Example/LS_Transferred'};done=true;}};
+}
+
+async function testSharedNineStagesAndOptInCompanionPreview() {
+  const x=boot({simple:true});
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  assert.match(x.app.innerHTML,/First-time Unity and Unreal companion setup/);
+  assert.match(x.app.innerHTML,/studio_companion_install.py/);
+  assert.match(x.app.innerHTML,/--unreal-uproject/);
+  assert.match(x.app.innerHTML,/--apply/);
+  await x.click('quick-transfer');
+  await x.poll();
+  assert.match(x.app.innerHTML,/Detailed AI workflow · 9 stages/);
+  assert.match(x.app.innerHTML,/Guarded Unreal execution/);
+  assert.match(x.app.innerHTML,/Native CineTwin readback/);
+  assert.match(x.app.innerHTML,/Native execution is never repeated automatically/);
+  assert.ok(x.calls.includes('/api/flow-diagnostics'));
+}
+
+async function testSimpleOfflineUnrealProvidesActionableConnectionReason() {
+  const x=boot({editorReady:false,simple:true});
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  assert.match(x.app.innerHTML,/Unreal bridge: Waiting for running editor/);
+  assert.match(x.app.innerHTML,/WAITING_FOR_MATCHED_UNREAL_PROJECT/);
+  assert.match(x.app.innerHTML,/Open Unreal Editor/);
+  assert.match(x.app.innerHTML,/Unity bridge: Waiting for running editor/);
+}
+
+async function testSimpleSourceOutcomeAutoloadAndPagination() {
+  const x=boot({simple:true,restoredJob:'finished'});
+  await x.pause();
+  await x.click('quick-results');
+  assert.match(x.app.innerHTML,/Source transfer report/);
+  assert.match(x.app.innerHTML,/53/);
+  assert.match(x.app.innerHTML,/NATIVE_ACCEPTANCE_PENDING_ALL_SOURCE_OCCURRENCES_UNVERIFIED/);
+  assert.match(x.app.innerHTML,/CAPTURE_ACTUAL_SAVED_AND_REOPENED_UNREAL_SEQUENCE/);
+  assert.match(x.app.innerHTML,/E00000/);
+  assert.match(x.app.innerHTML,/Showing 1–50 of 53/);
+  assert.match(x.app.innerHTML,/data-action="outcome-prev" disabled/);
+  await x.click('outcome-next');
+  assert.match(x.app.innerHTML,/E00050/);
+  assert.match(x.app.innerHTML,/Showing 51–53 of 53/);
+  assert.match(x.app.innerHTML,/data-action="outcome-next" disabled/);
+  assert.ok(x.requests.some(item=>item.url==='/api/final-outcome?job_id='+
+    'a'.repeat(32)+'&offset=50'));
+  await x.click('outcome-prev');
+  assert.match(x.app.innerHTML,/E00000/);
+  assert.doesNotMatch(x.app.innerHTML,/Verified Release Transfer/);
+}
+
+async function testSimpleSourceOutcomeMissingEvidenceAndExplicitRetry() {
+  const x=boot({simple:true,restoredJob:'finished'});
+  x.setOutcomeUnavailable(true);
+  await x.pause();
+  await x.click('quick-results');
+  assert.match(x.app.innerHTML,/Source report unavailable/);
+  assert.match(x.app.innerHTML,/Native source outcome is not ready yet/);
+  assert.doesNotMatch(x.app.innerHTML,/E00000/);
+  const old=x.calls.filter(url=>url.startsWith('/api/final-outcome?')).length;
+  await x.poll();
+  await x.poll();
+  assert.equal(x.calls.filter(url=>url.startsWith('/api/final-outcome?')).length,old,
+    'failed native evidence cannot cause an uncontrolled retry each status poll');
+  x.setOutcomeUnavailable(false);
+  await x.click('outcome-refresh');
+  assert.match(x.app.innerHTML,/E00000/);
+  assert.match(x.app.innerHTML,/Source elements accounted for/);
+}
+
+async function testPendingOutcomeResponseCannotPopulateDifferentRun() {
+  const x=boot({simple:true});
+  await x.pause();
+  x.completeAutopilot();
+  await x.poll();
+  x.delayOutcome();
+  const pending=x.click('quick-results');
+  await x.pause();
+  x.setAutopilot('BLOCKED');
+  await x.poll();
+  x.resolveOutcome();
+  await pending;
+  assert.doesNotMatch(x.app.innerHTML,/E00000/,
+    'a late source report from a previous native job must be discarded');
+  assert.doesNotMatch(x.app.innerHTML,/Source elements accounted for/);
+  assert.ok(x.calls.includes('/api/flow-diagnostics'));
+}
+
+async function testSimpleOutcomeCannotLeakWhenRunChanges() {
+  const x=boot({simple:true});
+  await x.pause();
+  x.completeAutopilot();
+  await x.poll();
+  await x.click('quick-results');
+  assert.match(x.app.innerHTML,/E00000/);
+  x.setAutopilot('BLOCKED');
+  await x.poll();
+  await x.click('quick-results');
+  assert.doesNotMatch(x.app.innerHTML,/E00000/,
+    'source reports from the earlier successful run must not leak to a blocked run');
+  assert.doesNotMatch(x.app.innerHTML,/Source elements accounted for/);
 }
 
 async function testOneClick() {
@@ -632,7 +791,103 @@ async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
   assert.match(x.app.innerHTML,/The character is facing the wrong direction/);
 }
 
+async function testSimpleBlockedAutopilotCannotReuseOldNativeResult() {
+  const x=boot({simple:true});
+  await x.pause();
+  x.completeAutopilot();
+  await x.poll();
+  await x.click('quick-results');
+  assert.match(x.app.innerHTML,/Generated sequence:/,
+    'prior genuine generated result is visible when the autopilot job ID matches');
+
+  // The previous native job pointer survives while the new run stops
+  // before submitting any native work. Its results must not be borrowed.
+  x.setAutopilot('BLOCKED');
+  await x.poll();
+  await x.click('quick-results');
+  assert.doesNotMatch(x.app.innerHTML,/Generated sequence:/,
+    'blocked new run must not inherit the last completed native sequence');
+  assert.doesNotMatch(x.app.innerHTML,/Optional AI follow-up/,
+    'a blocked new run has no source-authorized old feedback or repairs');
+  x.setAutopilot('CANCELLED');
+  await x.poll();
+  assert.doesNotMatch(x.app.innerHTML,/Generated sequence:/,
+    'cancelled run must not inherit previous native results');
+}
+
+async function testAdvancedJobChangeInvalidatesDiagnostics() {
+  const code=fs.readFileSync('apps/studio-web/app.js','utf8');
+  const old='a'.repeat(32), next='b'.repeat(32);
+  let active=old, html='';
+  const listeners={};
+  const app={
+    get innerHTML(){return html;},
+    set innerHTML(value){html=value;},
+    addEventListener(name,handler){listeners[name]=handler;},
+  };
+  const seen=[];
+  const fake={
+    document:{querySelector:selector=>selector==='#app'?app:null,
+      addEventListener(){},visibilityState:'visible',activeElement:null},
+    window:{scrollTo(){}},navigator:{clipboard:{writeText:async()=>{}}},
+    setInterval(){},console,Promise,
+    fetch:async url=>{
+      seen.push(url);
+      let result={};
+      if(url==='/api/status')result={
+        token:'stubtoken',connection:null,candidate:null,active_job:active,
+        unreal_worker:{connected:false},destination_readiness:{status:'WAITING_FOR_UNREAL'},
+      };
+      else if(url==='/api/capabilities')result={};
+      else if(url==='/api/verification')result={persistence:{status:'NOT_REOPENED'}};
+      else if(url.startsWith('/api/jobs/')){
+        const id=url.substring('/api/jobs/'.length);
+        result={job_id:id,status:'GENERATED_AND_MEASURED_NOT_FIDELITY_VERIFIED',
+          generation_status:'GENERATED_UNVERIFIED',diagnostic_file:'candidate-only.json'};
+      }else if(url.startsWith('/api/diagnostic/')){
+        const id=url.substring('/api/diagnostic/'.length);
+        result={entities:{[id===old?'old-only':'new-only']:{actor_max_cm:3}}};
+      }
+      else throw Error('Unexpected advanced UI request '+url);
+      return {ok:true,status:200,json:async()=>result};
+    },
+  };
+  vm.runInNewContext(code,fake,{filename:'app.js'});
+  const pause=()=>new Promise(resolve=>setTimeout(resolve,0));
+  const refresh=async()=>{
+    listeners.click({target:{closest(sel){
+      return sel==='[data-action]'?{dataset:{action:'refresh'}}:null;
+    }}});
+    await pause();await pause();
+  };
+  await pause();await pause();
+  assert.ok(seen.includes('/api/diagnostic/'+old),'initial diagnostic is loaded');
+  listeners.click({target:{closest(sel){
+    return sel==='[data-action]'?{dataset:{action:'results'}}:null;
+  }}});
+  assert.match(html,/old-only/);
+  active=next;
+  await refresh();
+  assert.ok(seen.includes('/api/diagnostic/'+next),
+    'job switch loads fresh diagnostics rather than retaining cached older data');
+  assert.match(html,/new-only/);
+  assert.doesNotMatch(html,/old-only/);
+  active=null;
+  await refresh();
+  assert.doesNotMatch(html,/new-only|old-only/,
+    'removing the native job pointer removes historical diagnostic results');
+  assert.match(html,/NOT RUN/);
+}
+
 (async()=>{
+  await testSharedNineStagesAndOptInCompanionPreview();
+  await testSimpleOfflineUnrealProvidesActionableConnectionReason();
+  await testSimpleSourceOutcomeAutoloadAndPagination();
+  await testSimpleSourceOutcomeMissingEvidenceAndExplicitRetry();
+  await testPendingOutcomeResponseCannotPopulateDifferentRun();
+  await testSimpleOutcomeCannotLeakWhenRunChanges();
+  await testSimpleBlockedAutopilotCannotReuseOldNativeResult();
+  await testAdvancedJobChangeInvalidatesDiagnostics();
   await testSimpleNewTransferFromCompletedProjects();
   await testSimpleNewTransferFromResultsStartsImmediately();
   await testSimpleBlockedTransferOffersNewTransfer();
@@ -651,5 +906,5 @@ async function testSimpleOneClickFlowAndNaturalLanguageCorrections(){
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
   await testMissingSelectedCensusFailsClosed();
-  console.log('Cinematic UI backend contract: 17 scenarios including fresh-transfer restart from Projects and Results, native errors, and Home-first startup passed.');
+  console.log('Cinematic + advanced UI backend contract: 26 scenarios including job-switch cache invalidation, old-job isolation after blocked autopilot, fresh transfers and native errors passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

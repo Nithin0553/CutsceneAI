@@ -1,0 +1,817 @@
+"""Element 3 Studio workflow: candidate-bound review and independent readback.
+
+This module integrates the existing five read-only Element 3 phases into the
+local Studio. It cannot dispatch or authorize native Unreal/Unity actions.
+The original prepared-transfer, worker preflight and user feedback policies
+remain the sole native execution authorities.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import sys
+import uuid
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+for package in ("studio", "ced", "cinetwin"):
+    path = str(ROOT / "packages" / package)
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+import ced_agent_knowledge
+import studio_element_cinetwin
+import studio_element_investigation
+import studio_element_native_execution as native_actions
+import studio_element_plan
+import studio_element_schedule
+import studio_element_strategy
+import studio_element4_validation
+import studio_element5_plan
+from sampling_plan import build_plan
+
+KNOWN_CAPABILITIES = (
+    "fbx_asset_import", "sequencer_visibility_track",
+    "sequencer_skeletal_animation_track", "cine_camera_actor",
+)
+CANDIDATE_ID = re.compile(r"[0-9]{8}T[0-9]{6}Z_[a-f0-9]{8}\Z")
+HEX = re.compile(r"[a-f0-9]{64}\Z")
+PAGE_SIZE = 60
+MAX_STORED_REVIEWS = 3
+MAX_SOURCE_BYTES = 64 * 1024 * 1024
+MAX_CAPTURE_BYTES = 128 * 1024 * 1024
+
+
+class ElementWorkflowError(ValueError):
+    """Candidate identity, review authority or captured evidence is invalid."""
+
+
+def _digest(value: Any) -> str:
+    return studio_element_plan._digest(value)
+
+
+def _sha_file(path: Path, *, max_bytes: int = MAX_SOURCE_BYTES) -> str:
+    if not path.is_file() or path.is_symlink() or not 0 < path.stat().st_size <= max_bytes:
+        raise ElementWorkflowError("Source/mapping/observation evidence missing or unsafe.")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _read(path: Path, *, limit: int = MAX_SOURCE_BYTES) -> dict[str, Any]:
+    _sha_file(path, max_bytes=limit)
+    try:
+        content = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (UnicodeError, ValueError) as exc:
+        raise ElementWorkflowError("Malformed structured candidate evidence.") from exc
+    if not isinstance(content, dict):
+        raise ElementWorkflowError("Expected a structured evidence object.")
+    return content
+
+
+def _write_new(path: Path, body: dict[str, Any]) -> None:
+    data = json.dumps(body, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
+    with path.open("xb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _atomic(path: Path, body: dict[str, Any]) -> None:
+    data = json.dumps(body, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
+    tmp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        with tmp.open("xb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _workspace(folder: Path) -> tuple[dict, dict, Path, Path, Path]:
+    config_path, candidate_path = folder / "connection.json", folder / "active-candidate.json"
+    if not config_path.is_file() or not candidate_path.is_file():
+        raise ElementWorkflowError("Connect projects and prepare a candidate first.")
+    config, candidate = _read(config_path), _read(candidate_path)
+    ident = candidate.get("candidate_id")
+    if not isinstance(ident, str) or not CANDIDATE_ID.fullmatch(ident):
+        raise ElementWorkflowError("Invalid active candidate identity.")
+    root = (folder / "candidates").resolve()
+    location = (root / ident).resolve()
+    if location.parent != root or not location.is_dir() or location.is_symlink():
+        raise ElementWorkflowError("Candidate workspace outside Studio or missing.")
+    source_path = Path(str(config.get("csir") or "")).resolve()
+    mapping = Path(str(candidate.get("mapping_copy") or "")).resolve()
+    plan_path = location / "transfer-plan.json"
+    if not mapping.is_file() or not plan_path.is_file():
+        raise ElementWorkflowError("Prepared immutable mapping or transfer plan missing.")
+    if candidate.get("sequence_path") != _read(plan_path).get("sequence_asset_path", candidate.get("sequence_path")):
+        raise ElementWorkflowError("Prepared candidate sequence identity changed.")
+    return config, candidate, location, source_path, mapping
+
+
+def _caps(config: dict, worker: dict) -> tuple[bool, dict[str, bool]]:
+    """Only current connected, same-project native observations count."""
+    def same_path(a: Any, b: Any) -> bool:
+        return (isinstance(a, str) and isinstance(b, str)
+                and os.path.normcase(str(Path(a).resolve())) ==
+                os.path.normcase(str(Path(b).resolve())))
+    connected = (worker.get("connected") is True and
+                 same_path(worker.get("project"), config.get("target_project")) and
+                 (worker.get("level") == config.get("level_path")
+                  or config.get("auto_create_level") is True))
+    inventory = worker.get("scene_inventory") if connected else None
+    observed = inventory.get("native_capabilities") if isinstance(inventory, dict) else None
+    if (not isinstance(inventory, dict)
+            or inventory.get("available") is not True
+            or not isinstance(observed, dict)
+            or any(type(observed.get(name)) is not bool for name in KNOWN_CAPABILITIES)):
+        return False, {key: False for key in KNOWN_CAPABILITIES}
+    return True, {key: observed[key] for key in KNOWN_CAPABILITIES}
+
+
+def _knowledge(csir: dict, capabilities: dict, folder: Path, target_version: str) -> dict:
+    home = folder.parent
+    return ced_agent_knowledge.retrieve_all(
+        csir, target_capabilities=capabilities,
+        source_version=str(csir.get("source", {}).get("engine_version") or ""),
+        target_version=target_version,
+        approved_store=home / "ced-knowledge",
+        case_store=home / "ced-cases",
+        feedback_store=home / "ced-experiences.jsonl",
+    )
+
+
+def _build(folder: Path, caps: dict[str, bool], observed: bool,
+           target_version: str = "") -> dict[str, Any]:
+    config, candidate, location, csir_path, mapping_path = _workspace(folder)
+    csir = _read(csir_path)
+    knowledge = _knowledge(csir, caps, folder, target_version)
+    plan = studio_element_plan.prepare(csir, knowledge, caps)
+    schedule = studio_element_schedule.build(plan, csir)
+    strategy = studio_element_strategy.build(plan, schedule, knowledge, csir, caps)
+    investigation = studio_element_investigation.build(
+        plan, schedule, strategy, knowledge, csir, caps,
+    )
+    # Element 4's baseline inventory gate does not impersonate an invoked
+    # model; it records all report-only limitations and rejects unsafe
+    # combinations before Element 5 binds the deterministic native compiler.
+    baseline_gate = studio_element4_validation.build(
+        plan, schedule, strategy, investigation, knowledge, csir, caps,
+        global_strategy="native_source",
+        allowed_strategies=["native_source", "source_materials"],
+    )
+    native_plan = _read(location / "transfer-plan.json")
+    mapping = _read(mapping_path)
+    source_bound = studio_element5_plan.build(
+        csir, mapping, native_plan, plan, schedule, strategy, baseline_gate,
+    )
+    report = {
+        "kind": "cutsceneai.studio.element_workflow",
+        "schema_version": "1",
+        "candidate_id": candidate["candidate_id"],
+        "source_file_sha256": _sha_file(csir_path),
+        "source_csir_sha256": plan["source_csir_sha256"],
+        "candidate_mapping_sha256": _sha_file(mapping_path),
+        "transfer_plan_sha256": _sha_file(location / "transfer-plan.json"),
+        "target_project_identity_sha256": hashlib.sha256(str(
+            Path(config["target_project"]).resolve()
+        ).encode("utf-8")).hexdigest(),
+        "target_capabilities_observed": observed,
+        "target_capabilities": caps,
+        "target_version": target_version,
+        "knowledge_sha256": knowledge["knowledge_sha256"],
+        "element_plan": plan,
+        "element_schedule": schedule,
+        "element_strategy": strategy,
+        "element_investigation": investigation,
+        "element4_baseline_validation": baseline_gate,
+        "element5_source_bound_plan": source_bound,
+        "native_execution_authorized": False,
+        "full_cutscene_fidelity_verified": False,
+    }
+    report["workflow_sha256"] = _digest(report)
+    return report
+
+
+def _active(folder: Path) -> dict[str, Any]:
+    _config, _candidate, location, _source, _mapping = _workspace(folder)
+    pointer_path = location / "element-workflow-active.json"
+    if not pointer_path.is_file():
+        raise ElementWorkflowError("No Element 3 review yet. Prepare it first.")
+    pointer = _read(pointer_path)
+    digest = pointer.get("workflow_sha256")
+    if (not isinstance(digest, str) or not HEX.fullmatch(digest)
+            or pointer.get("candidate_id") != _candidate["candidate_id"]):
+        raise ElementWorkflowError("Candidate element workflow pointer was altered.")
+    path = location / ("element-workflow-" + digest + ".json")
+    report = _read(path)
+    if (report.get("workflow_sha256") != digest
+            or _digest({k: v for k, v in report.items()
+                        if k != "workflow_sha256"}) != digest):
+        raise ElementWorkflowError("Candidate element workflow checksum is invalid.")
+    expected = _build(
+        folder, report["target_capabilities"],
+        report["target_capabilities_observed"], report["target_version"],
+    )
+    if expected != report:
+        raise ElementWorkflowError(
+            "Candidate Element 3 review is stale or modified. Prepare a fresh review."
+        )
+    return report
+
+
+def _review_ack(location: Path, digest: str) -> bool:
+    file = location / "element-review-ack.json"
+    if not file.is_file():
+        return False
+    value = _read(file)
+    return (value.get("kind") == "cutsceneai.studio.element_review_ack"
+            and value.get("workflow_sha256") == digest
+            and value.get("scope") == "INVENTORY_REVIEWED_NO_NATIVE_ACTION_PERMISSION"
+            and value.get("native_execution_authorized") is False
+            and value.get("receipt_sha256") == _digest({
+                k: v for k, v in value.items() if k != "receipt_sha256"
+            }))
+
+
+
+def _native_inventory(folder: Path, report: dict) -> tuple[dict, Path]:
+    _config, _candidate, location, _source, _mapping = _workspace(folder)
+    prepared = _read(location / "transfer-plan.json")
+    return native_actions.inventory(
+        prepared, report["element_plan"], report["element_strategy"],
+    ), location
+
+
+def _native_approval(folder: Path, report: dict, manifest: dict) -> dict | None:
+    _config, _candidate, location, _source, _mapping = _workspace(folder)
+    path = location / "element-native-approval.json"
+    if not path.exists():
+        return None
+    authorization = _read(path)
+    native_actions.verify_authorization(
+        authorization, manifest, candidate_id=report["candidate_id"],
+        workflow_sha256=report["workflow_sha256"],
+        transfer_plan_sha256=report["transfer_plan_sha256"],
+    )
+    return authorization
+
+
+def approve_native_actions(folder: Path, worker: dict, *, workflow_sha256: str,
+                           inventory_sha256: str, review_all: bool,
+                           accept_legacy_unattributed: bool) -> dict:
+    """Explicit all-prepared-actions consent. This does not dispatch anything."""
+    report = _active(folder)
+    config, _candidate, location, _source, _mapping = _workspace(folder)
+    manifest, _ = _native_inventory(folder, report)
+    if (report["workflow_sha256"] != workflow_sha256
+            or native_actions.digest(manifest) != inventory_sha256
+            or review_all is not True
+            or not report["target_capabilities_observed"]
+            or not _current_native_status(report, config, worker)
+            or not _review_ack(location, report["workflow_sha256"])):
+        raise ElementWorkflowError(
+            "Native action authorization requires an exact current review, live "
+            "native capability evidence and separate explicit operator consent."
+        )
+    approved = native_actions.authorize(
+        manifest, candidate_id=report["candidate_id"],
+        workflow_sha256=report["workflow_sha256"],
+        transfer_plan_sha256=report["transfer_plan_sha256"],
+        approved_action_ids=[row["action_id"] for row in manifest["actions"]],
+        accept_legacy_unattributed=accept_legacy_unattributed,
+    )
+    target = location / "element-native-approval.json"
+    if target.exists() and _read(target) != approved:
+        raise ElementWorkflowError(
+            "A different native approval already exists for this candidate; "
+            "prepare a fresh candidate rather than silently replacing consent."
+        )
+    if not target.exists():
+        _write_new(target, approved)
+    return {
+        "candidate_id": report["candidate_id"],
+        "action_count": manifest["action_count"],
+        "unattributed_count": manifest["unattributed_count"],
+        "native_action_authorization_sha256": approved["authorization_sha256"],
+        "approved_for_existing_native_preflight": True,
+        "native_builder_executed": False,
+        "full_cutscene_fidelity_verified": False,
+    }
+
+
+def require_native_action_authorization(folder: Path, worker: dict,
+                                        candidate_id: str) -> str:
+    """Queue gate for prepared Element 3 candidates, legacy jobs unchanged."""
+    if not isinstance(candidate_id, str) or not CANDIDATE_ID.fullmatch(candidate_id):
+        raise ElementWorkflowError("Invalid native candidate identity.")
+    path = folder / "candidates" / candidate_id / "element-workflow-active.json"
+    if not path.exists():
+        return ""
+    report = _active(folder)
+    config, _candidate, location, _source, _mapping = _workspace(folder)
+    if (report["candidate_id"] != candidate_id
+            or not report["target_capabilities_observed"]
+            or not _current_native_status(report, config, worker)
+            or not _review_ack(location, report["workflow_sha256"])):
+        raise ElementWorkflowError(
+            "Native action submission needs a fresh acknowledged Element 3 source review."
+        )
+    manifest, _ = _native_inventory(folder, report)
+    if native_actions.digest(manifest) != report["element5_source_bound_plan"][
+            "native_action_inventory_sha256"]:
+        raise ElementWorkflowError("Element 5 source-bound compiled action evidence changed.")
+    approval = _native_approval(folder, report, manifest)
+    if approval is None:
+        raise ElementWorkflowError(
+            "Approve the exact registered native action set separately before Generate."
+        )
+    return approval["authorization_sha256"]
+
+
+def verify_native_job(folder: Path, job: dict) -> tuple[dict, dict]:
+    """Unreal worker pre-mutation, independent of HTTP consent or model."""
+    expected = job.get("element_native_authorization_sha256") or ""
+    if not expected:
+        raise ElementWorkflowError("Submitted job has no Element 3 native action consent.")
+    report = _active(folder)
+    candidate = job.get("candidate_id")
+    if report["candidate_id"] != candidate:
+        raise ElementWorkflowError("Native job references another Element 3 candidate.")
+    config, _candidate, _location, _source, _mapping = _workspace(folder)
+    if (job.get("expected_project") != config.get("target_project")
+            or job.get("sequence_path") != _candidate["sequence_path"]
+            or job.get("csir") != config.get("csir")
+            or job.get("mapping") != _candidate["mapping_copy"]):
+        raise ElementWorkflowError("Native job does not match the prepared source/target.")
+    manifest, _ = _native_inventory(folder, report)
+    approval = _native_approval(folder, report, manifest)
+    if (approval is None or approval["authorization_sha256"] != expected):
+        raise ElementWorkflowError("Native job's approved action bytes changed.")
+    return approval, manifest
+
+
+def record_native_job(folder: Path, job: dict) -> dict:
+    """Append a builder dispatch ledger only after genuine runtime receipt."""
+    approval, manifest = verify_native_job(folder, job)
+    _config, _candidate, location, _source, _mapping = _workspace(folder)
+    job_id = job.get("job_id")
+    if not isinstance(job_id, str) or not re.fullmatch("[a-f0-9]{32}", job_id):
+        raise ElementWorkflowError("Unexpected native job ID.")
+    path = location / ("unreal-runtime-receipt-" + job_id + ".json")
+    runtime = _read(path)
+    native_digest = _sha_file(path)
+    report = native_actions.receipt(
+        approval, manifest, runtime, job_id=job_id,
+        native_receipt_sha256=native_digest,
+    )
+    output = location / ("element-native-dispatch-" + job_id + ".json")
+    if output.exists():
+        if _read(output) != report:
+            raise ElementWorkflowError("Native dispatch receipt differs from saved report.")
+    else:
+        _write_new(output, report)
+    return report
+
+
+
+def _case_rows(report: dict) -> list[dict]:
+    plan = report["element_plan"]["elements"]
+    nodes = {row["occurrence_id"]: row for row in report["element_schedule"]["nodes"]}
+    strategy = {row["occurrence_id"]: row
+                for row in report["element_strategy"]["comparisons"]}
+    investigations = {row["occurrence_id"]: row
+                      for row in report["element_investigation"]["findings"]}
+    return [{
+        "occurrence_id": row["occurrence_id"],
+        "source_kind": row["source_kind"],
+        "source_location": row["source_location"],
+        "ced": strategy[row["occurrence_id"]]["ced"],
+        "source_state": row["state"],
+        "schedule_status": nodes[row["occurrence_id"]]["status"],
+        "suggested_action": strategy[row["occurrence_id"]]["suggested_action"],
+        "eligible_alternatives": [item["action"] for item in
+            strategy[row["occurrence_id"]]["alternatives"]
+            if item["eligible_for_model_proposal"] is True],
+        "investigation_status": investigations[row["occurrence_id"]]["state"],
+        "reason_codes": investigations[row["occurrence_id"]]["reason_codes"],
+        "required_evidence": investigations[row["occurrence_id"]]["required_evidence"],
+        "next_steps": investigations[row["occurrence_id"]]["available_investigation_steps"],
+        "native_verified": False,
+    } for row in plan]
+
+
+def _index(folder: Path, report: dict) -> dict:
+    _config, _candidate, location, _source, _mapping = _workspace(folder)
+    file = location / "element-readback-index.json"
+    if not file.exists():
+        return {"kind": "cutsceneai.studio.element_readback_index",
+                "candidate_id": report["candidate_id"],
+                "workflow_sha256": report["workflow_sha256"],
+                "observations": []}
+    index = _read(file)
+    digest = index.get("index_sha256")
+    if (index.get("kind") != "cutsceneai.studio.element_readback_index"
+            or index.get("candidate_id") != report["candidate_id"]
+            or index.get("workflow_sha256") != report["workflow_sha256"]
+            or not isinstance(index.get("observations"), list)
+            or len(index["observations"]) > MAX_STORED_REVIEWS
+            or digest != _digest({k: v for k, v in index.items()
+                                  if k != "index_sha256"})):
+        raise ElementWorkflowError("Saved CineTwin evidence index is stale or tampered.")
+    return index
+
+
+def _element4_model_gate(folder: Path, report: dict) -> dict:
+    """Show the REAL pretransfer model gate, or an explicit unverified state.
+
+    The source-inventory-only candidate is NOT mislabeled as a model-validated
+    strategy. Never show an externally supplied/rehashed decision as accepted
+    without rebuilding its exact source graph and CED evidence.
+    """
+    _config, _candidate, location, csir_path, _mapping = _workspace(folder)
+    file = location / "ai-conversion-decision.json"
+    if not file.exists():
+        return {
+            "status": "NO_MODEL_STRATEGY_DECISION",
+            "independently_recomputed": False,
+            "native_execution_authorized": False,
+            "full_cutscene_fidelity_verified": False,
+        }
+    decision = _read(file)
+    if not isinstance(decision.get("element4_validation"), dict):
+        return {
+            "status": "LEGACY_DECISION_UNVERIFIED",
+            "independently_recomputed": False,
+            "native_execution_authorized": False,
+            "full_cutscene_fidelity_verified": False,
+        }
+    try:
+        import studio_element4_validation as gate_module
+
+        csir = _read(csir_path)
+        knowledge = _knowledge(
+            csir, report["target_capabilities"], folder, report["target_version"],
+        )
+        candidate_gate = decision["element4_validation"]
+        if (decision.get("kind") != "cutsceneai.studio.ai_conversion_decision"
+                or decision.get("input_sha256", {}).get("csir")
+                != report["source_file_sha256"]
+                or decision.get("element4_validation_sha256")
+                != candidate_gate.get("validation_sha256")
+                or decision.get("element4_validation_advisory_only") is not True
+                or not isinstance(decision.get("allowed_strategies"), list)
+                or decision.get("element_plan_sha256") !=
+                decision["element_plan"]["element_plan_sha256"]
+                or decision.get("element_schedule_sha256") !=
+                decision["element_schedule"]["schedule_sha256"]
+                or decision.get("element_strategy_sha256") !=
+                decision["element_strategy"]["comparison_sha256"]
+                or decision.get("element_investigation_sha256") !=
+                decision["element_investigation"]["investigation_sha256"]):
+            raise gate_module.StrategyValidationError(
+                "Studio conversion decision is not exact-source bound."
+            )
+        gate_module.verify(
+            candidate_gate, decision["element_plan"],
+            decision["element_schedule"], decision["element_strategy"],
+            decision["element_investigation"], knowledge, csir,
+            report["target_capabilities"],
+            global_strategy=decision["strategy"],
+            allowed_strategies=decision["allowed_strategies"],
+        )
+        return {
+            "status": candidate_gate["validation_status"],
+            "independently_recomputed": True,
+            "accepted_for_source_bound_plan":
+                candidate_gate["accepted_for_source_bound_plan"],
+            "source_occurrence_count": candidate_gate["source_occurrence_count"],
+            "advisory_candidate_count": candidate_gate["validated_candidate_count"],
+            "reported_limitation_count": candidate_gate["reported_limitation_count"],
+            "rejected_count": candidate_gate["rejected_count"],
+            "validation_sha256": candidate_gate["validation_sha256"],
+            "native_execution_authorized": False,
+            "full_cutscene_fidelity_verified": False,
+        }
+    except (ValueError, TypeError, KeyError, AttributeError, OSError):
+        return {
+            "status": "MODEL_STRATEGY_EVIDENCE_STALE_OR_UNVERIFIABLE",
+            "independently_recomputed": False,
+            "native_execution_authorized": False,
+            "full_cutscene_fidelity_verified": False,
+        }
+
+
+def _readback_inputs(folder: Path, report: dict, index: dict):
+    config, _candidate, location, csir_path, _mapping = _workspace(folder)
+    csir = _read(csir_path)
+    capture_path = Path(str(config.get("capture") or ""))
+    if not config.get("capture"):
+        raise ElementWorkflowError("Real Unity source CineTwin behavior capture required.")
+    source_capture = _read(capture_path, limit=MAX_CAPTURE_BYTES)
+    sampling = build_plan(csir, csir_sha256=_sha_file(csir_path))
+    recorded = []
+    for item in index["observations"]:
+        if (not isinstance(item, dict)
+                or not isinstance(item.get("sha256"), str)
+                or not HEX.fullmatch(item["sha256"])
+                or not isinstance(item.get("path"), str)):
+            raise ElementWorkflowError("Saved target observation record is malformed.")
+        path = Path(item["path"]).resolve()
+        if _sha_file(path, max_bytes=MAX_CAPTURE_BYTES) != item["sha256"]:
+            raise ElementWorkflowError("Previously reviewed target observation changed.")
+        captured = _read(path, limit=MAX_CAPTURE_BYTES)
+        recorded.append(captured)
+    return csir, source_capture, sampling, recorded
+
+
+def _current_native_status(report: dict, config: dict, worker: dict) -> bool:
+    observed, caps = _caps(config, worker)
+    return (observed == report["target_capabilities_observed"]
+            and caps == report["target_capabilities"])
+
+
+def _preview(report: dict, folder: Path, worker: dict,
+             *, offset: int = 0, action_offset: int = 0) -> dict[str, Any]:
+    if type(offset) is not int or offset < 0 or offset > studio_element_plan.MAX_OCCURRENCES:
+        raise ElementWorkflowError("Invalid element review page offset.")
+    if (type(action_offset) is not int or action_offset < 0
+            or action_offset > native_actions.MAX_ACTIONS):
+        raise ElementWorkflowError("Invalid native action review page offset.")
+    config, _candidate, location, _source, _mapping = _workspace(folder)
+    rows = _case_rows(report)
+    selected = rows[offset: offset + PAGE_SIZE]
+    index = _index(folder, report)
+    manifest, _ = _native_inventory(folder, report)
+    if (native_actions.digest(manifest) != report["element5_source_bound_plan"][
+            "native_action_inventory_sha256"]):
+        raise ElementWorkflowError(
+            "Element 5 native action list diverged from the immutable source-bound plan."
+        )
+    approval = _native_approval(folder, report, manifest)
+    latest = None
+    if index["observations"]:
+        csir, source_capture, sampling, target_captures = _readback_inputs(
+            folder, report, index,
+        )
+        if len(target_captures) == 1:
+            saved = studio_element_cinetwin.build(
+                csir, report["element_plan"], sampling, source_capture, target_captures[0],
+            )
+        else:
+            saved = studio_element_cinetwin.remeasure(
+                csir, report["element_plan"], sampling, source_capture, target_captures,
+            )
+        last_digest = index["observations"][-1]["report_sha256"]
+        actual = (saved["attribution_sha256"] if len(target_captures) == 1
+                  else saved["remeasurement_sha256"])
+        if actual != last_digest:
+            raise ElementWorkflowError("Saved CineTwin report does not match fresh evidence.")
+        latest = {
+            "status": "MEASURED_DOMAINS_ONLY_FIDELITY_NOT_ESTABLISHED",
+            "observation_count": len(target_captures),
+            "report_sha256": actual,
+            "remeasurement_attempts": len(target_captures) - 1,
+            "next_attempt_recommended": (
+                saved["next_attempt_recommended"]
+                if len(target_captures) > 1 else False
+            ),
+            "per_occurrence": (
+                saved["per_occurrence"][offset:offset + PAGE_SIZE]
+                if len(target_captures) > 1 else
+                saved["occurrences"][offset:offset + PAGE_SIZE]
+            ),
+            "native_repair_authorized": False,
+            "full_cutscene_fidelity_verified": False,
+        }
+    return {
+        "available": True,
+        "kind": "cutsceneai.studio.element_workflow_summary",
+        "candidate_id": report["candidate_id"],
+        "workflow_sha256": report["workflow_sha256"],
+        "source_occurrence_count": len(rows),
+        "offset": offset,
+        "page_size": PAGE_SIZE,
+        "has_more": offset + PAGE_SIZE < len(rows),
+        "source_state_counts": dict(sorted(Counter(row["source_state"] for row in rows).items())),
+        "schedule_status_counts": dict(sorted(Counter(row["schedule_status"] for row in rows).items())),
+        "investigation_state_counts": dict(sorted(
+            Counter(row["investigation_status"] for row in rows).items()
+        )),
+        "target_capabilities_observed": report["target_capabilities_observed"],
+        "target_capability_evidence_current": _current_native_status(report, config, worker),
+        "review_acknowledged": _review_ack(location, report["workflow_sha256"]),
+        "element4_strategy_validation": _element4_model_gate(folder, report),
+        "element5_source_bound_plan": {
+            "status": "SOURCE_BOUND_ADVISORY_PLAN_NATIVE_PREFLIGHT_PENDING",
+            "source_bound_plan_sha256":
+                report["element5_source_bound_plan"]["source_bound_plan_sha256"],
+            "source_occurrence_count":
+                report["element5_source_bound_plan"]["source_occurrence_count"],
+            "action_count": report["element5_source_bound_plan"]["action_count"],
+            "explicit_source_action_count":
+                report["element5_source_bound_plan"]["explicit_source_action_count"],
+            "legacy_unattributed_action_count":
+                report["element5_source_bound_plan"]["legacy_unattributed_action_count"],
+            "missing_target_reference_count":
+                report["element5_source_bound_plan"]["missing_target_reference_count"],
+            "blocked_action_count":
+                report["element5_source_bound_plan"]["blocked_action_count"],
+            "source_plan_states":
+                report["element5_source_bound_plan"]["source_plan_states"],
+            "source_page": report["element5_source_bound_plan"][
+                "source_occurrences"][offset:offset + PAGE_SIZE],
+            "native_action_page": report["element5_source_bound_plan"][
+                "native_actions"][action_offset:action_offset + PAGE_SIZE],
+            "native_builder_action_order_preserved": True,
+            "native_execution_authorized": False,
+            "target_readback_verified": False,
+            "full_cutscene_fidelity_verified": False,
+        },
+        "native_actions": {
+            "action_count": manifest["action_count"],
+            "unattributed_count": manifest["unattributed_count"],
+            "registered_action_counts": manifest["registered_action_counts"],
+            "action_inventory_sha256": native_actions.digest(manifest),
+            "action_offset": action_offset,
+            "action_page_size": PAGE_SIZE,
+            "has_more_actions": action_offset + PAGE_SIZE < manifest["action_count"],
+            "candidate_actions": manifest["actions"][action_offset:action_offset + PAGE_SIZE],
+            "approved_for_existing_native_preflight": approval is not None,
+            "native_builder_executed": False,
+            "native_execution_authorized_by_review_alone": False,
+            "full_cutscene_fidelity_verified": False,
+        },
+        "native_execution_authorized": False,
+        "full_cutscene_fidelity_verified": False,
+        "elements": selected,
+        "verification": latest,
+    }
+
+
+def prepare(folder: Path, worker: dict) -> dict[str, Any]:
+    config, _candidate, location, _source, _mapping = _workspace(folder)
+    observed, caps = _caps(config, worker)
+    version = (str(worker.get("engine_version") or "")[:48] if observed else "")
+    report = _build(folder, caps, observed, version)
+    digest = report["workflow_sha256"]
+    file = location / ("element-workflow-" + digest + ".json")
+    if not file.exists():
+        _write_new(file, report)
+    elif _read(file) != report:
+        raise ElementWorkflowError("Existing candidate Element 3 snapshot was modified.")
+    pointer = {"candidate_id": report["candidate_id"], "workflow_sha256": digest}
+    previous_index = location / "element-readback-index.json"
+    if previous_index.exists():
+        prior = _read(previous_index)
+        if prior.get("workflow_sha256") != digest:
+            prior_sha = prior.get("index_sha256")
+            if not isinstance(prior_sha, str) or not HEX.fullmatch(prior_sha):
+                raise ElementWorkflowError("Previously saved readback index is corrupt.")
+            archived = location / ("element-readback-index-" + prior_sha + ".json")
+            if not archived.exists():
+                _write_new(archived, prior)
+            elif _read(archived) != prior:
+                raise ElementWorkflowError("Archived readback index was modified.")
+            previous_index.unlink()
+    prior_approval = location / "element-native-approval.json"
+    if prior_approval.exists():
+        old = _read(prior_approval)
+        old_sha = old.get("authorization_sha256")
+        if (old.get("kind") != native_actions.KIND
+                or old.get("candidate_id") != report["candidate_id"]
+                or not isinstance(old_sha, str) or not HEX.fullmatch(old_sha)
+                or old_sha != _digest({
+                    k: v for k, v in old.items()
+                    if k != "authorization_sha256"
+                })):
+            raise ElementWorkflowError(
+                "Previous native operator approval was modified; inspect it before replanning."
+            )
+        if old.get("workflow_sha256") != digest:
+            archive = location / ("element-native-approval-" + old_sha + ".json")
+            if not archive.exists():
+                _write_new(archive, old)
+            elif _read(archive) != old:
+                raise ElementWorkflowError("Archived native approval was modified.")
+            prior_approval.unlink()
+    _atomic(location / "element-workflow-active.json", pointer)
+    # An old acknowledgment or readback from another snapshot never carries
+    # forward to the new capability/knowledge/source binding.
+    return _preview(report, folder, worker)
+
+
+def current(folder: Path, worker: dict, *, offset: int = 0,
+            action_offset: int = 0) -> dict[str, Any]:
+    try:
+        report = _active(folder)
+    except ElementWorkflowError as exc:
+        if str(exc).startswith("No Element 3 review yet"):
+            return {"available": False, "status": "NOT_PREPARED",
+                    "native_execution_authorized": False}
+        raise
+    return _preview(
+        report, folder, worker, offset=offset, action_offset=action_offset,
+    )
+
+
+def acknowledge(folder: Path, worker: dict, workflow_sha256: str) -> dict:
+    report = _active(folder)
+    config, _candidate, location, _source, _mapping = _workspace(folder)
+    if (not isinstance(workflow_sha256, str)
+            or workflow_sha256 != report["workflow_sha256"]
+            or not _current_native_status(report, config, worker)):
+        raise ElementWorkflowError(
+            "Element review or native capability evidence changed; prepare and review again."
+        )
+    receipt = {
+        "kind": "cutsceneai.studio.element_review_ack",
+        "candidate_id": report["candidate_id"],
+        "workflow_sha256": report["workflow_sha256"],
+        "scope": "INVENTORY_REVIEWED_NO_NATIVE_ACTION_PERMISSION",
+        "native_execution_authorized": False,
+    }
+    receipt["receipt_sha256"] = _digest(receipt)
+    _atomic(location / "element-review-ack.json", receipt)
+    return {"acknowledged": True, "candidate_id": report["candidate_id"],
+            "native_execution_authorized": False}
+
+
+def require_acknowledgment(folder: Path, worker: dict, candidate_id: str) -> None:
+    if not isinstance(candidate_id, str) or not CANDIDATE_ID.fullmatch(candidate_id):
+        raise ElementWorkflowError("Invalid candidate identity for Element 3 review.")
+    location = folder / "candidates" / candidate_id
+    if not (location / "element-workflow-active.json").is_file():
+        # The original manual/automated transfer remains backward compatible
+        # when an Element 3 review was never requested.
+        return
+    _config, _candidate, location, _source, _mapping = _workspace(folder)
+    if _candidate["candidate_id"] != candidate_id:
+        raise ElementWorkflowError("Element review belongs to a different candidate.")
+    report = _active(folder)
+    config, _candidate, location, _source, _mapping = _workspace(folder)
+    if (not _review_ack(location, report["workflow_sha256"])
+            or not _current_native_status(report, config, worker)):
+        raise ElementWorkflowError(
+            "Review and acknowledge the current source-bound Element 3 issues "
+            "before native generation. This does not approve unregistered actions."
+        )
+
+
+def verify_target(folder: Path, worker: dict, target_path: str) -> dict:
+    report = _active(folder)
+    _config, _candidate, location, _source, _mapping = _workspace(folder)
+    if not isinstance(target_path, str) or not target_path.strip():
+        raise ElementWorkflowError("Choose an existing Unreal CineTwin target JSON.")
+    target_unresolved = Path(target_path).expanduser()
+    if target_unresolved.is_symlink():
+        raise ElementWorkflowError("Refusing a symlinked target observation.")
+    target_file = target_unresolved.resolve()
+    target_digest = _sha_file(target_file, max_bytes=MAX_CAPTURE_BYTES)
+    index = _index(folder, report)
+    if (len(index["observations"]) >= MAX_STORED_REVIEWS
+            or any(item["sha256"] == target_digest for item in index["observations"])):
+        raise ElementWorkflowError(
+            "Duplicate observation or two-remeasurement budget reached."
+        )
+    csir, source_capture, sampling, prior = _readback_inputs(folder, report, index)
+    target = _read(target_file, limit=MAX_CAPTURE_BYTES)
+    # A declared, different target candidate sequence cannot be accepted as
+    # this candidate's result. A missing native sequence remains unverified.
+    observed = target.get("target") if isinstance(target.get("target"), dict) else {}
+    declared = observed.get("sequence_asset_path")
+    if declared and declared != _candidate["sequence_path"]:
+        raise ElementWorkflowError("Target native sequence differs from active candidate.")
+    captures = [*prior, target]
+    if len(captures) == 1:
+        result = studio_element_cinetwin.build(
+            csir, report["element_plan"], sampling, source_capture, target,
+        )
+        field = "attribution_sha256"
+    else:
+        result = studio_element_cinetwin.remeasure(
+            csir, report["element_plan"], sampling, source_capture, captures,
+        )
+        field = "remeasurement_sha256"
+    digest = result[field]
+    filename = location / ("element-readback-" + digest + ".json")
+    if not filename.exists():
+        _write_new(filename, result)
+    elif _read(filename) != result:
+        raise ElementWorkflowError("Previously saved CineTwin readback is corrupted.")
+    index["observations"].append({
+        "path": str(target_file),
+        "sha256": target_digest,
+        "report_sha256": digest,
+    })
+    index.pop("index_sha256", None)
+    index["index_sha256"] = _digest(index)
+    _atomic(location / "element-readback-index.json", index)
+    return _preview(report, folder, worker)

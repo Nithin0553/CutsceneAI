@@ -1,12 +1,14 @@
 """Guarded Unreal editor adapter for optional host LangGraph repair requests.
 
-No arbitrary code execution. A source-backed material restoration or one
-full-frame actor translation, editor thread only, two receipts per job.
+No arbitrary code execution. Source-backed material restoration, one measured
+actor translation, or one independently observed constant CineCamera lens
+correction. All are editor-thread only; two receipts per job.
 """
 from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +32,17 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
             or request.get("job_id") != job["job_id"]
             or request.get("candidate_id") != job["candidate_id"]
             or request.get("strategy") not in {
-                "restore_source_albedo", "restore_constant_actor_offset"
+                "restore_source_albedo", "restore_constant_actor_offset",
+                "restore_static_camera_lens",
+                "restore_single_camera_cut_timing",
+                "restore_two_shot_camera_switch",
+                "restore_static_camera_position",
+                "restore_static_camera_actor_yaw",
+                "restore_static_character_actor_yaw",
+                "restore_single_animated_camera_position_key",
+                "restore_two_animated_camera_position_keys",
+                "restore_single_animated_camera_yaw_key",
+                "restore_bounded_animated_camera_yaw_keys",
             }
             or request.get("sequence_path") != job["sequence_path"]
             or request.get("expected_project") != job["expected_project"]
@@ -47,9 +59,99 @@ def execute(api: Any, workspace: Path, job: dict[str, Any],
         raise ValueError("Agent request refers to inactive job.")
     if len(list(candidate.glob("agent-receipt-*.json"))) >= 2:
         raise ValueError("Exceeded two guarded repair receipts.")
+    # Defense in depth: when actual reopened Element 7 CineTwin evidence
+    # exists, a previously authorized offset agent may only reach its native
+    # adapter if the new Element 8 verifier independently recommends REVIEW
+    # for a precise character occurrence and no no-progress/regression stop.
+    # This does NOT replace the adapter's fresh native measurements or the
+    # explicit one-character user feedback requirement.
+    if request["strategy"] == "restore_constant_actor_offset":
+        saved = sorted(
+            candidate.glob("native-acceptance-*/element7-readback.json"),
+            key=lambda path: (path.stat().st_mtime_ns, path.parent.name),
+        )
+        if saved:
+            if len(saved) > 3 or any(
+                path.is_symlink() or path.parent.is_symlink()
+                for path in saved
+            ):
+                raise ValueError("Element 8 remeasurement evidence is unsafe or over budget.")
+            package = str(Path(__file__).resolve().parents[2] / "packages/studio")
+            if package not in sys.path:
+                sys.path.insert(0, package)
+            import studio_element8_repair
+
+            try:
+                review = studio_element8_repair.build(
+                    workspace, job["job_id"], [path.parent for path in saved],
+                )
+            except (studio_element8_repair.BoundedRepairError,
+                    OSError, KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    "Element 8 source-bound native evidence is missing or altered."
+                ) from exc
+            if (not review["native_repair_adapter_available_for_review"]
+                    or review["status"] in {
+                        "STOP_MEASURED_REGRESSION_OR_NO_PROGRESS",
+                        "STOP_REMEASUREMENT_BUDGET_EXHAUSTED",
+                    } or not studio_element8_repair.may_review_exact_character_offset(
+                        workspace, job["job_id"],
+                        [path.parent for path in saved],
+                        request.get("target_entity"),
+                    )):
+                raise ValueError(
+                    "Element 8 measured discrepancy does not permit "
+                    "this exact user-named character-offset adapter to be considered."
+                )
     if request["strategy"] == "restore_constant_actor_offset":
         import studio_transform_repair
         return studio_transform_repair.attempt(api, workspace, job, request)
+    if request["strategy"] == "restore_static_camera_lens":
+        import studio_camera_lens_repair
+        return studio_camera_lens_repair.attempt(
+            api, workspace, job, request,
+        )
+    if request["strategy"] == "restore_single_camera_cut_timing":
+        import studio_camera_cut_repair
+        return studio_camera_cut_repair.attempt(
+            api, workspace, job, request,
+        )
+    if request["strategy"] == "restore_two_shot_camera_switch":
+        import studio_two_shot_cut_repair
+        return studio_two_shot_cut_repair.attempt(
+            api, workspace, job, request,
+        )
+    if request["strategy"] == "restore_static_camera_position":
+        import studio_camera_position_repair
+        return studio_camera_position_repair.attempt(api, workspace, job, request)
+    if request["strategy"] == "restore_static_camera_actor_yaw":
+        import studio_camera_yaw_repair
+        return studio_camera_yaw_repair.attempt(api, workspace, job, request)
+    if request["strategy"] == "restore_single_animated_camera_position_key":
+        import studio_camera_key_repair
+        return studio_camera_key_repair.attempt(
+            api,workspace,job,request,
+        )
+    if request["strategy"] == "restore_two_animated_camera_position_keys":
+        import studio_camera_key_repair
+        return studio_camera_key_repair.attempt_two(
+            api, workspace, job, request,
+        )
+    if request["strategy"] == "restore_single_animated_camera_yaw_key":
+        import studio_camera_key_repair
+        return studio_camera_key_repair.attempt_yaw(
+            api, workspace, job, request,
+        )
+    if request["strategy"] == "restore_bounded_animated_camera_yaw_keys":
+        import studio_camera_key_repair
+        return studio_camera_key_repair.attempt_many_yaw(
+            api,workspace,job,request,
+        )
+    if request["strategy"] == "restore_static_character_actor_yaw":
+        import studio_static_character_yaw_repair
+        return studio_static_character_yaw_repair.attempt(
+            api, workspace, job, request,
+        )
     import studio_visual_audit
     before = studio_visual_audit.audit_latest(workspace, api=api)
     old_count = before.get("character_material_slots_engine_default")

@@ -83,12 +83,89 @@ fails its saved-session hash comparison.
 - Held-out source-project validation and a published compatibility/capability
   matrix with independently measured supported/unsupported feature outcomes.
 
-The latest LangGraph work safely diagnoses unsupported domains, but its
-**executable repair strategy** remains limited to provably source-backed
-material fallback restoration. No arbitrary Unity script, proprietary shader,
-animation rig or camera control can be automatically recreated just because
-an LLM identifies a mismatch. Those require source-aware adapters and their
-own independent acceptance tests.
+The integrated Elements 1–9 / Phase 10.2 software stack now registers
+**eight narrowly bounded source-bound repair families**: material albedo
+fallback, one-character constant actor offset, static physical CineCamera lens,
+single camera-cut section boundary, static CineCamera world placement,
+**one static-character actor-base yaw**, an exact **two-camera, two-shot
+shared-switch frame correction** (no inserts, deletes, reorder, retargeting,
+time-warps, subsequences or general multi-cut scheduling), and **one
+static-CineCamera actor world-yaw-only correction** (no animated camera
+transform, rig, pitch/roll, lens, cut or moving-camera rewrites). Static character yaw
+requires reviewed anatomical mesh
+forward, exact native reopened owner, calibrated motionless rig and no active
+native animation/Sequencer transform controller. The native owner,
+source/CineTwin evidence, user consent, preflight, direct readback and rollback
+guards differ by family. They have **synthetic/software tests only**; no real
+Unreal editor mutation, repaired sequence reopening or rendered fidelity is
+certified. Moving/animated character facing, general IK retarget calibration,
+camera animation, audio, events, lighting/shader parity and unknown plugins
+remain diagnostic-only or unsupported. See [Elements 1–9 audit](ELEMENT1_TO_9_INTEGRATED_AUDIT_AND_REPAIR_EXPANSION_V01.md),
+[Phase 10.1 gap audit](PHASE10_1_SOFTWARE_GAP_AUDIT_V01.md), and
+[Phase 10.2 static character yaw scope](PHASE10_2_GUARDED_STATIC_CHARACTER_YAW_V01.md)
+and [Phase 10.2 two-shot camera switch scope](PHASE10_2_TWO_SHOT_CAMERA_SWITCH_V01.md), and
+[Phase 10.2 static camera yaw scope](PHASE10_2_STATIC_CAMERA_YAW_V01.md).
+Animated camera world-trajectory reconstruction now has a distinct
+[source-frame and native nine-channel motion contract](PHASE10_2_ANIMATED_CAMERA_FRAME_GRID_V01.md):
+the independent evaluated Unity CineTwin capture is authoritative when
+available, otherwise a complete, nonblended source-local camera curve is
+baked on every exact display frame. The native writer preflights contiguous
+source frames, absolute transform channels, and scale defaults **before
+editor mutation**. Unknown camera curves, missing world baselines,
+overlapping/gapped/eased clips, moving camera parents and ambiguous local
+curve ownership fail closed unless original evaluated source capture is
+available. **This is conversion-layer hardening, not a ninth autonomous
+native post-generation repair.** True Unreal reopens and rendered parity
+remain unverified.
+Phase 10.2 now also includes a **ninth narrow guarded repair family**:
+a source-evaluated CineTwin-backed, independently reopened **one animated
+CineCamera XYZ position-key** restoration, with exact original Sequencer
+nine-channel key-grid comparison, one existing native key mutation,
+save/readback and rollback. The prior statement of **eight families** above
+describes the earlier static adapter generation, not this new ninth member.
+See [Phase 10.2 single animated camera key](PHASE10_2_ONE_ANIMATED_CAMERA_KEY_V01.md).
+This is **not** general animated-camera curve/rig/blend repair and does not
+establish actual Unreal editor execution, independent post-repair CineTwin,
+rendered motion or a release-ready cutscene.
+A **tenth** bounded family now permits exactly two nonadjacent, interior
+source-measured animated CineCamera XYZ **position** keys on one native axis,
+with separate two-key user consent, a recomputed original CineTwin/CSIR
+evidence hash, nine-channel native preflight and all-key readback, and
+compensating two-key rollback attempts after write/readback/save failure.
+See [Phase 10.2 exactly two animated camera keys](PHASE10_2_TWO_ANIMATED_CAMERA_KEYS_V01.md).
+This does **not** imply generic camera curve or rotation repair, nor does it
+establish real-editor save/reopen, post-repair CineTwin or rendered fidelity.
+The earlier family counts are historical descriptions of previous increments.
+An **eleventh** guarded software adapter now supports exactly one
+**source-measured, interior animated CineCamera yaw keyframe** (3–30°) with
+physical source/native quaternion-versus-Euler proof, no unwrap/gimbal
+ambiguity, strict full-grid position/pitch/roll/scale checks, original
+native Sequencer nine-channel ownership, exact current user feedback,
+one existing key edit, full channel readback and rollback attempts.
+It does **not** permit arbitrary rotation curves, multi-yaw/pitch/roll
+edits, moving camera rigs, shot blending, or claim post-repair distinct
+Unreal Editor reopen, CineTwin or rendered parity.
+See [single animated camera yaw key contract](PHASE10_2_ONE_ANIMATED_CAMERA_YAW_KEY_V01.md).
+Earlier counts on this page describe historical earlier increments.
+The Phase 10.2 consolidated seven-workstream software branch also adds
+a **twelfth** guarded repair family: counted **2–8** nonadjacent,
+independently source-measured animated CineCamera yaw-only key restorations,
+with source quaternion-to-Unreal-Euler proof, current exact-count feedback,
+full native nine-channel preflight, save/readback and multi-key compensating
+rollback. It does NOT support generic key tangents, pitch/roll,
+quaternion-spline interpolation, moving rig/parent blends, or rendered
+continuity without separately measured editor acceptance.
+
+The seven original Phase 10.2 work areas are inventoried with exact
+source features, installed action candidates and explicit remaining gates
+in [the consolidated seven-workstream contract](PHASE10_2_SEVEN_WORKSTREAM_CONSOLIDATED_V01.md).
+The `phase10_2_consolidated_audit` can be exclusively persisted and later
+recomputed through `tools/phase10_2_audit.py`; the release gate may mark
+that source/action **accounting** PASS while all engine, renderer, native
+post-reopen and held-out acceptance remain independently INCOMPLETE.
+No seventh workstream may be silently marked complete from CI alone.
+No arbitrary Unity script, proprietary shader, animation rig or camera
+control may be reconstructed simply because an LLM identifies a mismatch.
 
 ## Release decision rules
 

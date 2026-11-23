@@ -453,6 +453,372 @@ def assess(workspace: Path, job_id: str) -> dict[str, Any]:
             native_status=compared,
         )
 
+    # Element 3 native consent and post-reopen measurement are separate
+    # release checks. A native builder receipt is not individual readback,
+    # and no measured-domain PASS can establish full cinematic fidelity.
+    if (candidate / "element-workflow-active.json").exists():
+        tools_path = str(Path(__file__).resolve().parents[2] / "tools")
+        if tools_path not in sys.path:
+            sys.path.insert(0, tools_path)
+        try:
+            import studio_element_workflow
+            import studio_element_native_execution as native_actions
+
+            permission, manifest = studio_element_workflow.verify_native_job(
+                root, job,
+            )
+            record(
+                "element3_native_action_consent", "PASS",
+                "Exact registered native actions were separately authorized "
+                "for the active source-bound candidate; this is not playback verification.",
+                approved_action_count=manifest["action_count"],
+                legacy_unattributed_count=manifest["unattributed_count"],
+            )
+            native_receipt_path = candidate / (
+                "unreal-runtime-receipt-" + job_id + ".json"
+            )
+            dispatch_path = candidate / (
+                "element-native-dispatch-" + job_id + ".json"
+            )
+            if not native_receipt_path.is_file() or not dispatch_path.is_file():
+                record(
+                    "element3_native_builder_dispatch", "INCOMPLETE",
+                    "No completed real Unreal builder receipt and source-bound "
+                    "per-action dispatch ledger are both available.",
+                )
+            else:
+                expected_dispatch = native_actions.receipt(
+                    permission, manifest, _read(native_receipt_path),
+                    job_id=job_id, native_receipt_sha256=_sha(native_receipt_path),
+                )
+                recorded = _read(dispatch_path)
+                if (recorded != expected_dispatch
+                        or job.get("element_native_dispatch_status")
+                        != "REGISTERED_BUILDER_COMPLETED_INDIVIDUAL_READBACK_UNVERIFIED"
+                        or Path(str(job.get("element_native_dispatch_receipt") or "")).resolve()
+                        != dispatch_path.resolve()):
+                    raise ReleaseEvidenceError(
+                        "Element 3 native action dispatch evidence is stale or tampered."
+                    )
+                record(
+                    "element3_native_builder_dispatch", "PASS",
+                    "Exact native builder completed registered actions, but individual "
+                    "action readback remains unverified.",
+                    action_count=expected_dispatch["action_count"],
+                )
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            record(
+                "element3_native_action_consent", "FAIL",
+                "Native action consent is missing, changed or refers to a different "
+                "candidate: " + type(exc).__name__,
+            )
+            record(
+                "element3_native_builder_dispatch", "FAIL",
+                "Cannot accept builder execution without unchanged source-bound consent.",
+            )
+        if not accepted:
+            record(
+                "element3_native_reopened_attribution", "INCOMPLETE",
+                "No independent different-editor CineTwin target sampling is available.",
+            )
+        else:
+            try:
+                import studio_element_workflow
+                import studio_element_cinetwin
+
+                snapshot = studio_element_workflow._active(root)
+                source_csir = _read(csir_path)
+                native_plan = _read(sampling_file)
+                source_capture = _read(capture_path)
+                observed_target = _read(target_file)
+                measured = studio_element_cinetwin.build(
+                    source_csir, snapshot["element_plan"], native_plan,
+                    source_capture, observed_target,
+                )
+                if (comparison.get("element3_workflow_sha256")
+                        != snapshot["workflow_sha256"]
+                        or comparison.get("element3_native_authorization_sha256")
+                        != job.get("element_native_authorization_sha256")
+                        or comparison.get("element3_source_occurrence_count")
+                        != measured["source_occurrence_count"]
+                        or measured.get("full_cutscene_fidelity_verified") is not False):
+                    raise ReleaseEvidenceError(
+                        "Reopened Element 3 provenance does not match the real engine observations."
+                    )
+                record(
+                    "element3_native_reopened_attribution", "PASS",
+                    "All source occurrences were independently re-attributed "
+                    "from the real reopened native target samples. This is "
+                    "measured-scope accounting, not full-cutscene fidelity.",
+                    source_occurrence_count=measured["source_occurrence_count"],
+                    measured_difference_count=sum(
+                        row["measurement_status"] == "DIRECT_MEASURED_DIFFERENCE"
+                        for row in measured["occurrences"]
+                    ),
+                    unmeasured_or_unresolved_count=sum(
+                        row["measurement_status"] not in {
+                            "DIRECT_MEASURED_NO_FLAGGED_DIFFERENCE",
+                            "DIRECT_MEASURED_DIFFERENCE",
+                        } for row in measured["occurrences"]
+                    ),
+                    attribution_sha256=measured["attribution_sha256"],
+                    measured_native_fidelity_verified=False,
+                )
+            except (ValueError, KeyError, TypeError, OSError) as exc:
+                record(
+                    "element3_native_reopened_attribution", "FAIL",
+                    "Source-bound post-reopen CineTwin evidence is altered or incomplete: "
+                    + type(exc).__name__,
+                )
+    else:
+        for element_check in (
+            "element3_native_action_consent",
+            "element3_native_builder_dispatch",
+            "element3_native_reopened_attribution",
+        ):
+            record(
+                element_check, "NOT_APPLICABLE",
+                "This legacy job did not opt into the new Element 3 workflow.",
+            )
+
+    # Element 7 is distinct from the legacy camera/motion acceptance status:
+    # it independently reconstructs the complete source-bound CineTwin
+    # comparison from persisted raw native capture, checks the exact Element 6
+    # one-attempt claim/receipt, and (where available) attributes EVERY source
+    # occurrence. Builder completion alone is never a readback PASS.
+    if not accepted:
+        record(
+            "element7_native_execution_chain", "INCOMPLETE",
+            "No reopened native observation is available for Element 7.",
+        )
+        record(
+            "element7_cinetwin_recomputation", "INCOMPLETE",
+            "No separate source-bound raw-sample verification has completed.",
+        )
+    else:
+        evidence_file = chosen.parent / "element7-readback.json"
+        if not evidence_file.exists():
+            record(
+                "element7_native_execution_chain", "INCOMPLETE",
+                "A legacy reopened comparison lacks the new Element 7 "
+                "source-bound execution contract.",
+            )
+            record(
+                "element7_cinetwin_recomputation", "INCOMPLETE",
+                "Independent Element 7 per-domain and per-occurrence "
+                "recomputation is not attached.",
+            )
+        else:
+            try:
+                import studio_element7_readback
+
+                proof = _read(evidence_file)
+                studio_element7_readback.verify(
+                    proof, root, job_id, chosen.parent,
+                )
+                native_chain = proof["native_attempt"]
+                chain_status = (
+                    "PASS" if native_chain["status"]
+                    == "SOURCE_BOUND_NATIVE_BUILDER_COMPLETED"
+                    else "INCOMPLETE"
+                )
+                measured = proof["measured_scope_status"]
+                measured_status = (
+                    "FAIL" if measured == "MEASURED_NATIVE_DIFFERENCES_DETECTED"
+                    else "PASS" if measured
+                    == "MEASURED_NATIVE_SCOPE_WITHIN_TOLERANCE"
+                    else "INCOMPLETE"
+                )
+                record(
+                    "element7_native_execution_chain", chain_status,
+                    "Exact candidate, Element 6 exclusive attempt and real "
+                    "native builder receipt are independently bound. "
+                    "Legacy or incomplete attempts remain unverified.",
+                    native_attempt_status=native_chain["status"],
+                )
+                record(
+                    "element7_cinetwin_recomputation", measured_status,
+                    "Recomputed full-time-grid actor/root/joint/camera "
+                    "measurements and optional anonymous per-source attribution. "
+                    "No whole-cutscene fidelity or independent engine attestation "
+                    "is inferred from stored JSON alone.",
+                    measured_scope_status=measured,
+                    sampled_frames=proof["sampling_count"],
+                    mapped_actors=proof["mapped_entity_count"],
+                    unmapped_actors=proof["unmapped_entity_count"],
+                    unverified_domains=proof["unverified_domains"],
+                    source_occurrence_count=(
+                        proof["element_occurrence_attribution"][
+                            "source_occurrence_count"
+                        ] if proof["element_occurrence_attribution"] else None
+                    ),
+                    readback_sha256=proof["readback_sha256"],
+                )
+            except (ValueError, TypeError, KeyError, OSError) as exc:
+                record(
+                    "element7_native_execution_chain", "FAIL",
+                    "Element 7 native execution or receipt evidence was altered: "
+                    + type(exc).__name__,
+                )
+                record(
+                    "element7_cinetwin_recomputation", "FAIL",
+                    "Element 7 raw CineTwin evidence cannot be independently "
+                    "reconstructed from the saved Unity/Unreal samples.",
+                )
+
+    # Element 8 never implies a native repair or replay permission. It
+    # independently derives a bounded diagnostic from actual source-bound
+    # Element 7 files, and refuses to rank an invalid/rehashed comparison.
+    if not accepted or not (
+        chosen.parent / "element7-readback.json"
+    ).is_file():
+        record(
+            "element8_bounded_repair_triage", "INCOMPLETE",
+            "No independently reconstructed post-reopen Element 7 readback "
+            "is available for bounded repair triage.",
+        )
+    else:
+        try:
+            import studio_element8_repair
+
+            decision = studio_element8_repair.build(
+                root, job_id, [chosen.parent],
+            )
+            existing = candidate / (
+                "element8-repair-plan-" + decision["repair_plan_sha256"] + ".json"
+            )
+            if existing.exists():
+                studio_element8_repair.verify(
+                    _read(existing), root, job_id, [chosen.parent],
+                )
+            record(
+                "element8_bounded_repair_triage", "PASS",
+                "One exact-source native capture was classified using a bounded "
+                "read-only strategy policy. This is NOT a native repair grant, "
+                "action readback, automatic retry or cinematic fidelity proof.",
+                diagnostic_status=decision["status"],
+                source_occurrence_count=decision["source_occurrence_count"],
+                manual_observation_budget=decision[
+                    "remaining_manual_observation_budget"
+                ],
+                user_authorized_character_offset_review_possible=decision[
+                    "native_repair_adapter_available_for_review"
+                ],
+                native_repair_authorized=False,
+                automatic_native_retry_authorized=False,
+                repair_plan_sha256=decision["repair_plan_sha256"],
+            )
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            record(
+                "element8_bounded_repair_triage", "FAIL",
+                "Element 8 native comparison/repair evidence is missing, "
+                "stale or corrupted: " + type(exc).__name__,
+            )
+
+    # Element 9 terminates the architectural reasoning loop by accounting for
+    # EVERY source occurrence and every unverified domain. A PASS here means
+    # only that the limitation report was independently reconstructed; it
+    # never promotes measured parity to complete cinematic fidelity.
+    if not isinstance(job.get("mapping"), str) or not job["mapping"]:
+        # Legacy/partial jobs created before source-bound mapping handoffs
+        # cannot satisfy Element 9; lack of evidence is INCOMPLETE, not an
+        # independently detected violation of a contract they never had.
+        record(
+            "element9_final_outcome_accounting", "INCOMPLETE",
+            "Legacy native job lacks the immutable exact-target mapping needed "
+            "for a source-complete Element 9 report.",
+        )
+    else:
+        try:
+            import studio_element9_outcome
+
+            final = studio_element9_outcome.build(root, job_id)
+            record(
+                "element9_final_outcome_accounting", "PASS",
+                "All original source occurrences and required unverified domains "
+                "are independently enumerated. Native observation/repair gaps "
+                "remain limitations, not successful conversions.",
+                final_status=final["status"],
+                outcome_sha256=final["outcome_sha256"],
+                source_occurrence_count=final["source_occurrence_count"],
+                native_observation_count=final["native_observation_count"],
+                source_outcome_counts=final["source_outcome_counts"],
+                automatic_native_retry_authorized=False,
+                full_cutscene_fidelity_verified=False,
+            )
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            record(
+                "element9_final_outcome_accounting", "FAIL",
+                "Final source-complete outcome could not be rebuilt from the "
+                "candidate, native observations and recovery bounds: "
+                + type(exc).__name__,
+            )
+
+    # Phase 10.2 contract is a separate recomputable source/action ledger for
+    # all seven original workstreams. A saved report may prove software-source
+    # accounting, never a native editor execution or complete fidelity.
+    phase10_2_path = candidate / "phase10_2-consolidated-audit.json"
+    if not job.get("mapping"):
+        record(
+            "phase10_2_consolidated_software_audit", "INCOMPLETE",
+            "No immutable source-target mapping exists for the seven-area audit.",
+        )
+    else:
+        try:
+            import studio_element9_outcome as phase10_outcome
+            import phase10_2_consolidated_audit as phase10_contract
+
+            _, _, _, original_csir, original_mapping, original_plan = (
+                phase10_outcome._context(root,job_id)
+            )
+            computed = phase10_contract.audit(
+                original_csir,original_mapping,original_plan,
+            )
+            if phase10_2_path.is_symlink():
+                raise ReleaseEvidenceError("Saved seven-area audit is a symlink.")
+            if not phase10_2_path.is_file():
+                record(
+                    "phase10_2_consolidated_software_audit", "INCOMPLETE",
+                    "Exact seven-workstream source/action audit is recomputable but "
+                    "has not been persisted. Native, rendered, retarget and custom "
+                    "effects acceptance remain separate.",
+                    workstream_count=computed["workstream_count"],
+                    accounted_source_occurrences=computed[
+                        "source_occurrences_accounted"],
+                    canonical_report_sha256=computed[
+                        "canonical_report_sha256"],
+                    full_phase10_2_accepted=False,
+                )
+            else:
+                saved = _read(phase10_2_path)
+                if not phase10_contract.verify(
+                        saved,original_csir,original_mapping,original_plan):
+                    raise ReleaseEvidenceError(
+                        "Persisted seven-area audit differs from original source/action evidence."
+                    )
+                record(
+                    "phase10_2_consolidated_software_audit", "PASS",
+                    "All seven Phase 10.2 software inventory rows recompute "
+                    "exactly from the original source and plan. This does NOT "
+                    "certify an editor adapter, post-reopen CineTwin, rendered "
+                    "or universal cutscene behavior.",
+                    workstream_count=computed["workstream_count"],
+                    fully_accepted_workstream_count=0,
+                    accounted_source_occurrences=computed[
+                        "source_occurrences_accounted"],
+                    canonical_report_sha256=computed[
+                        "canonical_report_sha256"],
+                    full_phase10_2_accepted=False,
+                )
+        except (ValueError,KeyError,TypeError,OSError) as exc:
+            record(
+                "phase10_2_consolidated_software_audit",
+                "FAIL" if phase10_2_path.exists() or phase10_2_path.is_symlink()
+                else "INCOMPLETE",
+                "Phase 10.2 original source, exact mapping, compiled plan or "
+                "saved audit is incomplete/altered: " + type(exc).__name__,
+            )
+
     for domain, explanation in {
         "rendered_frame_parity": "Matched-time source and target images/camera projections are not independently compared.",
         "full_skeletal_pose": "All animated joint transforms, reference poses and retargeting remain unverified.",

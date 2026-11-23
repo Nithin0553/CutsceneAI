@@ -1,6 +1,7 @@
 """The AI participates in *candidate planning*, not arbitrary native execution."""
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -291,3 +292,308 @@ def test_ai_inspection_passes_large_capture_only_to_bounded_capture_reader(
     assert ("unity.census.json", "Unity source census") in seen
     assert ("target.mapping.json", "Target mapping") in seen
     assert ("Target.uproject", "project evidence") in seen
+
+
+
+def test_default_ai_decision_reviews_all_source_elements_before_native(scene, monkeypatch):
+    config, census, worker = scene
+    import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_PLANNING", "model")
+
+    monkeypatch.setattr(ai, "_model_choose", lambda _: {
+        "strategy": "native_source", "reason": "Registered native source policy",
+    })
+    requests = []
+
+    def review(**kwargs):
+        requests.append(kwargs)
+        if kwargs["task"] == "cutsceneai_element4_bounded_alternatives":
+            return SimpleNamespace(answer={"choices": [
+                {"occurrence_id": item["occurrence_id"],
+                 "action": "report_only"}
+                for item in kwargs["payload"]["rejected"]
+            ]}, response_sha256="b" * 64)
+        return SimpleNamespace(answer={
+            "choices": [
+                {
+                    "occurrence_id": item["occurrence_id"],
+                    "action": (item["candidate_actions"][0]
+                               if item["candidate_actions"] else "report_only"),
+                }
+                for item in kwargs["payload"]["elements"]
+            ]
+        }, response_sha256="a" * 64)
+
+    monkeypatch.setattr(studio_model_provider, "complete_json", review)
+    decision = ai.decide(config, census, worker)
+    plan = decision["element_plan"]
+    assert decision["element_decisions_advisory_only"] is True
+    assert plan["source_occurrence_count"] == 3
+    assert plan["model_reviewed_count"] == 3
+    assert decision["element_model_reviewed_count"] == 3
+    assert decision["element_model_response_sha256s"] == ["a" * 64]
+    assert requests[0]["task"] == "cutsceneai_element_conversion_choices"
+    assert config["csir"] not in json.dumps(requests[0]["payload"])
+    assert config["target_project"] not in json.dumps(requests[0]["payload"])
+    assert all(item["model_reviewed"] for item in plan["elements"])
+    assert plan["native_conversion_executed"] is False
+    assert ai.verify(decision, config, census, worker)[
+        "enable_actor_visibility_fallback"] is False
+
+
+def test_injected_global_reasoner_cannot_silently_claim_element_ai_selection(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Unit test reasoner without element review"
+    })
+    assert decision["element_model_reviewed_count"] == 0
+    assert decision["element_model_response_sha256s"] == []
+    assert all(row["selected_action"] == "report_only"
+               and row["model_reviewed"] is False
+               for row in decision["element_plan"]["elements"])
+    assert ai.verify(decision, config, census, worker)
+
+
+def test_ai_rejects_unregistered_per_occurrence_action_before_conversion(
+        scene, monkeypatch):
+    config, census, worker = scene
+    import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_PLANNING", "model")
+    monkeypatch.setattr(ai, "_model_choose", lambda _: {
+        "strategy": "native_source", "reason": "Source strategy"
+    })
+
+    def inject(**kwargs):
+        return SimpleNamespace(answer={
+            "choices": [
+                {"occurrence_id": row["occurrence_id"],
+                 "action": "arbitrary_unreal_python"}
+                for row in kwargs["payload"]["elements"]
+            ]
+        }, response_sha256="b" * 64)
+
+    monkeypatch.setattr(studio_model_provider, "complete_json", inject)
+    with pytest.raises(ai.TransferAIError, match="unregistered"):
+        ai.decide(config, census, worker)
+
+
+def test_per_occurrence_decision_tampering_blocks_stale_plan_verification(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Source plan"
+    })
+    decision["element_plan"]["elements"].pop()
+    with pytest.raises(ai.TransferAIError, match="tampered"):
+        ai.verify(decision, config, census, worker)
+
+
+def test_phase33_strategy_is_source_bound_and_reverified_before_native(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Installed native policy."
+    })
+    comparison = decision["element_strategy"]
+    assert decision["element_strategy_advisory_only"] is True
+    assert decision["element_strategy_sha256"] == comparison["comparison_sha256"]
+    assert comparison["native_execution_authorized"] is False
+    assert comparison["full_cutscene_fidelity_verified"] is False
+    assert len(comparison["comparisons"]) == decision["element_plan"][
+        "source_occurrence_count"]
+    assert ai.verify(decision, config, census, worker)
+
+    tampered = copy.deepcopy(decision)
+    tampered["element_strategy"]["comparisons"][0]["suggested_action"] = (
+        "arbitrary_native_code"
+    )
+    import studio_element_plan
+    tampered["element_strategy"].pop("comparison_sha256")
+    tampered["element_strategy"]["comparison_sha256"] = (
+        studio_element_plan._digest(tampered["element_strategy"])
+    )
+    tampered["element_strategy_sha256"] = tampered["element_strategy"][
+        "comparison_sha256"]
+    with pytest.raises(ai.TransferAIError, match="Adaptive element strategy"):
+        ai.verify(tampered, config, census, worker)
+
+
+def test_phase33_model_receives_strategy_options_without_native_bypass(scene, monkeypatch):
+    config, census, worker = scene
+    import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_PLANNING", "model")
+    monkeypatch.setattr(ai, "_model_choose", lambda _: {
+        "strategy": "native_source", "reason": "Source policy"
+    })
+    requests = []
+
+    def review(**kwargs):
+        requests.append(kwargs["payload"])
+        if kwargs["task"] == "cutsceneai_element4_bounded_alternatives":
+            return SimpleNamespace(answer={"choices": [
+                {"occurrence_id": row["occurrence_id"],
+                 "action": "report_only"}
+                for row in kwargs["payload"]["rejected"]
+            ]}, response_sha256="e" * 64)
+        for element in kwargs["payload"]["elements"]:
+            assert "adaptive_evidence" in element
+            assert element["candidate_actions"] == [
+                option["action"] for option in element["adaptive_evidence"][
+                    "alternatives"]
+            ]
+        return SimpleNamespace(answer={"choices": [
+            {"occurrence_id": element["occurrence_id"],
+             "action": (element["candidate_actions"][0]
+                        if element["candidate_actions"] else "report_only")}
+            for element in kwargs["payload"]["elements"]
+        ]}, response_sha256="d" * 64)
+
+    monkeypatch.setattr(studio_model_provider, "complete_json", review)
+    decision = ai.decide(config, census, worker)
+    assert requests
+    assert decision["element_planning_mode"] == "MODEL_REVIEWED"
+    assert ai.verify(decision, config, census, worker)
+
+
+
+def test_phase34_source_investigation_rebuilt_before_native_execution(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Registered policy"
+    })
+    report = decision["element_investigation"]
+    assert decision["element_investigation_advisory_only"] is True
+    assert report["source_occurrence_count"] == decision["element_plan"][
+        "source_occurrence_count"]
+    assert report["native_execution_authorized"] is False
+    assert report["source_and_target_fidelity_verified"] is False
+    assert decision["element_investigation_mode"] == "INVENTORY_ONLY"
+    assert decision["element_investigation_model_response_sha256s"] == []
+    assert ai.verify(decision, config, census, worker)
+
+    modified = copy.deepcopy(decision)
+    modified["element_investigation"]["findings"][0]["reason_codes"].append(
+        "SOURCE_NATIVE_EXECUTION_SUCCESS"
+    )
+    import studio_element_plan
+    report = modified["element_investigation"]
+    report.pop("investigation_sha256")
+    report["investigation_sha256"] = studio_element_plan._digest(report)
+    modified["element_investigation_sha256"] = report["investigation_sha256"]
+    with pytest.raises(ai.TransferAIError, match="investigation"):
+        ai.verify(modified, config, census, worker)
+
+
+def test_phase34_opt_in_model_investigates_every_issue_without_unsafe_tools(
+        scene, monkeypatch):
+    config, census, worker = scene
+    import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_INVESTIGATION", "model")
+    monkeypatch.setattr(ai, "_model_choose", lambda _: {
+        "strategy": "native_source", "reason": "Safe native source"
+    })
+    calls = []
+
+    def investigate(**kwargs):
+        assert kwargs["task"] == "cutsceneai_element_investigation_next_step"
+        calls.append(kwargs["payload"])
+        body = json.dumps(kwargs["payload"])
+        assert config["csir"] not in body
+        assert config["target_project"] not in body
+        return SimpleNamespace(answer={"choices": [
+            {"occurrence_id": row["occurrence_id"],
+             "action": row["available_investigation_steps"][0]}
+            for row in kwargs["payload"]["cases"]
+        ]}, response_sha256="d" * 64)
+
+    monkeypatch.setattr(studio_model_provider, "complete_json", investigate)
+    decision = ai.decide(config, census, worker)
+    report = decision["element_investigation"]
+    count = sum(bool(row["available_investigation_steps"])
+                for row in report["findings"])
+    assert calls
+    assert decision["element_investigation_mode"] == "MODEL_REVIEWED"
+    assert decision["element_investigation_model_reviewed_count"] == count
+    assert decision["element_investigation_model_response_sha256s"] == [
+        "d" * 64]
+    assert report["native_execution_authorized"] is False
+    assert ai.verify(decision, config, census, worker)
+
+
+def test_phase34_model_cannot_propose_arbitrary_unreal_investigation_code(
+        scene, monkeypatch):
+    config, census, worker = scene
+    import studio_model_provider
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_INVESTIGATION", "model")
+    monkeypatch.setattr(ai, "_model_choose", lambda _: {
+        "strategy": "native_source", "reason": "Safe"
+    })
+
+    def malicious(**kwargs):
+        return SimpleNamespace(answer={"choices": [
+            {"occurrence_id": row["occurrence_id"],
+             "action": "execute_unreal_python_and_change_scene"}
+            for row in kwargs["payload"]["cases"]
+        ]}, response_sha256="e" * 64)
+
+    monkeypatch.setattr(studio_model_provider, "complete_json", malicious)
+    with pytest.raises(ai.TransferAIError, match="investigation failed"):
+        ai.decide(config, census, worker)
+
+
+def test_phase34_invalid_investigation_mode_fails_closed(scene, monkeypatch):
+    config, census, worker = scene
+    monkeypatch.setenv("CUTSCENEAI_ELEMENT_INVESTIGATION", "execute")
+    with pytest.raises(ai.TransferAIError, match="CUTSCENEAI_ELEMENT_INVESTIGATION"):
+        ai.decide(config, census, worker, reasoner=lambda _: {
+            "strategy": "native_source", "reason": "Still read-only"
+        })
+
+
+
+def test_element4_approved_strategy_is_source_bound_and_not_native_permission(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Registered deterministic source"
+    })
+    result = decision["element4_validation"]
+    assert decision["element4_validation_advisory_only"] is True
+    assert decision["element4_validation_sha256"] == result["validation_sha256"]
+    assert result["accepted_for_source_bound_plan"] is True
+    assert result["source_occurrence_count"] == decision["element_plan"][
+        "source_occurrence_count"
+    ]
+    assert result["native_execution_authorized"] is False
+    assert result["full_cutscene_fidelity_verified"] is False
+    assert decision["element4_alternative_reasoning_audit"] == []
+    assert ai.verify(decision, config, census, worker)
+
+    # Even a fully rehashed approval label cannot bypass source reconputation.
+    forged = copy.deepcopy(decision)
+    forged["element4_validation"]["accepted_for_source_bound_plan"] = False
+    import studio_element_plan as plan_tool
+    forged["element4_validation"].pop("validation_sha256")
+    forged["element4_validation"]["validation_sha256"] = plan_tool._digest(
+        forged["element4_validation"]
+    )
+    forged["element4_validation_sha256"] = forged[
+        "element4_validation"]["validation_sha256"]
+    with pytest.raises(ai.TransferAIError, match="Element 4"):
+        ai.verify(forged, config, census, worker)
+
+
+def test_element4_retry_metadata_cannot_be_forged_into_model_authority(scene):
+    config, census, worker = scene
+    decision = ai.decide(config, census, worker, reasoner=lambda _: {
+        "strategy": "native_source", "reason": "Source-backed CED"
+    })
+    invalid = copy.deepcopy(decision)
+    invalid["element4_alternative_reasoning_audit"] = [{
+        "round": 1, "rejected_count": 1,
+        "validated_replacement_count": 1,
+        "previous_validation_sha256": "a" * 64,
+        "new_plan_sha256": "b" * 64,
+        "responses": [{"page_index": 0, "response_sha256": "c" * 64,
+                       "reviewed_count": 1}],
+        "native_execution_authorized": False,
+    }]
+    with pytest.raises(ai.TransferAIError, match="Element 4"):
+        ai.verify(invalid, config, census, worker)

@@ -231,9 +231,11 @@ def test_unhandled_camera_track_bakes_source_lens_and_world_pose():
     assert report["tracks"][-1]["outcome"] == "BAKED_PARTIAL"
     assert len([a for a in plan["actions"] if a["kind"] == "camera_fov"]) == 1
     assert len([a for a in plan["actions"] if a["kind"] == "transform"]) == 2
-    assert next(a for a in plan["actions"] if a["kind"] == "camera_fov")["keys"][0] == {
-        "frame": 0, "value": 55.0,
-    }
+    lens_keys = next(a for a in plan["actions"]
+                     if a["kind"] == "camera_fov")["keys"]
+    assert lens_keys[0] == {"frame": 0, "value": 55.0}
+    assert lens_keys[-1] == {"frame": 4, "value": 55.0}
+    assert [row["frame"] for row in lens_keys] == [0, 1, 2, 3, 4]
 
 
 def test_unknown_light_animation_bakes_independently_measured_intensity():
@@ -538,6 +540,14 @@ def test_capture_world_camera_replaces_locally_compiled_camera_trajectory():
               a["kind"] == "transform" and a.get("entity_name") == "CAM"]
     assert len(camera) == 1
     assert camera[0]["source_behavior_strategy"] == "verified_cinetwin_camera_world_pose"
+    # The full independently sampled world grid now receives the SAME
+    # nine-channel native preflight as source-authored local frame baking.
+    from studio_camera_motion_contract import validate_plan
+    native_review = validate_plan(plan)
+    assert len(native_review) == 1
+    assert native_review[0]["strategy"] == "verified_cinetwin_camera_world_pose"
+    assert native_review[0]["sample_count"] == 5
+    assert native_review[0]["rendered_shot_fidelity_verified"] is False
     assert camera[0]["track_name"] == "CutSceneAI Evaluated Camera World Motion"
     assert camera[0]["keys"][-1]["location_cm"] == [0.0, 200.0, 0.0]
     assert camera[0]["baked_source_curves"] is True
@@ -545,7 +555,7 @@ def test_capture_world_camera_replaces_locally_compiled_camera_trajectory():
     assert report["tracks"][-1]["native_action_count"] == 0
 
 
-def test_without_capture_authored_camera_remains_native_unverified():
+def test_without_capture_missing_camera_world_baseline_stops_unverified_trajectory():
     src = source()
     src["tracks"].append({
         "track_id": "cam:authored", "name": "CameraMove",
@@ -563,8 +573,47 @@ def test_without_capture_authored_camera_remains_native_unverified():
     plan, report = transfer_backend.compose(src, mapping())
     camera = [a for a in plan["actions"] if
               a["kind"] == "transform" and a.get("entity_name") == "CAM"]
-    assert len(camera) == 1
-    assert camera[0].get("source_behavior_strategy") != "verified_cinetwin_camera_world_pose"
+    # Formerly this invented zero world position/rotation for the missing
+    # camera axes. A partial local source channel and no original world
+    # baseline cannot justify an editable native camera trajectory.
+    assert camera == []
+    assert report["tracks"][-1]["outcome"] == "SKIPPED"
+    assert any("world transform" in reason.lower()
+               for reason in report["tracks"][-1]["details"])
+    assert report["no_full_fidelity_claim"] is True
+
+
+def test_no_capture_complete_world_camera_baseline_uses_frame_grid():
+    src = source()
+    camera = next(e for e in src["entities"] if e["entity_id"] == "lens")
+    camera["metadata"]["world_transform"] = {
+        "position": {"x": 0.0, "y": 1.0, "z": 0.0},
+        "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+        "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+    }
+    src["tracks"].append({
+        "track_id": "cam:authored", "name": "CameraMove",
+        "ced_type": "camera.transform", "binding_entity_id": "lens",
+        "sections": [{
+            "section_id": "c1", "start": rt(0), "end": rt(2),
+            "source_offset": rt(0), "time_scale": 1.0,
+            "payload": {"animation": {"curves": [{
+                "canonical_semantic": "transform.position.x",
+                "keys": [{"time_seconds": 0, "value": 0},
+                         {"time_seconds": 2, "value": 25}],
+            }]}},
+        }],
+    })
+    plan, report = transfer_backend.compose(src, mapping())
+    camera_actions = [a for a in plan["actions"] if a["kind"] == "transform"
+                      and a.get("entity_name") == "CAM"]
+    assert len(camera_actions) == 1
+    assert camera_actions[0]["source_behavior_strategy"] == (
+        "source_frame_baked_camera_transform_v1"
+    )
+    assert camera_actions[0]["baked_source_curves"] is True
+    assert [row["frame"] for row in camera_actions[0]["keys"]] == [0, 1, 2, 3, 4]
+    assert camera_actions[0]["keys"][0]["location_cm"] == (0.0, 0.0, 100.0)
     assert report["tracks"][-1]["outcome"] == "NATIVE_UNVERIFIED"
 
 

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, "foundation/**", "feature/**", "engine/**", "fix/**", "chore/**", "agent/friday-animation-rootmotion-assets-v0.1"]
+    branches: [main, "foundation/**", "feature/**", "engine/**", "fix/**", "chore/**", "audit/**", "integration/**", "agent/friday-animation-rootmotion-assets-v0.1"]
   pull_request:
-    branches: [main, "feature/**", "chore/**", "integration/agent-native-adapters-v0.1"]
+    branches: [main, "feature/**", "chore/**", "audit/**", "integration/**"]
 
 jobs:
   python-contracts:
@@ -25,6 +25,36 @@ jobs:
         run: python -m pytest -q
       - name: Check Studio JavaScript syntax
         run: node --check apps/studio-web/app.js && node --check apps/studio-web/cinematic.js && node tests/studio/test_cinematic_ui.cjs
+      - name: Build and independently verify source-only workstation distribution
+        run: |
+          python tools/build_studio_bundle.py --output "$RUNNER_TEMP/CutSceneAI-Studio-source.zip"
+          python tools/build_studio_bundle.py --output "$RUNNER_TEMP/CutSceneAI-Studio-source.zip" --verify
+      - name: Publish verified Studio source distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-source-bundle-${{ github.sha }}
+          path: ${{ runner.temp }}/CutSceneAI-Studio-source.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Phase 10.4 source-only end-to-end interruption rehearsal
+        run: python tools/phase10_4_rehearse.py --output "$RUNNER_TEMP/phase10_4-rehearsal.json"
+      - name: Upload Phase 10.4 synthetic rehearsal evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase10-4-synthetic-rehearsal-${{ github.sha }}
+          path: ${{ runner.temp }}/phase10_4-rehearsal.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Phase 10.5 exact-commit pre-engine freeze and handoff audit
+        run: |
+          python tools/phase10_5_freeze_preflight.py --repo . --bundle "$RUNNER_TEMP/CutSceneAI-Studio-source.zip" --rehearsal "$RUNNER_TEMP/phase10_4-rehearsal.json" --commit "$GITHUB_SHA" --output "$RUNNER_TEMP/phase10_5-freeze-preflight.json"
+      - name: Publish Phase 10.5 software handoff blockers
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase10-5-pre-engine-handoff-${{ github.sha }}
+          path: ${{ runner.temp }}/phase10_5-freeze-preflight.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Ruff test checks
         run: python -m ruff check tests
       - name: Repository hygiene and docs navigation
@@ -59,3 +89,87 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Studio installation failed." }
           & .\.venv-studio\Scripts\python.exe .\tools\check_studio_setup.py --strict --json
           if ($LASTEXITCODE -ne 0) { throw "Studio diagnostics failed." }
+      - name: Build, unzip, install and live-smoke Studio on clean Windows distribution
+        shell: pwsh
+        run: |
+          $Zip = Join-Path $env:RUNNER_TEMP "CutSceneAI-Studio-source-Windows.zip"
+          $Dist = Join-Path $env:RUNNER_TEMP "cutsceneai-clean-workstation"
+          & .\.venv-studio\Scripts\python.exe .\tools\build_studio_bundle.py --repo . --output $Zip
+          if ($LASTEXITCODE -ne 0) { throw "Windows distribution ZIP build failed." }
+          & .\.venv-studio\Scripts\python.exe .\tools\build_studio_bundle.py --output $Zip --verify
+          if ($LASTEXITCODE -ne 0) { throw "Windows ZIP manifest verification failed." }
+          Expand-Archive -LiteralPath $Zip -DestinationPath $Dist
+          $Studio = Join-Path $Dist "CutSceneAI-Studio"
+          if (-not (Test-Path (Join-Path $Studio "tools\install_studio.ps1") -PathType Leaf)) {
+            throw "Extracted source distribution is missing its installer."
+          }
+          & (Join-Path $Studio "tools\install_studio.ps1") -Python python
+          if ($LASTEXITCODE -ne 0) { throw "Clean source ZIP installation failed." }
+          $Python = Join-Path $Studio ".venv-studio\Scripts\python.exe"
+          & $Python (Join-Path $Studio "tools\check_studio_setup.py") --repo $Studio --strict --json
+          if ($LASTEXITCODE -ne 0) { throw "Extracted Studio strict setup failed." }
+          & $Python (Join-Path $Studio "tools\studio_startup_smoke.py") --repo $Studio --source-bundle $Zip --timeout 70 --output (Join-Path $env:RUNNER_TEMP "phase10_5-windows-startup-smoke.json")
+          if ($LASTEXITCODE -ne 0) { throw "Actual packaged Studio localhost UI startup smoke failed." }
+          # Repeat the real Windows process launch/teardown to catch inherited
+          # stdout handle locks (WinError 32) and temp-directory cleanup races.
+          for ($i = 1; $i -le 3; $i++) {
+            & $Python (Join-Path $Studio "tools\studio_startup_smoke.py") --repo $Studio --source-bundle $Zip --timeout 70
+            if ($LASTEXITCODE -ne 0) { throw "Packaged Windows Studio repeat startup smoke $i failed." }
+          }
+      - name: Archive Windows packaged-Studio startup smoke
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase10-5-windows-packaged-studio-startup-${{ github.sha }}
+          path: ${{ runner.temp }}/phase10_5-windows-startup-smoke.json
+          if-no-files-found: error
+          retention-days: 30
+
+  studio-package-handoff:
+    name: Cross-platform packaged Studio software acceptance (engine pending)
+    needs: [python-contracts, studio-windows-bootstrap]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download verified source-only distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: studio-source-bundle-${{ github.sha }}
+          path: ${{ runner.temp }}/studio-handoff/bundle
+      - name: Download Phase 10.4 synthetic source-gate evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: phase10-4-synthetic-rehearsal-${{ github.sha }}
+          path: ${{ runner.temp }}/studio-handoff/rehearsal
+      - name: Download exact-head pre-engine freeze report
+        uses: actions/download-artifact@v4
+        with:
+          name: phase10-5-pre-engine-handoff-${{ github.sha }}
+          path: ${{ runner.temp }}/studio-handoff/preflight
+      - name: Download separately installed Windows Studio live-start evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: phase10-5-windows-packaged-studio-startup-${{ github.sha }}
+          path: ${{ runner.temp }}/studio-handoff/windows
+      - name: Cross-verify same ZIP on Windows and Ubuntu; authorize engine testing only
+        shell: bash
+        run: |
+          python tools/phase10_5_package_acceptance.py \
+            --commit "$GITHUB_SHA" \
+            --bundle "$RUNNER_TEMP/studio-handoff/bundle/CutSceneAI-Studio-source.zip" \
+            --rehearsal "$RUNNER_TEMP/studio-handoff/rehearsal/phase10_4-rehearsal.json" \
+            --preflight "$RUNNER_TEMP/studio-handoff/preflight/phase10_5-freeze-preflight.json" \
+            --startup "$RUNNER_TEMP/studio-handoff/windows/phase10_5-windows-startup-smoke.json" \
+            --output "$RUNNER_TEMP/studio-handoff/software-package-engine-test-entry.json"
+      - name: Publish final software-only engine-test entry receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase10-5-software-ready-for-engine-test-${{ github.sha }}
+          path: ${{ runner.temp }}/studio-handoff/software-package-engine-test-entry.json
+          if-no-files-found: error
+          retention-days: 90

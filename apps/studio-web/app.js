@@ -8,7 +8,9 @@
     candidate:null, job:null, report:null, source:null, detailsOpen:false, evidencePath:'',
     selectedFolders:{unity:'',unreal:''}, discovery:null, selectedCutscene:'', selectedLevel:'', selectedUnrealProject:'', sourceRightsConfirmed:false,
     capabilities:null, sourceSurfaces:null, censusIdentity:'', selectedCensus:'', strictSourceCensus:true,
-    visibilityFallback:false, importFbxMaterials:false, verification:null };
+    visibilityFallback:false, importFbxMaterials:false, verification:null,
+    elementReview:null, elementReviewCandidateId:'', elementReviewError:'', releaseReadiness:null,
+    finalOutcome:null, finalOutcomeJobId:'', finalOutcomeError:'', flowDiagnostics:null };
   const steps = [['connect','Connect'],['select','Select'],['review','Review'],['transfer','Transfer'],['results','Results']];
   const mark = `<svg viewBox="0 0 36 36" fill="currentColor" aria-hidden="true"><path d="M18 2 3 30h11l4-7h-5l7-14zM23 18l10 12H19l-4-4h8l-4-5z"/></svg>`;
   const icons = {
@@ -154,9 +156,85 @@
       ${isB002?'<div class="rule"></div><h3>Benchmark002 regression</h3><p class="hint">Use the real Unity Benchmark002 cutscene and a new empty backed-up Unreal staging level. Preserve old sequences. After generation: Save All, restart Unreal, then check persistence, 18/18 imported assets, 10/10 mapped actors, and 2/2 direct attachments. Eight source grouping relationships remain a separate coverage task.</p>':''}
       </section>`;
   }
+  function elementPanel(){
+    const r=state.elementReview;
+    if(!state.candidate)return '';
+    const breakdown=r?.investigation_state_counts||{};
+    const needs=Object.entries(breakdown).filter(([k])=>k!=='NATIVE_PREFLIGHT_REQUIRED').reduce((a,[,v])=>a+Number(v||0),0);
+    return '<section class="panel pad sidebar-panel"><div class="section-head"><h2>Element 3 · Source review</h2>'+
+      statusLabel(r?.available?'SOURCE INVENTORIED':'NOT PREPARED',r?.available?'good':'warning')+'</div>'+
+      '<p class="body-copy">Inspect source occurrences, dependency blockers and registered CED alternatives before generation. No candidate is a verified native conversion.</p>'+
+      (state.elementReviewError?'<p class="notice-inline">'+esc(state.elementReviewError)+'</p>':'')+
+      (!r?.available?btn('Analyze source occurrences','prepare-elements','secondary',state.busy):
+        item('Source occurrences',size(r.source_occurrence_count))+
+        item('Unresolved or review-required',size(needs))+
+        '<div class="rule"></div><h3>Element 4 · Validated strategy?</h3>'+
+        item('Independent decision gate',r.element4_strategy_validation?.status||'NOT AVAILABLE')+
+        (r.element4_strategy_validation?.independently_recomputed?
+          item('Registered advisory candidates',size(r.element4_strategy_validation.advisory_candidate_count))+
+          item('Reported source limitations',size(r.element4_strategy_validation.reported_limitation_count))+
+          item('Rejected combinations',size(r.element4_strategy_validation.rejected_count)):
+          '<p class="hint">A source inventory is not an AI-validated strategy. A model decision must be source-bound and independently revalidated to show a pass here.</p>')+
+        '<p class="hint">No → bounded registered alternatives → full graph revalidation. Yes means planning eligible, not native execution or fidelity.</p>'+
+        '<div class="rule"></div><h3>Element 5 · Source-bound conversion plan</h3>'+
+        item('Prepared source occurrences',size(r.element5_source_bound_plan?.source_occurrence_count))+
+        item('Deterministic native builder actions',size(r.element5_source_bound_plan?.action_count))+
+        item('Actions with explicit source attribution',size(r.element5_source_bound_plan?.explicit_source_action_count))+
+        item('Legacy actions without exact-source links',size(r.element5_source_bound_plan?.legacy_unattributed_action_count))+
+        item('Source target references missing',size(r.element5_source_bound_plan?.missing_target_reference_count))+
+        item('Context-blocked native actions',size(r.element5_source_bound_plan?.blocked_action_count))+
+        '<details class="element-list"><summary>Source-to-action mapping for this page</summary>'+
+        (r.element5_source_bound_plan?.source_page||[]).map(s=>
+          '<div class="element-review-row"><strong>'+esc(s.occurrence_id+' · '+s.source_kind)+'</strong>'+
+          '<p class="hint">Status: '+esc(s.conversion_plan_state)+'</p>'+
+          '<p class="hint">Target reference: '+esc(s.mapping_status)+'</p>'+
+          '<p class="hint">Native source links: '+esc(s.explicitly_attributed_action_ids.join(', ')||'NONE VERIFIED')+'</p>'+
+          '</div>').join('')+'</details>'+
+        '<p class="hint">Element 5 preserves exact compiler action order and reports missing provenance; it does not invent conversion details or approve native execution. A planned target reference is not native readback.</p>'+
+        item('Native capabilities',r.target_capabilities_observed?'Observed in connected Unreal':'Not observed')+
+        item('Capability evidence',r.target_capability_evidence_current?'Current':'Changed · refresh review')+
+        '<details class="element-list" open><summary>Review occurrences ('+size(r.elements?.length||0)+' on this page)</summary>'+
+        (r.elements||[]).map(e=>'<div class="element-review-row"><strong>'+esc(e.occurrence_id+' · '+e.source_kind)+'</strong>'+
+          '<p class="hint">'+esc(e.ced)+' · '+esc(e.source_location)+'</p>'+
+          '<p class="hint">Source '+esc(e.source_state)+' · '+esc(e.schedule_status)+'</p>'+
+          '<p class="hint">Suggested: '+esc(e.suggested_action)+' · Registered: '+esc((e.eligible_alternatives||[]).join(', ')||'none')+'</p>'+
+          (e.reason_codes?.length?'<p class="hint">Gaps: '+esc(e.reason_codes.join(', '))+'</p>':'')+
+          (e.next_steps?.length?'<p class="hint">Investigate: '+esc(e.next_steps.join(', '))+'</p>':'')+
+          '</div>').join('')+'</details>'+
+        '<div class="form-actions">'+btn('Previous','elements-prev','secondary',state.busy||r.offset===0)+
+        btn('Next','elements-next','secondary',state.busy||!r.has_more)+'</div>'+
+        '<div class="rule"></div><h3>Exact native action authorization</h3>'+
+        item('Registered prepared actions',size(r.native_actions?.action_count))+
+        item('Legacy actions without exact-source attribution',size(r.native_actions?.unattributed_count))+
+        item('Blocked actions requiring source/target evidence',size(r.native_actions?.blocked_action_count))+
+        item('Native action approval',r.native_actions?.approved_for_existing_native_preflight?'APPROVED · ENGINE PREFLIGHT REQUIRED':'NOT AUTHORIZED')+
+        '<details class="element-list"><summary>Review exact native actions ('+size(r.native_actions?.action_count)+')</summary>'+
+        (r.native_actions?.candidate_actions||[]).map(a=>
+          '<div class="element-review-row"><strong>'+esc(a.action_id+' · '+a.kind)+'</strong>'+
+          '<p class="hint">Source: '+esc(a.source_occurrence_ids?.join(', ')||'UNATTRIBUTED LEGACY ACTION')+'</p>'+
+          '<p class="hint">Status: '+esc(a.native_action_eligible?'REGISTERED · PREFLIGHT PENDING':a.native_action_blocker||'BLOCKED')+'</p>'+
+          '<p class="hint">Immutable action fingerprint: '+esc(a.action_sha256?.slice(0,16)||'missing')+'</p></div>'
+        ).join('')+'</details>'+
+        '<div class="form-actions">'+
+          btn('Previous actions','elements-native-prev','secondary',state.busy||!r.native_actions?.action_offset)+
+          btn('Next actions','elements-native-next','secondary',state.busy||!r.native_actions?.has_more_actions)+
+        '</div>'+
+        '<p class="hint">Only the immutable registered Unreal builder action set can run. Actions without explicit source-location metadata are not per-element verified. Partial changes require a NEW candidate.</p>'+
+        (r.native_actions?.approved_for_existing_native_preflight?
+          statusLabel('EXACT ACTION SET AUTHORIZED','good'):
+          btn('Approve all prepared native actions','approve-native-elements','secondary',
+              state.busy||!r.review_acknowledged||!r.target_capability_evidence_current||
+              !r.target_capabilities_observed||r.native_actions?.blocked_action_count>0))+
+        '<p class="hint">Acknowledgment confirms issue review only; it does not authorize native or AI tool execution.</p>'+
+        (r.review_acknowledged?statusLabel('REVIEW ACKNOWLEDGED','good'):
+          btn('Acknowledge known source limitations','ack-elements','secondary',
+              state.busy||!r.target_capability_evidence_current))+
+        '<div class="form-actions">'+btn('Re-evaluate evidence','prepare-elements','secondary',state.busy)+'</div>')+
+      '</section>';
+  }
   function review(){const c=state.status?.connection;
     if(!c)return missing('Review transfer','Connect existing Unity source data and Unreal target first.','connect');
-    const p=state.candidate;return `<div class="page-heading"><div class="eyebrow">03 / REVIEW</div><h1>Review the transfer</h1><p>Generate an independently verifiable transfer plan before opening Unreal.</p></div>${stageRail()}<div class="review-layout"><section class="panel pad"><div class="section-head"><h2>Prepared actions</h2>${statusLabel(p?'PLAN VERIFIED':'NOT PREPARED',p?'good':'warning')}</div>${p?`<div class="big-number">${size(p.action_total)}<small>planned actions</small></div><div class="action-grid">${Object.entries(p.action_counts||{}).map(([k,v])=>`<div><span>${esc(k.replaceAll('_',' '))}</span><strong>${size(v)}</strong></div>`).join('')}</div>`:`<div class="empty-state">${icon('layers')}<h3>No transfer plan yet</h3><p>Read your source CSIR and mapping, then create the immutable plan and coverage report.</p></div>`}<div class="rule"></div><h3>Source track coverage</h3>${p?Object.entries(p.track_coverage||{}).map(([k,v])=>item(k,size(v))).join(''): '<p class="muted">Coverage appears after preparation.</p>'}<div class="form-actions">${btn(state.busy?'Preparing…':'Prepare transfer plan', 'prepare','primary',state.busy)}${btn('Connect different files','connect','secondary')}</div></section><aside>${featurePanel()}<section class="panel pad sidebar-panel"><h2>Transfer destination</h2>${item('Source cutscene',c.scene_name)}${item('Target level',c.level_path)}${item('Selected mapping JSON',c.mapping)}${item('Mapping base sequence',c.base_sequence)}${item('New target sequence',p?.sequence_path||'Created on preparation')}${item('CED preflight',String(p?.ced_preflight||'Not evaluated'))}<div class="rule"></div><div class="slim-note">${p?'This plan did not modify the Unreal project.':'A verified plan is required before generating.'}</div>${p?.review_flags?.length?`<div class="callout" role="alert">${icon('alert')}<div><strong>Review mapping and target assets before generation</strong>${p.review_flags.map(x=>`<p>${esc(x)}</p>`).join('')}</div></div>`:''}${p?`<div class="bottom-action">${btn('Continue to Unreal '+icon('arrow'),'transfer')}</div>`:''}</section><section class="callout">${icon('alert')}<p>Incomplete animation, audio, hierarchy, and other CED features remain explicit. A prepared plan is not a proof of fidelity.</p></section></aside></div>`;
+    const p=state.candidate;return `<div class="page-heading"><div class="eyebrow">03 / REVIEW</div><h1>Review the transfer</h1><p>Generate an independently verifiable transfer plan before opening Unreal.</p></div>${stageRail()}<div class="review-layout"><section class="panel pad"><div class="section-head"><h2>Prepared actions</h2>${statusLabel(p?'PLAN VERIFIED':'NOT PREPARED',p?'good':'warning')}</div>${p?`<div class="big-number">${size(p.action_total)}<small>planned actions</small></div><div class="action-grid">${Object.entries(p.action_counts||{}).map(([k,v])=>`<div><span>${esc(k.replaceAll('_',' '))}</span><strong>${size(v)}</strong></div>`).join('')}</div>`:`<div class="empty-state">${icon('layers')}<h3>No transfer plan yet</h3><p>Read your source CSIR and mapping, then create the immutable plan and coverage report.</p></div>`}<div class="rule"></div><h3>Source track coverage</h3>${p?Object.entries(p.track_coverage||{}).map(([k,v])=>item(k,size(v))).join(''): '<p class="muted">Coverage appears after preparation.</p>'}<div class="form-actions">${btn(state.busy?'Preparing…':'Prepare transfer plan', 'prepare','primary',state.busy)}${btn('Connect different files','connect','secondary')}</div></section><aside>${elementPanel()}${featurePanel()}<section class="panel pad sidebar-panel"><h2>Transfer destination</h2>${item('Source cutscene',c.scene_name)}${item('Target level',c.level_path)}${item('Selected mapping JSON',c.mapping)}${item('Mapping base sequence',c.base_sequence)}${item('New target sequence',p?.sequence_path||'Created on preparation')}${item('CED preflight',String(p?.ced_preflight||'Not evaluated'))}<div class="rule"></div><div class="slim-note">${p?'This plan did not modify the Unreal project.':'A verified plan is required before generating.'}</div>${p?.review_flags?.length?`<div class="callout" role="alert">${icon('alert')}<div><strong>Review mapping and target assets before generation</strong>${p.review_flags.map(x=>`<p>${esc(x)}</p>`).join('')}</div></div>`:''}${p?`<div class="bottom-action">${btn('Continue to Unreal '+icon('arrow'),'transfer')}</div>`:''}</section><section class="callout">${icon('alert')}<p>Incomplete animation, audio, hierarchy, and other CED features remain explicit. A prepared plan is not a proof of fidelity.</p></section></aside></div>`;
   }
   function transfer(){
     const c=state.status?.connection;
@@ -179,7 +257,11 @@
     const recoveryHint=recoverableReadinessImportFailure
       ? '<div class="slim-note">The Unity assets and actors are already staged. The Python readiness import blocked sequence generation before it started. Do not reimport or retry this job. See docs/studio/RECOVER_SEQUENCE_AFTER_READINESS_IMPORT.md for the one-time, guarded sequence-only recovery.</div>'
       : '';
-    const canGenerate=Boolean(connectedTarget&&p&&
+    const elementsApproved=Boolean(!state.elementReviewCandidateId ||
+      (state.elementReview?.available&&state.elementReview.review_acknowledged&&
+       state.elementReview.target_capability_evidence_current&&
+       state.elementReview.native_actions?.approved_for_existing_native_preflight));
+    const canGenerate=Boolean(connectedTarget&&p&&elementsApproved&&
       ((d.ready&&d.candidate_id===p.candidate_id)||autoCanRun)&&!state.busy&&!state.job);
     if(!c)return missing('Unreal transfer','Connect your Unity source and target Unreal project first.','connect');
     if(!p)return missing('Unreal transfer','Prepare a transfer plan before generating a new sequence.','review');
@@ -187,7 +269,12 @@
     const missingAssets=d.missing_assets||[];
     const wrongTypes=[...(d.wrong_actor_types||[]),...(d.duplicate_actors||[]),...(d.wrong_asset_types||[])];
     const readinessLabel=d.ready?'READY TO GENERATE':pendingImport?'READY TO IMPORT AUTOMATICALLY':d.status==='SCENE_SETUP_REQUIRED'?'SCENE SETUP NEEDED':d.status==='ASSETS_REQUIRED'?'ASSET IMPORT NEEDED':d.status==='WRONG_TARGET'?'WRONG PROJECT / LEVEL':d.status==='TARGET_EXISTS'?'SEQUENCE ALREADY EXISTS':d.status==='UPGRADE_COMPANION'?'UPDATE EDITOR COMPANION':d.status==='INSPECTION_FAILED'?'INSPECTION FAILED':d.status==='INSPECTION_UNAVAILABLE'?'INSPECTION UNAVAILABLE':d.status==='WAITING_FOR_UNREAL'?'UNREAL OFFLINE':d.status==='WAITING_FOR_PLAN'?'TRANSFER PLAN NEEDED':d.status==='NEW_LEVEL_REQUIRED'?'NEW LEVEL WILL BE CREATED':'INSPECTING DESTINATION';
-    return `<div class="page-heading"><div class="eyebrow">04 / TRANSFER</div><h1>Generate in Unreal</h1><p>Studio checks the real target scene before allowing generation. Missing project setup never becomes a failed transfer job.</p></div>${stageRail()}<div class="review-layout"><section class="panel pad"><div class="section-head"><h2>Destination readiness</h2>${statusLabel(readinessLabel,d.ready||pendingImport?'good':'warning')}</div><p class="body-copy">${pendingImport?'This destination has not been populated yet. The source-backed setup plan is prepared; the import and actor creation will run only after you approve Generate.':esc(d.next_action||'Connect the Unreal editor companion to inspect this project.')}</p>${pendingImport?`<div class="slim-note">Ready for the next step: import ${size(auto.planned_imports)} source files, create ${size(auto.planned_actors)} mapped actors, save the Unreal level, and then generate the editable sequence. Import and playback have NOT happened yet.</div><div class="form-actions">${btn('Import Unity assets & generate sequence '+icon('arrow'),'execute','primary',!canGenerate)}${btn('Recheck destination','refresh','secondary')}</div>`:''}${item('Scene actors',d.expected_actor_count===undefined?(d.status==='CHECKING'?'Inspecting…':'Not inspected'):`${size(d.found_actor_count)} / ${size(d.expected_actor_count)} found`)}${item('Mapped assets',d.required_asset_count===undefined?(d.status==='CHECKING'?'Inspecting…':'Not inspected'):`${size(d.required_asset_count-missingAssets.length)} / ${size(d.required_asset_count)} available`)}${missingActors.length?`<div class="readiness-issues ${pendingImport?'planned-assets':''}"><strong>${pendingImport?'Mapped actors planned for creation':'Missing mapped actors'} (${missingActors.length})</strong><p>${pendingImport?'These are not failures: these actors will be created after you approve the import above.':'These actors are not in the loaded Unreal level. The sequence cannot safely bind them.'}</p><ul>${missingActors.slice(0,10).map(row=>`<li><code>${esc(row.entity_name)}</code><span>${esc(row.actor_label)}</span></li>`).join('')}</ul>${missingActors.length>10?`<p>And ${missingActors.length-10} more.</p>`:''}</div>`:''}${missingAssets.length?`<div class="readiness-issues ${pendingImport?'planned-assets':''}"><strong>${pendingImport?'Mapped assets planned for import':'Missing imported assets'} (${missingAssets.length})</strong><p>${pendingImport?'These assets have not been imported yet; the automatic setup will create and verify them in Unreal first.':'The target asset paths in the selected mapping are not present in this project.'}</p><ul>${missingAssets.slice(0,10).map(row=>`<li><code>${esc(row.expected_class)}</code><span>${esc(row.asset_path)}</span></li>`).join('')}</ul></div>`:''}${wrongTypes.length?`<div class="readiness-issues"><strong>Incorrect or ambiguous bindings (${wrongTypes.length})</strong><p>Correct the listed actor or asset mappings before generating.</p>${wrongTypes.slice(0,10).map(row=>item(row.actor_label||row.asset_path,`Expected ${row.expected||row.expected_class||'one unique actor'}; actual ${row.actual||row.actual_class||'multiple actors'}`)).join('')}</div>`:''}${auto.available?`<div class="readiness-issues"><strong>Automatic Unity asset and actor setup</strong>${auto.ready?`<p>${alreadyStaged?'The source assets and actors were imported and saved in Unreal; a sequence is not verified yet.':size(auto.planned_imports)+' source files and '+size(auto.planned_actors)+' actors will be transferred/created before generating the sequence.'} Unsupported source features remain explicitly reported.</p>`:`<p>Automatic setup cannot start:</p><ul>${(auto.blockers||[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`}${(auto.warnings||[]).slice(0,6).map(x=>`<p class="hint">${esc(x)}</p>`).join('')}</div>`:`<div class="slim-note">Connect the Unity project folder and Assets scope to enable automatic import and actor creation.</div>`}<div class="rule"></div><div class="section-head"><h2>Editor companion</h2>${statusLabel(d.status==='UPGRADE_COMPANION'?'OUTDATED COMPANION':connectedTarget?'CONNECTED TO TARGET':w.connected?'WRONG PROJECT / LEVEL':'OFFLINE',connectedTarget&&d.status!=='UPGRADE_COMPANION'?'good':'warning')}</div><p class="body-copy">Open the backed-up Unreal staging project with the correct level loaded, then start the companion in the <strong>Unreal Python Console</strong>:</p><pre class="command" id="worker-command">${esc(workerCommand)}</pre>${btn('Copy Python command','copy-command','secondary')}${item('Loaded project',w.project||'Not detected')}${item('Loaded level',w.level||'Not detected')}${item('Companion version',w.worker_version||'Not detected')}${item('Target sequence',p.sequence_path)}${p?.review_flags?.length?`<div class="callout" role="alert">${icon('alert')}<div><strong>Mapping review:</strong>${p.review_flags.map(x=>`<p>${esc(x)}</p>`).join('')}</div></div>`:''}<div class="form-actions">${pendingImport?'':btn(state.busy?'Submitting…':auto.available?'Import Unity assets & generate sequence '+icon('arrow'):'Generate new Level Sequence '+icon('arrow'),'execute','primary',!canGenerate)}${pendingImport?'':btn('Recheck destination','refresh','secondary')}${state.job?btn('Prepare a fresh attempt','review','secondary'):''}</div>${!canGenerate?'<p class="hint">Generation requires a verified destination or a complete source-backed automatic setup plan; missing/ambiguous Unity files are reported before any Unreal changes.</p>':''}</section><aside><section class="panel pad sidebar-panel"><h2>Execution report</h2>${item('Job status',state.job?.status||'Not started')}${item('Engine generation',state.job?.generation_status||'Not started')}${state.job?.setup_status?item('Source setup',state.job.setup_status):''}${item('Output',state.job?.generated_sequence||p.sequence_path)}${item('Fidelity','Not established')}${state.job?.error?`<p class="notice-inline">${esc(state.job.error)}</p>`:''}${recoveryHint}<div class="rule"></div><p class="hint">After successful generation: Save All in Unreal, reopen the sequence, and audit its persisted tracks before trusting playback.</p><div class="bottom-action">${btn('View results '+icon('arrow'),'results','secondary')}</div></section><section class="callout">${icon('shield')}<p>Studio never overwrites an existing sequence. A failed run must be investigated rather than replayed blindly.</p></section></aside></div>`;
+    return `<div class="page-heading"><div class="eyebrow">04 / TRANSFER</div><h1>Generate in Unreal</h1><p>Studio checks the real target scene before allowing generation. Missing project setup never becomes a failed transfer job.</p></div>${stageRail()}<div class="review-layout"><section class="panel pad"><div class="section-head"><h2>Destination readiness</h2>${statusLabel(readinessLabel,d.ready||pendingImport?'good':'warning')}</div>${!elementsApproved?'<div class="callout" role="alert"><p>Review and acknowledge the current Element 3 source issues on the Review page first.</p></div>':''}<p class="body-copy">${pendingImport?'This destination has not been populated yet. The source-backed setup plan is prepared; the import and actor creation will run only after you approve Generate.':esc(d.next_action||'Connect the Unreal editor companion to inspect this project.')}</p>${pendingImport?`<div class="slim-note">Ready for the next step: import ${size(auto.planned_imports)} source files, create ${size(auto.planned_actors)} mapped actors, save the Unreal level, and then generate the editable sequence. Import and playback have NOT happened yet.</div><div class="form-actions">${btn('Import Unity assets & generate sequence '+icon('arrow'),'execute','primary',!canGenerate)}${btn('Recheck destination','refresh','secondary')}</div>`:''}${item('Scene actors',d.expected_actor_count===undefined?(d.status==='CHECKING'?'Inspecting…':'Not inspected'):`${size(d.found_actor_count)} / ${size(d.expected_actor_count)} found`)}${item('Mapped assets',d.required_asset_count===undefined?(d.status==='CHECKING'?'Inspecting…':'Not inspected'):`${size(d.required_asset_count-missingAssets.length)} / ${size(d.required_asset_count)} available`)}${missingActors.length?`<div class="readiness-issues ${pendingImport?'planned-assets':''}"><strong>${pendingImport?'Mapped actors planned for creation':'Missing mapped actors'} (${missingActors.length})</strong><p>${pendingImport?'These are not failures: these actors will be created after you approve the import above.':'These actors are not in the loaded Unreal level. The sequence cannot safely bind them.'}</p><ul>${missingActors.slice(0,10).map(row=>`<li><code>${esc(row.entity_name)}</code><span>${esc(row.actor_label)}</span></li>`).join('')}</ul>${missingActors.length>10?`<p>And ${missingActors.length-10} more.</p>`:''}</div>`:''}${missingAssets.length?`<div class="readiness-issues ${pendingImport?'planned-assets':''}"><strong>${pendingImport?'Mapped assets planned for import':'Missing imported assets'} (${missingAssets.length})</strong><p>${pendingImport?'These assets have not been imported yet; the automatic setup will create and verify them in Unreal first.':'The target asset paths in the selected mapping are not present in this project.'}</p><ul>${missingAssets.slice(0,10).map(row=>`<li><code>${esc(row.expected_class)}</code><span>${esc(row.asset_path)}</span></li>`).join('')}</ul></div>`:''}${wrongTypes.length?`<div class="readiness-issues"><strong>Incorrect or ambiguous bindings (${wrongTypes.length})</strong><p>Correct the listed actor or asset mappings before generating.</p>${wrongTypes.slice(0,10).map(row=>item(row.actor_label||row.asset_path,`Expected ${row.expected||row.expected_class||'one unique actor'}; actual ${row.actual||row.actual_class||'multiple actors'}`)).join('')}</div>`:''}${auto.available?`<div class="readiness-issues"><strong>Automatic Unity asset and actor setup</strong>${auto.ready?`<p>${alreadyStaged?'The source assets and actors were imported and saved in Unreal; a sequence is not verified yet.':size(auto.planned_imports)+' source files and '+size(auto.planned_actors)+' actors will be transferred/created before generating the sequence.'} Unsupported source features remain explicitly reported.</p>`:`<p>Automatic setup cannot start:</p><ul>${(auto.blockers||[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`}${(auto.warnings||[]).slice(0,6).map(x=>`<p class="hint">${esc(x)}</p>`).join('')}</div>`:`<div class="slim-note">Connect the Unity project folder and Assets scope to enable automatic import and actor creation.</div>`}<div class="rule"></div><div class="section-head"><h2>Editor companion</h2>${statusLabel(d.status==='UPGRADE_COMPANION'?'OUTDATED COMPANION':connectedTarget?'CONNECTED TO TARGET':w.connected?'WRONG PROJECT / LEVEL':'OFFLINE',connectedTarget&&d.status!=='UPGRADE_COMPANION'?'good':'warning')}</div><p class="body-copy">Open the backed-up Unreal staging project with the correct level loaded, then start the companion in the <strong>Unreal Python Console</strong>:</p><pre class="command" id="worker-command">${esc(workerCommand)}</pre>${btn('Copy Python command','copy-command','secondary')}${item('Loaded project',w.project||'Not detected')}${item('Loaded level',w.level||'Not detected')}${item('Companion version',w.worker_version||'Not detected')}${item('Target sequence',p.sequence_path)}${p?.review_flags?.length?`<div class="callout" role="alert">${icon('alert')}<div><strong>Mapping review:</strong>${p.review_flags.map(x=>`<p>${esc(x)}</p>`).join('')}</div></div>`:''}<div class="form-actions">${pendingImport?'':btn(state.busy?'Submitting…':auto.available?'Import Unity assets & generate sequence '+icon('arrow'):'Generate new Level Sequence '+icon('arrow'),'execute','primary',!canGenerate)}${pendingImport?'':btn('Recheck destination','refresh','secondary')}${state.job?btn('Prepare a fresh attempt','review','secondary'):''}</div>${!canGenerate?'<p class="hint">Generation requires a verified destination or a complete source-backed automatic setup plan; missing/ambiguous Unity files are reported before any Unreal changes.</p>':''}</section><aside><section class="panel pad sidebar-panel"><h2>Execution report</h2>${item('Job status',state.job?.status||'Not started')}${item('Engine generation',state.job?.generation_status||'Not started')}${state.job?.element6_execution?.available?
+          item('Element 6 · Guarded native attempt',state.job.element6_execution.status)+
+          item('Last durable stage',state.job.element6_execution.last_stage)+
+          item('Automatic replay','FORBIDDEN · inspect before recovery'):
+          state.job?.element6_execution?.status?
+          item('Element 6 · Native evidence',state.job.element6_execution.status):''}${state.job?.setup_status?item('Source setup',state.job.setup_status):''}${item('Output',state.job?.generated_sequence||p.sequence_path)}${item('Fidelity','Not established')}${state.job?.error?`<p class="notice-inline">${esc(state.job.error)}</p>`:''}${recoveryHint}<div class="rule"></div><p class="hint">After successful generation: Save All in Unreal, reopen the sequence, and audit its persisted tracks before trusting playback.</p><div class="bottom-action">${btn('View results '+icon('arrow'),'results','secondary')}</div></section><section class="callout">${icon('shield')}<p>Studio never overwrites an existing sequence. A failed run must be investigated rather than replayed blindly.</p></section></aside></div>`;
   }
   function verificationPanel(){
     if(!state.job)return '';
@@ -228,8 +315,96 @@
       ${persistence?.path?`<p class="hint">Persistence evidence: ${esc(persistence.path)}</p>`:''}${hierarchy?.path?`<p class="hint">Hierarchy evidence: ${esc(hierarchy.path)}</p>`:''}${visual?.path?`<p class="hint">Visual evidence: ${esc(visual.path)}</p>`:''}
       <p class="hint">Even a structural PASS does not verify full source-to-target cinematic playback, rendering, audio or custom scripting.</p></section>`;
   }
+  function nativeAcceptancePanel(){
+    if(!state.job)return '';
+    const root=String(state.status?.repo_root||'').replaceAll('\\','/').replaceAll('"','');
+    const script='import sys\nsys.path.insert(0, r"'+root+'/integrations/unreal")\nimport studio_native_acceptance\nstudio_native_acceptance.start()';
+    const r=state.releaseReadiness;
+    const checks=Object.entries(r?.checks||{});
+    return '<section class="panel pad"><div class="section-head"><h2>Real-engine acceptance</h2>'+
+      statusLabel(r?.release_ready?'RELEASE READY':r?.status||'NOT VERIFIED',r?.release_ready?'good':'warning')+'</div>'+
+      '<p class="body-copy">After generating, Save All and reopen the staging map in a different Unreal Editor process once. This command captures independent CineTwin measurements. Rendered frame, audio, event and complete skeletal fidelity remain separately gated.</p>'+
+      '<pre class="command" id="element-native-acceptance-command">'+esc(script)+'</pre>'+
+      '<div class="form-actions">'+btn('Copy native acceptance command','copy-native-acceptance-command','secondary')+
+      btn('Check release evidence','check-native-acceptance','secondary',state.busy)+
+      btn('Check final source outcome','check-final-outcome','secondary',state.busy)+'</div>'+
+      (r?item('Release gate',r.status)+
+        '<div class="rule"></div><h3>Element 7 · Native readback + CineTwin</h3>'+
+        item('Original engine execution chain',r.checks?.element7_native_execution_chain?.status||'INCOMPLETE')+
+        item('Independent source/target remeasurement',r.checks?.element7_cinetwin_recomputation?.status||'INCOMPLETE')+
+        (r.checks?.element7_cinetwin_recomputation?.sampled_frames!=null?
+          item('Matched-time observations',size(r.checks.element7_cinetwin_recomputation.sampled_frames)):'')+
+        (r.checks?.element7_cinetwin_recomputation?.unmapped_actors!=null?
+          item('Unmapped source actors',size(r.checks.element7_cinetwin_recomputation.unmapped_actors)):'')+
+        '<p class="hint">Element 7 recomputes stored native observations against the exact Unity capture, prepared plan, and source-bound Element 6 attempt. Even a measured-domain PASS is not proof of rendered, audio, event, or complete cinematic fidelity.</p>'+
+        '<div class="rule"></div><h3>Element 8 · Bounded repair agent</h3>'+
+        item('Verified read-only recovery triage',r.checks?.element8_bounded_repair_triage?.status||'INCOMPLETE')+
+        (r.checks?.element8_bounded_repair_triage?.diagnostic_status?
+          item('Recovery decision',r.checks.element8_bounded_repair_triage.diagnostic_status):'')+
+        (r.checks?.element8_bounded_repair_triage?.manual_observation_budget!=null?
+          item('Remaining bounded remeasurements',size(r.checks.element8_bounded_repair_triage.manual_observation_budget)):'')+
+        item('Automatic native retry / new edit','NOT AUTHORIZED')+
+        '<p class="hint">Element 8 only classifies independently reconstructed discrepancies. Existing character-offset and material adapters still require their own exact-source preflight, explicit user request, editor approval and fresh measurement. No arbitrary AI Unreal commands or full fidelity claims.</p>'+
+        '<details><summary>Independent domain checks ('+size(checks.length)+')</summary>'+
+        checks.map(([name,check])=>'<p class="hint"><strong>'+esc(name.replaceAll('_',' '))+
+          '</strong> · '+esc(check.status)+' · '+esc(check.explanation||'')+'</p>').join('')+
+        '</details>':'<p class="hint">No reopened native acceptance report checked yet.</p>')+
+      '<div class="rule"></div><h3>Element 9 · Remeasure or report limitation</h3>'+
+      (state.finalOutcome?.available?
+        item('Final source outcome',state.finalOutcome.status)+
+        item('Source occurrences accounted for',size(state.finalOutcome.source_occurrence_count))+
+        item('Native observations',size(state.finalOutcome.native_observation_count))+
+        item('Remaining manual remeasurements',size(state.finalOutcome.remaining_manual_remeasurement_budget))+
+        item('Next evidence step',state.finalOutcome.next_step)+
+        '<details class="element-list"><summary>Source-level outcomes</summary>'+
+        (state.finalOutcome.source_page||[]).map(x=>
+          '<div class="element-review-row"><strong>'+esc(x.occurrence_id+' · '+x.source_kind)+'</strong>'+
+          '<p class="hint">'+esc(x.outcome)+' · '+esc(x.next_step)+'</p>'+
+          '<p class="hint">Explicit native source actions: '+size(x.explicit_native_source_action_count)+
+          ' · Cinematic fidelity unverified</p></div>').join('')+
+        '<div class="form-actions">'+
+        btn('Previous sources','final-prev','secondary',state.busy||state.finalOutcome.page_offset===0)+
+        btn('Next sources','final-next','secondary',
+          state.busy||(state.finalOutcome.page_offset+state.finalOutcome.page_size)>=state.finalOutcome.source_occurrence_count)+
+        '</div></details>'+
+        '<p class="hint">This is a read-only outcome report. Measured improvement does not prove what caused it or grant another engine execution.</p>':
+        '<p class="hint">'+esc(state.finalOutcomeError||
+          'Check final source outcome to see every source element, including unmeasured ones.')+'</p>')+
+      '<p class="hint">A measured-domain pass is never proof of full cinematic equivalence.</p></section>';
+  }
+  function nineStageFlow(){
+    const result=state.flowDiagnostics;
+    if(!result||!Array.isArray(result.stages)||result.stages.length!==9)return '';
+    return '<section class="panel pad" aria-label="Nine-stage source-bound workflow">'+
+      '<div class="section-head"><h2>AI conversion stages</h2>'+statusLabel(
+        result.native_replay_authorized===false?'READ ONLY':'INCOMPLETE','warning')+'</div>'+
+      '<p class="hint">Stages require actual source/native evidence; no automatic native replay.</p>'+
+      '<details><summary>Inspect all 9 stages</summary><ol class="stage-diagnostics-list">'+
+      result.stages.map(row=>'<li><strong>'+esc(row.label)+'</strong>'+
+        '<span>'+esc((row.status||'NOT_VERIFIED').replaceAll('_',' '))+'</span>'+
+        '<small>'+esc(row.next_action||'Collect source evidence')+'</small></li>').join('')+
+      '</ol></details>'+
+      (result.issues?.length?'<p class="hint">'+esc(result.next_action||result.issues[0])+'</p>':'')+
+      '</section>';
+  }
   function results(){const r=state.report,j=state.job,c=state.status?.connection;
-    return `<div class="page-heading"><div class="eyebrow">05 / RESULTS</div><h1>Transfer results</h1><p>Inspectable evidence from Unreal, not a simulated success score.</p></div>${stageRail()}${verificationPanel()}<div class="results-layout"><section class="panel pad"><div class="section-head"><h2>Unreal generation</h2>${statusLabel(j?.generation_status==='GENERATED_UNVERIFIED'?'GENERATED · UNVERIFIED':j?.status||'NOT RUN',j?.generation_status==='GENERATED_UNVERIFIED'?'good':'warning')}</div>${item('Sequence',j?.generated_sequence||state.candidate?.sequence_path||'Not generated in this session')}${item('Job status',j?.status||'Not started')}${item('Saved-level readback','Not verified by this UI')}${item('Fidelity','Not established')}${j?.receipt_file?item('Runtime receipt',j.receipt_file):''}${j?.error?`<p class="notice-inline">${esc(j.error)}</p>`:''}<div class="rule"></div><h3>Independent CineTwin diagnostics</h3>${state.jobDiagnostic?`<div class="diagnostic-table">${Object.entries(state.jobDiagnostic.entities||{}).map(([k,v])=>item(`${k} · actor max`,v.actor_max_cm==null?'Not measured':`${Number(v.actor_max_cm).toFixed(2)} cm`)).join('')}</div>`:'<p class="muted">No run-specific world-position comparison is available yet.</p>'}</section><aside><section class="panel pad"><div class="section-head"><h2>Attach existing CineTwin capture</h2>${icon('layers')}</div><p class="body-copy">Already completed Stage 7 manually? Attach the <strong>Unreal target observation JSON</strong> you generated. This only reads and summarizes the file; it does not regenerate anything.</p><form id="observation-form"><label class="field"><span>Existing target observation JSON</span><input name="path" value="${esc(state.evidencePath)}" placeholder="D:\\...\\stage7_target_observation.json" required autocomplete="off" spellcheck="false"></label><button class="button secondary full" type="submit">Inspect existing observation</button></form>${r?`<div class="rule"></div>${statusLabel('TARGET CAPTURE COMPLETE','good')}${item('Samples',`${size(r.sample_count)} measured`)}${item('Mapped actors',`${size(r.mapped_actor_count)} / ${size(r.source_entity_count)}`)}${item('Skeletal rigs',size(r.skeletal_rig_count))}${item('Unmapped source entities',size(r.unmapped_count))}${item('Comparison','Target only · no parity claim')}<div class="rule"></div><h3>Measured target actor motion (cm)</h3>${Object.entries(r.actor_motion_cm||{}).map(([k,v])=>item(k.split('_').pop(),v+' cm')).join('')}<div class="rule"></div><h3>Target skeletal motion</h3>${Object.entries(r.skeletal_bone_motion_cm||{}).map(([k,v],i)=>item('Rig '+(i+1),v+' cm'+(v<0.1?' · STATIC OBSERVED':''))).join('')}`:''}</section><section class="callout">${icon('alert')}<p>Matching-time Unity observations are still required to quantify source-to-target errors. Skeletal pose equivalence, audio output, and rendered-frame fidelity remain unverified.</p></section></aside></div>`;
+    const ev=state.elementReview?.verification;
+    const perElement=ev?'<section class="panel pad"><div class="section-head"><h2>Element 3 · CineTwin readback</h2>'+
+      statusLabel('MEASURED DOMAINS ONLY','warning')+'</div>'+
+      item('Recorded target observations',size(ev.observation_count))+
+      item('Remeasurements',size(ev.remeasurement_attempts))+
+      item('Fidelity','Not established')+
+      (ev.per_occurrence||[]).filter(x=>x.result||x.discrepancy_flags?.length).slice(0,25).map(x=>
+        '<p class="hint">'+esc(x.occurrence_id)+' · '+esc(x.result||x.measurement_status)+' · '+esc((x.latest_discrepancy_flags||x.discrepancy_flags||[]).join(', '))+'</p>').join('')+
+      '<p class="hint">Only measured domains were compared. No repair or native retry was authorized.</p></section>':'';
+
+    return `<div class="page-heading"><div class="eyebrow">05 / RESULTS</div><h1>Transfer results</h1><p>Inspectable evidence from Unreal, not a simulated success score.</p></div>${stageRail()}${nineStageFlow()}${verificationPanel()}${nativeAcceptancePanel()}<div class="results-layout"><section class="panel pad"><div class="section-head"><h2>Unreal generation</h2>${statusLabel(j?.generation_status==='GENERATED_UNVERIFIED'?'GENERATED · UNVERIFIED':j?.status||'NOT RUN',j?.generation_status==='GENERATED_UNVERIFIED'?'good':'warning')}</div>${item('Sequence',j?.generated_sequence||state.candidate?.sequence_path||'Not generated in this session')}${item('Job status',j?.status||'Not started')}${j?.element6_execution?.available?
+          item('Element 6 · Execution attempt',j.element6_execution.status)+
+          item('Durable last stage',j.element6_execution.last_stage)+
+          item('Automatic native replay','NOT AUTHORIZED')+
+          '<p class="hint">One immutable native attempt only. A stopped or unobservable editor requires manual inspection; successful builder completion is not cinematic fidelity.</p>':
+          j?.element6_execution?.status?
+          item('Element 6 · Execution evidence',j.element6_execution.status):''}${item('Saved-level readback','Not verified by this UI')}${item('Fidelity','Not established')}${j?.receipt_file?item('Runtime receipt',j.receipt_file):''}${j?.error?`<p class="notice-inline">${esc(j.error)}</p>`:''}<div class="rule"></div><h3>Independent CineTwin diagnostics</h3>${state.jobDiagnostic?`<div class="diagnostic-table">${Object.entries(state.jobDiagnostic.entities||{}).map(([k,v])=>item(`${k} · actor max`,v.actor_max_cm==null?'Not measured':`${Number(v.actor_max_cm).toFixed(2)} cm`)).join('')}</div>`:'<p class="muted">No run-specific world-position comparison is available yet.</p>'}</section><aside>${perElement}<section class="panel pad"><div class="section-head"><h2>Attach existing CineTwin capture</h2>${icon('layers')}</div><p class="body-copy">Already completed Stage 7 manually? Attach the <strong>Unreal target observation JSON</strong> you generated. This only reads and summarizes the file; it does not regenerate anything.</p><form id="observation-form"><label class="field"><span>Existing target observation JSON</span><input name="path" value="${esc(state.evidencePath)}" placeholder="D:\\...\\stage7_target_observation.json" required autocomplete="off" spellcheck="false"></label><button class="button secondary full" type="submit">Inspect existing observation</button></form>${r?`<div class="rule"></div>${statusLabel('TARGET CAPTURE COMPLETE','good')}${item('Samples',`${size(r.sample_count)} measured`)}${item('Mapped actors',`${size(r.mapped_actor_count)} / ${size(r.source_entity_count)}`)}${item('Skeletal rigs',size(r.skeletal_rig_count))}${item('Unmapped source entities',size(r.unmapped_count))}${item('Comparison','Target only · no parity claim')}<div class="rule"></div><h3>Measured target actor motion (cm)</h3>${Object.entries(r.actor_motion_cm||{}).map(([k,v])=>item(k.split('_').pop(),v+' cm')).join('')}<div class="rule"></div><h3>Target skeletal motion</h3>${Object.entries(r.skeletal_bone_motion_cm||{}).map(([k,v],i)=>item('Rig '+(i+1),v+' cm'+(v<0.1?' · STATIC OBSERVED':''))).join('')}`:''}</section><section class="callout">${icon('alert')}<p>Matching-time Unity observations are still required to quantify source-to-target errors. Skeletal pose equivalence, audio output, and rendered-frame fidelity remain unverified.</p></section></aside></div>`;
   }
   function missing(title,msg,destination){return `<div class="page-heading"><h1>${esc(title)}</h1><p>${esc(msg)}</p></div><section class="panel pad empty-large">${icon('folder')}<h2>Complete the previous step</h2>${btn(`Go to ${destination} `+icon('arrow'),destination)}</section>`}
   function page(){return ({overview,connect,select,review,transfer,results}[state.page]||overview)()}
@@ -238,8 +413,22 @@
     const response=await fetch('/api/'+path,{method:payload===undefined?'GET':'POST',cache:'no-store',headers:payload===undefined?{}:{'Content-Type':'application/json','X-CSAI-Token':state.status?.token||''},body:payload===undefined?undefined:JSON.stringify(payload)});
     let body={};try{body=await response.json()}catch{throw new Error('The local backend returned an invalid response.')}if(!response.ok)throw new Error(body.error||`Local API error ${response.status}`);return body;
   }
-  async function refresh(quiet=false){try{let oldId=state.status?.active_job;const status=await api('status');state.status=status;
+  async function refresh(quiet=false){try{const status=await api('status');state.status=status;
+      const activeJobId=status.active_job||'';
+      if((state.job?.job_id||'')!==activeJobId){
+        // The advanced console can observe a job switch outside this tab.
+        // Never reuse a previous job's diagnostics, CineTwin or release state.
+        state.job=null;state.jobDiagnostic=null;state.verification=null;
+        state.releaseReadiness=null;state.report=null;state.evidencePath='';
+        state.finalOutcome=null;state.finalOutcomeJobId='';state.finalOutcomeError='';
+        state.flowDiagnostics=null;
+      }
       state.candidate=status.candidate||null;
+      const elementCandidate=state.candidate?.candidate_id||'';
+      if(state.elementReviewCandidateId!==elementCandidate){
+        state.elementReviewCandidateId=elementCandidate;state.elementReview=null;state.elementReviewError='';
+        if(elementCandidate){try{state.elementReview=await api('elements')}catch(err){state.elementReviewError=err.message}}
+      }
       if(status.connection && !state.selectedFolders.unity && !state.selectedFolders.unreal){
         state.sourceRightsConfirmed=Boolean(status.connection.source_rights_confirmed);
         state.selectedFolders.unity=status.connection.unity_project||'';
@@ -253,7 +442,10 @@
           state.selectedLevel=status.connection.level_path||'';
         }catch{} // Project folders may have moved; allow Browse Folder again.
       }
-      if(status.observation)state.report=status.observation;
+      // A target-only attachment is not job-bound acceptance evidence.
+      // Preserve it only while the same job remains active in this tab.
+      if(status.observation && activeJobId && state.job?.job_id===activeJobId)
+        state.report=status.observation;
       if(!state.capabilities){try{state.capabilities=await api('capabilities')}catch{}}
       const censusKey=status.connection?String(status.connection.csir||'')+'|'+String(status.connection.unity_project||''):'';
       if(status.connection && (!state.sourceSurfaces || state.censusIdentity!==censusKey)){
@@ -269,12 +461,23 @@
           }
         }catch{}
       }
+      if(state.finalOutcomeJobId &&
+         state.finalOutcomeJobId!==status.active_job){
+        state.finalOutcome=null;state.finalOutcomeError='';state.finalOutcomeJobId='';
+      }
       if(status.active_job){
         try{state.verification=await api('verification')}
         catch{state.verification=null}
       } else state.verification=null;
-      if(status.active_job && (!state.job || status.active_job!==oldId || state.job.job_id!==status.active_job))state.job=await api('jobs/'+status.active_job);
-      else if(status.active_job)state.job=await api('jobs/'+status.active_job);
+      if(activeJobId)state.job=await api('jobs/'+activeJobId);
+      else state.job=null;
+      if(['transfer','results'].includes(state.page)){
+        try{
+          const flow=await api('flow-diagnostics');
+          state.flowDiagnostics=(flow?.kind==='cutsceneai.studio.phase10_3.flow_diagnostics' &&
+            flow.native_replay_authorized===false)?flow:null;
+        }catch{state.flowDiagnostics=null;}
+      }
       if(state.job?.diagnostic_file&&!state.jobDiagnostic){try{state.jobDiagnostic=await api('diagnostic/'+state.job.job_id)}catch{}}
       state.loading=false;if(!quiet)state.info='Workspace refreshed.';render();
     }catch(err){state.loading=false;if(!quiet){state.error=err.message;render()}}}
@@ -295,8 +498,9 @@
     if(name==='continue'){navigate(state.job?'results':state.candidate?'transfer':c?'select':'connect');return}
     if(name==='clear'){state.error='';state.info='';render();return}
     if(name==='refresh'){await refresh();return}
-    if(['copy-command','copy-unreal-scan','copy-audit-command'].includes(name)){
-      const field=name==='copy-command'?'worker-command':name==='copy-unreal-scan'?'unreal-scan-command':'audit-command';
+    if(['copy-command','copy-unreal-scan','copy-audit-command','copy-native-acceptance-command'].includes(name)){
+      const field=name==='copy-command'?'worker-command':name==='copy-unreal-scan'?'unreal-scan-command':
+        name==='copy-native-acceptance-command'?'element-native-acceptance-command':'audit-command';
       try{await navigator.clipboard.writeText($('#'+field).textContent);notice('Unreal Python command copied.')}
       catch{notice('Copy the command manually from the box.',true)}return;
     }
@@ -328,6 +532,7 @@
       return;
     }
     if(name==='prepare'){
+      state.finalOutcome=null;state.finalOutcomeJobId='';state.finalOutcomeError='';
       state.busy=true;render();try{
         const preferences={
           enable_actor_visibility_fallback:state.visibilityFallback,
@@ -335,12 +540,108 @@
         };
         if(state.selectedCensus){preferences.source_feature_surface_path=state.selectedCensus;preferences.require_complete_source_features=state.strictSourceCensus}
         state.candidate=await api('prepare',preferences);
-        state.job=null;state.jobDiagnostic=null;state.verification=null;
-        notice('CED-aware source-authenticated plan prepared. Unreal assets remain unchanged.');
+        state.job=null;state.jobDiagnostic=null;state.verification=null;state.releaseReadiness=null;
+        state.elementReview=null;state.elementReviewError='';
+        state.elementReviewCandidateId=state.candidate.candidate_id;
+        try{state.elementReview=await api('elements/prepare',{})}
+        catch(err){state.elementReviewError='Element review pending: '+err.message}
+        notice('Source-authenticated candidate prepared. Per-element review '+(state.elementReview?.available?'available.':'needs investigation.'));
       }catch(err){notice('Plan blocked: '+err.message,true)}finally{state.busy=false;render()}return;
+    }
+    if(name==='check-native-acceptance'){
+      if(!state.job){notice('Native job evidence is required.',true);return}
+      state.busy=true;render();try{
+        state.releaseReadiness=await api('release-readiness');
+        notice('Independent native evidence checked. Incomplete domains remain unverified.');
+      }catch(err){notice('Acceptance evidence unavailable: '+err.message,true)}
+      finally{state.busy=false;render()}return;
+    }
+    if(name==='check-final-outcome'||name==='final-prev'||name==='final-next'){
+      if(!state.job){notice('A saved transfer is required for final source accounting.',true);return}
+      const old=state.finalOutcome;
+      const offset=name==='check-final-outcome'?0:
+        Math.max(0,(old?.page_offset||0)+
+          (name==='final-next'?(old?.page_size||50):-(old?.page_size||50)));
+      state.busy=true;render();try{
+        state.finalOutcome=await api('final-outcome?offset='+offset);
+        state.finalOutcomeJobId=state.job.job_id;
+        state.finalOutcomeError='';
+        notice('Every source occurrence accounted for. Unmeasured fidelity remains explicit.');
+      }catch(err){
+        state.finalOutcome=null;state.finalOutcomeError=err.message;
+        notice('Final evidence is incomplete: '+err.message,true);
+      }finally{state.busy=false;render()}return;
+    }
+    if(name==='prepare-elements'){
+      state.busy=true;render();try{
+        state.elementReview=await api('elements/prepare',{});
+        state.elementReviewCandidateId=state.candidate?.candidate_id||'';
+        state.elementReviewError='';
+        notice('Source-bound element inventory, CED alternatives and gaps recorded. No native execution.');
+      }catch(err){state.elementReviewError=err.message;notice(err.message,true)}
+      finally{state.busy=false;render()}return;
+    }
+    if(name==='ack-elements'){
+      if(!state.elementReview?.available){notice('Prepare the Element 3 review first.',true);return}
+      state.busy=true;render();try{
+        await api('elements/acknowledge',{workflow_sha256:state.elementReview.workflow_sha256,reviewed:true});
+        state.elementReview.review_acknowledged=true;
+        notice('Known source limitations acknowledged. Generation still requires explicit separate approval.');
+      }catch(err){notice(err.message,true)}
+      finally{state.busy=false;render()}return;
+    }
+    if(name==='elements-native-next'||name==='elements-native-prev'){
+      const r=state.elementReview;if(!r?.available)return;
+      const native=r.native_actions||{};
+      const actionOffset=Math.max(0,(native.action_offset||0)+
+        (name==='elements-native-next'?(native.action_page_size||60):-(native.action_page_size||60)));
+      state.busy=true;render();try{
+        state.elementReview=await api('elements?offset='+r.offset+'&action_offset='+actionOffset);
+      }catch(err){notice(err.message,true)}finally{state.busy=false;render()}return;
+    }
+    if(name==='elements-next'||name==='elements-prev'){
+      const r=state.elementReview;if(!r?.available)return;
+      const offset=Math.max(0,r.offset+(name==='elements-next'?r.page_size:-r.page_size));
+      state.busy=true;render();try{
+        state.elementReview=await api('elements?offset='+offset+
+          '&action_offset='+(r.native_actions?.action_offset||0))
+      }
+      catch(err){notice(err.message,true)}finally{state.busy=false;render()}return;
+    }
+    if(name==='approve-native-elements'){
+      const e=state.elementReview, native=e?.native_actions;
+      if(!e?.available||!native||!e.review_acknowledged||!e.target_capabilities_observed){
+        notice('Current source review and live Unreal capability evidence are required.',true);return;
+      }
+      const hasLegacy=native.unattributed_count>0;
+      const consent=confirm(
+        'Approve the EXACT '+native.action_count+' prepared, registered Unreal builder actions for this candidate?'+
+        (hasLegacy?'\n\n'+native.unattributed_count+' legacy actions lack explicit per-element source provenance. They remain unverified and require separate explicit acceptance.':'')+
+        '\n\nThis approval does not execute anything or prove native fidelity. The separate Generate action and engine preflight remain required.');
+      if(!consent)return;
+      if(hasLegacy&&!confirm(
+        'Confirm separately that you have reviewed the '+native.unattributed_count+
+        ' legacy actions whose individual source occurrence is not yet proven. Continue ONLY in a backed-up staging project.')){
+        return;
+      }
+      state.busy=true;render();try{
+        await api('elements/approve-native-actions',{
+          workflow_sha256:e.workflow_sha256,
+          action_inventory_sha256:native.action_inventory_sha256,
+          review_all:true,accept_legacy_unattributed:hasLegacy
+        });
+        state.elementReview=await api('elements');
+        notice('Exact registered native actions authorized for this candidate. Unreal preflight and separate Generate approval still required.');
+      }catch(err){notice(err.message,true)}finally{state.busy=false;render()}return;
     }
     if(name==='execute'){
       if(!state.candidate){notice('Prepare a verified transfer first.',true);return}
+      state.finalOutcome=null;state.finalOutcomeJobId='';state.finalOutcomeError='';
+      if(state.elementReviewCandidateId &&
+         (!state.elementReview?.review_acknowledged ||
+          !state.elementReview.target_capability_evidence_current ||
+          !state.elementReview.native_actions?.approved_for_existing_native_preflight)){
+        notice('Review and separately authorize the exact Element 3 action set before Generate.',true);return}
       const d=state.status?.destination_readiness;
       const autoReady=automaticSetupState(state.candidate,d).safe;
       const w=worker();
@@ -387,16 +688,26 @@
           csir:body.csir,level:body.level,
           source_rights_confirmed:!!form.querySelector('[name=source_rights_confirmed]').checked
         });
-        state.status.connection=result;state.candidate=null;state.job=null;state.sourceSurfaces=null;state.censusIdentity='';state.selectedCensus='';state.verification=null;
+        state.status.connection=result;state.candidate=null;state.job=null;state.releaseReadiness=null;state.sourceSurfaces=null;state.censusIdentity='';state.selectedCensus='';state.verification=null;
         state.jobDiagnostic=null;state.report=null;state.evidencePath='';
         navigate('select');notice('Projects connected. Cutscene and mapping detected automatically.');
       }else if(form.id==='connect-form'){
         body.skeletal_root_world_lock=!!form.querySelector('[name=skeletal_root_world_lock]').checked;
         body.source_rights_confirmed=!!form.querySelector('[name=source_rights_confirmed]').checked;
         const result=await api('connect',body);
-        state.status.connection=result;state.candidate=null;state.job=null;state.sourceSurfaces=null;state.censusIdentity='';state.selectedCensus='';state.verification=null;state.jobDiagnostic=null;state.report=null;state.evidencePath='';navigate('select');notice('Project files verified. Select your exported cutscene.');
+        state.status.connection=result;state.candidate=null;state.job=null;state.releaseReadiness=null;state.sourceSurfaces=null;state.censusIdentity='';state.selectedCensus='';state.verification=null;state.jobDiagnostic=null;state.report=null;state.evidencePath='';navigate('select');notice('Project files verified. Select your exported cutscene.');
       }else if(form.id==='observation-form'){
-        state.evidencePath=body.path;state.report=await api('observation',{path:body.path});notice('Real target observations verified and attached. Fidelity remains unverified.');
+        state.evidencePath=body.path;state.report=await api('observation',{path:body.path});
+        if(state.elementReview?.available){
+          try{
+            state.elementReview=await api('elements/verify-target',{path:body.path});
+            state.elementReviewError='';
+            notice('Per-element CineTwin comparison saved. Full cinematic fidelity remains unverified.');
+          }catch(err){
+            state.elementReviewError='Independent CineTwin comparison incomplete: '+err.message;
+            notice('Target-only observation attached; independent source/target comparison is incomplete: '+err.message,true);
+          }
+        }else notice('Real target observations verified and attached. Fidelity remains unverified.');
       }
     }catch(err){notice(err.message,true)}finally{state.busy=false;render()}
   });
