@@ -117,6 +117,16 @@ curve ownership fail closed unless original evaluated source capture is
 available. **This is conversion-layer hardening, not a ninth autonomous
 native post-generation repair.** True Unreal reopens and rendered parity
 remain unverified.
+Phase 10.2 now also includes a **ninth narrow guarded repair family**:
+a source-evaluated CineTwin-backed, independently reopened **one animated
+CineCamera XYZ position-key** restoration, with exact original Sequencer
+nine-channel key-grid comparison, one existing native key mutation,
+save/readback and rollback. The prior statement of **eight families** above
+describes the earlier static adapter generation, not this new ninth member.
+See [Phase 10.2 single animated camera key](PHASE10_2_ONE_ANIMATED_CAMERA_KEY_V01.md).
+This is **not** general animated-camera curve/rig/blend repair and does not
+establish actual Unreal editor execution, independent post-repair CineTwin,
+rendered motion or a release-ready cutscene.
 No arbitrary Unity script, proprietary shader, animation rig or camera
 control may be reconstructed simply because an LLM identifies a mismatch.
 

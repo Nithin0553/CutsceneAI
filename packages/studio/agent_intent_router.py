@@ -142,6 +142,7 @@ def route(
     two_shot_cut_repair_evidence: dict[str, Any] | None = None,
     camera_position_repair_evidence: dict[str, Any] | None = None,
     camera_yaw_repair_evidence: dict[str, Any] | None = None,
+    animated_camera_key_evidence: dict[str, Any] | None = None,
     character_facing_review: dict[str, Any] | None = None,
     static_character_yaw_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -304,7 +305,40 @@ def route(
                 "character_yaw_repair_sha256"
             ), str)
         )
-    if static_character_yaw_eligible:
+    animated_camera_key_eligible = False
+    if isinstance(animated_camera_key_evidence,dict):
+        from studio_camera_key_evidence import message_requests_key
+        animated_camera_key_eligible = bool(
+            message_requests_key(message)
+            and intent["mode"]=="user_feedback"
+            # Camera + animation + position are three *overlapping*
+            # semantic cues for this one exact native key operation.
+            # Generic multi-domain requests remain ambiguous elsewhere.
+            and scope=="unspecified"
+            and set(domains)=={"camera","animation","transform"}
+            and generation_complete and completed_repairs<repair_budget
+            and animated_camera_key_evidence.get("kind")
+                == "cutsceneai.studio.single_animated_camera_position_key_review"
+            and animated_camera_key_evidence.get("eligible") is True
+            and animated_camera_key_evidence.get("native_edit_authorized") is False
+            and type(animated_camera_key_evidence.get("source_key_frame")) is int
+            and animated_camera_key_evidence.get("native_channel_index") in (0,1,2)
+            and isinstance(animated_camera_key_evidence.get(
+                "animated_camera_key_repair_sha256"),str)
+        )
+    if animated_camera_key_eligible:
+        disposition="GUARDED_ONE_ANIMATED_CAMERA_POSITION_KEY_AVAILABLE"
+        reason=(
+            "An original authenticated evaluated Unity camera-world grid and "
+            "independent reopened CineTwin reveal exactly one bounded "
+            "camera position-axis frame discrepancy. Native Unreal must recheck "
+            "every other Sequencer transform key, original staged actor UObject "
+            "and current explicit feedback. Only one existing key value may "
+            "change with rollback; saved native key readback is not reopened "
+            "CineTwin or rendered fidelity."
+        )
+        allowed=["report_only","restore_single_animated_camera_position_key"]
+    elif static_character_yaw_eligible:
         disposition = "GUARDED_STATIC_CHARACTER_ACTOR_YAW_AVAILABLE"
         reason = (
             "One unmoving source character has an independently approved "

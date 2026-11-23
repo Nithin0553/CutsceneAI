@@ -11,6 +11,7 @@ This command never starts Unreal, applies a correction or retries native work.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -20,7 +21,23 @@ STUDIO = str(ROOT / "packages" / "studio")
 if STUDIO not in sys.path:
     sys.path.insert(0, STUDIO)
 
-import studio_element8_repair
+# This CLI has the SAME basename as its Studio library. When the tools/
+# directory is first on sys.path, `import studio_element8_repair` can load
+# THIS wrapper instead of the source-bound implementation (and then return
+# a partially initialized module). Resolve the library by its actual file
+# path; exported library symbols remain compatible for legacy consumers.
+library_path = ROOT / "packages" / "studio" / "studio_element8_repair.py"
+library_spec = importlib.util.spec_from_file_location(
+    "_cutsceneai_studio_element8_library", library_path,
+)
+if library_spec is None or library_spec.loader is None:
+    raise ImportError("Source-bound Studio Element 8 implementation is missing.")
+studio_element8_repair = importlib.util.module_from_spec(library_spec)
+library_spec.loader.exec_module(studio_element8_repair)
+if __name__ != "__main__":
+    for _name, _value in vars(studio_element8_repair).items():
+        if not _name.startswith("__") and _name not in {"main"}:
+            globals()[_name] = _value
 
 
 def main() -> int:
