@@ -24,6 +24,7 @@ TEST_MODULES = (
     "tests/studio/test_studio_unity_bridge.py",
     "tests/studio/test_studio_destination_preflight.py",
     "tests/studio/test_studio_generation_recovery.py",
+    "tests/studio/test_element6_guarded_execution.py",
     "tests/studio/test_element9_final_outcome.py",
     "tests/studio/test_phase10_3_companion_and_flow.py",
     "tests/studio/test_phase10_3_distribution.py",
