@@ -45,6 +45,7 @@ def _ready(tmp_path,monkeypatch):
     monkeypatch.setattr(freeze.bundle,"verify_exact_checkout",lambda _root,_archive: {
         "status":"SOURCE_BUNDLE_HASHES_VERIFIED_ENGINE_PENDING",
         "sha256":"e"*64,"file_count":600,"source_manifest_sha256":"c"*64,
+        "portable_source_manifest_sha256":"d"*64,
         "exact_checked_out_source_verified":True,
     })
     monkeypatch.setattr(freeze.rehearsal,"plan",lambda _:plan)
