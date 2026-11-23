@@ -238,6 +238,18 @@ function boot({editorReady = true, censusUnresolved = false, multiSources = fals
         generated_sequence:'/Game/Example/LS_Transferred'};done=true;}};
 }
 
+async function testSimpleOfflineUnrealProvidesActionableConnectionReason() {
+  const x=boot({editorReady:false,simple:true});
+  await x.pause();
+  await x.click('projects');
+  await x.click('browse-unity');
+  await x.click('browse-unreal');
+  assert.match(x.app.innerHTML,/Unreal bridge: Waiting for running editor/);
+  assert.match(x.app.innerHTML,/WAITING_FOR_MATCHED_UNREAL_PROJECT/);
+  assert.match(x.app.innerHTML,/Open Unreal Editor/);
+  assert.match(x.app.innerHTML,/Unity bridge: Waiting for running editor/);
+}
+
 async function testSimpleSourceOutcomeAutoloadAndPagination() {
   const x=boot({simple:true,restoredJob:'finished'});
   await x.pause();
@@ -812,6 +824,7 @@ async function testAdvancedJobChangeInvalidatesDiagnostics() {
 }
 
 (async()=>{
+  await testSimpleOfflineUnrealProvidesActionableConnectionReason();
   await testSimpleSourceOutcomeAutoloadAndPagination();
   await testSimpleSourceOutcomeMissingEvidenceAndExplicitRetry();
   await testSimpleOutcomeCannotLeakWhenRunChanges();
@@ -835,5 +848,5 @@ async function testAdvancedJobChangeInvalidatesDiagnostics() {
   await testStrictCensusBlockAndExplicitRecovery();
   await testManualCSIRAndCensus();
   await testMissingSelectedCensusFailsClosed();
-  console.log('Cinematic + advanced UI backend contract: 19 scenarios including job-switch cache invalidation, old-job isolation after blocked autopilot, fresh transfers and native errors passed.');
+  console.log('Cinematic + advanced UI backend contract: 24 scenarios including job-switch cache invalidation, old-job isolation after blocked autopilot, fresh transfers and native errors passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
