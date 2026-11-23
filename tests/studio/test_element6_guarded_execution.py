@@ -263,3 +263,35 @@ def test_native_worker_claim_is_before_any_editor_mutation_or_active_execution()
     sync = (ROOT / "integrations" / "unreal" /
             "studio_planner_sync.py").read_text(encoding="utf-8")
     assert '("studio_element6_execution", "packages/studio")' in sync
+
+
+@pytest.mark.parametrize("interrupted_after", range(len(guard.STAGES)))
+def test_phase10_4_interrupt_each_guarded_native_checkpoint_never_replays(
+        tmp_path, interrupted_after):
+    """Simulate a worker dying after every durable native stage, including claim.
+
+    A new editor must inspect the original incomplete attempt, never requeue
+    an import, overwrite a checkpoint or mark an unobserved scene as verified.
+    """
+    work, folder, job = _queued(tmp_path)
+    editor_pid = 2000 + interrupted_after
+    claim = guard.claim(work, job, editor_pid=editor_pid)
+    for stage in guard.STAGES[1:interrupted_after+1]:
+        guard.step(work, job, claim, stage)
+    before = sorted(p.name for p in folder.glob("element6-native-*.json"))
+    report = guard.inspect(work, job)
+    assert report["last_stage"] == guard.STAGES[interrupted_after]
+    assert report["native_replay_allowed"] is False
+    assert report["full_cutscene_fidelity_verified"] is False
+    assert report["native_builder_completed"] is False
+    assert report["status"] == (
+        "ATTEMPT_IN_PROGRESS_OR_INTERRUPTED_INSPECT_BEFORE_ANY_RECOVERY"
+    )
+    with pytest.raises(guard.GuardedExecutionError, match="another Unreal Editor"):
+        guard.load_claim(work, job, editor_pid=editor_pid+1)
+    with pytest.raises(guard.GuardedExecutionError, match="already claimed"):
+        guard.claim(work, job, editor_pid=editor_pid+1)
+    if interrupted_after:
+        with pytest.raises(guard.GuardedExecutionError, match="repeated"):
+            guard.step(work, job, claim, guard.STAGES[interrupted_after])
+    assert sorted(p.name for p in folder.glob("element6-native-*.json")) == before
