@@ -432,3 +432,79 @@ def test_native_camera_binding_must_be_original_staged_uobject_not_label_only():
         native._live_owner(api,NS(),staged,{
             "source_camera_name":"CAM","target_actor_label":"CameraUE",
         },action)
+
+
+
+def test_after_one_key_edit_checks_nine_channels_not_only_xyz():
+    action,section,proof_row=_native()
+    key,old_value=native._read_channels(API,section,action,repair=proof_row)
+    assert old_value==405
+    key.set_value(400)
+    native._all_camera_keys_match_source(API,section,action)
+    section.channels[8].default=2
+    with pytest.raises(native.AnimatedCameraNativeError,match="scale"):
+        native._all_camera_keys_match_source(API,section,action)
+    section.channels[8].default=1
+    section.channels[5].keys[3].value=10
+    with pytest.raises(native.AnimatedCameraNativeError,match="immutable"):
+        native._all_camera_keys_match_source(API,section,action)
+    section.channels[5].keys[3].value=0
+    section.channels[2].keys[1].get_interpolation_mode=lambda:"RCIM_CUBIC"
+    with pytest.raises(native.AnimatedCameraNativeError,match="interpolation"):
+        native._all_camera_keys_match_source(API,section,action)
+
+
+def test_native_section_requires_valid_optional_absolute_blend_and_active_source():
+    action,section,_=_native()
+    path="/Game/Test.PersistentLevel.CineCameraActor_5"
+    actor=NS(
+        get_path_name=lambda:path,
+        get_actor_label=lambda:"CameraUE",
+        get_class=lambda:NS(get_name=lambda:"CineCameraActor"),
+        get_attach_parent_actor=lambda:None,
+        get_cine_camera_component=lambda:NS(
+            get_path_name=lambda:path+".CameraComponent",
+        ),
+    )
+    track=NS(
+        get_class=lambda:NS(get_name=lambda:"MovieScene3DTransformTrack"),
+        get_display_name=lambda:"CutSceneAI Evaluated Camera World Motion",
+        get_sections=lambda:[section],
+    )
+    binding=NS(get_tracks=lambda:[track])
+    root=NS(get_class=lambda:NS(get_name=lambda:"MovieSceneCameraCutTrack"))
+    extensions=NS(
+        get_tracks=lambda seq:[root],
+        get_bindings=lambda seq:[binding],
+        locate_bound_objects=lambda seq,b,w:[actor],
+    )
+    api=NS(
+        MovieSceneSequenceExtensions=extensions,
+        MovieSceneSectionExtensions=NS(
+            get_start_frame=lambda sec:0,
+            get_end_frame=lambda sec:5,
+        ),
+        MovieSceneBlendType=NS(ABSOLUTE="ABSOLUTE"),
+        UnrealEditorSubsystem="world",
+        EditorActorSubsystem="actor",
+        get_editor_subsystem=lambda sub:(
+            NS(get_editor_world=lambda:NS()) if sub=="world"
+            else NS(get_all_level_actors=lambda:[actor])
+        ),
+    )
+    staged=[{
+        "name":"CAM","kind":"entity.camera","label":"CameraUE",
+        "native_actor_path":path,
+    }]
+    proof_actor={"source_camera_name":"CAM","target_actor_label":"CameraUE"}
+    assert native._live_owner(api,NS(),staged,proof_actor,action) is section
+    section.get_blend_type=lambda:NS(is_valid=False,blend_type="ABSOLUTE")
+    with pytest.raises(native.AnimatedCameraNativeError,match="absolute blend"):
+        native._live_owner(api,NS(),staged,proof_actor,action)
+    section.get_blend_type=lambda:NS(is_valid=True,blend_type="ADDITIVE")
+    with pytest.raises(native.AnimatedCameraNativeError,match="absolute blend"):
+        native._live_owner(api,NS(),staged,proof_actor,action)
+    section.get_blend_type=lambda:NS(is_valid=True,blend_type="ABSOLUTE")
+    section.is_active=lambda:False
+    with pytest.raises(native.AnimatedCameraNativeError,match="inactive"):
+        native._live_owner(api,NS(),staged,proof_actor,action)
