@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import copy
-import math
 import sys
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -124,7 +123,6 @@ def test_only_explicit_single_camera_xyz_key_language_is_eligible(message,expect
 
 
 def test_intent_cannot_authorize_without_exact_proof_and_no_budget():
-    source,target,cam,label,action,plan,csir=_scenario()
     shot=_review()
     eligible={
         "kind":proof.KIND,"eligible":True,"native_edit_authorized":False,
@@ -206,7 +204,7 @@ API=NS(MovieSceneTimeUnit=NS(DISPLAY_RATE="DISPLAY_RATE"),
 
 
 def _native():
-    src,dst,cam,label,action,plan,csir=_scenario()
+    _,_,_,_,action,_,_=_scenario()
     section=FakeSection(action)
     report=_review()
     return action,section,report
@@ -242,9 +240,8 @@ def test_native_preflight_refuses_modified_or_competing_keys(tamper):
 
 
 def test_native_single_key_transaction_confirms_save_and_does_not_retry(monkeypatch,tmp_path):
-    import unreal_compat
     _,section,review=_native()
-    source,target,cam,label,action,plan,csir=_scenario()
+    _,_,_,_,action,_,_=_scenario()
     setup=tmp_path/"setup.json"
     setup.write_text('{"actors_created": []}',encoding="utf-8")
     (tmp_path/"transfer-plan.json").write_text(__import__("json").dumps({
@@ -308,7 +305,7 @@ def test_native_single_key_transaction_confirms_save_and_does_not_retry(monkeypa
 def test_mutate_then_throw_native_key_setter_rolls_back(monkeypatch,tmp_path):
     # A low-level setter can mutate an Unreal object and then raise. Test the
     # rollback boundary from a separate callback, not only normal return.
-    _,section,review=_native()
+    _,section,_=_native()
     key=section.channels[1].keys[2]
     key.fail_after=True
     key.set_value=lambda val: setattr(key,"value",float(val)) or (
@@ -355,7 +352,7 @@ def test_mutate_then_throw_native_key_setter_rolls_back(monkeypatch,tmp_path):
 
 
 def test_native_camera_binding_must_be_original_staged_uobject_not_label_only():
-    action,section,report=_native()
+    action,section,_=_native()
     path="/Game/Test.PersistentLevel.CineCameraActor_5"
     class FakeActor:
         def __init__(self):
