@@ -117,3 +117,43 @@ def test_distribution_archive_must_match_exact_checkout_for_freeze(tmp_path):
     )
     with pytest.raises(bundle.BundleError,match="exact checked-out"):
         bundle.verify_exact_checkout(repo,archive)
+
+
+def test_portable_source_fingerprint_ignores_only_text_crlf_variants(tmp_path):
+    repo=_repo(tmp_path)
+    source=repo/"packages/studio/module_0.py"
+    source.write_bytes(b"value = 0\n# source\n")
+    first=tmp_path/"linux.zip"
+    bundle.build(repo,first)
+    original=bundle.verify(first)
+    source.write_bytes(b"value = 0\r\n# source\r\n")
+    second=tmp_path/"windows.zip"
+    bundle.build(repo,second)
+    converted=bundle.verify(second)
+    assert original["source_manifest_sha256"]!=converted["source_manifest_sha256"]
+    assert original["portable_source_manifest_sha256"]==converted[
+        "portable_source_manifest_sha256"
+    ]
+    source.write_bytes(b"value = 1\r\n# source\r\n")
+    third=tmp_path/"altered.zip"
+    bundle.build(repo,third)
+    changed=bundle.verify(third)
+    assert original["portable_source_manifest_sha256"]!=changed[
+        "portable_source_manifest_sha256"
+    ]
+
+
+def test_portable_source_fingerprint_never_normalizes_binary_asset_bytes(tmp_path):
+    repo=_repo(tmp_path)
+    image=repo/"apps/studio-web"/"test.png"
+    image.write_bytes(b"fake-png\r\nbyte-stream")
+    first=tmp_path/"binary-a.zip"
+    bundle.build(repo,first)
+    before=bundle.verify(first)
+    image.write_bytes(b"fake-png\nbyte-stream")
+    second=tmp_path/"binary-b.zip"
+    bundle.build(repo,second)
+    after=bundle.verify(second)
+    assert before["portable_source_manifest_sha256"]!=after[
+        "portable_source_manifest_sha256"
+    ]
