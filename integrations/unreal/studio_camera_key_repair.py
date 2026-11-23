@@ -52,104 +52,112 @@ def _frame(api: Any, key: Any) -> int:
         ) from exc
 
 
-def _read_channels(api: Any, section: Any, prepared: dict,
-                   *,repair: dict) -> tuple[Any,float]:
-    """Compare ALL existing native keys to immutable source action; one exception."""
+def _read_many_channels(api: Any, section: Any, prepared: dict,
+                        *, repairs: list[dict]) -> list[tuple[Any, float]]:
+    """Validate the whole native grid before allowing one or TWO known XYZ keys.
+
+    The exception set is recomputed from immutable measured source evidence,
+    never supplied as executable numeric instructions by a model.
+    """
     from unreal_compat import get_section_channels
-    channels=list(get_section_channels(section))
-    if len(channels)!=9:
+
+    channels = list(get_section_channels(section))
+    if len(channels) != 9:
         raise AnimatedCameraNativeError("Nine native camera transform channels required.")
-    keys=prepared["keys"]
-    if (prepared.get("source_behavior_strategy")!=grid.CAPTURE_STRATEGY
-            or len(keys)>evidence._MAX_FRAMES
-            or len(keys)<4
-            or any(k.get("frame")!=i for i,k in enumerate(keys))):
-        raise AnimatedCameraNativeError(
-            "Original CineTwin evaluated camera frame grid invalid."
-        )
-    active_frame=repair["source_key_frame"]
-    axis=repair["native_channel_index"]
-    if (type(active_frame) is not int or type(axis) is not int
-            or not 0<active_frame<len(keys)-1 or axis not in (0,1,2)):
-        raise AnimatedCameraNativeError("Camera key does not belong to one XYZ axis.")
-    rich=getattr(api,"RichCurveInterpMode",None)
-    linear=getattr(rich,"RCIM_LINEAR",None)
+    keys = prepared["keys"]
+    if (prepared.get("source_behavior_strategy") != grid.CAPTURE_STRATEGY
+            or len(keys) > evidence._MAX_FRAMES or len(keys) < 4
+            or any(k.get("frame") != i for i, k in enumerate(keys))):
+        raise AnimatedCameraNativeError("Original CineTwin evaluated camera frame grid invalid.")
+    if (not isinstance(repairs, list) or len(repairs) not in (1, 2)
+            or any(not isinstance(row, dict) for row in repairs)):
+        raise AnimatedCameraNativeError("Only one or exactly two measured camera keys are supported.")
+    exceptions = {}
+    for row in repairs:
+        frame = row.get("source_key_frame")
+        axis = row.get("native_channel_index")
+        if (type(frame) is not int or type(axis) is not int
+                or not 0 < frame < len(keys) - 1 or axis not in (0, 1, 2)
+                or (frame, axis) in exceptions):
+            raise AnimatedCameraNativeError("Native camera exception is not one unique interior XYZ key.")
+        exceptions[(frame, axis)] = row
+    if len(repairs) == 2:
+        first, second = repairs
+        if (first["native_channel_index"] != second["native_channel_index"]
+                or abs(first["source_key_frame"]-second["source_key_frame"]) < 2):
+            raise AnimatedCameraNativeError(
+                "Exactly two nonadjacent position keys on one axis are required."
+            )
+    rich = getattr(api, "RichCurveInterpMode", None)
+    linear = getattr(rich, "RCIM_LINEAR", None)
     if linear is None:
         raise AnimatedCameraNativeError(
             "Native source camera linear key interpolation is not introspectable."
         )
-    changed_key=None
-    original_value=None
-    for channel_index,channel in enumerate(channels):
-        key_list=list(channel.get_keys())
-        if channel_index>=6:
+    changed = {}
+    for channel_index, channel in enumerate(channels):
+        key_list = list(channel.get_keys())
+        if channel_index >= 6:
             if key_list:
-                raise AnimatedCameraNativeError(
-                    "Animated camera has explicit authored scale keys."
-                )
-            default_getter=getattr(channel,"get_default",None)
-            has_default=getattr(channel,"has_default",None)
-            if (not callable(default_getter)
-                    or not callable(has_default)
+                raise AnimatedCameraNativeError("Animated camera has explicit authored scale keys.")
+            default_getter = getattr(channel, "get_default", None)
+            has_default = getattr(channel, "has_default", None)
+            if (not callable(default_getter) or not callable(has_default)
                     or has_default() is not True):
-                raise AnimatedCameraNativeError(
-                    "Native source camera scale default cannot be inspected."
-                )
-            default=float(default_getter())
-            if not math.isfinite(default) or abs(default-1.)>1e-6:
+                raise AnimatedCameraNativeError("Native source camera scale default cannot be inspected.")
+            default = float(default_getter())
+            if not math.isfinite(default) or abs(default - 1.) > 1e-6:
                 raise AnimatedCameraNativeError(
                     "Animated camera native scale differs from original unit scale."
                 )
             continue
-        if len(key_list)!=len(keys):
-            raise AnimatedCameraNativeError(
-                "Native camera channel has extra/missing key times."
-            )
-        frames=[_frame(api,key) for key in key_list]
-        if frames!=list(range(len(keys))):
+        if len(key_list) != len(keys):
+            raise AnimatedCameraNativeError("Native camera channel has extra/missing key times.")
+        if [_frame(api, key) for key in key_list] != list(range(len(keys))):
             raise AnimatedCameraNativeError(
                 "Native camera channel has subframe, duplicated or reordered source keys."
             )
-        for index,key in enumerate(key_list):
-            # A different cubic/constant tangent or extrapolation mode can
-            # change camera motion BETWEEN the matching source frame samples.
-            # Source-baked CineTwin transform keys must remain LINEAR.
-            mode=getattr(key,"get_interpolation_mode",None)
-            if not callable(mode) or mode()!=linear:
+        for index, key in enumerate(key_list):
+            interpolation = getattr(key, "get_interpolation_mode", None)
+            if not callable(interpolation) or interpolation() != linear:
                 raise AnimatedCameraNativeError(
                     "Native camera key interpolation differs from source linear grid."
                 )
-            expected=(
-                list(keys[index]["location_cm"])
-                + list(keys[index]["rotation_rpy_degrees"])
+            expected = (
+                *keys[index]["location_cm"], *keys[index]["rotation_rpy_degrees"]
             )[channel_index]
-            actual=float(key.get_value())
+            actual = float(key.get_value())
             if not math.isfinite(actual) or not math.isfinite(float(expected)):
                 raise AnimatedCameraNativeError("Native camera key value nonfinite.")
-            # For rotations, the precise native Euler trajectory from the
-            # ORIGINAL prepared plan is authoritative. Equivalent but different
-            # unwrapped angles can interpolate differently: fail closed.
-            if channel_index==axis and index==active_frame:
-                if (abs(actual-repair["native_key_value_before_cm"])>0.15
-                        or abs(float(expected)-repair["source_key_value_cm"])>0.1
-                        or not evidence.MIN_CM<=abs(actual-float(expected))<=evidence.MAX_CM
-                        or not callable(getattr(key,"set_value",None))):
+            measured = exceptions.get((index, channel_index))
+            if measured is not None:
+                if (type(measured.get("native_key_value_before_cm")) not in (int,float)
+                        or type(measured.get("source_key_value_cm")) not in (int,float)
+                        or not math.isfinite(measured["native_key_value_before_cm"])
+                        or not math.isfinite(measured["source_key_value_cm"])
+                        or abs(actual - measured["native_key_value_before_cm"]) > 0.15
+                        or abs(float(expected) - measured["source_key_value_cm"]) > 0.1
+                        or not evidence.MIN_CM <= abs(actual-float(expected)) <= evidence.MAX_CM
+                        or not callable(getattr(key, "set_value", None))):
                     raise AnimatedCameraNativeError(
                         "Live native key no longer matches independently sampled discrepancy."
                     )
-                changed_key=key
-                original_value=actual
-            elif abs(actual-float(expected))>(
-                    0.05 if channel_index<3 else 0.02):
+                changed[(index,channel_index)] = (key, actual)
+            elif abs(actual - float(expected)) > (
+                    0.05 if channel_index < 3 else 0.02):
                 raise AnimatedCameraNativeError(
                     "Another native transform channel/key differs from source."
                 )
-    if changed_key is None or original_value is None:
-        raise AnimatedCameraNativeError(
-            "Original source-owned camera key not found."
-        )
-    return changed_key,original_value
+    if len(changed) != len(repairs):
+        raise AnimatedCameraNativeError("Original source-owned camera keys not found.")
+    return [changed[(row["source_key_frame"],row["native_channel_index"])]
+            for row in repairs]
 
+
+def _read_channels(api: Any, section: Any, prepared: dict,
+                   *, repair: dict) -> tuple[Any, float]:
+    """Backward-compatible single-key native proof; never expands its scope."""
+    return _read_many_channels(api, section, prepared, repairs=[repair])[0]
 
 def _all_camera_keys_match_source(api: Any, section: Any, action: dict) -> None:
     """Independently reread all nine native transform channels after mutation."""
@@ -483,4 +491,124 @@ def attempt(api: Any,workspace: Path,job: dict,request: dict) -> dict:
             except (AttributeError,TypeError,ValueError,RuntimeError) as exc:
                 raise AnimatedCameraNativeError(
                     "Animated camera key rollback unverified; inspect editor manually."
+                ) from exc
+
+
+def attempt_two(api: Any, workspace: Path, job: dict, request: dict) -> dict:
+    """Restore exactly two measured nonadjacent position keys; no curve rewrite."""
+    if request.get("strategy") != evidence.STRATEGY_TWO:
+        raise AnimatedCameraNativeError("Wrong two-key camera strategy.")
+    candidate = Path(job["candidate_dir"]).resolve()
+    fid = str(request.get("feedback_id") or "")
+    if not re.fullmatch("[a-f0-9]{32}",fid):
+        raise AnimatedCameraNativeError("Current explicit two-camera-key consent required.")
+    active = _load(candidate / ("user-feedback-active-" + job["job_id"] + ".json"))
+    feedback = _load(candidate / ("user-feedback-" + fid + ".json"))
+    if (active.get("feedback_id") != fid
+            or active.get("job_id") != job["job_id"]
+            or active.get("candidate_id") != job["candidate_id"]
+            or feedback.get("kind") != "cutsceneai.studio.user_feedback"
+            or feedback.get("feedback_id") != fid
+            or feedback.get("job_id") != job["job_id"]
+            or feedback.get("candidate_id") != job["candidate_id"]
+            or not evidence.message_requests_two_keys(feedback.get("message"))):
+        raise AnimatedCameraNativeError("Stale/ambiguous two-camera-key consent.")
+    proof = evidence.build_two(workspace, job)
+    if (request.get("animated_camera_two_key_repair_sha256")
+            != proof["animated_camera_two_key_repair_sha256"]
+            or request.get("source_camera_occurrence_id")
+            != proof["source_camera_occurrence_id"]
+            or proof.get("kind") != evidence.KIND_TWO
+            or proof.get("source_key_count") != 2):
+        raise AnimatedCameraNativeError("Original two-key camera proof is stale.")
+    setup_path = Path(str(job.get("setup_receipt_file") or ""))
+    if (setup_path.is_symlink() or not setup_path.is_file()
+            or setup_path.resolve().parent != candidate):
+        raise AnimatedCameraNativeError("Source-created camera staging receipt unavailable.")
+    staged = _load(setup_path).get("actors_created")
+    if not isinstance(staged, list):
+        raise AnimatedCameraNativeError("Original camera staging inventory absent.")
+    compiled, _ = evidence.readback._safe_json(candidate / "transfer-plan.json")
+    actions = [a for a in compiled.get("actions", [])
+               if isinstance(a, dict) and a.get("entity_name")
+               == proof["source_camera_name"] and a.get("kind") == "transform"]
+    if (len(actions) != 1 or actions[0].get("actor_label")
+            != proof["target_actor_label"]
+            or position._hash(actions[0]) != proof["source_camera_action_sha256"]):
+        raise AnimatedCameraNativeError("Original compiled camera animation changed.")
+    action = actions[0]
+    grid.validate_action(action, duration_frames=compiled["duration_frames"])
+    sequence = api.load_asset(job["sequence_path"])
+    if sequence is None:
+        raise AnimatedCameraNativeError("Exact source-generated Level Sequence missing.")
+    section = _live_owner(api, sequence, staged, proof, action)
+    from unreal_compat import UnrealCompatibilityError
+    try:
+        before = _read_many_channels(
+            api, section, action, repairs=proof["source_position_key_repairs"],
+        )
+    except (UnrealCompatibilityError, AttributeError, TypeError, RuntimeError) as exc:
+        raise AnimatedCameraNativeError(
+            "Exact native nine-channel two-key inventory unavailable."
+        ) from exc
+    changed = []
+    saved = False
+    try:
+        for (key, old), row in zip(before, proof["source_position_key_repairs"]):
+            expected = float(action["keys"][row["source_key_frame"]][
+                "location_cm"][row["native_channel_index"]])
+            changed.append((key, old))
+            # Append before the setter: a native setter can mutate and then throw.
+            key.set_value(expected)
+        _all_camera_keys_match_source(api, section, action)
+        asset_lib = getattr(api, "EditorAssetLibrary", None)
+        save = getattr(asset_lib, "save_loaded_asset", None)
+        if not callable(save) or save(sequence) is not True:
+            raise AnimatedCameraNativeError(
+                "Native two-key camera Level Sequence save not confirmed."
+            )
+        saved = True
+        residual = max(
+            abs(float(key.get_value()) -
+                float(action["keys"][row["source_key_frame"]][
+                    "location_cm"][row["native_channel_index"]]))
+            for (key, _), row in zip(before, proof["source_position_key_repairs"])
+        )
+        return {
+            "status": "TWO_ANIMATED_CAMERA_POSITION_KEYS_SAVED_REOPENED_CINETWIN_PENDING",
+            "animated_camera_two_key_repair_sha256":
+                proof["animated_camera_two_key_repair_sha256"],
+            "source_camera_occurrence_id": proof["source_camera_occurrence_id"],
+            "source_key_frames": [
+                row["source_key_frame"] for row in proof["source_position_key_repairs"]
+            ],
+            "native_channel_index":
+                proof["source_position_key_repairs"][0]["native_channel_index"],
+            "changes": 2,
+            "native_key_max_difference_after_cm": residual,
+            "native_complete_transform_key_grid_readback_verified": True,
+            "sequence_save_confirmed": True,
+            "persistence_after_editor_restart_verified": False,
+            "cinetwin_reopened_after_repair_verified": False,
+            "rendered_camera_motion_verified": False,
+            "full_cutscene_fidelity_verified": False,
+        }
+    finally:
+        if changed and not saved:
+            try:
+                for key, old in reversed(changed):
+                    key.set_value(old)
+                for key, old in changed:
+                    if abs(float(key.get_value()) - old) > 0.02:
+                        raise AnimatedCameraNativeError("Two-key rollback value mismatch.")
+                # Re-check that the complete original grid is again in its
+                # preflight state. This cannot prove a failed save did not
+                # partially persist; it must never claim engine acceptance.
+                _read_many_channels(
+                    api, section, action, repairs=proof["source_position_key_repairs"],
+                )
+            except (AnimatedCameraNativeError, UnrealCompatibilityError,
+                    AttributeError, TypeError, ValueError, RuntimeError) as exc:
+                raise AnimatedCameraNativeError(
+                    "Two-key rollback unverified; inspect editor/asset manually."
                 ) from exc

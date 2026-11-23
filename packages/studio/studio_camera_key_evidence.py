@@ -35,6 +35,8 @@ import studio_element9_outcome as outcome
 
 KIND = "cutsceneai.studio.single_animated_camera_position_key_review"
 STRATEGY = "restore_single_animated_camera_position_key"
+KIND_TWO = "cutsceneai.studio.two_animated_camera_position_keys_review"
+STRATEGY_TWO = "restore_two_animated_camera_position_keys"
 MIN_CM = 3.0
 MAX_CM = 30.0
 OTHER_POSITION_CM = 0.15
@@ -46,6 +48,8 @@ _CAM = re.compile(r"\b(?:camera|cinecamera)\b", re.I)
 _KEY = re.compile(r"\b(?:keyframe|key[ -]?frame|keyed[ -]?frame)\b", re.I)
 _POS = re.compile(r"\b(?:position|translation|location)\b", re.I)
 _MOTION = re.compile(r"\b(?:animated|animation|moving|motion)\b", re.I)
+_TWO = re.compile(r"\b(?:two|both|pair)\b", re.I)
+_KEYS = re.compile(r"\b(?:keyframes?|key[ -]?frames?|keyed[ -]?frames?)\b", re.I)
 _FORBID = re.compile(
     r"\b(?:all|every|multiple|many|several|whole|entire|curve|curves|"
     r"rotation|rotations|yaw|pitch|roll|facing|pan|tilt|scale|zoom|lens|fov|"
@@ -66,6 +70,19 @@ def message_requests_key(message: Any) -> bool:
         and all(pattern.search(message)
                 for pattern in (_FIX, _CAM, _KEY, _POS, _MOTION))
         and not _FORBID.search(message)
+        and not _TWO.search(message)
+    )
+
+
+def message_requests_two_keys(message: Any) -> bool:
+    """Only explicit consent to repair TWO camera position keyframes."""
+    return bool(
+        isinstance(message, str) and 8 <= len(message) <= 1200
+        and all(ord(c) >= 32 or c in "\n\t" for c in message)
+        and all(pattern.search(message)
+                for pattern in (_FIX, _CAM, _KEYS, _POS, _MOTION, _TWO))
+        and not _FORBID.search(message)
+        and not re.search(r"\b(?:one|single|three|four|five)\b", message, re.I)
     )
 
 
@@ -112,7 +129,7 @@ def _vec(transform: dict, field: str, count: int) -> tuple[float, ...]:
 
 def _analyze_grid(source: dict, target: dict, entity: dict,
                   label: str, action: dict, plan: dict,
-                  csir: dict) -> dict:
+                  csir: dict, *, two: bool = False) -> dict:
     """Pure comparison of ORIGINAL source, target and compiled source keys."""
     if (action.get("source_behavior_strategy") != contract.CAPTURE_STRATEGY
             or action.get("baked_source_curves") is not True):
@@ -178,6 +195,35 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
         raise AnimatedCameraKeyError(
             "Camera is not moving; static-camera adapters own that scenario."
         )
+    if two:
+        if len(differing) != 2:
+            raise AnimatedCameraKeyError(
+                "Camera needs exactly two isolated measured position key corrections."
+            )
+        if (differing[0][1] != differing[1][1]
+                or abs(differing[0][0] - differing[1][0]) < 2):
+            raise AnimatedCameraKeyError(
+                "Two camera key repairs require the same axis and nonadjacent frames."
+            )
+        repairs = []
+        for frame, axis, drift, observed, expected in differing:
+            if (frame in (0, plan["duration_frames"])
+                    or not MIN_CM <= abs(drift) <= MAX_CM):
+                raise AnimatedCameraKeyError(
+                    "Two camera errors must be interior, measured and bounded."
+                )
+            repairs.append({
+                "source_key_frame": frame,
+                "native_channel_index": axis,
+                "native_key_value_before_cm": round(observed, 6),
+                "source_key_value_cm": round(expected, 6),
+                "native_source_position_error_cm": round(abs(drift), 6),
+            })
+        return {
+            "source_position_key_repairs": repairs,
+            "source_key_count": 2,
+            "sample_count": len(action["keys"]),
+        }
     if len(differing) != 1:
         raise AnimatedCameraKeyError(
             "Camera needs exactly one isolated positional source/native key correction."
@@ -197,7 +243,7 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
     }
 
 
-def build(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
+def build(workspace: Path, job: dict[str,Any], *, two: bool = False) -> dict[str,Any]:
     if not isinstance(job,dict):
         raise AnimatedCameraKeyError("Native camera job missing.")
     try:
@@ -271,7 +317,7 @@ def build(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
         raise AnimatedCameraKeyError(
             "Original compiled camera action is not evaluated CineTwin motion."
         )
-    grid=_analyze_grid(source,target,camera,label,actions[0],compiled,csir)
+    grid=_analyze_grid(source,target,camera,label,actions[0],compiled,csir,two=two)
     workflow=repair._snapshot(candidate)
     if workflow is None:
         raise AnimatedCameraKeyError("Source occurrence plan missing.")
@@ -290,7 +336,7 @@ def build(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
             "One exact camera source occurrence was not separately measured discrepant."
         )
     result={
-        "kind":KIND,"eligible":True,
+        "kind":KIND_TWO if two else KIND,"eligible":True,
         "source_camera_name":name,"source_entity_id":ident,
         "source_camera_occurrence_id":matches[0],
         "target_actor_label":label,
@@ -303,5 +349,14 @@ def build(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
         "rendered_camera_motion_verified":False,
         "full_cutscene_fidelity_verified":False,
     }
-    result["animated_camera_key_repair_sha256"]=position._hash(result)
+    digest_name = (
+        "animated_camera_two_key_repair_sha256" if two
+        else "animated_camera_key_repair_sha256"
+    )
+    result[digest_name] = position._hash(result)
     return result
+
+
+def build_two(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
+    """Independently verify the same immutable original chain for exactly two keys."""
+    return build(workspace, job, two=True)

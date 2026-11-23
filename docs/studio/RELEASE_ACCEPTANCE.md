@@ -127,6 +127,15 @@ See [Phase 10.2 single animated camera key](PHASE10_2_ONE_ANIMATED_CAMERA_KEY_V0
 This is **not** general animated-camera curve/rig/blend repair and does not
 establish actual Unreal editor execution, independent post-repair CineTwin,
 rendered motion or a release-ready cutscene.
+A **tenth** bounded family now permits exactly two nonadjacent, interior
+source-measured animated CineCamera XYZ **position** keys on one native axis,
+with separate two-key user consent, a recomputed original CineTwin/CSIR
+evidence hash, nine-channel native preflight and all-key readback, and
+compensating two-key rollback attempts after write/readback/save failure.
+See [Phase 10.2 exactly two animated camera keys](PHASE10_2_TWO_ANIMATED_CAMERA_KEYS_V01.md).
+This does **not** imply generic camera curve or rotation repair, nor does it
+establish real-editor save/reopen, post-repair CineTwin or rendered fidelity.
+The earlier family counts are historical descriptions of previous increments.
 No arbitrary Unity script, proprietary shader, animation rig or camera
 control may be reconstructed simply because an LLM identifies a mismatch.
 
