@@ -147,6 +147,23 @@ edits, moving camera rigs, shot blending, or claim post-repair distinct
 Unreal Editor reopen, CineTwin or rendered parity.
 See [single animated camera yaw key contract](PHASE10_2_ONE_ANIMATED_CAMERA_YAW_KEY_V01.md).
 Earlier counts on this page describe historical earlier increments.
+The Phase 10.2 consolidated seven-workstream software branch also adds
+a **twelfth** guarded repair family: counted **2–8** nonadjacent,
+independently source-measured animated CineCamera yaw-only key restorations,
+with source quaternion-to-Unreal-Euler proof, current exact-count feedback,
+full native nine-channel preflight, save/readback and multi-key compensating
+rollback. It does NOT support generic key tangents, pitch/roll,
+quaternion-spline interpolation, moving rig/parent blends, or rendered
+continuity without separately measured editor acceptance.
+
+The seven original Phase 10.2 work areas are inventoried with exact
+source features, installed action candidates and explicit remaining gates
+in [the consolidated seven-workstream contract](PHASE10_2_SEVEN_WORKSTREAM_CONSOLIDATED_V01.md).
+The `phase10_2_consolidated_audit` can be exclusively persisted and later
+recomputed through `tools/phase10_2_audit.py`; the release gate may mark
+that source/action **accounting** PASS while all engine, renderer, native
+post-reopen and held-out acceptance remain independently INCOMPLETE.
+No seventh workstream may be silently marked complete from CI alone.
 No arbitrary Unity script, proprietary shader, animation rig or camera
 control may be reconstructed simply because an LLM identifies a mismatch.
 
