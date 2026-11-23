@@ -214,6 +214,36 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
             capture['sha256'], persistence._sha(observed_path),
         )
         _write(facing_path, facing)
+        # Independently inspect ALL mapped native character bindings/parents
+        # after real editor reopening. This is a structural check; it cannot
+        # substitute for independent bone, attachment-motion or render parity.
+        multi_character_path = None
+        source_csir = persistence._json(Path(job['csir']))
+        mapped_characters = [
+            row for row in source_csir.get('entities', [])
+            if isinstance(row, dict) and row.get('ced_type') == 'entity.character'
+        ]
+        if len(mapped_characters) >= 2:
+            import studio_multi_character_native
+            multi_character_path = folder / 'native-multi-character-coordination.json'
+            try:
+                report = studio_multi_character_native.inspect(
+                    unreal,
+                    unreal.load_asset(job['sequence_path']),
+                    source_csir,
+                    persistence._json(Path(job['mapping'])),
+                    persistence._json(candidate / 'transfer-plan.json'),
+                )
+            except (ValueError, AttributeError, TypeError, RuntimeError) as exc:
+                report = {
+                    'kind': 'cutsceneai.studio.native_multi_character_coordination',
+                    'status': 'NATIVE_CHARACTER_COORDINATION_INCOMPLETE',
+                    'reason': type(exc).__name__,
+                    'native_bone_pose_and_contact_verified': False,
+                    'reopened_independent_editor_verified': False,
+                    'rendered_interaction_fidelity_verified': False,
+                }
+            _write(multi_character_path, report)
         character_proof = None
         if job.get('character_native_readback_status') == 'PASS':
             import animation_conversion_policy as policy
@@ -310,6 +340,10 @@ def start(workspace=None, *, job_id=None, baseline_target=None,
             'mesh_forward_approval_sha256': forward_approval_sha,
             'mesh_forward_statuses': forward_results,
             'native_facing_ownership_sha256': persistence._sha(facing_path),
+            'native_multi_character_coordination_sha256': (
+                persistence._sha(multi_character_path)
+                if multi_character_path is not None else None
+            ),
             'element3_workflow_sha256': (
                 element_permission['workflow_sha256']
                 if element_permission is not None else None
