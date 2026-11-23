@@ -49,13 +49,13 @@ def _files(repo:Path)->list[tuple[str,bytes]]:
         if origin.is_symlink() or not origin.is_dir():
             raise BundleError("Required Studio source folder missing or redirected: "+dirname)
         for path in origin.rglob("*"):
+            if path.is_symlink():
+                raise BundleError("Studio source tree includes redirected file.")
             if (any(part.startswith(".") or part in {
                 "__pycache__","node_modules",".venv","build","dist",
             } for part in path.relative_to(repo).parts)
                 or path.is_dir()):
                 continue
-            if path.is_symlink():
-                raise BundleError("Studio source tree includes redirected file.")
             if path.suffix.lower() not in SUFFIXES:
                 continue
             relative=path.relative_to(repo).as_posix()
