@@ -95,6 +95,8 @@ def assess(*,commit:str,preflight:Path,startup:Path,bundle:Path,
     _require(bool(HEX64.fullmatch(archive_sha))
              and checks.get("source_bundle_sha256")==archive_sha,
              "Source ZIP bytes differ from the exact-commit freeze audit.")
+    _require(smoke.get("source_distribution_sha256")==archive_sha,
+             "Windows live Studio started from different source ZIP bytes.")
     return {
         "kind":"cutsceneai.studio.phase10_5.cross_platform_software_package_acceptance",
         "schema_version":"1",
