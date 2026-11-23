@@ -619,12 +619,18 @@
         continue;
       }
       if(old.nodeType!==1)continue;
+      // Expanded diagnostic/details panels should stay expanded when the
+      // two-second status poll reconciles updated text in the same job.
+      const keepOpen=old.tagName==='DETAILS' && old.hasAttribute('open') &&
+        ['stage-diagnostics','companion-setup','outcome-details'].some(
+          name=>old.classList.contains(name));
       for(const attr of Array.from(old.attributes)){
         if(!next.hasAttribute(attr.name))old.removeAttribute(attr.name);
       }
       for(const attr of Array.from(next.attributes)){
         if(old.getAttribute(attr.name)!==attr.value)old.setAttribute(attr.name,attr.value);
       }
+      if(keepOpen)old.setAttribute('open','');
       if(old.tagName==='DETAILS' && old.hasAttribute('class') &&
         old.classList.contains('research')){
         // The browser's native details open state is authoritative.
