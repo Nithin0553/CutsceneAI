@@ -448,6 +448,11 @@ def test_phase10_2_bone_parent_ancestry_rejects_missing_self_or_cycle():
     sample["rigs"][0]["bones"].append({
         "bone_id":"wrist","native_bone_name":"Wrist","parent_bone_id":"hips",
     })
+    for frame in sample["samples"]:
+        frame["skeletal_poses"][0]["bones"].append({
+            "bone_id":"wrist","local_transform":_transform(),
+            "world_transform":_transform(),
+        })
     adjusted=copy.deepcopy(approval)
     adjusted["bone_map"]["wrist"]="hand_r"
     adjusted["reference"]["wrist"]=copy.deepcopy(adjusted["reference"]["hips"])
