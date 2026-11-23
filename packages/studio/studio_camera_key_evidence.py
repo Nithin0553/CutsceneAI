@@ -39,6 +39,9 @@ KIND_TWO = "cutsceneai.studio.two_animated_camera_position_keys_review"
 STRATEGY_TWO = "restore_two_animated_camera_position_keys"
 KIND_YAW = "cutsceneai.studio.single_animated_camera_yaw_key_review"
 STRATEGY_YAW = "restore_single_animated_camera_yaw_key"
+KIND_MANY_YAW = "cutsceneai.studio.multi_animated_camera_yaw_keys_review"
+STRATEGY_MANY_YAW = "restore_bounded_animated_camera_yaw_keys"
+MAX_MULTI_YAW_KEYS = 8
 MIN_YAW_DEGREES = 3.
 MAX_YAW_DEGREES = 30.
 MAX_NATIVE_PITCH_DEGREES = 65.
@@ -114,6 +117,37 @@ def message_requests_yaw_key(message: Any) -> bool:
     )
 
 
+_MANY_YAW_NUMBERS = {
+    "two":2,"three":3,"four":4,"five":5,
+    "six":6,"seven":7,"eight":8,
+}
+_MANY_YAW_FORBID = re.compile(
+    r"\b(?:all|every|multiple|many|several|whole|entire|curve|curves|"
+    r"position|translation|location|pitch|roll|fov|scale|zoom|lens|"
+    r"cut|cuts|switch|shot|shots|blend|blending|rig|parent|skeletal|"
+    r"character|dolly|physics|event|delete|insert|timewarp|"
+    r"do not|don't|dont|never|avoid|without|not)\b",re.I,
+)
+
+
+def requested_many_yaw_count(message: Any) -> int | None:
+    """User must independently name exactly two–eight animated yaw keys."""
+    if (not isinstance(message,str) or not 8 <= len(message) <= 1200
+            or any(ord(c) < 32 and c not in "\n\t" for c in message)
+            or not all(pattern.search(message) for pattern in (
+                _FIX,_CAM,_KEYS,_MOTION,
+            ))
+            or not re.search(r"\byaw\b",message,re.I)
+            or _MANY_YAW_FORBID.search(message)
+            or not re.search(r"\bkeyframes\b",message,re.I)):
+        return None
+    counts=[value for word,value in _MANY_YAW_NUMBERS.items()
+            if re.search(r"\b"+word+r"\b",message,re.I)]
+    if len(counts)!=1 or re.search(r"\b(?:one|single|nine|ten|more)\b",message,re.I):
+        return None
+    return counts[0]
+
+
 def _unique_sample(capture: dict, entity_id: str, label: str | None,
                    moment: float) -> dict:
     matches = [
@@ -157,7 +191,8 @@ def _vec(transform: dict, field: str, count: int) -> tuple[float, ...]:
 
 def _analyze_grid(source: dict, target: dict, entity: dict,
                   label: str, action: dict, plan: dict,
-                  csir: dict, *, two: bool = False, yaw_key: bool = False) -> dict:
+                  csir: dict, *, two: bool = False, yaw_key: bool = False,
+                   yaw_many: bool = False) -> dict:
     """Pure comparison of ORIGINAL source, target and compiled source keys."""
     if (action.get("source_behavior_strategy") != contract.CAPTURE_STRATEGY
             or action.get("baked_source_curves") is not True):
@@ -271,6 +306,35 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
             raise AnimatedCameraKeyError(
                 "Source camera yaw is not animated; static adapter owns it."
             )
+        if yaw_many:
+            if not 2 <= len(yaw_differences) <= MAX_MULTI_YAW_KEYS:
+                raise AnimatedCameraKeyError(
+                    "Expected exactly two-eight independently measured yaw-key discrepancies."
+                )
+            frames = [row[0] for row in yaw_differences]
+            if any(b-a<2 for a,b in zip(frames,frames[1:])):
+                raise AnimatedCameraKeyError(
+                    "Bounded animated camera yaw-key repairs require nonadjacent frames."
+                )
+            repairs=[]
+            for frame,delta,observed,expected in yaw_differences:
+                if (frame in (0,plan["duration_frames"])
+                        or not MIN_YAW_DEGREES<=abs(delta)<=MAX_YAW_DEGREES):
+                    raise AnimatedCameraKeyError(
+                        "All animated yaw key repairs must be bounded interior frames."
+                    )
+                repairs.append({
+                    "source_key_frame":frame,
+                    "native_channel_index":5,
+                    "native_key_value_before_degrees":round(observed,6),
+                    "source_key_value_degrees":round(expected,6),
+                    "native_source_yaw_error_degrees":round(abs(delta),6),
+                })
+            return {
+                "source_yaw_key_repairs":repairs,
+                "source_key_count":len(repairs),
+                "sample_count":len(action["keys"]),
+            }
         if len(yaw_differences) != 1:
             raise AnimatedCameraKeyError(
                 "Exactly one independently measured camera yaw key discrepancy required."
@@ -342,7 +406,7 @@ def _analyze_grid(source: dict, target: dict, entity: dict,
 
 
 def build(workspace: Path, job: dict[str,Any], *, two: bool = False,
-          yaw_key: bool = False) -> dict[str,Any]:
+          yaw_key: bool = False, yaw_many: bool = False) -> dict[str,Any]:
     if not isinstance(job,dict):
         raise AnimatedCameraKeyError("Native camera job missing.")
     try:
@@ -417,7 +481,7 @@ def build(workspace: Path, job: dict[str,Any], *, two: bool = False,
             "Original compiled camera action is not evaluated CineTwin motion."
         )
     grid=_analyze_grid(source,target,camera,label,actions[0],compiled,csir,
-                       two=two,yaw_key=yaw_key)
+                       two=two,yaw_key=yaw_key or yaw_many,yaw_many=yaw_many)
     workflow=repair._snapshot(candidate)
     if workflow is None:
         raise AnimatedCameraKeyError("Source occurrence plan missing.")
@@ -431,13 +495,14 @@ def build(workspace: Path, job: dict[str,Any], *, two: bool = False,
     if (len(matches)!=1 or len(rows)!=1
             or rows[0].get("latest_status")!="DIRECT_MEASURED_DIFFERENCE"
             or rows[0].get("latest_discrepancy_flags")
-            !=(["WORLD_ROTATION_OUTSIDE_TOLERANCE"] if yaw_key else
+            !=(["WORLD_ROTATION_OUTSIDE_TOLERANCE"] if yaw_key or yaw_many else
                  ["WORLD_POSITION_OUTSIDE_TOLERANCE"])):
         raise AnimatedCameraKeyError(
             "One exact camera source occurrence was not separately measured discrepant."
         )
     result={
-        "kind":KIND_YAW if yaw_key else KIND_TWO if two else KIND,"eligible":True,
+        "kind":KIND_MANY_YAW if yaw_many else KIND_YAW if yaw_key else
+               KIND_TWO if two else KIND,"eligible":True,
         "source_camera_name":name,"source_entity_id":ident,
         "source_camera_occurrence_id":matches[0],
         "target_actor_label":label,
@@ -451,7 +516,8 @@ def build(workspace: Path, job: dict[str,Any], *, two: bool = False,
         "full_cutscene_fidelity_verified":False,
     }
     digest_name = (
-        "animated_camera_yaw_key_repair_sha256" if yaw_key
+        "animated_camera_many_yaw_repair_sha256" if yaw_many
+        else "animated_camera_yaw_key_repair_sha256" if yaw_key
         else "animated_camera_two_key_repair_sha256" if two
         else "animated_camera_key_repair_sha256"
     )
@@ -467,3 +533,8 @@ def build_two(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
 def build_yaw_key(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
     """Independently prove one isolated, captured animated CineCamera YAW key."""
     return build(workspace, job, yaw_key=True)
+
+
+def build_many_yaw_keys(workspace: Path, job: dict[str,Any]) -> dict[str,Any]:
+    """Prove a bounded exact set of 2–8 independent camera yaw-only outliers."""
+    return build(workspace,job,yaw_many=True)
