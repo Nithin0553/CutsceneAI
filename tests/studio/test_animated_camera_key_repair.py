@@ -342,3 +342,81 @@ def test_mutate_then_throw_native_key_setter_rolls_back(monkeypatch,tmp_path):
                           EditorAssetLibrary=NS(save_loaded_asset=lambda s:True)),
                        tmp_path,job,req)
     assert key.get_value()==405
+
+
+
+def test_native_camera_binding_must_be_original_staged_uobject_not_label_only():
+    action,section,report=_native()
+    path="/Game/Test.PersistentLevel.CineCameraActor_5"
+    class FakeActor:
+        def __init__(self):
+            self.label="CameraUE"
+            self.path=path
+            self.parent=None
+        def get_path_name(self):
+            return self.path
+        def get_actor_label(self):
+            return self.label
+        def get_class(self):
+            return NS(get_name=lambda:"CineCameraActor")
+        def get_attach_parent_actor(self):
+            return self.parent
+        def get_cine_camera_component(self):
+            return NS()
+    class FakeTrack:
+        def __init__(self,name,section=None):
+            self.name=name
+            self.section=section
+        def get_class(self):
+            return NS(get_name=lambda:self.name)
+        def get_display_name(self):
+            return "CutSceneAI Evaluated Camera World Motion"
+        def get_sections(self):
+            return [self.section] if self.section is not None else []
+    actor=FakeActor()
+    track=FakeTrack("MovieScene3DTransformTrack",section)
+    root=FakeTrack("MovieSceneCameraCutTrack")
+    binding=NS(get_tracks=lambda:[track],owner=actor)
+    native_world=NS(get_editor_world=lambda:NS())
+    actor_scene=NS(get_all_level_actors=lambda:[actor])
+    roots=[root]
+    ext=NS(
+        get_bindings=lambda seq:[binding],
+        get_tracks=lambda seq:list(roots),
+        locate_bound_objects=lambda seq,b,w:[b.owner],
+    )
+    api=NS(MovieSceneSequenceExtensions=ext,
+           UnrealEditorSubsystem="world",
+           EditorActorSubsystem="actor",
+           get_editor_subsystem=lambda cls:native_world
+               if cls=="world" else actor_scene)
+    staged=[{
+        "name":"CAM","kind":"entity.camera","label":"CameraUE",
+        "native_actor_path":path,
+    }]
+    assert native._live_owner(api,NS(),staged,{
+        "source_camera_name":"CAM","target_actor_label":"CameraUE",
+    },action) is section
+    actor.path="/Game/Wrong.PersistentLevel.CineCameraActor_5"
+    with pytest.raises(native.AnimatedCameraNativeError,match="not bound"):
+        native._live_owner(api,NS(),staged,{
+            "source_camera_name":"CAM","target_actor_label":"CameraUE",
+        },action)
+    actor.path=path
+    binding.get_tracks=lambda:[track,FakeTrack("MovieSceneFloatTrack")]
+    with pytest.raises(native.AnimatedCameraNativeError,match="additional"):
+        native._live_owner(api,NS(),staged,{
+            "source_camera_name":"CAM","target_actor_label":"CameraUE",
+        },action)
+    binding.get_tracks=lambda:[track]
+    roots.append(FakeTrack("MovieSceneCinematicShotTrack"))
+    with pytest.raises(native.AnimatedCameraNativeError,match="master"):
+        native._live_owner(api,NS(),staged,{
+            "source_camera_name":"CAM","target_actor_label":"CameraUE",
+        },action)
+    roots.pop()
+    actor.parent=FakeActor()
+    with pytest.raises(native.AnimatedCameraNativeError,match="parent rig"):
+        native._live_owner(api,NS(),staged,{
+            "source_camera_name":"CAM","target_actor_label":"CameraUE",
+        },action)
