@@ -58,6 +58,7 @@ def run(repo: Path, *, python: str = sys.executable,
         except (OSError, ValueError) as exc:
             raise SmokeError("Packaged Studio ZIP does not match extracted source.") from exc
         source_sha = verified["sha256"]
+        source_manifest_sha = verified["source_manifest_sha256"]
     if not 2 <= timeout_seconds <= 120:
         raise SmokeError("Smoke timeout must be between 2 and 120 seconds.")
     with tempfile.TemporaryDirectory(prefix="cutsceneai-startup-") as temp:
@@ -148,6 +149,7 @@ def run(repo: Path, *, python: str = sys.executable,
                         "no_native_job_created": "PASS",
                     },
                     "source_distribution_sha256": source_sha,
+                    "source_manifest_sha256": source_manifest_sha,
                     "native_editor_started": False,
                     "unity_editor_started": False,
                     "model_invoked": False,
