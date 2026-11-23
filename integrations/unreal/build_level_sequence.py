@@ -512,7 +512,10 @@ def _add_transform(sequence: unreal.LevelSequence, binding: Any, action: dict[st
         raise UnrealBuildError(
             "Unexpected Unreal transform channel layout; expected at least 6 channels."
         )
-    if action.get("source_behavior_strategy") == "cinetwin_verified_actor_world_trajectory_v1":
+    if action.get("source_behavior_strategy") in {
+        "cinetwin_verified_actor_world_trajectory_v1",
+        "approved_measured_skeletal_root_6dof_actor_world_v1",
+    }:
         import studio_character_motion
         section.set_is_active(True)
         section.set_blend_type(unreal.MovieSceneBlendType.ABSOLUTE)
