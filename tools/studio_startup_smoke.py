@@ -52,6 +52,7 @@ def run(repo: Path, *, python: str = sys.executable,
     root = root.resolve()
     source_sha = None
     source_manifest_sha = None
+    portable_source_sha = None
     if source_bundle is not None:
         try:
             verified = distribution.verify_exact_checkout(root, Path(source_bundle))
@@ -151,6 +152,7 @@ def run(repo: Path, *, python: str = sys.executable,
                     },
                     "source_distribution_sha256": source_sha,
                     "source_manifest_sha256": source_manifest_sha,
+                    "portable_source_manifest_sha256": portable_source_sha,
                     "native_editor_started": False,
                     "unity_editor_started": False,
                     "model_invoked": False,
