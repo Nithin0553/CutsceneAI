@@ -145,6 +145,7 @@ def route(
     animated_camera_key_evidence: dict[str, Any] | None = None,
     animated_camera_two_key_evidence: dict[str, Any] | None = None,
     animated_camera_yaw_key_evidence: dict[str, Any] | None = None,
+    animated_camera_many_yaw_evidence: dict[str, Any] | None = None,
     character_facing_review: dict[str, Any] | None = None,
     static_character_yaw_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -380,7 +381,46 @@ def route(
             and re.fullmatch("[a-f0-9]{64}", animated_camera_yaw_key_evidence[
                 "animated_camera_yaw_key_repair_sha256"]) is not None
         )
-    if animated_camera_yaw_key_eligible:
+    many_yaw_eligible = False
+    if isinstance(animated_camera_many_yaw_evidence,dict):
+        from studio_camera_key_evidence import requested_many_yaw_count
+        count = requested_many_yaw_count(message)
+        rows = animated_camera_many_yaw_evidence.get("source_yaw_key_repairs")
+        many_yaw_eligible = bool(
+            count is not None
+            and intent["mode"]=="user_feedback"
+            and scope=="unspecified"
+            and set(domains) in (
+                {"camera","animation"},{"camera","animation","transform"},
+            )
+            and generation_complete and completed_repairs<repair_budget
+            and animated_camera_many_yaw_evidence.get("kind")
+                == "cutsceneai.studio.multi_animated_camera_yaw_keys_review"
+            and animated_camera_many_yaw_evidence.get("eligible") is True
+            and animated_camera_many_yaw_evidence.get("native_edit_authorized") is False
+            and animated_camera_many_yaw_evidence.get("source_key_count")==count
+            and isinstance(rows,list) and len(rows)==count
+            and all(isinstance(row,dict)
+                    and type(row.get("source_key_frame")) is int
+                    and row.get("native_channel_index")==5 for row in rows)
+            and all(b["source_key_frame"]-a["source_key_frame"]>=2
+                    for a,b in zip(rows,rows[1:]))
+            and isinstance(animated_camera_many_yaw_evidence.get(
+                "animated_camera_many_yaw_repair_sha256"),str)
+            and re.fullmatch("[a-f0-9]{64}", animated_camera_many_yaw_evidence[
+                "animated_camera_many_yaw_repair_sha256"]) is not None
+        )
+    if many_yaw_eligible:
+        disposition = "GUARDED_BOUNDED_ANIMATED_CAMERA_YAW_KEYS_AVAILABLE"
+        reason = (
+            "Only an explicit count of 2–8 source-measured, nonadjacent camera "
+            "yaw-only keys can be restored. Exact original capture/plan, "
+            "nine-channel Sequencer readback, user consent and native "
+            "rollback are mandatory. No arbitrary pitch/roll/rig/shot "
+            "curves or rendered fidelity claim."
+        )
+        allowed = ["report_only","restore_bounded_animated_camera_yaw_keys"]
+    elif animated_camera_yaw_key_eligible:
         disposition = "GUARDED_ONE_ANIMATED_CAMERA_YAW_KEY_AVAILABLE"
         reason = (
             "One source-measured interior animated CineCamera yaw key differs "
