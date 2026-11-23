@@ -434,3 +434,35 @@ def test_skeletal_pose_cli_binds_actual_source_capture_bytes_and_refuses_reuse(t
         entry.compile_files(
             source_file, capture_file, approval_file, tmp_path / "another-bake.json",
         )
+
+
+def test_phase10_2_bone_parent_ancestry_rejects_missing_self_or_cycle():
+    csir,capture,approval=_fixture()
+    for parent in ("hips","missing"):
+        sample=copy.deepcopy(capture)
+        sample["rigs"][0]["bones"][0]["parent_bone_id"]=parent
+        with pytest.raises(bake.PoseBakeError,match="parent"):
+            _compile(csir,sample,approval)
+    sample=copy.deepcopy(capture)
+    sample["rigs"][0]["bones"][0]["parent_bone_id"]="wrist"
+    sample["rigs"][0]["bones"].append({
+        "bone_id":"wrist","native_bone_name":"Wrist","parent_bone_id":"hips",
+    })
+    adjusted=copy.deepcopy(approval)
+    adjusted["bone_map"]["wrist"]="hand_r"
+    adjusted["reference"]["wrist"]=copy.deepcopy(adjusted["reference"]["hips"])
+    with pytest.raises(bake.PoseBakeError,match="cyclic"):
+        _compile(csir,sample,adjusted)
+
+
+def test_phase10_2_baked_quaternion_hemisphere_is_continuous():
+    csir,capture,approval=_fixture()
+    # Same physical source rotation encoded with the opposite quaternion sign.
+    q=capture["samples"][1]["skeletal_poses"][0]["bones"][0][
+        "local_transform"]["rotation_xyzw"]
+    capture["samples"][1]["skeletal_poses"][0]["bones"][0][
+        "local_transform"]["rotation_xyzw"]=[-x for x in q]
+    keys=_compile(csir,capture,approval)["bone_tracks"][0]["rotation_keys_xyzw"]
+    assert len(keys)==3
+    assert all(sum(a*b for a,b in zip(first,second)) >= 0
+               for first,second in zip(keys,keys[1:]))
