@@ -1235,17 +1235,17 @@ def build_graph(workspace: Path, job: dict[str, Any],
                 ),
             }
         if state.get("chosen_strategy") == "restore_bounded_animated_camera_yaw_keys":
-            candidate=state.get("animated_camera_many_yaw_candidate") or {}
-            rows=candidate.get("source_yaw_key_repairs") or []
+            curve_candidate=state.get("animated_camera_many_yaw_candidate") or {}
+            rows=curve_candidate.get("source_yaw_key_repairs") or []
             error=result.get("native_yaw_max_difference_after_degrees")
             valid=bool(
                 result.get("status")
                     =="BOUNDED_ANIMATED_CAMERA_YAW_KEYS_SAVED_REOPENED_CINETWIN_PENDING"
                 and result.get("animated_camera_many_yaw_repair_sha256")
-                    ==candidate.get("animated_camera_many_yaw_repair_sha256")
+                    ==curve_candidate.get("animated_camera_many_yaw_repair_sha256")
                 and result.get("source_camera_occurrence_id")
-                    ==candidate.get("source_camera_occurrence_id")
-                and len(rows)==candidate.get("source_key_count")
+                    ==curve_candidate.get("source_camera_occurrence_id")
+                and len(rows)==curve_candidate.get("source_key_count")
                 and result.get("source_key_frames")
                     ==[row.get("source_key_frame") for row in rows]
                 and result.get("native_channel_index")==5
