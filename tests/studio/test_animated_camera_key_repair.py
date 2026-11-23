@@ -307,7 +307,7 @@ def test_native_single_key_transaction_confirms_save_and_does_not_retry(monkeypa
 def test_mutate_then_throw_native_key_setter_rolls_back(monkeypatch,tmp_path):
     # A low-level setter can mutate an Unreal object and then raise. Test the
     # rollback boundary from a separate callback, not only normal return.
-    _,section,_=_native()
+    _,section,review=_native()
     key=section.channels[1].keys[2]
     key.fail_after=True
     key.set_value=lambda val: setattr(key,"value",float(val)) or (
