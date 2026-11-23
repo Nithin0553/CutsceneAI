@@ -95,15 +95,18 @@ def assess(*,commit:str,preflight:Path,startup:Path,bundle:Path,
     _require(bool(HEX64.fullmatch(archive_sha))
              and checks.get("source_bundle_sha256")==archive_sha,
              "Source ZIP bytes differ from the exact-commit freeze audit.")
-    # ZIP compression may vary between Windows and Ubuntu. Both archives
-    # must independently verify and contain the same exact canonical source
-    # file manifest; the Ubuntu archive remains bound to the checked-out SHA.
+    # Windows checkout may apply CRLF to source text and ZIP compression can
+    # differ. Compare every file's LF-normalized content SHA while preserving
+    # separately checked raw Windows/Linux archive+manifest hashes.
     windows_zip_sha=smoke.get("source_distribution_sha256")
     manifest_sha=checks.get("source_manifest_sha256")
-    _require(bool(HEX64.fullmatch(str(windows_zip_sha or "")))
-             and bool(HEX64.fullmatch(str(manifest_sha or "")))
-             and smoke.get("source_manifest_sha256")==manifest_sha,
-             "Windows packaged Studio source manifest differs from the reviewed checkout.")
+    windows_manifest_sha=smoke.get("source_manifest_sha256")
+    portable_sha=checks.get("portable_source_manifest_sha256")
+    _require(all(HEX64.fullmatch(str(value or "")) for value in (
+        windows_zip_sha, manifest_sha, windows_manifest_sha, portable_sha)),
+        "Either Windows or Ubuntu lacks raw source ZIP/manifest provenance.")
+    _require(smoke.get("portable_source_manifest_sha256")==portable_sha,
+             "Windows packaged Studio normalized source content differs from the reviewed checkout.")
     return {
         "kind":"cutsceneai.studio.phase10_5.cross_platform_software_package_acceptance",
         "schema_version":"1",
@@ -112,6 +115,8 @@ def assess(*,commit:str,preflight:Path,startup:Path,bundle:Path,
         "verified": {
             "source_distribution_sha256":archive_sha,
             "source_manifest_sha256":manifest_sha,
+            "windows_manifest_sha256":windows_manifest_sha,
+            "portable_source_manifest_sha256":portable_sha,
             "windows_archive_sha256":windows_zip_sha,
             "phase10_4_source_only_gates":19,
             "windows_clean_source_zip_installed":True,
