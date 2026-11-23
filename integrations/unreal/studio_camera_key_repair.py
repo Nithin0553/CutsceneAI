@@ -72,6 +72,12 @@ def _read_channels(api: Any, section: Any, prepared: dict,
     if (type(active_frame) is not int or type(axis) is not int
             or not 0<active_frame<len(keys)-1 or axis not in (0,1,2)):
         raise AnimatedCameraNativeError("Camera key does not belong to one XYZ axis.")
+    rich=getattr(api,"RichCurveInterpMode",None)
+    linear=getattr(rich,"RCIM_LINEAR",None)
+    if linear is None:
+        raise AnimatedCameraNativeError(
+            "Native source camera linear key interpolation is not introspectable."
+        )
     changed_key=None
     original_value=None
     for channel_index,channel in enumerate(channels):
@@ -102,6 +108,14 @@ def _read_channels(api: Any, section: Any, prepared: dict,
                 "Native camera channel has subframe, duplicated or reordered source keys."
             )
         for index,key in enumerate(key_list):
+            # A different cubic/constant tangent or extrapolation mode can
+            # change camera motion BETWEEN the matching source frame samples.
+            # Source-baked CineTwin transform keys must remain LINEAR.
+            mode=getattr(key,"get_interpolation_mode",None)
+            if not callable(mode) or mode()!=linear:
+                raise AnimatedCameraNativeError(
+                    "Native camera key interpolation differs from source linear grid."
+                )
             expected=(
                 list(keys[index]["location_cm"])
                 + list(keys[index]["rotation_rpy_degrees"])
@@ -217,6 +231,33 @@ def _live_owner(api: Any, sequence: Any, setup: list, proof: dict,
         actor_track=binding_tracks[0]
     if actor is None or actor_track is None:
         raise AnimatedCameraNativeError("Source-staged camera not bound to Sequencer.")
+    # No second native owner may animate the camera component's transform.
+    # Lens tracks are separate camera optics; anything else is a competitor.
+    get_component=getattr(actor,"get_cine_camera_component",None)
+    if not callable(get_component) or get_component() is None:
+        raise AnimatedCameraNativeError("Native CineCamera component is missing.")
+    component=get_component()
+    component_path=str(component.get_path_name())
+    for binding in bindings:
+        owners=list(locate(sequence,binding,world))
+        if len(owners)>1:
+            raise AnimatedCameraNativeError("Ambiguous native camera component binding.")
+        if not owners or str(owners[0].get_path_name())!=component_path:
+            continue
+        for linked in binding.get_tracks():
+            class_name=str(linked.get_class().get_name())
+            if class_name!="MovieSceneFloatTrack":
+                raise AnimatedCameraNativeError(
+                    "Camera component has another animation/transform owner."
+                )
+            get_property=getattr(linked,"get_property_name",None)
+            if (not callable(get_property)
+                    or str(get_property()) not in {
+                        "CurrentFocalLength","FieldOfView",
+                    }):
+                raise AnimatedCameraNativeError(
+                    "Camera component has an unknown scalar property owner."
+                )
     if str(actor_track.get_display_name())!=action.get("track_name"):
         raise AnimatedCameraNativeError(
             "Native animated camera track name is not source-generated."
@@ -227,6 +268,29 @@ def _live_owner(api: Any, sequence: Any, setup: list, proof: dict,
             "Only one original complete camera animation section is editable."
         )
     section=sections[0]
+    ext_section=getattr(api,"MovieSceneSectionExtensions",None)
+    get_start=getattr(ext_section,"get_start_frame",None)
+    get_end=getattr(ext_section,"get_end_frame",None)
+    is_active=getattr(section,"get_is_active",None)
+    get_blend=getattr(section,"get_blend_type",None)
+    absolute=getattr(getattr(api,"MovieSceneBlendType",None),"ABSOLUTE",None)
+    if (not all(callable(x) for x in (get_start,get_end,is_active,get_blend))
+            or absolute is None):
+        raise AnimatedCameraNativeError(
+            "Native section timing/absolute ownership cannot be inspected."
+        )
+    first=get_start(section)
+    last=get_end(section)
+    first=getattr(first,"value",first)
+    last=getattr(last,"value",last)
+    if (type(first) is not int or type(last) is not int
+            or (first,last)!=(0,len(action["keys"]))
+            or is_active() is not True or get_blend()!=absolute):
+        raise AnimatedCameraNativeError(
+            "Original animated camera section is retimed, inactive or not absolute."
+        )
+    # The prepared plan is independently checked at execution, while all
+    # native key indices must additionally belong to this original section.
     # Competing attachments/rigs must never be mistaken for actor world keys.
     if actor.get_attach_parent_actor() is not None:
         raise AnimatedCameraNativeError("Animated camera parent rig is unsupported.")
@@ -237,9 +301,6 @@ def _live_owner(api: Any, sequence: Any, setup: list, proof: dict,
         for other in actors
     ):
         raise AnimatedCameraNativeError("Animated camera owns child attachments.")
-    get_component=getattr(actor,"get_cine_camera_component",None)
-    if not callable(get_component) or get_component() is None:
-        raise AnimatedCameraNativeError("Native CineCamera component is missing.")
     # Some real CineCamera components use nonidentity defaults, so component
     # relative transform cannot be silently assumed source-aligned. The
     # original world-space native CineTwin capture and original Sequencer
