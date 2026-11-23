@@ -271,6 +271,20 @@ def test_studio_http_api_returns_page_and_pending_limitations_without_mutation(t
         assert not data["automatic_native_retry_authorized"]
         assert call(url + "/api/final-outcome?bogus=1")[0] == 409
         assert call(url + "/api/final-outcome?offset=999999")[0] == 409
+        # Phase 10.3 requires exact current job identity on each UI page.
+        bound = "/api/final-outcome?job_id=" + _job["job_id"]
+        good_status, bound_page = call(url + bound + "&offset=0")
+        assert good_status == 200
+        assert bound_page["source_page"][0]["occurrence_id"] == "E00000"
+        for invalid in (
+            "/api/final-outcome?job_id=" + "b" * 32,
+            "/api/final-outcome?job_id=not-a-job",
+            "/api/final-outcome?job_id=",
+            "/api/final-outcome?job_id=" + _job["job_id"] + "&job_id=" + _job["job_id"],
+            "/api/final-outcome?offset=",
+            "/api/final-outcome?offset=2&offset=3",
+        ):
+            assert call(url + invalid)[0] == 409, invalid
         assert not list(folder.parent.glob("element9-outcome-*.json"))
     finally:
         server.shutdown()
