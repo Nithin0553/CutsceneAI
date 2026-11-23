@@ -53,7 +53,8 @@ def _frame(api: Any, key: Any) -> int:
 
 
 def _read_many_channels(api: Any, section: Any, prepared: dict,
-                        *, repairs: list[dict]) -> list[tuple[Any, float]]:
+                        *, repairs: list[dict],
+                        yaw_only: bool = False) -> list[tuple[Any, float]]:
     """Validate the whole native grid before allowing one or TWO known XYZ keys.
 
     The exception set is recomputed from immutable measured source evidence,
@@ -69,7 +70,8 @@ def _read_many_channels(api: Any, section: Any, prepared: dict,
             or len(keys) > evidence._MAX_FRAMES or len(keys) < 4
             or any(k.get("frame") != i for i, k in enumerate(keys))):
         raise AnimatedCameraNativeError("Original CineTwin evaluated camera frame grid invalid.")
-    if (not isinstance(repairs, list) or len(repairs) not in (1, 2)
+    if (not isinstance(repairs, list)
+            or len(repairs) not in ((1,) if yaw_only else (1, 2))
             or any(not isinstance(row, dict) for row in repairs)):
         raise AnimatedCameraNativeError("Only one or exactly two measured camera keys are supported.")
     exceptions = {}
@@ -77,7 +79,8 @@ def _read_many_channels(api: Any, section: Any, prepared: dict,
         frame = row.get("source_key_frame")
         axis = row.get("native_channel_index")
         if (type(frame) is not int or type(axis) is not int
-                or not 0 < frame < len(keys) - 1 or axis not in (0, 1, 2)
+                or not 0 < frame < len(keys) - 1
+                or axis not in ((5,) if yaw_only else (0, 1, 2))
                 or (frame, axis) in exceptions):
             raise AnimatedCameraNativeError("Native camera exception is not one unique interior XYZ key.")
         exceptions[(frame, axis)] = row
@@ -94,6 +97,20 @@ def _read_many_channels(api: Any, section: Any, prepared: dict,
         raise AnimatedCameraNativeError(
             "Native source camera linear key interpolation is not introspectable."
         )
+    if yaw_only:
+        # An alias-equivalent native Euler change is not interchangeable with
+        # the immutable baked source channel. Guard the entire native yaw grid.
+        rotations = [tuple(row["rotation_rpy_degrees"]) for row in keys]
+        if any(abs(angle) >= evidence.MAX_EULER_ABS_DEGREES
+               for rpy in rotations for angle in rpy):
+            raise AnimatedCameraNativeError(
+                "Source camera Euler yaw/roll/pitch is outside no-wrap bounds."
+            )
+        if any(abs(b[2]-a[2]) > 60. for a,b
+               in zip(rotations,rotations[1:])):
+            raise AnimatedCameraNativeError(
+                "Native yaw source grid crosses an unsupported angular step."
+            )
     changed = {}
     for channel_index, channel in enumerate(channels):
         key_list = list(channel.get_keys())
@@ -131,13 +148,28 @@ def _read_many_channels(api: Any, section: Any, prepared: dict,
                 raise AnimatedCameraNativeError("Native camera key value nonfinite.")
             measured = exceptions.get((index, channel_index))
             if measured is not None:
-                if (type(measured.get("native_key_value_before_cm")) not in (int,float)
-                        or type(measured.get("source_key_value_cm")) not in (int,float)
-                        or not math.isfinite(measured["native_key_value_before_cm"])
-                        or not math.isfinite(measured["source_key_value_cm"])
-                        or abs(actual - measured["native_key_value_before_cm"]) > 0.15
-                        or abs(float(expected) - measured["source_key_value_cm"]) > 0.1
-                        or not evidence.MIN_CM <= abs(actual-float(expected)) <= evidence.MAX_CM
+                before_name = (
+                    "native_key_value_before_degrees" if yaw_only else
+                    "native_key_value_before_cm"
+                )
+                source_name = (
+                    "source_key_value_degrees" if yaw_only else
+                    "source_key_value_cm"
+                )
+                before = measured.get(before_name)
+                source = measured.get(source_name)
+                correction_min = (
+                    evidence.MIN_YAW_DEGREES if yaw_only else evidence.MIN_CM
+                )
+                correction_max = (
+                    evidence.MAX_YAW_DEGREES if yaw_only else evidence.MAX_CM
+                )
+                if (type(before) not in (int,float)
+                        or type(source) not in (int,float)
+                        or not math.isfinite(before) or not math.isfinite(source)
+                        or abs(actual - before) > 0.15
+                        or abs(float(expected) - source) > 0.1
+                        or not correction_min <= abs(actual-float(expected)) <= correction_max
                         or not callable(getattr(key, "set_value", None))):
                     raise AnimatedCameraNativeError(
                         "Live native key no longer matches independently sampled discrepancy."
