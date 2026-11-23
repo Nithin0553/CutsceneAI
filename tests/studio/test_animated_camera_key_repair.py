@@ -314,7 +314,7 @@ def test_mutate_then_throw_native_key_setter_rolls_back(monkeypatch,tmp_path):
         (_ for _ in ()).throw(RuntimeError("native setter threw"))
         if float(val)!=405 else None
     )
-    source,target,cam,label,action,plan,csir=_scenario()
+    _,_,_,_,action,_,_=_scenario()
     setup=tmp_path/"setup.json"
     setup.write_text('{"actors_created": []}',encoding="utf-8")
     (tmp_path/"transfer-plan.json").write_text(__import__("json").dumps({
