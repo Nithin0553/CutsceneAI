@@ -55,7 +55,7 @@ def test_phase10_4_executes_bounded_python_and_node_rehearsals(tmp_path):
     report=rehearsal.run(repo,output=path,runner=runner)
     assert report["status"]=="SYNTHETIC_REHEARSAL_PASSED_ENGINE_ACCEPTANCE_PENDING"
     assert len(report["plan"]["stage_and_interruption_gates"])==9
-    assert report["scenario_gate_count"]==18
+    assert report["scenario_gate_count"]==19
     assert report["exact_matrix_all_gates_exercised"] is True
     assert report["plan"]["exact_scenario_matrix"]["required_python_test_count"]>=20
     assert len(calls)==2
