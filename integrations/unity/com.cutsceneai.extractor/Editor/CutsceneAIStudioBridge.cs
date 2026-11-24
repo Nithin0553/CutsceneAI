@@ -80,7 +80,9 @@ namespace CutsceneAI.UnityExtractor
                 var bridge = Path.Combine(root, "CutSceneAI", "StudioBridge");
                 Directory.CreateDirectory(bridge);
                 var target = Path.Combine(bridge, HeartbeatFile);
-                var temporary = target + ".tmp";
+                // A unique staging path prevents a prior failed write or
+                // second editor process from colliding with this heartbeat.
+                var temporary = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 var payload = new Heartbeat
                 {
                     project_root = Path.GetFullPath(root),
@@ -89,13 +91,42 @@ namespace CutsceneAI.UnityExtractor
                     source_bridge_enabled = enabled,
                     editor_mode = EditorApplication.isPlaying ? "PLAY_MODE" : "EDIT_MODE",
                 };
-                File.WriteAllText(temporary, JsonUtility.ToJson(payload, true));
-                if (File.Exists(target))
-                    File.Replace(temporary, target, null);
-                else
-                    File.Move(temporary, target);
-                _lastPresenceError = "";
-                return true;
+                try
+                {
+                    File.WriteAllText(temporary, JsonUtility.ToJson(payload, true));
+                    // Windows readers may briefly hold the destination without
+                    // FileShare.Delete. Retry only a bounded sharing conflict;
+                    // never truncate the visible heartbeat or delete it first.
+                    for (var attempt = 0; attempt < 4; attempt++)
+                    {
+                        try
+                        {
+                            if (File.Exists(target))
+                                File.Replace(temporary, target, null);
+                            else
+                                File.Move(temporary, target);
+                            _lastPresenceError = "";
+                            return true;
+                        }
+                        catch (IOException) when (attempt < 3)
+                        {
+                            System.Threading.Thread.Sleep(25 * (attempt + 1));
+                        }
+                    }
+                    return false; // Unreachable: the fourth attempt propagates.
+                }
+                finally
+                {
+                    // Only remove this invocation's own staging file. Never
+                    // delete an existing/last-good heartbeat on any failure.
+                    try
+                    {
+                        if (File.Exists(temporary))
+                            File.Delete(temporary);
+                    }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
             }
             catch (IOException ex)
             {
