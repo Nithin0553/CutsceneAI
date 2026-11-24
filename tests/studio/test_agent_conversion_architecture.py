@@ -186,7 +186,7 @@ def test_local_ollama_timeout_is_not_misreported_as_offline(monkeypatch):
 def test_ollama_memory_http_error_is_not_misreported_as_offline(monkeypatch):
     monkeypatch.setenv("CUTSCENEAI_MODEL_PROVIDER", "ollama")
 
-    def overloaded(req, _timeout):
+    def overloaded(req, timeout):
         raise models.error.HTTPError(
             req.full_url, 500, "Internal Server Error", {},
             io.BytesIO(b'{"error":"model requires more system memory (4.0 GiB)"}')
@@ -205,7 +205,7 @@ def test_ollama_memory_http_error_is_not_misreported_as_offline(monkeypatch):
 def test_missing_ollama_model_is_not_treated_as_service_disconnect(monkeypatch):
     monkeypatch.setenv("CUTSCENEAI_MODEL_PROVIDER", "ollama")
 
-    def missing(req, _timeout):
+    def missing(req, timeout):
         raise models.error.HTTPError(req.full_url, 404, "Not Found", {}, io.BytesIO(b"{}"))
 
     monkeypatch.setattr(models.request, "urlopen", missing)
@@ -221,7 +221,7 @@ def test_missing_ollama_model_is_not_treated_as_service_disconnect(monkeypatch):
 def test_offline_ollama_still_allows_pre_native_bounded_retry(monkeypatch):
     monkeypatch.setenv("CUTSCENEAI_MODEL_PROVIDER", "ollama")
 
-    def disconnected(_req, _timeout):
+    def disconnected(_req, timeout):
         raise models.error.URLError("connection refused")
 
     monkeypatch.setattr(models.request, "urlopen", disconnected)
