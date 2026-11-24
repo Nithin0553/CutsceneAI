@@ -84,6 +84,22 @@ def _local_url() -> str:
     return f"http://{target.hostname if target.hostname != '::1' else '[::1]'}:{port}"
 
 
+def _ollama_timeout_seconds() -> int:
+    """Bounded local inference budget; slow open-weight models need more than 40s."""
+    raw = os.environ.get("CUTSCENEAI_OLLAMA_TIMEOUT_SECONDS", "120").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ModelProviderError(
+            "CUTSCENEAI_OLLAMA_TIMEOUT_SECONDS must be an integer from 10 to 300."
+        ) from exc
+    if not 10 <= value <= 300:
+        raise ModelProviderError(
+            "CUTSCENEAI_OLLAMA_TIMEOUT_SECONDS must be an integer from 10 to 300."
+        )
+    return value
+
+
 def _answer(raw: str) -> dict[str, Any]:
     if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_RESPONSE_BYTES:
         raise ModelProviderError("Model returned empty or oversized JSON.")
@@ -146,13 +162,45 @@ def complete_json(*, task: str, instructions: str, payload: dict[str, Any],
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        timeout = _ollama_timeout_seconds()
         try:
-            with request.urlopen(req, timeout=40) as stream:
+            with request.urlopen(req, timeout=timeout) as stream:
                 response_bytes = stream.read(MAX_RESPONSE_BYTES + 1)
-        except (error.URLError, TimeoutError, OSError) as exc:
+        except error.HTTPError as exc:
+            # HTTPError is also a URLError: distinguish server/model failures
+            # from an offline Ollama service without leaking response contents.
+            detail = ""
+            try:
+                body = json.loads(exc.read(2048))
+                if isinstance(body, dict):
+                    detail = str(body.get("error", ""))[:400].lower()
+            except (OSError, ValueError, TypeError):
+                pass
+            if exc.code == 404:
+                raise ModelProviderError(
+                    "Local Ollama model not found (HTTP 404). Verify the exact "
+                    "CUTSCENEAI_AGENT_MODEL with 'ollama list'; no native job was submitted."
+                ) from exc
+            if "memory" in detail or "allocation" in detail:
+                raise ModelProviderError(
+                    "Local Ollama lacks enough memory to run the configured model. "
+                    "Free RAM/VRAM or choose a smaller model; no native job was submitted."
+                ) from exc
             raise ModelProviderError(
-                "Local Ollama is unavailable. Start 'ollama serve' and pull the "
-                "configured model before retrying; no native job was submitted."
+                f"Local Ollama returned HTTP {exc.code} from /api/chat; "
+                "inspect Ollama logs before retrying. No native job was submitted."
+            ) from exc
+        except (error.URLError, TimeoutError, OSError) as exc:
+            reason = exc.reason if isinstance(exc, error.URLError) else exc
+            if isinstance(reason, TimeoutError) or "timed out" in str(reason).lower():
+                raise ModelProviderError(
+                    f"Local Ollama timed out after {timeout} seconds during /api/chat. "
+                    "Check available RAM/VRAM or configure a bounded "
+                    "CUTSCENEAI_OLLAMA_TIMEOUT_SECONDS; no native job was submitted."
+                ) from exc
+            raise ModelProviderError(
+                "Local Ollama connection failed at the configured loopback address. "
+                "Check the Ollama service and local port; no native job was submitted."
             ) from exc
         if len(response_bytes) > MAX_RESPONSE_BYTES:
             raise ModelProviderError("Ollama response exceeds the safe budget.")
