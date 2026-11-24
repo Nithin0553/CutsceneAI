@@ -106,6 +106,33 @@ This distribution is **not** a signed standalone desktop installer; Python
 dependencies and the actual Unity/Unreal installations are external.
 See [Phase 10.3 six-area software contract](PHASE10_3_SIX_AREA_CONSOLIDATION_AND_10_4_START.md).
 
+## Local Ollama inference on memory-constrained Windows workstations
+
+The Studio software setup does not start Ollama or load model weights. For
+the AI transfer workflow, first verify the configured model with
+`ollama list` and a structured `/api/chat` request. A successful
+`/api/tags` connection proves only that the Ollama service is listening.
+
+The localhost Ollama provider defaults to a **120-second** bounded inference
+request timeout, rather than 40 seconds, to accommodate local model loading and
+JSON strategy generation. It can be configured before starting Studio:
+
+```powershell
+$env:CUTSCENEAI_MODEL_PROVIDER = "ollama"
+$env:CUTSCENEAI_AGENT_MODEL = "qwen2.5:7b-instruct"
+$env:CUTSCENEAI_OLLAMA_TIMEOUT_SECONDS = "120"
+.\tools\start_studio.ps1
+```
+
+Only integer timeouts from 10 through 300 seconds are accepted. The transport
+distinguishes timeouts, unavailable local services, HTTP 404 missing models, and
+HTTP 500 memory errors when Ollama provides memory-failure evidence. Slow
+inference and out-of-memory conditions block for human investigation instead of
+silently retrying; only actual pre-native connection failures receive the
+existing bounded retry policy. A blocked AI attempt with no candidate/job ID
+must be cancelled and restarted as a fresh transfer after the cause is fixed.
+No Unity or Unreal Editor restart is needed to change the Studio host setting.
+
 ## Companion setup remains explicit and bounded
 
 - **Unity:** Add or confirm the extractor package
