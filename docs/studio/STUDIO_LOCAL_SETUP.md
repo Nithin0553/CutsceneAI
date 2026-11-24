@@ -186,9 +186,9 @@ twice.
 
 ## Windows Unity source heartbeat sharing conflicts
 
-The Unity bridge publishes a project-scoped \`unity-editor.json\` through
+The Unity bridge publishes a project-scoped `unity-editor.json` through
 atomic file replacement every 0.7 seconds. A brief Windows sharing conflict
-can cause \`IOException: Unable to remove the file to be replaced\`, even
+can cause `IOException: Unable to remove the file to be replaced`, even
 when the selected Unity project itself is writable. Studio cannot use
 a stale heartbeat to authorize source-export requests.
 
@@ -201,13 +201,13 @@ Console warning instead of pretending the Editor is connected.
 
 Check the exact source project's heartbeat in PowerShell:
 
-\`\`\`powershell
+```powershell
 $bridge = "D:\Path\To\UnityProject\CutSceneAI\StudioBridge"
 $presence = Get-Content "$bridge\unity-editor.json" -Raw | ConvertFrom-Json
 $presence | Select-Object project_root, source_bridge_enabled, editor_mode, heartbeat
 $age = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($presence.heartbeat)).TotalSeconds
 [math]::Round($age, 1)
-\`\`\`
+```
 
 The emitted heartbeat must name the exact Unity project, have the source
 bridge enabled and be fresh (normally under eight seconds for Studio's
