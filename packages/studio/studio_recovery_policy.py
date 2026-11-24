@@ -15,11 +15,32 @@ def classify(message: str, *, phase: str, native_submitted: bool) -> dict[str, A
     text = str(message).casefold()[:1200]
     category = "UNKNOWN_FAILURE"
     next_action = "Review the source-bound Studio diagnostic before retrying."
-    if "local ollama is unavailable" in text or "ollama did not return" in text:
+    if "local ollama timed out after" in text:
+        category = "MODEL_PROVIDER_TIMEOUT"
+        next_action = (
+            "The local model exceeded the bounded inference timeout. Inspect "
+            "available RAM/VRAM and the configured Ollama timeout before starting "
+            "a fresh transfer. No native retry is authorized."
+        )
+    elif "local ollama lacks enough memory" in text:
+        category = "MODEL_RESOURCE_EXHAUSTED"
+        next_action = (
+            "Free memory or choose a smaller local model. Do not replay a "
+            "native candidate; inspect the previous run first."
+        )
+    elif "local ollama model not found" in text:
+        category = "MODEL_NOT_INSTALLED"
+        next_action = (
+            "Check CUTSCENEAI_AGENT_MODEL and 'ollama list' before starting "
+            "a fresh pre-native transfer."
+        )
+    elif ("local ollama connection failed" in text
+          or "local ollama is unavailable" in text
+          or "ollama did not return" in text):
         category = "MODEL_PROVIDER_UNAVAILABLE"
         next_action = (
-            "Start the local Ollama server and ensure the requested model is "
-            "installed. Studio will retry this pre-native reasoning step safely."
+            "Check the loopback Ollama service, model and port. Studio will "
+            "retry this pre-native reasoning step safely."
         )
     elif "openai_api_key" in text:
         category = "MODEL_CREDENTIALS_MISSING"
