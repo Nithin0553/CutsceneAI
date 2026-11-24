@@ -262,6 +262,31 @@ def test_studio_unity_companion_never_silently_starts_scripts_or_saves_scene():
 
 
 
+def test_unity_heartbeat_retries_windows_replace_without_truncating_published_file():
+    """Source contract: transient Win32 sharing conflicts cannot corrupt a heartbeat.
+
+    Compilation and actual Windows File.Replace contention remain native editor tests.
+    """
+    bridge = (Path(__file__).resolve().parents[2] /
+              "integrations/unity/com.cutsceneai.extractor/Editor/CutsceneAIStudioBridge.cs")
+    code = bridge.read_text()
+    heartbeat = code.split("private static bool WritePresence(bool enabled)", 1)[1].split(
+        "[Serializable]", 1)[0]
+    assert 'Guid.NewGuid().ToString("N")' in heartbeat
+    assert 'File.WriteAllText(temporary,' in heartbeat
+    assert 'File.Replace(temporary, target, null)' in heartbeat
+    assert 'File.Move(temporary, target)' in heartbeat
+    assert 'for (var attempt = 0; attempt < 4; attempt++)' in heartbeat
+    assert 'catch (IOException) when (attempt < 3)' in heartbeat
+    assert 'System.Threading.Thread.Sleep(25 * (attempt + 1))' in heartbeat
+    assert 'if (File.Exists(temporary))' in heartbeat
+    assert 'File.Delete(temporary)' in heartbeat
+    assert 'File.WriteAllText(target,' not in heartbeat
+    assert 'File.Delete(target)' not in heartbeat
+    assert 'File.Copy(temporary, target' not in heartbeat
+    assert 'return false;' in heartbeat
+
+
 def test_evidence_hash_streams_without_loading_large_file_into_memory(
         project, monkeypatch):
     directory = project / "CutSceneAI" / "StudioBridge" / "evidence"
