@@ -184,6 +184,39 @@ If interrupted after creating a candidate but before finalizing state, Studio
 blocks and preserves the partial candidate instead of silently preparing it
 twice.
 
+## Windows Unity source heartbeat sharing conflicts
+
+The Unity bridge publishes a project-scoped \`unity-editor.json\` through
+atomic file replacement every 0.7 seconds. A brief Windows sharing conflict
+can cause \`IOException: Unable to remove the file to be replaced\`, even
+when the selected Unity project itself is writable. Studio cannot use
+a stale heartbeat to authorize source-export requests.
+
+The bridge stages the heartbeat under a unique temporary filename and
+retries the atomic replacement a bounded four times (150 ms total retry
+sleep). It never truncates, deletes or overwrites the last successful
+heartbeat as a fallback. A permanent read-only/permission failure or
+persistent external lock still blocks source requests and raises a Unity
+Console warning instead of pretending the Editor is connected.
+
+Check the exact source project's heartbeat in PowerShell:
+
+\`\`\`powershell
+$bridge = "D:\Path\To\UnityProject\CutSceneAI\StudioBridge"
+$presence = Get-Content "$bridge\unity-editor.json" -Raw | ConvertFrom-Json
+$presence | Select-Object project_root, source_bridge_enabled, editor_mode, heartbeat
+$age = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($presence.heartbeat)).TotalSeconds
+[math]::Round($age, 1)
+\`\`\`
+
+The emitted heartbeat must name the exact Unity project, have the source
+bridge enabled and be fresh (normally under eight seconds for Studio's
+connected check). If it is fresh, no native restart or manual file deletion
+is needed; use the bridge to export a new paired CSIR/census. Otherwise
+inspect locks/ACLs without deleting receipts, evidence, or the Unity scene.
+The regression test checks source-level safety; actual Windows locking
+and Unity C# compilation must still be verified on a real workstation.
+
 ## What CI verifies
 
 `.github/workflows/ci.yml` runs the Python, JS, syntax, lint and repository
